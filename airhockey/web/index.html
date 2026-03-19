@@ -1,0 +1,62 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>Air Hockey</title>
+    <link rel="stylesheet" href="/style.css">
+</head>
+<body>
+    <div id="app">
+        <div id="sidebar">
+            <h1>Air Hockey</h1>
+            <div id="scoreboard">
+                <div class="score-row">
+                    <span class="score-label agent-color">You</span>
+                    <span id="score-agent" class="score-value">0</span>
+                </div>
+                <div class="score-divider">:</div>
+                <div class="score-row">
+                    <span id="score-opponent" class="score-value">0</span>
+                    <span class="score-label opponent-color">CPU</span>
+                </div>
+            </div>
+            <div id="timer">0:00</div>
+            <div id="controls">
+                <button id="btn-reset">New Game</button>
+                <button id="btn-save">Save Recording</button>
+            </div>
+            <div id="mode-select">
+                <button class="mode-btn active" data-mode="live">Live</button>
+                <button class="mode-btn" data-mode="replay">Replay</button>
+            </div>
+            <div id="replay-panel" class="hidden">
+                <h3>Recordings</h3>
+                <ul id="recording-list"></ul>
+                <div id="replay-controls" class="hidden">
+                    <input type="range" id="replay-slider" min="0" max="100" value="0">
+                    <div id="replay-buttons">
+                        <button id="btn-play-pause">Play</button>
+                        <button id="btn-step-back">&lt;</button>
+                        <button id="btn-step-fwd">&gt;</button>
+                    </div>
+                    <label>
+                        Speed: <select id="replay-speed">
+                            <option value="0.25">0.25x</option>
+                            <option value="0.5">0.5x</option>
+                            <option value="1" selected>1x</option>
+                            <option value="2">2x</option>
+                            <option value="4">4x</option>
+                        </select>
+                    </label>
+                </div>
+            </div>
+            <div id="status">Connecting...</div>
+        </div>
+        <div id="canvas-container">
+            <canvas id="table"></canvas>
+        </div>
+    </div>
+    <script src="/app.js"></script>
+</body>
+</html>

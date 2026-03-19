@@ -1,0 +1,25 @@
+[build-system]
+requires = ["setuptools>=68.0"]
+build-backend = "setuptools.build_meta"
+
+[project]
+name = "airhockey"
+version = "0.1.0"
+requires-python = ">=3.10"
+dependencies = [
+    "numpy",
+    "gymnasium",
+    "fastapi",
+    "uvicorn[standard]",
+    "websockets",
+]
+
+[project.optional-dependencies]
+dev = ["pytest", "ruff"]
+rl = ["stable-baselines3", "torch"]
+
+[tool.setuptools.packages.find]
+include = ["airhockey*"]
+
+[tool.setuptools.package-data]
+airhockey = ["web/**/*"]
