@@ -76,14 +76,16 @@ class AirHockeyEnv(gym.Env):
         )
         self.observation_space = spaces.Box(-high_obs, high_obs, dtype=np.float32)
 
-        # Action: target position within agent's half of table
+        # Action: normalized [-1, 1] mapped to paddle position in agent's half
         self.action_space = spaces.Box(
-            low=np.array([cfg.paddle_radius, cfg.paddle_radius], dtype=np.float32),
-            high=np.array(
-                [cfg.width - cfg.paddle_radius, cfg.height / 2 - cfg.paddle_radius],
-                dtype=np.float32,
-            ),
+            low=np.array([-1.0, -1.0], dtype=np.float32),
+            high=np.array([1.0, 1.0], dtype=np.float32),
             dtype=np.float32,
+        )
+        # Real position bounds for rescaling
+        self._action_low = np.array([cfg.paddle_radius, cfg.paddle_radius])
+        self._action_high = np.array(
+            [cfg.width - cfg.paddle_radius, cfg.height / 2 - cfg.paddle_radius]
         )
 
         # Camera delay buffer
@@ -123,8 +125,10 @@ class AirHockeyEnv(gym.Env):
     def step(
         self, action: np.ndarray
     ) -> tuple[np.ndarray, float, bool, bool, dict[str, Any]]:
-        action = np.clip(action, self.action_space.low, self.action_space.high)
-        target_x, target_y = float(action[0]), float(action[1])
+        # Clip to [-1, 1] then rescale to real position bounds
+        action = np.clip(action, -1.0, 1.0)
+        real_action = self._action_low + (action + 1.0) * 0.5 * (self._action_high - self._action_low)
+        target_x, target_y = float(real_action[0]), float(real_action[1])
 
         # Run physics substeps
         n_substeps = max(1, int(self.action_dt / self.physics_dt))
