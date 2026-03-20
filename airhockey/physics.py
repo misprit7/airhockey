@@ -87,12 +87,15 @@ class PhysicsEngine:
         if rng is None:
             rng = np.random.default_rng()
 
+        # Randomize puck start: position near center, random direction and speed
+        angle = rng.uniform(0, 2 * np.pi)
+        speed = rng.uniform(0.3, 1.5)
         self.state = PhysicsState(
             puck=PuckState(
-                x=cfg.width / 2,
-                y=cfg.height / 2,
-                vx=rng.uniform(-0.5, 0.5),
-                vy=rng.uniform(-1.0, 1.0),
+                x=cfg.width / 2 + rng.uniform(-0.15, 0.15),
+                y=cfg.height / 2 + rng.uniform(-0.15, 0.15),
+                vx=speed * np.cos(angle),
+                vy=speed * np.sin(angle),
             ),
             paddle_agent=PaddleState(
                 x=cfg.width / 2,
