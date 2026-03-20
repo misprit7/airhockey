@@ -59,7 +59,7 @@ class ShapedRewardWrapper(gym.Wrapper):
         puck_pos = obs[0:2]
         paddle_pos = obs[4:6]
         dist = np.linalg.norm(puck_pos - paddle_pos)
-        shaped_reward += float(np.exp(-3.0 * dist))
+        shaped_reward += 0.05 * float(np.exp(-3.0 * dist))
 
         # 2. Goals
         if reward > 0:

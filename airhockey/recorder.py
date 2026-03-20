@@ -46,10 +46,26 @@ class Recorder:
 
     def save(self, path: str | Path, episode_index: int = -1) -> None:
         episode = self.get_episode(episode_index)
-        data = [asdict(f) for f in episode]
-        Path(path).write_text(json.dumps(data, default=lambda x: float(x)))
+        if not episode:
+            return
+        # Columnar format: keys once, then arrays of values (much smaller)
+        fields = list(asdict(episode[0]).keys())
+        columns = {f: [] for f in fields}
+        for frame in episode:
+            d = asdict(frame)
+            for f in fields:
+                v = d[f]
+                columns[f].append(round(float(v), 4) if isinstance(v, float) else v)
+        data = {"fields": fields, "columns": columns}
+        Path(path).write_text(json.dumps(data, separators=(",", ":")))
 
     @staticmethod
     def load(path: str | Path) -> list[FrameData]:
         data = json.loads(Path(path).read_text())
-        return [FrameData(**f) for f in data]
+        # Support both row-based (old) and columnar (new) formats
+        if isinstance(data, list):
+            return [FrameData(**f) for f in data]
+        fields = data["fields"]
+        columns = data["columns"]
+        n = len(columns[fields[0]])
+        return [FrameData(**{f: columns[f][i] for f in fields}) for i in range(n)]

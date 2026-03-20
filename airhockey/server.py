@@ -76,7 +76,14 @@ async def get_recording(filename: str):
     path = RECORDINGS_DIR / filename
     if not path.exists():
         return {"error": "not found"}
-    return json.loads(path.read_text())
+    data = json.loads(path.read_text())
+    # Convert columnar format to row format for frontend
+    if isinstance(data, dict) and "columns" in data:
+        fields = data["fields"]
+        columns = data["columns"]
+        n = len(columns[fields[0]])
+        return [{f: columns[f][i] for f in fields} for i in range(n)]
+    return data
 
 
 @app.websocket("/ws/live")
