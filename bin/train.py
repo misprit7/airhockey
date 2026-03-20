@@ -74,7 +74,7 @@ class RecordGameCallback(BaseCallback):
             use_dynamics=self.use_dynamics,
             record=True,
         )
-        obs, _ = env.reset(seed=0)  # fixed seed for comparable replays
+        obs, _ = env.reset(seed=step)  # different seed per recording
         terminated, truncated = False, False
 
         while not (terminated or truncated):
