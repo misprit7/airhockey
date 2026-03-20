@@ -45,10 +45,30 @@ async def style_css():
     )
 
 
+def _recording_label(stem: str) -> str:
+    """Turn a filename stem into a readable label.
+
+    e.g. 'ppo_v4_shaped_step_0100000' -> 'ppo_v4_shaped @ step 100k'
+         'game_1773964952' -> 'game_1773964952'
+    """
+    if "_step_" in stem:
+        parts = stem.rsplit("_step_", 1)
+        run_name = parts[0]
+        step_num = int(parts[1])
+        if step_num >= 1_000_000:
+            step_label = f"{step_num / 1_000_000:.1f}M"
+        elif step_num >= 1_000:
+            step_label = f"{step_num // 1_000}k"
+        else:
+            step_label = str(step_num)
+        return f"{run_name} @ {step_label}"
+    return stem
+
+
 @app.get("/api/recordings")
 async def list_recordings():
     files = sorted(RECORDINGS_DIR.glob("*.json"), reverse=True)
-    return [{"name": f.stem, "path": f.name} for f in files]
+    return [{"name": f.stem, "path": f.name, "label": _recording_label(f.stem)} for f in files]
 
 
 @app.get("/api/recordings/{filename}")

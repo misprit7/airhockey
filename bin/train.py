@@ -48,6 +48,7 @@ class RecordGameCallback(BaseCallback):
         opponent: str,
         use_dynamics: bool,
         recordings_dir: Path,
+        run_name: str = "",
         verbose: int = 0,
     ):
         super().__init__(verbose)
@@ -56,6 +57,7 @@ class RecordGameCallback(BaseCallback):
         self.use_dynamics = use_dynamics
         self.recordings_dir = recordings_dir
         self.recordings_dir.mkdir(parents=True, exist_ok=True)
+        self.run_name = run_name
         self._last_record_step = 0
 
     def _on_step(self) -> bool:
@@ -85,7 +87,8 @@ class RecordGameCallback(BaseCallback):
             rec = Recorder()
             rec._current = recording
             step_str = f"{step:07d}"
-            filename = f"train_step_{step_str}.json"
+            prefix = f"{self.run_name}_" if self.run_name else ""
+            filename = f"{prefix}step_{step_str}.json"
             rec.save(self.recordings_dir / filename)
             score = f"{info['score_agent']}-{info['score_opponent']}"
             if self.verbose:
@@ -191,6 +194,7 @@ def main():
         opponent=args.opponent,
         use_dynamics=args.dynamics,
         recordings_dir=recordings_dir,
+        run_name=args.run_name,
         verbose=1,
     )
 

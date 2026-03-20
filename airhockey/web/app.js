@@ -337,6 +337,8 @@ document.getElementById("btn-save").addEventListener("click", () => {
 });
 
 // Mode switching
+let recordingsRefreshTimer = null;
+
 document.querySelectorAll(".mode-btn").forEach((btn) => {
     btn.addEventListener("click", () => {
         document.querySelectorAll(".mode-btn").forEach((b) => b.classList.remove("active"));
@@ -347,8 +349,13 @@ document.querySelectorAll(".mode-btn").forEach((btn) => {
         if (mode === "replay") {
             replayPanel.classList.remove("hidden");
             loadRecordingsList();
+            // Auto-refresh recording list every 5 seconds
+            if (recordingsRefreshTimer) clearInterval(recordingsRefreshTimer);
+            recordingsRefreshTimer = setInterval(loadRecordingsList, 5000);
         } else {
             replayPanel.classList.add("hidden");
+            if (recordingsRefreshTimer) clearInterval(recordingsRefreshTimer);
+            recordingsRefreshTimer = null;
             stopReplay();
             puckTrail = [];
         }
@@ -356,6 +363,8 @@ document.querySelectorAll(".mode-btn").forEach((btn) => {
 });
 
 // Replay
+let activeRecordingPath = null;
+
 async function loadRecordingsList() {
     try {
         const resp = await fetch("/api/recordings");
@@ -364,7 +373,8 @@ async function loadRecordingsList() {
         list.innerHTML = "";
         recordings.forEach((rec) => {
             const li = document.createElement("li");
-            li.textContent = rec.name;
+            li.textContent = rec.label || rec.name;
+            if (rec.path === activeRecordingPath) li.classList.add("active");
             li.addEventListener("click", () => loadRecording(rec.path, li));
             list.appendChild(li);
         });
@@ -380,6 +390,7 @@ async function loadRecording(path, li) {
         replayIndex = 0;
         puckTrail = [];
 
+        activeRecordingPath = path;
         document.querySelectorAll("#recording-list li").forEach((l) => l.classList.remove("active"));
         li.classList.add("active");
 
