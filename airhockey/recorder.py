@@ -57,7 +57,7 @@ class Recorder:
                 v = d[f]
                 columns[f].append(round(float(v), 4) if isinstance(v, float) else v)
         data = {"fields": fields, "columns": columns}
-        Path(path).write_text(json.dumps(data, separators=(",", ":")))
+        Path(path).write_text(json.dumps(data, separators=(",", ":"), default=lambda x: round(float(x), 4)))
 
     @staticmethod
     def load(path: str | Path) -> list[FrameData]:
