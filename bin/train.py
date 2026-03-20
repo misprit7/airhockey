@@ -19,7 +19,7 @@ from pathlib import Path
 
 import gymnasium as gym
 import numpy as np
-from stable_baselines3 import PPO
+from stable_baselines3 import PPO, SAC
 from stable_baselines3.common.callbacks import (
     BaseCallback,
     CheckpointCallback,
@@ -117,76 +117,113 @@ def main():
     parser = argparse.ArgumentParser(description="Train air hockey agent")
     parser.add_argument("--timesteps", type=int, default=500_000)
     parser.add_argument("--n-envs", type=int, default=4)
+    parser.add_argument("--algo", type=str, default="sac", choices=["ppo", "sac"])
     parser.add_argument("--opponent", type=str, default="idle")
     parser.add_argument("--dynamics", action="store_true", help="Use delayed motor dynamics")
     parser.add_argument("--resume", type=str, default=None, help="Path to model to resume from")
-    parser.add_argument("--run-name", type=str, default="ppo_airhockey")
+    parser.add_argument("--run-name", type=str, default=None)
     parser.add_argument("--record-freq", type=int, default=50_000, help="Record a game every N steps")
     args = parser.parse_args()
+
+    if args.run_name is None:
+        args.run_name = f"{args.algo}_airhockey"
 
     run_dir = Path("runs") / args.run_name
     run_dir.mkdir(parents=True, exist_ok=True)
     log_dir = run_dir / "logs"
     log_dir.mkdir(exist_ok=True)
 
-    print(f"Training for {args.timesteps:,} steps with {args.n_envs} envs")
+    print(f"Training {args.algo.upper()} for {args.timesteps:,} steps with {args.n_envs} envs")
     print(f"Opponent: {args.opponent}, Dynamics: {args.dynamics}")
     print(f"Output: {run_dir}")
     print(f"TensorBoard: tensorboard --logdir {log_dir} --bind_all")
 
-    # Training envs with observation normalization
-    vec_env = make_vec_env(
-        lambda: make_env(opponent=args.opponent, use_dynamics=args.dynamics),
-        n_envs=args.n_envs,
-        vec_env_cls=SubprocVecEnv,
-    )
-    vec_env = VecNormalize(vec_env, norm_obs=True, norm_reward=True, clip_obs=10.0)
-
-    # Eval env (single, for clean metrics)
-    eval_env = make_vec_env(
-        lambda: make_env(opponent=args.opponent, use_dynamics=args.dynamics),
-        n_envs=1,
-    )
-    eval_env = VecNormalize(eval_env, norm_obs=True, norm_reward=False, clip_obs=10.0, training=False)
-
-    if args.resume:
-        print(f"Resuming from {args.resume}")
-        model = PPO.load(args.resume, env=vec_env, tensorboard_log=str(log_dir))
-    else:
-        model = PPO(
-            "MlpPolicy",
-            vec_env,
-            verbose=1,
-            device="cpu",
-            tensorboard_log=str(log_dir),
-            learning_rate=3e-4,
-            n_steps=2048,
-            batch_size=256,
-            n_epochs=10,
-            gamma=0.99,
-            gae_lambda=0.95,
-            clip_range=0.2,
-            ent_coef=0.05,  # higher entropy for more exploration
-            policy_kwargs=dict(
-                net_arch=dict(pi=[128, 128], vf=[128, 128]),
-                log_std_init=-0.5,  # start with larger action variance
-            ),
+    if args.algo == "sac":
+        # SAC: off-policy, single env, no VecNormalize (replay buffer breaks with shifting stats)
+        vec_env = make_vec_env(
+            lambda: make_env(opponent=args.opponent, use_dynamics=args.dynamics),
+            n_envs=1,
         )
+        eval_env = make_vec_env(
+            lambda: make_env(opponent=args.opponent, use_dynamics=args.dynamics),
+            n_envs=1,
+        )
+
+        if args.resume:
+            print(f"Resuming from {args.resume}")
+            model = SAC.load(args.resume, env=vec_env, tensorboard_log=str(log_dir))
+        else:
+            model = SAC(
+                "MlpPolicy",
+                vec_env,
+                verbose=1,
+                device="cpu",
+                tensorboard_log=str(log_dir),
+                learning_rate=3e-4,
+                buffer_size=300_000,
+                learning_starts=5_000,
+                batch_size=256,
+                tau=0.005,
+                gamma=0.99,
+                ent_coef="auto",  # auto-tunes exploration
+                policy_kwargs=dict(
+                    net_arch=[128, 128],
+                ),
+            )
+    else:
+        # PPO: on-policy, parallel envs, with normalization
+        vec_env = make_vec_env(
+            lambda: make_env(opponent=args.opponent, use_dynamics=args.dynamics),
+            n_envs=args.n_envs,
+            vec_env_cls=SubprocVecEnv,
+        )
+        vec_env = VecNormalize(vec_env, norm_obs=True, norm_reward=True, clip_obs=10.0)
+
+        eval_env = make_vec_env(
+            lambda: make_env(opponent=args.opponent, use_dynamics=args.dynamics),
+            n_envs=1,
+        )
+        eval_env = VecNormalize(eval_env, norm_obs=True, norm_reward=False, clip_obs=10.0, training=False)
+
+        if args.resume:
+            print(f"Resuming from {args.resume}")
+            model = PPO.load(args.resume, env=vec_env, tensorboard_log=str(log_dir))
+        else:
+            model = PPO(
+                "MlpPolicy",
+                vec_env,
+                verbose=1,
+                device="cpu",
+                tensorboard_log=str(log_dir),
+                learning_rate=3e-4,
+                n_steps=2048,
+                batch_size=256,
+                n_epochs=10,
+                gamma=0.99,
+                gae_lambda=0.95,
+                clip_range=0.2,
+                ent_coef=0.05,
+                policy_kwargs=dict(
+                    net_arch=dict(pi=[128, 128], vf=[128, 128]),
+                    log_std_init=-0.5,
+                ),
+            )
 
     # Recordings dir (shared with web UI)
     recordings_dir = Path("recordings")
 
     # Callbacks
+    n_envs = 1 if args.algo == "sac" else args.n_envs
     checkpoint_cb = CheckpointCallback(
-        save_freq=max(10_000 // args.n_envs, 1),
+        save_freq=max(10_000 // n_envs, 1),
         save_path=str(run_dir / "checkpoints"),
-        name_prefix="ppo",
+        name_prefix=args.algo,
     )
     eval_cb = EvalCallback(
         eval_env,
         best_model_save_path=str(run_dir),
         log_path=str(run_dir),
-        eval_freq=max(5_000 // args.n_envs, 1),
+        eval_freq=max(5_000 // n_envs, 1),
         n_eval_episodes=10,
         deterministic=True,
     )
@@ -206,7 +243,8 @@ def main():
     )
 
     model.save(str(run_dir / "final_model"))
-    vec_env.save(str(run_dir / "vec_normalize.pkl"))
+    if hasattr(vec_env, "save"):
+        vec_env.save(str(run_dir / "vec_normalize.pkl"))
     print(f"Training complete. Model saved to {run_dir / 'final_model'}")
 
     # Record a final game
