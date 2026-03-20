@@ -59,7 +59,7 @@ class ShapedRewardWrapper(gym.Wrapper):
         puck_pos = obs[0:2]
         paddle_pos = obs[4:6]
         dist = np.linalg.norm(puck_pos - paddle_pos)
-        shaped_reward += 0.05 * float(np.exp(-3.0 * dist))
+        shaped_reward += 0.1 * float(np.exp(-3.0 * dist))
 
         # 2. Goals
         if reward > 0:
@@ -70,7 +70,9 @@ class ShapedRewardWrapper(gym.Wrapper):
         # 3. Puck progress toward opponent goal (potential-based)
         puck_y = obs[1]
         if self._prev_puck_y is not None:
-            shaped_reward += self.puck_progress_weight * (puck_y - self._prev_puck_y)
+            delta = puck_y - self._prev_puck_y
+            if delta > 0:  # only reward forward progress, never punish
+                shaped_reward += self.puck_progress_weight * delta
 
         # 4. Contact detection
         puck_speed = np.linalg.norm(obs[2:4])

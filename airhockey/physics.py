@@ -87,8 +87,8 @@ class PhysicsEngine:
         if rng is None:
             rng = np.random.default_rng()
 
-        # Randomize puck start: position near center, random direction and speed
-        angle = rng.uniform(0, 2 * np.pi)
+        # Randomize puck start: position near center, heading toward agent (negative vy)
+        angle = rng.uniform(-np.pi * 0.8, -np.pi * 0.2)  # downward-ish
         speed = rng.uniform(0.3, 1.5)
         self.state = PhysicsState(
             puck=PuckState(
