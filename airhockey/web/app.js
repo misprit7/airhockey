@@ -312,7 +312,7 @@ canvas.addEventListener("mousemove", (e) => {
 });
 
 // Touch control for mobile
-canvas.addEventListener("touchmove", (e) => {
+function handleTouch(e) {
     e.preventDefault();
     if (mode !== "live" || !ws || !config) return;
     const touch = e.touches[0];
@@ -322,7 +322,9 @@ canvas.addEventListener("touchmove", (e) => {
     const clampedY = Math.min(Math.max(my, config.paddle_radius), config.height / 2 - config.paddle_radius);
     const clampedX = Math.min(Math.max(mx, config.paddle_radius), config.width - config.paddle_radius);
     ws.send(JSON.stringify({ type: "move", x: clampedX, y: clampedY }));
-}, { passive: false });
+}
+canvas.addEventListener("touchstart", handleTouch, { passive: false });
+canvas.addEventListener("touchmove", handleTouch, { passive: false });
 
 // Buttons
 document.getElementById("btn-reset").addEventListener("click", () => {
@@ -453,6 +455,42 @@ document.getElementById("replay-speed").addEventListener("change", (e) => {
         }, (1000 / 60) / replaySpeed);
     }
 });
+
+// Mobile sidebar menu
+const sidebar = document.getElementById("sidebar");
+const overlay = document.getElementById("sidebar-overlay");
+const menuBtn = document.getElementById("btn-menu");
+
+function openSidebar() {
+    sidebar.classList.add("open");
+    overlay.classList.add("visible");
+}
+
+function closeSidebar() {
+    sidebar.classList.remove("open");
+    overlay.classList.remove("visible");
+}
+
+if (menuBtn) {
+    menuBtn.addEventListener("click", () => {
+        if (sidebar.classList.contains("open")) {
+            closeSidebar();
+        } else {
+            openSidebar();
+        }
+    });
+}
+
+if (overlay) {
+    overlay.addEventListener("click", closeSidebar);
+}
+
+// Prevent default touch behaviors on the whole page to avoid scrolling/zooming
+document.addEventListener("touchmove", (e) => {
+    if (e.target === canvas || e.target === document.body) {
+        e.preventDefault();
+    }
+}, { passive: false });
 
 // Init
 window.addEventListener("resize", resize);

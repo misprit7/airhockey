@@ -2,14 +2,13 @@
 <html lang="en">
 <head>
     <meta charset="UTF-8">
-    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0, maximum-scale=1.0, user-scalable=no">
     <title>Air Hockey</title>
     <link rel="stylesheet" href="/style.css">
 </head>
 <body>
     <div id="app">
-        <div id="sidebar">
-            <h1>Air Hockey</h1>
+        <div id="topbar">
             <div id="scoreboard">
                 <div class="score-row">
                     <span class="score-label agent-color">You</span>
@@ -22,6 +21,13 @@
                 </div>
             </div>
             <div id="timer">0:00</div>
+            <button id="btn-menu" class="icon-btn" aria-label="Menu">&#9776;</button>
+        </div>
+        <div id="canvas-container">
+            <canvas id="table"></canvas>
+        </div>
+        <div id="sidebar" class="hidden-mobile">
+            <h1>Air Hockey</h1>
             <div id="controls">
                 <button id="btn-reset">New Game</button>
                 <button id="btn-save">Save Recording</button>
@@ -53,10 +59,8 @@
             </div>
             <div id="status">Connecting...</div>
         </div>
-        <div id="canvas-container">
-            <canvas id="table"></canvas>
-        </div>
     </div>
+    <div id="sidebar-overlay"></div>
     <script src="/app.js"></script>
 </body>
 </html>
