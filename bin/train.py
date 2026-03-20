@@ -163,11 +163,11 @@ def main():
                 learning_rate=3e-4,
                 buffer_size=300_000,
                 learning_starts=5_000,
-                batch_size=256,
+                batch_size=512,
                 tau=0.005,
                 gamma=0.99,
-                train_freq=(1, "step"),  # update every step across all envs
-                gradient_steps=args.n_envs,  # scale gradient steps with envs
+                train_freq=(8, "step"),  # collect 8 steps before updating
+                gradient_steps=4,  # 4 gradient steps per update
                 ent_coef="auto",  # auto-tunes exploration
                 policy_kwargs=dict(
                     net_arch=[128, 128],
