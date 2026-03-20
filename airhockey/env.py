@@ -160,6 +160,14 @@ class AirHockeyEnv(gym.Env):
 
         obs = self._make_obs(state)
 
+        # XXX REMOVE THIS FOR SELF-PLAY OR REAL OPPONENTS XXX
+        # Reset puck if it comes to rest in opponent's half (idle opponent can't return it)
+        puck = state.puck
+        if (puck.y > self.table_config.height / 2
+                and abs(puck.vx) < 0.05 and abs(puck.vy) < 0.05):
+            self.engine._reset_puck_after_goal(toward_agent=True)
+        # XXX END REMOVE XXX
+
         # Check termination
         terminated = (
             state.score_agent >= self.max_score
