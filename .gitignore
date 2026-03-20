@@ -5,4 +5,5 @@ dist/
 build/
 .eggs/
 recordings/
+runs/
 .venv/
