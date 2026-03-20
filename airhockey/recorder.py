@@ -47,7 +47,7 @@ class Recorder:
     def save(self, path: str | Path, episode_index: int = -1) -> None:
         episode = self.get_episode(episode_index)
         data = [asdict(f) for f in episode]
-        Path(path).write_text(json.dumps(data))
+        Path(path).write_text(json.dumps(data, default=lambda x: float(x)))
 
     @staticmethod
     def load(path: str | Path) -> list[FrameData]:

@@ -161,14 +161,15 @@ def main():
             tensorboard_log=str(log_dir),
             learning_rate=3e-4,
             n_steps=2048,
-            batch_size=64,
+            batch_size=256,
             n_epochs=10,
             gamma=0.99,
             gae_lambda=0.95,
             clip_range=0.2,
-            ent_coef=0.01,  # encourage exploration early on
+            ent_coef=0.05,  # higher entropy for more exploration
             policy_kwargs=dict(
-                net_arch=dict(pi=[256, 256], vf=[256, 256]),
+                net_arch=dict(pi=[128, 128], vf=[128, 128]),
+                log_std_init=-0.5,  # start with larger action variance
             ),
         )
 
