@@ -26,7 +26,7 @@ from stable_baselines3.common.callbacks import (
     EvalCallback,
 )
 from stable_baselines3.common.env_util import make_vec_env
-from stable_baselines3.common.vec_env import SubprocVecEnv
+from stable_baselines3.common.vec_env import SubprocVecEnv, VecNormalize
 
 from airhockey.dynamics import DelayedDynamics, IdealDynamics
 from airhockey.env import AirHockeyEnv
@@ -131,18 +131,20 @@ def main():
     print(f"Output: {run_dir}")
     print(f"TensorBoard: tensorboard --logdir {log_dir} --bind_all")
 
-    # Training envs
+    # Training envs with observation normalization
     vec_env = make_vec_env(
         lambda: make_env(opponent=args.opponent, use_dynamics=args.dynamics),
         n_envs=args.n_envs,
         vec_env_cls=SubprocVecEnv,
     )
+    vec_env = VecNormalize(vec_env, norm_obs=True, norm_reward=True, clip_obs=10.0)
 
     # Eval env (single, for clean metrics)
     eval_env = make_vec_env(
         lambda: make_env(opponent=args.opponent, use_dynamics=args.dynamics),
         n_envs=1,
     )
+    eval_env = VecNormalize(eval_env, norm_obs=True, norm_reward=False, clip_obs=10.0, training=False)
 
     if args.resume:
         print(f"Resuming from {args.resume}")
@@ -199,6 +201,7 @@ def main():
     )
 
     model.save(str(run_dir / "final_model"))
+    vec_env.save(str(run_dir / "vec_normalize.pkl"))
     print(f"Training complete. Model saved to {run_dir / 'final_model'}")
 
     # Record a final game
