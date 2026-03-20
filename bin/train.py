@@ -166,7 +166,7 @@ def main():
                 batch_size=512,
                 tau=0.005,
                 gamma=0.99,
-                train_freq=(8, "step"),  # collect 8 steps before updating
+                train_freq=(32, "step"),  # collect 32 steps before updating
                 gradient_steps=4,  # 4 gradient steps per update
                 ent_coef="auto",  # auto-tunes exploration
                 policy_kwargs=dict(
