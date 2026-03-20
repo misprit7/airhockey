@@ -116,6 +116,9 @@ class AirHockeyEnv(gym.Env):
         for _ in range(self._delay_steps):
             self._obs_buffer.append(obs.copy())
 
+        self._step_reward = 0.0
+        self._cumulative_reward = 0.0
+
         if self.recorder:
             self.recorder.start_episode()
             self.recorder.record(self._make_frame(state))
@@ -168,6 +171,11 @@ class AirHockeyEnv(gym.Env):
             self.recorder.record(self._make_frame(state))
 
         return self._get_delayed_obs(obs), reward, terminated, truncated, self._make_info(state)
+
+    def record_reward(self, reward: float) -> None:
+        """Called by reward wrapper to log shaped reward into recordings."""
+        self._step_reward = reward
+        self._cumulative_reward += reward
 
     def _clamp_to_half(self, x: float, y: float, agent: bool) -> tuple[float, float]:
         """Clamp paddle position to its own half of the table."""
@@ -242,6 +250,8 @@ class AirHockeyEnv(gym.Env):
             opponent_y=state.paddle_opponent.y,
             score_agent=state.score_agent,
             score_opponent=state.score_opponent,
+            reward=getattr(self, '_step_reward', 0.0),
+            cumulative_reward=getattr(self, '_cumulative_reward', 0.0),
         )
 
     def get_recording(self) -> list[FrameData] | None:

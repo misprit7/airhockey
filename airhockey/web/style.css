@@ -95,6 +95,26 @@ h1 {
     font-variant-numeric: tabular-nums;
 }
 
+#topbar-stats {
+    display: flex;
+    flex-direction: column;
+    align-items: center;
+    gap: 2px;
+}
+
+#reward-display {
+    font-size: 12px;
+    font-variant-numeric: tabular-nums;
+    color: #888;
+}
+
+#reward-value {
+    font-weight: 600;
+}
+
+#reward-value.positive { color: #4aff8a; }
+#reward-value.negative { color: #ff5a6a; }
+
 #controls {
     display: flex;
     flex-direction: column;

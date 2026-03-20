@@ -20,6 +20,8 @@ class FrameData:
     opponent_y: float
     score_agent: int
     score_opponent: int
+    reward: float = 0.0
+    cumulative_reward: float = 0.0
 
 
 class Recorder:

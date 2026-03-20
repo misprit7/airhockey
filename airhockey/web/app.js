@@ -296,6 +296,12 @@ function updateScoreboard(f) {
         const secs = Math.floor(f.time % 60).toString().padStart(2, "0");
         document.getElementById("timer").textContent = `${mins}:${secs}`;
     }
+    if (f.cumulative_reward !== undefined) {
+        const el = document.getElementById("reward-value");
+        const val = f.cumulative_reward;
+        el.textContent = val.toFixed(1);
+        el.className = val > 0 ? "positive" : val < 0 ? "negative" : "";
+    }
 }
 
 // Mouse control

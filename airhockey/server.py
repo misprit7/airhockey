@@ -67,7 +67,7 @@ def _recording_label(stem: str) -> str:
 
 @app.get("/api/recordings")
 async def list_recordings():
-    files = sorted(RECORDINGS_DIR.glob("*.json"), reverse=True)
+    files = sorted(RECORDINGS_DIR.glob("*.json"), key=lambda f: f.stat().st_mtime, reverse=True)
     return [{"name": f.stem, "path": f.name, "label": _recording_label(f.stem)} for f in files]
 
 

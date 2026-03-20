@@ -108,6 +108,9 @@ class ShapedRewardWrapper(gym.Wrapper):
         info["raw_reward"] = reward
         info["shaped_reward"] = shaped_reward
 
+        # Log into recording system
+        self.env.unwrapped.record_reward(shaped_reward)
+
         return obs, shaped_reward, terminated, truncated, info
 
     def _dist_to_puck(self, obs: np.ndarray) -> float:
