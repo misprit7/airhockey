@@ -139,10 +139,11 @@ def main():
     print(f"TensorBoard: tensorboard --logdir {log_dir} --bind_all")
 
     if args.algo == "sac":
-        # SAC: off-policy, single env, no VecNormalize (replay buffer breaks with shifting stats)
+        # SAC: off-policy, parallel envs for faster data collection
         vec_env = make_vec_env(
             lambda: make_env(opponent=args.opponent, use_dynamics=args.dynamics),
-            n_envs=1,
+            n_envs=args.n_envs,
+            vec_env_cls=SubprocVecEnv,
         )
         eval_env = make_vec_env(
             lambda: make_env(opponent=args.opponent, use_dynamics=args.dynamics),
@@ -165,6 +166,8 @@ def main():
                 batch_size=256,
                 tau=0.005,
                 gamma=0.99,
+                train_freq=(1, "step"),  # update every step across all envs
+                gradient_steps=args.n_envs,  # scale gradient steps with envs
                 ent_coef="auto",  # auto-tunes exploration
                 policy_kwargs=dict(
                     net_arch=[128, 128],
@@ -213,7 +216,7 @@ def main():
     recordings_dir = Path("recordings")
 
     # Callbacks
-    n_envs = 1 if args.algo == "sac" else args.n_envs
+    n_envs = args.n_envs
     checkpoint_cb = CheckpointCallback(
         save_freq=max(10_000 // n_envs, 1),
         save_path=str(run_dir / "checkpoints"),
