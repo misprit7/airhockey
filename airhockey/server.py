@@ -155,13 +155,6 @@ async def live_game(ws: WebSocket):
 
             if terminated or truncated:
                 await ws.send_json({"type": "game_over", **info})
-                # Auto-save
-                recording = env.get_recording()
-                if recording:
-                    rec = Recorder()
-                    rec._current = recording
-                    ts = int(time.time())
-                    rec.save(RECORDINGS_DIR / f"game_{ts}.json")
                 obs, info = env.reset()
                 target_x = cfg.width / 2
                 target_y = cfg.height * 0.15

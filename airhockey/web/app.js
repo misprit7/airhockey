@@ -304,17 +304,23 @@ function updateScoreboard(f) {
     }
 }
 
+// Convert screen coordinates to physics coordinates
+function screenToPhysics(clientX, clientY) {
+    const rect = canvas.getBoundingClientRect();
+    // Use display size (rect) not internal canvas size for accurate mapping
+    const displayScale = rect.width / config.width;
+    const mx = (clientX - rect.left) / displayScale;
+    const my = config.height - (clientY - rect.top) / displayScale;
+    const clampedX = Math.min(Math.max(mx, config.paddle_radius), config.width - config.paddle_radius);
+    const clampedY = Math.min(Math.max(my, config.paddle_radius), config.height / 2 - config.paddle_radius);
+    return { x: clampedX, y: clampedY };
+}
+
 // Mouse control
 canvas.addEventListener("mousemove", (e) => {
     if (mode !== "live" || !ws || !config) return;
-    const rect = canvas.getBoundingClientRect();
-    const mx = (e.clientX - rect.left) / scale;
-    // Flip Y back to physics coords
-    const my = (canvas.height - (e.clientY - rect.top)) / scale;
-    // Clamp to agent's half
-    const clampedY = Math.min(Math.max(my, config.paddle_radius), config.height / 2 - config.paddle_radius);
-    const clampedX = Math.min(Math.max(mx, config.paddle_radius), config.width - config.paddle_radius);
-    ws.send(JSON.stringify({ type: "move", x: clampedX, y: clampedY }));
+    const pos = screenToPhysics(e.clientX, e.clientY);
+    ws.send(JSON.stringify({ type: "move", ...pos }));
 });
 
 // Touch control for mobile
@@ -322,12 +328,8 @@ function handleTouch(e) {
     e.preventDefault();
     if (mode !== "live" || !ws || !config) return;
     const touch = e.touches[0];
-    const rect = canvas.getBoundingClientRect();
-    const mx = (touch.clientX - rect.left) / scale;
-    const my = (canvas.height - (touch.clientY - rect.top)) / scale;
-    const clampedY = Math.min(Math.max(my, config.paddle_radius), config.height / 2 - config.paddle_radius);
-    const clampedX = Math.min(Math.max(mx, config.paddle_radius), config.width - config.paddle_radius);
-    ws.send(JSON.stringify({ type: "move", x: clampedX, y: clampedY }));
+    const pos = screenToPhysics(touch.clientX, touch.clientY);
+    ws.send(JSON.stringify({ type: "move", ...pos }));
 }
 canvas.addEventListener("touchstart", handleTouch, { passive: false });
 canvas.addEventListener("touchmove", handleTouch, { passive: false });

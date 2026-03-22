@@ -29,7 +29,7 @@ class ShapedRewardWrapper(gym.Wrapper):
         self,
         env: gym.Env,
         goal_reward: float = 100.0,
-        goal_penalty: float = -100.0,
+        goal_penalty: float = -5.0,
         puck_progress_weight: float = 3.0,
         contact_reward: float = 5.0,
     ):
