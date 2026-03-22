@@ -279,6 +279,9 @@ function connect() {
         } else if (msg.type === "saved") {
             document.getElementById("status").textContent = `Saved: ${msg.name}`;
             loadRecordingsList();
+        } else if (msg.type === "physics_mode") {
+            document.getElementById("btn-physics").textContent =
+                msg.instant ? "Physics: Instant" : "Physics: Realistic";
         }
     };
 
@@ -342,6 +345,10 @@ document.getElementById("btn-reset").addEventListener("click", () => {
 
 document.getElementById("btn-save").addEventListener("click", () => {
     if (ws) ws.send(JSON.stringify({ type: "save" }));
+});
+
+document.getElementById("btn-physics").addEventListener("click", () => {
+    if (ws) ws.send(JSON.stringify({ type: "toggle_physics" }));
 });
 
 // Mode switching

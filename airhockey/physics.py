@@ -251,9 +251,15 @@ class PhysicsEngine:
             self._reset_puck_after_goal(toward_agent=False)
 
     def _reset_puck_after_goal(self, toward_agent: bool) -> None:
-        """Reset puck to center, moving toward the side that was scored on."""
+        """Reset puck to center with random direction toward the scored-on side."""
         cfg = self.config
-        self.state.puck.x = cfg.width / 2
+        rng = np.random.default_rng()
+        if toward_agent:
+            angle = rng.uniform(-np.pi * 0.8, -np.pi * 0.2)  # downward
+        else:
+            angle = rng.uniform(np.pi * 0.2, np.pi * 0.8)  # upward
+        speed = rng.uniform(0.3, 1.5)
+        self.state.puck.x = cfg.width / 2 + rng.uniform(-0.15, 0.15)
         self.state.puck.y = cfg.height / 2
-        self.state.puck.vx = 0.0
-        self.state.puck.vy = -0.5 if toward_agent else 0.5
+        self.state.puck.vx = speed * np.cos(angle)
+        self.state.puck.vy = speed * np.sin(angle)

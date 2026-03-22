@@ -91,8 +91,10 @@ async def live_game(ws: WebSocket):
     """Run a live game and stream frames to the client."""
     await ws.accept()
 
+    use_instant = False
+    agent_dynamics = DelayedDynamics(max_speed=3.0, max_accel=30.0)
     env = AirHockeyEnv(
-        agent_dynamics=DelayedDynamics(max_speed=3.0, max_accel=30.0),
+        agent_dynamics=agent_dynamics,
         opponent_policy="follow",
         record=True,
         action_dt=1 / 60,
@@ -128,6 +130,17 @@ async def live_game(ws: WebSocket):
                         ts = int(time.time())
                         rec.save(RECORDINGS_DIR / f"game_{ts}.json")
                         await ws.send_json({"type": "saved", "name": f"game_{ts}"})
+                elif msg.get("type") == "toggle_physics":
+                    use_instant = not use_instant
+                    if use_instant:
+                        env.agent_dynamics = IdealDynamics()
+                    else:
+                        env.agent_dynamics = DelayedDynamics(max_speed=3.0, max_accel=30.0)
+                    env.agent_dynamics.reset(
+                        env.engine.state.paddle_agent.x,
+                        env.engine.state.paddle_agent.y,
+                    )
+                    await ws.send_json({"type": "physics_mode", "instant": use_instant})
                 elif msg.get("type") == "reset":
                     obs, info = env.reset()
                     target_x = cfg.width / 2
@@ -135,8 +148,11 @@ async def live_game(ws: WebSocket):
             except (TimeoutError, asyncio.TimeoutError):
                 pass
 
-            action = np.array([target_x, target_y], dtype=np.float32)
-            action = np.clip(action, env.action_space.low, env.action_space.high)
+            # Convert physics coords to normalized [-1, 1] action space
+            norm_x = (target_x - env._action_low[0]) / (env._action_high[0] - env._action_low[0]) * 2 - 1
+            norm_y = (target_y - env._action_low[1]) / (env._action_high[1] - env._action_low[1]) * 2 - 1
+            action = np.array([norm_x, norm_y], dtype=np.float32)
+            action = np.clip(action, -1.0, 1.0)
             obs, reward, terminated, truncated, info = env.step(action)
 
             state = env.engine.state
