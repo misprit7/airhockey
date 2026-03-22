@@ -523,3 +523,48 @@ window.addEventListener("resize", resize);
 resize();
 render();
 connect();
+
+// Default to replay mode with most recent recording
+async function initReplayMode() {
+    // Switch to replay mode
+    mode = "replay";
+    document.querySelectorAll(".mode-btn").forEach((b) => b.classList.remove("active"));
+    document.querySelector('.mode-btn[data-mode="replay"]').classList.add("active");
+    const replayPanel = document.getElementById("replay-panel");
+    replayPanel.classList.remove("hidden");
+
+    // Load recordings and auto-select the first (most recent)
+    try {
+        const resp = await fetch("/api/recordings");
+        const recordings = await resp.json();
+        if (recordings.length > 0) {
+            const list = document.getElementById("recording-list");
+            list.innerHTML = "";
+            recordings.forEach((rec) => {
+                const li = document.createElement("li");
+                li.textContent = rec.label || rec.name;
+                if (rec.path === recordings[0].path) li.classList.add("active");
+                li.addEventListener("click", () => loadRecording(rec.path, li));
+                list.appendChild(li);
+            });
+            // Auto-load the most recent
+            activeRecordingPath = recordings[0].path;
+            const recResp = await fetch(`/api/recordings/${recordings[0].path}`);
+            replayData = await recResp.json();
+            replayIndex = 0;
+            const controls = document.getElementById("replay-controls");
+            controls.classList.remove("hidden");
+            const slider = document.getElementById("replay-slider");
+            slider.max = replayData.length - 1;
+            slider.value = 0;
+            showReplayFrame(0);
+        }
+    } catch (e) {
+        console.error("Failed to init replay mode", e);
+    }
+
+    // Start auto-refresh
+    if (recordingsRefreshTimer) clearInterval(recordingsRefreshTimer);
+    recordingsRefreshTimer = setInterval(loadRecordingsList, 5000);
+}
+initReplayMode();
