@@ -322,6 +322,13 @@ def main():
             for _ in range(num_updates):
                 train_metrics = agent.update(buffer)
 
+        # Checkpoint every 100k steps
+        if step > 0 and step % 100_000 == 0:
+            ckpt_path = run_dir / f"agent_step_{step}.pt"
+            agent.save(ckpt_path)
+            # Also save as latest for easy resuming
+            agent.save(run_dir / "agent.pt")
+
         # Record
         if step > 0 and step // args.record_freq > last_record_step // args.record_freq:
             last_record_step = step

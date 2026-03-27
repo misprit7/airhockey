@@ -261,6 +261,7 @@ def main():
             # Save current agent, load as opponent
             checkpoint_path = run_dir / f"agent_step_{step}.pt"
             agent.save(checkpoint_path)
+            agent.save(run_dir / "agent.pt")  # latest for easy resuming
             opponent.load(checkpoint_path)
             print(f"[Step {step:,}] Updated opponent to version {opponent_version}")
 
