@@ -115,6 +115,24 @@ h1 {
 #reward-value.positive { color: #4aff8a; }
 #reward-value.negative { color: #ff5a6a; }
 
+#sidebar-reward {
+    font-size: 14px;
+    color: #888;
+    font-variant-numeric: tabular-nums;
+    text-align: center;
+    padding: 8px;
+    background: #1a1a26;
+    border-radius: 8px;
+    border: 1px solid #2a2a3a;
+}
+
+#reward-value-desktop {
+    font-weight: 600;
+}
+
+#reward-value-desktop.positive { color: #4aff8a; }
+#reward-value-desktop.negative { color: #ff5a6a; }
+
 #controls {
     display: flex;
     flex-direction: column;

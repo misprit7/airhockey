@@ -167,7 +167,7 @@ def train_stage(
             verbose=1,
             device="auto",
             tensorboard_log=str(log_dir),
-            learning_rate=3e-4,
+            learning_rate=5e-3,
             buffer_size=500_000,
             learning_starts=5_000,
             batch_size=4096,
@@ -182,7 +182,7 @@ def train_stage(
         )
 
     checkpoint_cb = CheckpointCallback(
-        save_freq=max(10_000 // n_envs, 1),
+        save_freq=max(50_000 // n_envs, 1),
         save_path=str(run_dir / "checkpoints"),
         name_prefix="sac",
     )
@@ -190,8 +190,8 @@ def train_stage(
         eval_env,
         best_model_save_path=str(run_dir),
         log_path=str(run_dir),
-        eval_freq=max(5_000 // n_envs, 1),
-        n_eval_episodes=10,
+        eval_freq=max(200_000 // n_envs, 1),
+        n_eval_episodes=3,
         deterministic=True,
     )
     record_cb = RecordGameCallback(
@@ -232,7 +232,7 @@ def main():
     parser.add_argument("--no-dynamics", dest="dynamics", action="store_false")
     parser.add_argument("--resume", type=str, default=None, help="Path to model to resume from")
     parser.add_argument("--run-name", type=str, default=None)
-    parser.add_argument("--record-freq", type=int, default=100_000)
+    parser.add_argument("--record-freq", type=int, default=50_000)
     args = parser.parse_args()
 
     if args.curriculum:

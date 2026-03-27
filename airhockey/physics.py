@@ -87,19 +87,26 @@ class PhysicsEngine:
         if rng is None:
             rng = np.random.default_rng()
 
-        # Randomize puck start: position near center, heading toward agent (negative vy)
+        # Randomize puck: anywhere in agent's half, heading toward agent
         angle = rng.uniform(-np.pi * 0.8, -np.pi * 0.2)  # downward-ish
         speed = rng.uniform(0.3, 1.5)
+        puck_x = rng.uniform(cfg.puck_radius, cfg.width - cfg.puck_radius)
+        puck_y = rng.uniform(cfg.height * 0.25, cfg.height * 0.6)
+
+        # Randomize paddle start position in agent's half
+        paddle_x = rng.uniform(cfg.paddle_radius, cfg.width - cfg.paddle_radius)
+        paddle_y = rng.uniform(cfg.paddle_radius, cfg.height / 2 - cfg.paddle_radius)
+
         self.state = PhysicsState(
             puck=PuckState(
-                x=cfg.width / 2 + rng.uniform(-0.15, 0.15),
-                y=cfg.height / 2 + rng.uniform(-0.15, 0.15),
+                x=puck_x,
+                y=puck_y,
                 vx=speed * np.cos(angle),
                 vy=speed * np.sin(angle),
             ),
             paddle_agent=PaddleState(
-                x=cfg.width / 2,
-                y=cfg.height * 0.15,
+                x=paddle_x,
+                y=paddle_y,
             ),
             paddle_opponent=PaddleState(
                 x=cfg.width / 2,
@@ -248,7 +255,8 @@ class PhysicsEngine:
         elif puck.y + r > cfg.height + r:
             self.state.score_agent += 1
             self.state.goal_scored = 1
-            self._reset_puck_after_goal(toward_agent=False)
+            # XXX Always toward agent while using idle opponent XXX
+            self._reset_puck_after_goal(toward_agent=True)
 
     def _reset_puck_after_goal(self, toward_agent: bool) -> None:
         """Reset puck to center with random direction toward the scored-on side."""
