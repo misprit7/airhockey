@@ -273,7 +273,7 @@ button:active {
 
 canvas {
     border-radius: 16px;
-    cursor: none;
+    cursor: crosshair;
 }
 
 /* --- Mobile --- */
