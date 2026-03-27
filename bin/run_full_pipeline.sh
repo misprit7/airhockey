@@ -15,10 +15,11 @@ python bin/train_tdmpc2.py \
     --record-freq 50000
 
 echo ""
-echo "=== Phase 2: Self-play (5M steps) ==="
+echo "=== Phase 2: Self-play (5M steps, 32 parallel envs) ==="
 python bin/train_selfplay.py \
     --resume runs/tdmpc2_pretrain/agent.pt \
     --steps 5000000 \
+    --n-envs 32 \
     --model-size 5 \
     --horizon 5 \
     --run-name selfplay_v1 \
