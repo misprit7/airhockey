@@ -275,13 +275,16 @@ def main():
             obs_list[i] = obs_t_new
 
         # Update agent (once per batch of env steps)
-        if step >= cfg.seed_steps:
-            if step == cfg.seed_steps:
-                num_updates = cfg.seed_steps
-                print('Pretraining agent on seed data...')
+        total_episodes = wins + losses + draws
+        if step >= cfg.seed_steps and total_episodes >= 2:
+            if not hasattr(main, '_pretrained'):
+                num_updates = min(step, 5000)  # Pretrain on seed data
+                print(f'Pretraining agent on seed data ({num_updates} updates)...')
+                for _ in range(num_updates):
+                    agent.update(buffer)
+                main._pretrained = True
+                print('Pretraining done.')
             else:
-                num_updates = 1
-            for _ in range(num_updates):
                 agent.update(buffer)
 
         step += n_envs  # Each iteration steps all envs
