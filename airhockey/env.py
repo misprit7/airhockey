@@ -196,6 +196,43 @@ class AirHockeyEnv(gym.Env):
             y = np.clip(y, cfg.height / 2 + r, cfg.height - r)
         return float(x), float(y)
 
+    def set_opponent_action(self, target_x: float, target_y: float) -> None:
+        """Set opponent target for 'external' policy mode."""
+        self._external_opponent_target = (target_x, target_y)
+
+    def mirror_obs(self, obs: np.ndarray) -> np.ndarray:
+        """Mirror observation so opponent sees the game from its perspective.
+
+        Flips y-axis and swaps agent/opponent paddle data.
+        """
+        cfg = self.table_config
+        mirrored = obs.copy()
+        # Flip puck y and vy
+        mirrored[1] = cfg.height - obs[1]
+        mirrored[3] = -obs[3]
+        # Swap agent (4:8) and opponent (8:12), flip y and vy
+        mirrored[4] = obs[8]       # opp x -> agent x
+        mirrored[5] = cfg.height - obs[9]  # opp y flipped -> agent y
+        mirrored[6] = obs[10]      # opp vx -> agent vx
+        mirrored[7] = -obs[11]     # opp vy flipped -> agent vy
+        mirrored[8] = obs[4]       # agent x -> opp x
+        mirrored[9] = cfg.height - obs[5]  # agent y flipped -> opp y
+        mirrored[10] = obs[6]      # agent vx -> opp vx
+        mirrored[11] = -obs[7]     # agent vy flipped -> opp vy
+        return mirrored
+
+    def mirror_action_to_opponent(self, action: np.ndarray) -> tuple[float, float]:
+        """Convert a [-1,1] normalized action from the opponent's mirrored
+        perspective back to real table coordinates for the opponent's half."""
+        action = np.clip(action, -1.0, 1.0)
+        cfg = self.table_config
+        r = cfg.paddle_radius
+        # x: same mapping as agent
+        x = r + (action[0] + 1.0) * 0.5 * (cfg.width - 2 * r)
+        # y: maps to opponent's half (mirrored, so agent's [0,1] -> opponent's [height/2, height])
+        y = (cfg.height / 2 + r) + (action[1] + 1.0) * 0.5 * (cfg.height / 2 - 2 * r)
+        return float(x), float(y)
+
     def _opponent_action(self, state: PhysicsState, dt: float) -> tuple[float, float]:
         """Simple built-in opponent policies."""
         opp = state.paddle_opponent
@@ -216,6 +253,10 @@ class AirHockeyEnv(gym.Env):
             target_x = self._rng.uniform(cfg.paddle_radius, cfg.width - cfg.paddle_radius)
             target_y = self._rng.uniform(cfg.height / 2 + cfg.paddle_radius, cfg.height - cfg.paddle_radius)
             return self.opponent_dynamics.update(target_x, target_y, dt)
+
+        elif self.opponent_policy == "external":
+            target = getattr(self, '_external_opponent_target', (opp.x, opp.y))
+            return self.opponent_dynamics.update(target[0], target[1], dt)
 
         return opp.x, opp.y
 

@@ -255,8 +255,7 @@ class PhysicsEngine:
         elif puck.y + r > cfg.height + r:
             self.state.score_agent += 1
             self.state.goal_scored = 1
-            # XXX Always toward agent while using idle opponent XXX
-            self._reset_puck_after_goal(toward_agent=True)
+            self._reset_puck_after_goal(toward_agent=False)
 
     def _reset_puck_after_goal(self, toward_agent: bool) -> None:
         """Reset puck to center with random direction toward the scored-on side."""
