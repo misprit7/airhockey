@@ -165,7 +165,7 @@ def train_stage(
             "MlpPolicy",
             vec_env,
             verbose=1,
-            device="cpu",
+            device="auto",
             tensorboard_log=str(log_dir),
             learning_rate=3e-4,
             buffer_size=500_000,
@@ -173,11 +173,11 @@ def train_stage(
             batch_size=512,
             tau=0.005,
             gamma=0.99,
-            train_freq=(32, "step"),
+            train_freq=(64, "step"),
             gradient_steps=4,
             ent_coef="auto",
             policy_kwargs=dict(
-                net_arch=[256, 256],
+                net_arch=[512, 512],
             ),
         )
 
