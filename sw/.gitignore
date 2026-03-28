@@ -1,0 +1,9 @@
+# Build artifacts
+third_party/
+*.o
+*.so
+*.so.*
+
+# Binaries (keep source, ignore compiled)
+bin/test_motor
+!bin/*.cpp

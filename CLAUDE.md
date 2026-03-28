@@ -23,7 +23,11 @@ Robotic air hockey table that uses reinforcement learning trained in simulation,
     - `train_tdmpc2.py` - TD-MPC2 model-based training
     - `train_selfplay.py` - Self-play training with TD-MPC2
     - `run_full_pipeline.sh` - Pretrain + self-play pipeline
-- `sw/` - Physical robot control software (planned)
+- `sw/` - Physical robot control software
+  - `bin/` - Control programs
+    - `test_motor.cpp` - Basic motor communication and movement test
+  - `third_party/sFoundation/` - Teknic sFoundation SDK (patched for Linux, .gitignored)
+  - `Makefile` - Builds sFoundation library and control programs
 
 ## Key Design Decisions
 - **Physics are general-purpose**: Support configurable camera delay, motor dynamics models, friction, restitution, etc. Goal is to closely match real-world behavior.
@@ -54,6 +58,23 @@ cd ai && python bin/train_tdmpc2.py --steps 500000
 
 # Run self-play
 cd ai && python bin/train_selfplay.py --resume runs/tdmpc2_pretrain/agent.pt
+```
+
+## Hardware
+- **Motors**: Teknic ClearPath-SC CPM-SCSK-2331P-ELNA (NEMA 23 integrated servo, 310 oz-in peak torque, 4000 RPM)
+- **Communication**: SC4-Hub (USB) -> sFoundation C++ API -> motors via proprietary serial
+- **Power**: 24-75V DC supply
+
+## Commands (sw/)
+```bash
+# Build (fetches/builds sFoundation SDK first time)
+cd sw && make
+
+# Test motor communication
+cd sw && bin/test_motor
+
+# Or specify port manually
+cd sw && bin/test_motor /dev/ttyACM0
 ```
 
 ## Tech Stack
