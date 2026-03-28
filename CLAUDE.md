@@ -9,13 +9,21 @@ Robotic air hockey table that uses reinforcement learning trained in simulation,
 3. **Sim-to-real transfer**: Deploy trained policy on physical robot, optionally fine-tune
 
 ## Project Structure
-- `airhockey/` - Python package
-  - `physics.py` - Core 2D physics engine (puck, paddles, walls, collisions)
-  - `dynamics.py` - Pluggable motor dynamics models (ideal, delayed, learned)
-  - `env.py` - Gymnasium environment wrapping the physics
-  - `recorder.py` - Game recording and replay
-  - `server.py` - FastAPI WebSocket server for real-time visualization
-  - `web/` - Browser-based visualization UI
+- `ai/` - RL training, simulation, and visualization
+  - `airhockey/` - Python package
+    - `physics.py` - Core 2D physics engine (puck, paddles, walls, collisions)
+    - `dynamics.py` - Pluggable motor dynamics models (ideal, delayed, learned)
+    - `env.py` - Gymnasium environment wrapping the physics
+    - `rewards.py` - Curriculum reward shaping (3 stages)
+    - `recorder.py` - Game recording and replay
+    - `server.py` - FastAPI WebSocket server for real-time visualization
+    - `web/` - Browser-based visualization UI
+  - `bin/` - Training scripts
+    - `train.py` - SAC curriculum training
+    - `train_tdmpc2.py` - TD-MPC2 model-based training
+    - `train_selfplay.py` - Self-play training with TD-MPC2
+    - `run_full_pipeline.sh` - Pretrain + self-play pipeline
+- `sw/` - Physical robot control software (planned)
 
 ## Key Design Decisions
 - **Physics are general-purpose**: Support configurable camera delay, motor dynamics models, friction, restitution, etc. Goal is to closely match real-world behavior.
@@ -27,13 +35,25 @@ Robotic air hockey table that uses reinforcement learning trained in simulation,
 ## Commands
 ```bash
 # Install
-pip install -e ".[dev]"
+cd ai && pip install -e ".[dev]"
 
 # Run visualization server
-python -m airhockey.server
+cd ai && python -m airhockey.server
 
 # Run tests
-pytest
+cd ai && pytest
+
+# Run full training pipeline (pretrain + self-play)
+cd ai && bash bin/run_full_pipeline.sh
+
+# Run SAC curriculum training
+cd ai && python bin/train.py --curriculum
+
+# Run TD-MPC2 training
+cd ai && python bin/train_tdmpc2.py --steps 500000
+
+# Run self-play
+cd ai && python bin/train_selfplay.py --resume runs/tdmpc2_pretrain/agent.pt
 ```
 
 ## Tech Stack
@@ -41,7 +61,8 @@ pytest
 - Gymnasium for RL environment API
 - FastAPI + WebSocket for visualization server
 - Vanilla JS + Canvas for web UI
-- Stable-Baselines3 for RL training
+- Stable-Baselines3 for RL training (SAC)
+- TD-MPC2 for model-based planning (external repo at ../tdmpc2)
 
 ## Training Learnings
 - **Algorithm**: SAC works much better than PPO for this continuous control task.

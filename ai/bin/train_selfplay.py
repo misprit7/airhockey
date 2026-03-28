@@ -26,7 +26,7 @@ import torch
 from tensordict.tensordict import TensorDict
 from torch.utils.tensorboard import SummaryWriter
 
-TDMPC2_DIR = Path(__file__).resolve().parent.parent.parent / "tdmpc2" / "tdmpc2"
+TDMPC2_DIR = Path(__file__).resolve().parent.parent.parent.parent / "tdmpc2" / "tdmpc2"
 sys.path.insert(0, str(TDMPC2_DIR))
 
 from common.parser import cfg_to_dataclass

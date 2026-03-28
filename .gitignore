@@ -4,6 +4,6 @@ __pycache__/
 dist/
 build/
 .eggs/
-recordings/
-runs/
-.venv/
+**/recordings/
+**/runs/
+**/.venv/

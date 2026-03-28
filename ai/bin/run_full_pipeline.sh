@@ -2,6 +2,7 @@
 # Full training pipeline: pretrain on idle opponent, then self-play
 set -e
 
+# Navigate to ai/ directory
 cd "$(dirname "$0")/.."
 source .venv/bin/activate
 export PYTHONUNBUFFERED=1
