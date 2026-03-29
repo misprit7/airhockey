@@ -14,14 +14,14 @@ BIN_DIR := bin
 
 .PHONY: all clean sfoundation
 
-all: sfoundation $(BIN_DIR)/test_motor
+all: sfoundation $(BIN_DIR)/test_motor $(BIN_DIR)/scan_motors
 
 sfoundation: $(SF_SO)
 
 $(SF_SO):
 	$(MAKE) -C $(SF_LIB_DIR) -j$$(nproc)
 
-$(BIN_DIR)/test_motor: $(BIN_DIR)/test_motor.cpp $(SF_SO)
+$(BIN_DIR)/%: $(BIN_DIR)/%.cpp $(SF_SO)
 	$(CXX) $(CXXFLAGS) -o $@ $< $(LDFLAGS)
 
 clean:
