@@ -11,6 +11,7 @@ CDPR::CDPR(const CDPRConfig &config)
     : cfg_(config)
     , spool_circumference_(M_PI * config.spool_diameter)
     , x_(0), y_(0), pos_known_(false)
+    , ref_encoder_{0}, ref_lengths_{0}
     , mgr_(nullptr), port_(nullptr)
     , connected_(false), enabled_(false), node_count_(0)
 {
@@ -101,10 +102,41 @@ void CDPR::disconnect() {
     port_ = nullptr;
 }
 
-void CDPR::setPosition(double x, double y) {
+bool CDPR::setPosition(double x, double y) {
+    if (!connected_ || !enabled_) {
+        fprintf(stderr, "CDPR: Must be connected and enabled before setPosition\n");
+        x_ = x;
+        y_ = y;
+        pos_known_ = true;
+        return false;
+    }
+
+    // Read current encoder positions as the reference baseline.
+    try {
+        for (int i = 0; i < 4; i++) {
+            INode &node = port_->Nodes(i);
+            node.Motion.PosnMeasured.Refresh();
+            ref_encoder_[i] = node.Motion.PosnMeasured.Value();
+        }
+    } catch (mnErr &err) {
+        fprintf(stderr, "CDPR: Failed to read encoder positions: 0x%08x\n", err.ErrorCode);
+        return false;
+    }
+
+    // Compute cable lengths at this reference position.
+    cableLengths(x, y, ref_lengths_);
+
     x_ = x;
     y_ = y;
     pos_known_ = true;
+
+    printf("CDPR: Reference set at (%.1f, %.1f)\n", x, y);
+    printf("  Encoder positions: [%.0f, %.0f, %.0f, %.0f]\n",
+           ref_encoder_[0], ref_encoder_[1], ref_encoder_[2], ref_encoder_[3]);
+    printf("  Cable lengths: [%.1f, %.1f, %.1f, %.1f] mm\n",
+           ref_lengths_[0], ref_lengths_[1], ref_lengths_[2], ref_lengths_[3]);
+
+    return true;
 }
 
 double CDPR::cableLength(int motor, double x, double y) const {
@@ -134,7 +166,6 @@ int CDPR::mmToCounts(double mm, int motor) const {
 }
 
 double CDPR::mmPerSecToRPM(double mm_s) const {
-    // mm/s → rev/s → RPM
     return (mm_s / spool_circumference_) * 60.0;
 }
 
@@ -159,54 +190,51 @@ bool CDPR::moveTo(double x, double y, double speed_mm_s) {
         return false;
     }
 
-    // Clamp speed to configured max.
     speed_mm_s = std::min(speed_mm_s, cfg_.max_velocity);
 
-    // Compute cable length deltas.
-    double cur_lengths[4], new_lengths[4], deltas[4];
-    cableLengths(x_, y_, cur_lengths);
+    // Compute absolute encoder targets.
+    double target_encoder[4];
+    double new_lengths[4];
     cableLengths(x, y, new_lengths);
 
-    double max_delta = 0;
+    double cur_lengths[4];
+    cableLengths(x_, y_, cur_lengths);
+
     for (int i = 0; i < 4; i++) {
-        deltas[i] = new_lengths[i] - cur_lengths[i];
-        max_delta = std::max(max_delta, fabs(deltas[i]));
+        double delta_mm = new_lengths[i] - ref_lengths_[i];
+        target_encoder[i] = ref_encoder_[i] + mmToCounts(delta_mm, i);
     }
 
-    if (max_delta < 0.01) {
-        // Already there.
+    // Compute per-motor velocity for coordinated motion.
+    double cart_dist = sqrt((x - x_) * (x - x_) + (y - y_) * (y - y_));
+    if (cart_dist < 0.01) {
         x_ = x;
         y_ = y;
         return true;
     }
-
-    // Compute move duration from the cart's linear speed.
-    double cart_dist = sqrt((x - x_) * (x - x_) + (y - y_) * (y - y_));
     double duration_s = cart_dist / speed_mm_s;
     if (duration_s < 0.01) duration_s = 0.01;
 
-    // Set per-motor velocity so all motors finish at the same time.
-    // Each motor moves |delta[i]| mm in duration_s seconds.
     double accel_rpm_s = mmPerSecToRPM(cfg_.max_acceleration);
 
     try {
         for (int i = 0; i < 4; i++) {
             INode &node = port_->Nodes(i);
-            double motor_speed = fabs(deltas[i]) / duration_s;
+            double delta_mm = fabs(new_lengths[i] - cur_lengths[i]);
+            double motor_speed = delta_mm / duration_s;
             double vel_rpm = mmPerSecToRPM(motor_speed);
-            if (vel_rpm < 0.1) vel_rpm = 0.1;  // minimum to avoid stall
+            if (vel_rpm < 0.1) vel_rpm = 0.1;
             setMotionParams(node, vel_rpm, accel_rpm_s);
         }
 
-        // Start all moves.
+        // Send absolute moves.
         for (int i = 0; i < 4; i++) {
             INode &node = port_->Nodes(i);
-            int counts = mmToCounts(deltas[i], i);
             node.Motion.MoveWentDone();
-            node.Motion.MovePosnStart(counts);
+            node.Motion.MovePosnStart((int32_t)round(target_encoder[i]), true);
         }
 
-        // Wait for all moves to complete.
+        // Wait for completion.
         double timeout = mgr_->TimeStampMsec() + (duration_s + 5.0) * 1000;
         bool all_done = false;
         while (!all_done) {
@@ -249,50 +277,44 @@ bool CDPR::commandPosition(double x, double y, double speed_mm_s) {
 
     speed_mm_s = std::min(speed_mm_s, cfg_.max_velocity);
 
-    double deltas[4], cur_lengths[4], new_lengths[4];
+    // Compute absolute encoder targets from the reference baseline.
+    double target_encoder[4];
+    double new_lengths[4], cur_lengths[4];
+    cableLengths(x, y, new_lengths);
     cableLengths(x_, y_, cur_lengths);
 
-    double max_delta = 0;
     for (int i = 0; i < 4; i++) {
-        deltas[i] = new_lengths[i] - cur_lengths[i];
-        max_delta = std::max(max_delta, fabs(deltas[i]));
+        double delta_mm = new_lengths[i] - ref_lengths_[i];
+        target_encoder[i] = ref_encoder_[i] + mmToCounts(delta_mm, i);
     }
 
-    if (max_delta < 0.01) {
+    double cart_dist = sqrt((x - x_) * (x - x_) + (y - y_) * (y - y_));
+    if (cart_dist < 0.01) {
         x_ = x;
         y_ = y;
         return true;
     }
-
-    double cart_dist = sqrt((x - x_) * (x - x_) + (y - y_) * (y - y_));
     double duration_s = cart_dist / speed_mm_s;
     if (duration_s < 0.01) duration_s = 0.01;
 
     double accel_rpm_s = mmPerSecToRPM(cfg_.max_acceleration);
 
     try {
-        // Cancel any in-progress moves before sending new ones.
-        for (int i = 0; i < 4; i++) {
-            port_->Nodes(i).Motion.NodeStop(STOP_TYPE_ABRUPT);
-        }
-        // Clear the stop condition so we can send new moves.
-        for (int i = 0; i < 4; i++) {
-            port_->Nodes(i).Motion.NodeStopClear();
-        }
-
         for (int i = 0; i < 4; i++) {
             INode &node = port_->Nodes(i);
-            double motor_speed = fabs(deltas[i]) / duration_s;
+            double delta_mm = fabs(new_lengths[i] - cur_lengths[i]);
+            double motor_speed = delta_mm / duration_s;
             double vel_rpm = mmPerSecToRPM(motor_speed);
             if (vel_rpm < 0.1) vel_rpm = 0.1;
             setMotionParams(node, vel_rpm, accel_rpm_s);
         }
 
+        // Send absolute moves — safe to call repeatedly.
+        // Each call overwrites the previous target, no accumulation.
         for (int i = 0; i < 4; i++) {
             INode &node = port_->Nodes(i);
-            int counts = mmToCounts(deltas[i], i);
             node.Motion.MoveWentDone();
-            node.Motion.MovePosnStart(counts);
+            node.Motion.MovePosnStart((int32_t)round(target_encoder[i]), true);
         }
 
         x_ = x;
@@ -315,10 +337,7 @@ bool CDPR::retractAll(double mm, double speed_mm_s) {
     double vel_rpm = mmPerSecToRPM(speed_mm_s);
     double accel_rpm_s = mmPerSecToRPM(cfg_.max_acceleration);
 
-    // Retract = shorten cable = negative encoder counts.
-    // Extend = lengthen cable = positive encoder counts.
-    // mmToCounts gives positive counts for positive mm (extend).
-    // So for retract (positive mm input), we negate.
+    // retractAll still uses relative moves since it's not IK-based.
     try {
         for (int i = 0; i < 4; i++) {
             INode &node = port_->Nodes(i);
@@ -328,7 +347,7 @@ bool CDPR::retractAll(double mm, double speed_mm_s) {
             node.Motion.MovePosnStart(counts);
         }
 
-        double duration_s = mm / speed_mm_s;
+        double duration_s = fabs(mm) / speed_mm_s;
         double timeout = mgr_->TimeStampMsec() + (duration_s + 5.0) * 1000;
         bool all_done = false;
         while (!all_done) {

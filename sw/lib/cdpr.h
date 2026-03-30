@@ -34,9 +34,11 @@ public:
     void disconnect();
 
     // Tell the controller where the cart currently is (mm).
-    // Must be called before any moveTo/moveBy commands.
-    // This does NOT move anything — it just sets the internal state.
-    void setPosition(double x, double y);
+    // Reads current encoder positions and uses them as the reference
+    // for all subsequent absolute moves. Must be called once before
+    // any moveTo/moveBy/commandPosition calls.
+    // This does NOT move anything — it calibrates the coordinate system.
+    bool setPosition(double x, double y);
 
     // Move cart to absolute position (mm) at given speed (mm/s).
     // All 4 motors move simultaneously, coordinated so the cart
@@ -82,6 +84,12 @@ private:
     // Current cart position.
     double x_, y_;
     bool pos_known_;
+
+    // Absolute positioning reference.
+    // Encoder counts at the reference position (set by setPosition).
+    double ref_encoder_[4];
+    // Cable lengths at the reference position.
+    double ref_lengths_[4];
 
     // sFoundation state.
     sFnd::SysManager *mgr_;
