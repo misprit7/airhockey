@@ -249,9 +249,8 @@ bool CDPR::commandPosition(double x, double y, double speed_mm_s) {
 
     speed_mm_s = std::min(speed_mm_s, cfg_.max_velocity);
 
-    double cur_lengths[4], new_lengths[4], deltas[4];
+    double deltas[4], cur_lengths[4], new_lengths[4];
     cableLengths(x_, y_, cur_lengths);
-    cableLengths(x, y, new_lengths);
 
     double max_delta = 0;
     for (int i = 0; i < 4; i++) {
@@ -272,6 +271,15 @@ bool CDPR::commandPosition(double x, double y, double speed_mm_s) {
     double accel_rpm_s = mmPerSecToRPM(cfg_.max_acceleration);
 
     try {
+        // Cancel any in-progress moves before sending new ones.
+        for (int i = 0; i < 4; i++) {
+            port_->Nodes(i).Motion.NodeStop(STOP_TYPE_ABRUPT);
+        }
+        // Clear the stop condition so we can send new moves.
+        for (int i = 0; i < 4; i++) {
+            port_->Nodes(i).Motion.NodeStopClear();
+        }
+
         for (int i = 0; i < 4; i++) {
             INode &node = port_->Nodes(i);
             double motor_speed = fabs(deltas[i]) / duration_s;
@@ -287,7 +295,6 @@ bool CDPR::commandPosition(double x, double y, double speed_mm_s) {
             node.Motion.MovePosnStart(counts);
         }
 
-        // Update position immediately — don't wait for completion.
         x_ = x;
         y_ = y;
         return true;
