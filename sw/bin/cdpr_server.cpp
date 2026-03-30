@@ -1,4 +1,5 @@
 #include <cstdio>
+#include <cstdarg>
 #include <cstdlib>
 #include <csignal>
 #include <cstring>
@@ -16,6 +17,22 @@ static volatile sig_atomic_t g_stop = 0;
 void sigHandler(int) { g_stop = 1; }
 
 static const int DEFAULT_PORT = 8421;
+static FILE *g_log = nullptr;
+
+static void logf(const char *fmt, ...) {
+    va_list args;
+    // Print to stdout
+    va_start(args, fmt);
+    vprintf(fmt, args);
+    va_end(args);
+    // Print to log file
+    if (g_log) {
+        va_start(args, fmt);
+        vfprintf(g_log, fmt, args);
+        va_end(args);
+        fflush(g_log);
+    }
+}
 
 // Simple line-based protocol over TCP:
 //   MOVE x_mm y_mm speed_mm_s\n  →  OK x_mm y_mm\n
@@ -31,58 +48,58 @@ static bool handleCommand(const char *line, CDPR &robot, int client_fd) {
 
     if (sscanf(line, "MOVE %lf %lf %lf", &x, &y, &speed) == 3) {
         // Blocking move — waits for completion. Use for scripted moves.
-        printf("  MOVE (%.1f, %.1f) @ %.0f mm/s\n", x, y, speed);
+        logf("  MOVE (%.1f, %.1f) @ %.0f mm/s\n", x, y, speed);
         if (robot.moveTo(x, y, speed)) {
             snprintf(resp, sizeof(resp), "OK %.2f %.2f\n", robot.x(), robot.y());
-            printf("  -> OK\n");
+            logf("  -> OK\n");
         } else {
             snprintf(resp, sizeof(resp), "ERR moveTo failed\n");
-            printf("  -> ERR\n");
+            logf("  -> ERR\n");
         }
     } else if (sscanf(line, "CMD %lf %lf %lf", &x, &y, &speed) == 3) {
         // Non-blocking command — for real-time streaming (web UI).
-        printf("  CMD (%.1f, %.1f) @ %.0f mm/s\n", x, y, speed);
+        logf("  CMD (%.1f, %.1f) @ %.0f mm/s\n", x, y, speed);
         if (robot.commandPosition(x, y, speed)) {
             snprintf(resp, sizeof(resp), "OK %.2f %.2f\n", robot.x(), robot.y());
-            printf("  -> OK\n");
+            logf("  -> OK\n");
         } else {
             snprintf(resp, sizeof(resp), "ERR commandPosition failed\n");
-            printf("  -> ERR commandPosition\n");
+            logf("  -> ERR commandPosition\n");
         }
     } else if (strncmp(line, "POS", 3) == 0) {
         snprintf(resp, sizeof(resp), "OK %.2f %.2f\n", robot.x(), robot.y());
-        printf("  POS -> (%.1f, %.1f)\n", robot.x(), robot.y());
+        logf("  POS -> (%.1f, %.1f)\n", robot.x(), robot.y());
     } else if (sscanf(line, "RETRACT %lf %lf", &mm, &speed) == 2) {
-        printf("  RETRACT %.1f mm @ %.0f mm/s\n", mm, speed);
+        logf("  RETRACT %.1f mm @ %.0f mm/s\n", mm, speed);
         if (robot.retractAll(mm, speed)) {
             snprintf(resp, sizeof(resp), "OK\n");
-            printf("  -> OK\n");
+            logf("  -> OK\n");
         } else {
             snprintf(resp, sizeof(resp), "ERR retract failed\n");
-            printf("  -> ERR retract\n");
+            logf("  -> ERR retract\n");
         }
     } else if (strncmp(line, "DISABLE", 7) == 0) {
-        printf("  DISABLE\n");
+        logf("  DISABLE\n");
         robot.disable();
         snprintf(resp, sizeof(resp), "OK\n");
     } else if (strncmp(line, "ENABLE", 6) == 0) {
-        printf("  ENABLE\n");
+        logf("  ENABLE\n");
         if (robot.enable()) {
             snprintf(resp, sizeof(resp), "OK\n");
-            printf("  -> OK\n");
+            logf("  -> OK\n");
         } else {
             snprintf(resp, sizeof(resp), "ERR enable failed\n");
-            printf("  -> ERR enable\n");
+            logf("  -> ERR enable\n");
         }
     } else if (strncmp(line, "SETPOS", 6) == 0) {
         if (sscanf(line, "SETPOS %lf %lf", &x, &y) == 2) {
-            printf("  SETPOS (%.1f, %.1f)\n", x, y);
+            logf("  SETPOS (%.1f, %.1f)\n", x, y);
             robot.setPosition(x, y);
             snprintf(resp, sizeof(resp), "OK %.2f %.2f\n", robot.x(), robot.y());
-            printf("  -> OK\n");
+            logf("  -> OK\n");
         } else {
             snprintf(resp, sizeof(resp), "ERR bad SETPOS args\n");
-            printf("  -> ERR bad SETPOS args\n");
+            logf("  -> ERR bad SETPOS args\n");
         }
     } else if (strncmp(line, "QUIT", 4) == 0) {
         return false;
@@ -103,30 +120,35 @@ int main(int argc, char *argv[]) {
     int port = DEFAULT_PORT;
     if (argc > 1) port = atoi(argv[1]);
 
+    g_log = fopen("cdpr_server.log", "w");
+    if (!g_log) {
+        fprintf(stderr, "Warning: could not open cdpr_server.log\n");
+    }
+
     CDPRConfig config;
     CDPR robot(config);
 
-    printf("=== CDPR Server ===\n");
-    printf("Table: %.0f x %.0f mm\n", config.width, config.height);
+    logf("=== CDPR Server ===\n");
+    logf("Table: %.0f x %.0f mm\n", config.width, config.height);
 
     if (!robot.connect()) {
         fprintf(stderr, "Failed to connect to CDPR hardware\n");
         return 1;
     }
-    printf("Connected to motors.\n");
+    logf("Connected to motors.\n");
 
     if (!robot.enable()) {
         fprintf(stderr, "Failed to enable motors\n");
         robot.disconnect();
         return 1;
     }
-    printf("Motors enabled.\n");
+    logf("Motors enabled.\n");
 
     // Start at center.
     double cx = config.width / 2.0;
     double cy = config.height / 2.0;
     robot.setPosition(cx, cy);
-    printf("Position set to center (%.1f, %.1f)\n", cx, cy);
+    logf("Position set to center (%.1f, %.1f)\n", cx, cy);
 
     // Create TCP server socket.
     int server_fd = socket(AF_INET, SOCK_STREAM, 0);
@@ -156,8 +178,8 @@ int main(int argc, char *argv[]) {
     listen(server_fd, 1);
     fcntl(server_fd, F_SETFL, O_NONBLOCK);
 
-    printf("Listening on localhost:%d\n", port);
-    printf("Ctrl+C to stop.\n\n");
+    logf("Listening on localhost:%d\n", port);
+    logf("Ctrl+C to stop.\n\n");
 
     int client_fd = -1;
     char buf[4096];
@@ -173,7 +195,7 @@ int main(int argc, char *argv[]) {
                 int flag = 1;
                 setsockopt(client_fd, IPPROTO_TCP, TCP_NODELAY, &flag, sizeof(flag));
                 buf_len = 0;
-                printf("Client connected.\n");
+                logf("Client connected.\n");
             }
         }
 
@@ -192,7 +214,7 @@ int main(int argc, char *argv[]) {
                     if (!handleCommand(start, robot, client_fd)) {
                         close(client_fd);
                         client_fd = -1;
-                        printf("Client disconnected (QUIT).\n");
+                        logf("Client disconnected (QUIT).\n");
                         break;
                     }
                     start = nl + 1;
@@ -208,12 +230,12 @@ int main(int argc, char *argv[]) {
                 close(client_fd);
                 client_fd = -1;
                 buf_len = 0;
-                printf("Client disconnected.\n");
+                logf("Client disconnected.\n");
             } else if (errno != EAGAIN && errno != EWOULDBLOCK) {
                 close(client_fd);
                 client_fd = -1;
                 buf_len = 0;
-                printf("Client error: %s\n", strerror(errno));
+                logf("Client error: %s\n", strerror(errno));
             }
         }
 
@@ -221,11 +243,12 @@ int main(int argc, char *argv[]) {
         usleep(100);
     }
 
-    printf("\nShutting down...\n");
+    logf("\nShutting down...\n");
     if (client_fd >= 0) close(client_fd);
     close(server_fd);
     robot.disable();
     robot.disconnect();
-    printf("Done.\n");
+    logf("Done.\n");
+    if (g_log) fclose(g_log);
     return 0;
 }
