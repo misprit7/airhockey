@@ -74,6 +74,12 @@ bool CDPR::enable() {
                     return false;
                 }
             }
+
+            // Enable "immediate move" mode: new position commands replace
+            // the current move instead of queuing behind it. This is
+            // essential for real-time streaming control.
+            // Parameter 98 = immediate move enable (runtime).
+            node.Info.Ex.Parameter(98, 1);
         }
         enabled_ = true;
         return true;
@@ -300,17 +306,6 @@ bool CDPR::commandPosition(double x, double y, double speed_mm_s) {
     double accel_rpm_s = mmPerSecToRPM(cfg_.max_acceleration);
 
     try {
-        // Cancel current moves so the new absolute target takes effect
-        // immediately instead of queuing behind the previous move.
-        // Safe with absolute positioning since targets are computed from
-        // a fixed reference, not accumulated.
-        for (int i = 0; i < 4; i++) {
-            port_->Nodes(i).Motion.NodeStop(STOP_TYPE_ABRUPT);
-        }
-        for (int i = 0; i < 4; i++) {
-            port_->Nodes(i).Motion.NodeStopClear();
-        }
-
         for (int i = 0; i < 4; i++) {
             INode &node = port_->Nodes(i);
             double delta_mm = fabs(new_lengths[i] - cur_lengths[i]);
