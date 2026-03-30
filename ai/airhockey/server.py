@@ -214,7 +214,7 @@ async def live_game(ws: WebSocket):
 
             # Slow down the loop when hardware is active to avoid flooding
             # the motor controller. 1Hz for testing, increase once stable.
-            await asyncio.sleep(1.0 if use_hardware else 1 / 60)
+            await asyncio.sleep(1 / 5 if use_hardware else 1 / 60)
 
     except WebSocketDisconnect:
         pass

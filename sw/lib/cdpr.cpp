@@ -300,6 +300,17 @@ bool CDPR::commandPosition(double x, double y, double speed_mm_s) {
     double accel_rpm_s = mmPerSecToRPM(cfg_.max_acceleration);
 
     try {
+        // Cancel current moves so the new absolute target takes effect
+        // immediately instead of queuing behind the previous move.
+        // Safe with absolute positioning since targets are computed from
+        // a fixed reference, not accumulated.
+        for (int i = 0; i < 4; i++) {
+            port_->Nodes(i).Motion.NodeStop(STOP_TYPE_ABRUPT);
+        }
+        for (int i = 0; i < 4; i++) {
+            port_->Nodes(i).Motion.NodeStopClear();
+        }
+
         for (int i = 0; i < 4; i++) {
             INode &node = port_->Nodes(i);
             double delta_mm = fabs(new_lengths[i] - cur_lengths[i]);
@@ -309,20 +320,13 @@ bool CDPR::commandPosition(double x, double y, double speed_mm_s) {
             setMotionParams(node, vel_rpm, accel_rpm_s);
         }
 
-        // Send absolute move. If the move buffer is full (previous move
-        // still in progress), the motor is already heading to the right
-        // place — just skip this update.
         fprintf(stderr, "  cmdPos: target(%.1f,%.1f) enc[%.0f,%.0f,%.0f,%.0f] len[%.1f,%.1f,%.1f,%.1f]\n",
                 x, y, target_encoder[0], target_encoder[1], target_encoder[2], target_encoder[3],
                 new_lengths[0], new_lengths[1], new_lengths[2], new_lengths[3]);
         for (int i = 0; i < 4; i++) {
             INode &node = port_->Nodes(i);
             node.Motion.MoveWentDone();
-            try {
-                node.Motion.MovePosnStart((int32_t)round(target_encoder[i]), true);
-            } catch (mnErr &) {
-                // Buffer full — motor is still executing previous move, skip.
-            }
+            node.Motion.MovePosnStart((int32_t)round(target_encoder[i]), true);
         }
 
         x_ = x;

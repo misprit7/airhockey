@@ -45,8 +45,8 @@ def main():
     print(f"Server position: ({pos_x:.1f}, {pos_y:.1f}) mm\n")
 
     # Small test moves — 50mm square at 50 mm/s
-    step = 50.0
-    speed = 50.0
+    step = 10.0
+    speed = 10.0
 
     moves = [
         (step, 0, "right"),

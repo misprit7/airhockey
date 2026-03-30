@@ -144,7 +144,7 @@ class HardwareDynamics(MotorDynamics):
         cdpr_height_mm: float = 730.0,
         sim_width: float = 1.0,
         sim_height: float = 2.0,
-        speed_mm_s: float = 1.0,
+        speed_mm_s: float = 10.0,
         host: str = "127.0.0.1",
         port: int = 8421,
     ):
@@ -186,18 +186,30 @@ class HardwareDynamics(MotorDynamics):
     def _sim_to_mm(self, sx: float, sy: float) -> tuple[float, float]:
         """Convert sim coords (meters) to CDPR coords (mm).
 
-        Clamps output to CDPR workspace with margin to prevent
-        commanding positions outside the physical bounds.
+        Maps the full sim area to the inner 2/3 of the CDPR workspace,
+        keeping the cart away from the edges.
         """
-        margin = 30.0  # mm, matches CDPRConfig.edge_margin
-        mm_x = (sx / self.sim_width) * self.cdpr_width
-        mm_y = (sy / self.sim_half_height) * self.cdpr_height
-        mm_x = max(margin, min(self.cdpr_width - margin, mm_x))
-        mm_y = max(margin, min(self.cdpr_height - margin, mm_y))
+        # Inner 2/3: offset by 1/6 on each side
+        x_margin = self.cdpr_width / 6.0
+        y_margin = self.cdpr_height / 6.0
+        inner_w = self.cdpr_width - 2 * x_margin
+        inner_h = self.cdpr_height - 2 * y_margin
+
+        mm_x = x_margin + (sx / self.sim_width) * inner_w
+        mm_y = y_margin + (sy / self.sim_half_height) * inner_h
+
+        # Safety clamp
+        mm_x = max(x_margin, min(self.cdpr_width - x_margin, mm_x))
+        mm_y = max(y_margin, min(self.cdpr_height - y_margin, mm_y))
         return mm_x, mm_y
 
     def _mm_to_sim(self, mm_x: float, mm_y: float) -> tuple[float, float]:
         """Convert CDPR coords (mm) to sim coords (meters)."""
-        sx = (mm_x / self.cdpr_width) * self.sim_width
-        sy = (mm_y / self.cdpr_height) * self.sim_half_height
+        x_margin = self.cdpr_width / 6.0
+        y_margin = self.cdpr_height / 6.0
+        inner_w = self.cdpr_width - 2 * x_margin
+        inner_h = self.cdpr_height - 2 * y_margin
+
+        sx = ((mm_x - x_margin) / inner_w) * self.sim_width
+        sy = ((mm_y - y_margin) / inner_h) * self.sim_half_height
         return sx, sy
