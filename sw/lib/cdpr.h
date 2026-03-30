@@ -58,6 +58,11 @@ public:
     // Compute all 4 cable lengths for a position.
     void cableLengths(double x, double y, double lengths[4]) const;
 
+    // Retract all cables by the given amount (mm) simultaneously.
+    // Positive = retract (shorten), negative = extend (lengthen).
+    // This is a raw operation that bypasses IK — use for tensioning.
+    bool retractAll(double mm, double speed_mm_s);
+
     // Check if a position is within the reachable workspace.
     bool inBounds(double x, double y) const;
 

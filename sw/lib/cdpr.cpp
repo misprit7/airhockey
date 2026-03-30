@@ -233,6 +233,52 @@ bool CDPR::moveTo(double x, double y, double speed_mm_s) {
     }
 }
 
+bool CDPR::retractAll(double mm, double speed_mm_s) {
+    if (!enabled_) {
+        fprintf(stderr, "CDPR: Not enabled\n");
+        return false;
+    }
+
+    speed_mm_s = std::min(speed_mm_s, cfg_.max_velocity);
+    double vel_rpm = mmPerSecToRPM(speed_mm_s);
+    double accel_rpm_s = mmPerSecToRPM(cfg_.max_acceleration);
+
+    // Retract = shorten cable = negative encoder counts.
+    // Extend = lengthen cable = positive encoder counts.
+    // mmToCounts gives positive counts for positive mm (extend).
+    // So for retract (positive mm input), we negate.
+    try {
+        for (int i = 0; i < 4; i++) {
+            INode &node = port_->Nodes(i);
+            setMotionParams(node, vel_rpm, accel_rpm_s);
+            int counts = mmToCounts(-mm, i);  // negate: positive mm = retract = shorter
+            node.Motion.MoveWentDone();
+            node.Motion.MovePosnStart(counts);
+        }
+
+        double duration_s = mm / speed_mm_s;
+        double timeout = mgr_->TimeStampMsec() + (duration_s + 5.0) * 1000;
+        bool all_done = false;
+        while (!all_done) {
+            if (mgr_->TimeStampMsec() > timeout) {
+                fprintf(stderr, "CDPR: retractAll timed out\n");
+                return false;
+            }
+            all_done = true;
+            for (int i = 0; i < 4; i++) {
+                if (!port_->Nodes(i).Motion.MoveIsDone()) {
+                    all_done = false;
+                    break;
+                }
+            }
+        }
+        return true;
+    } catch (mnErr &err) {
+        fprintf(stderr, "CDPR retractAll error: 0x%08x %s\n", err.ErrorCode, err.ErrorMsg);
+        return false;
+    }
+}
+
 bool CDPR::moveBy(double dx, double dy, double speed_mm_s) {
     if (!pos_known_) {
         fprintf(stderr, "CDPR: Position not set. Call setPosition() first.\n");

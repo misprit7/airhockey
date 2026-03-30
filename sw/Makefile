@@ -10,7 +10,7 @@ CXX := g++
 CXXFLAGS := -std=c++11 -O2 -Wall -I$(SF_INC) -Ilib
 LDFLAGS := -L$(SF_LIB_DIR) -Wl,-rpath=$(CURDIR)/$(SF_LIB_DIR) -lsFoundation20 -lpthread
 
-BIN_DIR := bin
+SRC_DIR := bin
 LIB_DIR := lib
 BUILD_DIR := build
 
@@ -19,10 +19,10 @@ LIB_SRCS := $(wildcard $(LIB_DIR)/*.cpp)
 LIB_OBJS := $(patsubst $(LIB_DIR)/%.cpp,$(BUILD_DIR)/%.o,$(LIB_SRCS))
 
 # Programs that link against the library
-PROGRAMS := $(BIN_DIR)/cdpr_test
+PROGRAMS := $(BUILD_DIR)/cdpr_test
 
 # Standalone programs (no library dependency)
-STANDALONE := $(BIN_DIR)/test_motor $(BIN_DIR)/scan_motors $(BIN_DIR)/retract_test
+STANDALONE := $(BUILD_DIR)/test_motor $(BUILD_DIR)/scan_motors $(BUILD_DIR)/retract_test
 
 .PHONY: all clean sfoundation
 
@@ -40,14 +40,13 @@ $(BUILD_DIR):
 	mkdir -p $@
 
 # Standalone programs (single .cpp, no library)
-$(BIN_DIR)/test_motor $(BIN_DIR)/scan_motors $(BIN_DIR)/retract_test: $(BIN_DIR)/%: $(BIN_DIR)/%.cpp $(SF_SO)
+$(STANDALONE): $(BUILD_DIR)/%: $(SRC_DIR)/%.cpp $(SF_SO) | $(BUILD_DIR)
 	$(CXX) $(CXXFLAGS) -o $@ $< $(LDFLAGS)
 
 # Programs that link against the CDPR library
-$(PROGRAMS): $(BIN_DIR)/%: $(BIN_DIR)/%.cpp $(LIB_OBJS) $(SF_SO)
+$(PROGRAMS): $(BUILD_DIR)/%: $(SRC_DIR)/%.cpp $(LIB_OBJS) $(SF_SO) | $(BUILD_DIR)
 	$(CXX) $(CXXFLAGS) -o $@ $< $(LIB_OBJS) $(LDFLAGS)
 
 clean:
-	rm -f $(STANDALONE) $(PROGRAMS)
 	rm -rf $(BUILD_DIR)
 	$(MAKE) -C $(SF_LIB_DIR) clean
