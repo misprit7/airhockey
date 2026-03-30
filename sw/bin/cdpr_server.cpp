@@ -11,6 +11,7 @@
 #include <netinet/tcp.h>
 #include <fcntl.h>
 #include <errno.h>
+#include <sys/stat.h>
 #include "cdpr.h"
 
 static volatile sig_atomic_t g_stop = 0;
@@ -94,6 +95,8 @@ static bool handleCommand(const char *line, CDPR &robot, int client_fd) {
     } else if (strncmp(line, "SETPOS", 6) == 0) {
         if (sscanf(line, "SETPOS %lf %lf", &x, &y) == 2) {
             logf("  SETPOS (%.1f, %.1f)\n", x, y);
+            // Ensure motors are enabled (client may have disabled previously).
+            robot.enable();
             robot.setPosition(x, y);
             snprintf(resp, sizeof(resp), "OK %.2f %.2f\n", robot.x(), robot.y());
             logf("  -> OK\n");
@@ -120,7 +123,8 @@ int main(int argc, char *argv[]) {
     int port = DEFAULT_PORT;
     if (argc > 1) port = atoi(argv[1]);
 
-    g_log = fopen("cdpr_server.log", "w");
+    mkdir("logs", 0755);
+    g_log = fopen("logs/cdpr_server.log", "w");
     if (!g_log) {
         fprintf(stderr, "Warning: could not open cdpr_server.log\n");
     }

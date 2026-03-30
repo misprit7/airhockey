@@ -1,7 +1,9 @@
 """Python CDPR test — mirrors sw/bin/cdpr_test.cpp but goes through the TCP server."""
 
+import math
 import signal
 import sys
+import time
 
 from airhockey.hardware import CDPRClient
 
@@ -64,9 +66,13 @@ def main():
             break
         tx = x + dx
         ty = y + dy
+        dist = math.hypot(dx, dy)
+        wait_s = dist / speed + 0.5  # expected duration + margin
         print(f"  {desc} to ({tx:.1f}, {ty:.1f})... ", end="", flush=True)
         try:
-            actual_x, actual_y = client.move_to(tx, ty, speed)
+            actual_x, actual_y = client.command_position(tx, ty, speed)
+            time.sleep(wait_s)
+            actual_x, actual_y = client.get_position()
             print(f"done (pos={actual_x:.1f}, {actual_y:.1f})")
             x, y = actual_x, actual_y
         except Exception as e:
@@ -75,7 +81,6 @@ def main():
 
     print(f"\nFinal position: ({x:.1f}, {y:.1f})")
 
-    client.disable()
     client.close()
     print("Done!")
     return 0

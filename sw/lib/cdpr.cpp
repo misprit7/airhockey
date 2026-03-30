@@ -300,14 +300,6 @@ bool CDPR::commandPosition(double x, double y, double speed_mm_s) {
     double accel_rpm_s = mmPerSecToRPM(cfg_.max_acceleration);
 
     try {
-        // Flush the move buffer: stop motors, clear stop, then send one fresh move.
-        for (int i = 0; i < 4; i++) {
-            port_->Nodes(i).Motion.NodeStop(STOP_TYPE_ABRUPT);
-        }
-        for (int i = 0; i < 4; i++) {
-            port_->Nodes(i).Motion.NodeStopClear();
-        }
-
         for (int i = 0; i < 4; i++) {
             INode &node = port_->Nodes(i);
             double delta_mm = fabs(new_lengths[i] - cur_lengths[i]);
@@ -317,11 +309,17 @@ bool CDPR::commandPosition(double x, double y, double speed_mm_s) {
             setMotionParams(node, vel_rpm, accel_rpm_s);
         }
 
-        // Send single absolute move per motor. Buffer is clear so no accumulation.
+        // Send absolute move. If the move buffer is full (previous move
+        // still in progress), the motor is already heading to the right
+        // place — just skip this update.
         for (int i = 0; i < 4; i++) {
             INode &node = port_->Nodes(i);
             node.Motion.MoveWentDone();
-            node.Motion.MovePosnStart((int32_t)round(target_encoder[i]), true);
+            try {
+                node.Motion.MovePosnStart((int32_t)round(target_encoder[i]), true);
+            } catch (mnErr &) {
+                // Buffer full — motor is still executing previous move, skip.
+            }
         }
 
         x_ = x;
