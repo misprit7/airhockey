@@ -151,11 +151,16 @@ async def live_game(ws: WebSocket):
                                 sim_width=cfg.width,
                                 sim_height=cfg.height,
                             )
+                            # Reset hardware to CDPR center, which matches
+                            # the physical cart starting position.
+                            hw_center_x = cfg.width / 2
+                            hw_center_y = cfg.height / 4  # agent's half center
                             env.agent_dynamics = hardware_dynamics
-                            env.agent_dynamics.reset(
-                                env.engine.state.paddle_agent.x,
-                                env.engine.state.paddle_agent.y,
-                            )
+                            env.agent_dynamics.reset(hw_center_x, hw_center_y)
+                            # Also update the mouse target so the first
+                            # frame doesn't jump somewhere unexpected.
+                            target_x = hw_center_x
+                            target_y = hw_center_y
                         except Exception as e:
                             print(f"Hardware connect failed: {e}")
                             use_hardware = False

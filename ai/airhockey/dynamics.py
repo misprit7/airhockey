@@ -168,6 +168,7 @@ class HardwareDynamics(MotorDynamics):
 
     def update(self, target_x: float, target_y: float, dt: float) -> tuple[float, float]:
         mm_x, mm_y = self._sim_to_mm(target_x, target_y)
+        print(f"  HW: sim=({target_x:.3f}, {target_y:.3f}) -> mm=({mm_x:.1f}, {mm_y:.1f})")
         try:
             actual_mm_x, actual_mm_y = self.client.command_position(mm_x, mm_y, self.speed)
             self.x, self.y = self._mm_to_sim(actual_mm_x, actual_mm_y)

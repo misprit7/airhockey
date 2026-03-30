@@ -312,6 +312,9 @@ bool CDPR::commandPosition(double x, double y, double speed_mm_s) {
         // Send absolute move. If the move buffer is full (previous move
         // still in progress), the motor is already heading to the right
         // place — just skip this update.
+        fprintf(stderr, "  cmdPos: target(%.1f,%.1f) enc[%.0f,%.0f,%.0f,%.0f] len[%.1f,%.1f,%.1f,%.1f]\n",
+                x, y, target_encoder[0], target_encoder[1], target_encoder[2], target_encoder[3],
+                new_lengths[0], new_lengths[1], new_lengths[2], new_lengths[3]);
         for (int i = 0; i < 4; i++) {
             INode &node = port_->Nodes(i);
             node.Motion.MoveWentDone();
