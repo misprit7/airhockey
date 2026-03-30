@@ -173,14 +173,20 @@ class HardwareDynamics(MotorDynamics):
             self.x, self.y = self._mm_to_sim(actual_mm_x, actual_mm_y)
         except Exception as e:
             print(f"HardwareDynamics: move failed: {e}")
-            self.x = target_x
-            self.y = target_y
+            # Don't update position on failure — keep last known good position.
         return self.x, self.y
 
     def _sim_to_mm(self, sx: float, sy: float) -> tuple[float, float]:
-        """Convert sim coords (meters) to CDPR coords (mm)."""
+        """Convert sim coords (meters) to CDPR coords (mm).
+
+        Clamps output to CDPR workspace with margin to prevent
+        commanding positions outside the physical bounds.
+        """
+        margin = 30.0  # mm, matches CDPRConfig.edge_margin
         mm_x = (sx / self.sim_width) * self.cdpr_width
         mm_y = (sy / self.sim_half_height) * self.cdpr_height
+        mm_x = max(margin, min(self.cdpr_width - margin, mm_x))
+        mm_y = max(margin, min(self.cdpr_height - margin, mm_y))
         return mm_x, mm_y
 
     def _mm_to_sim(self, mm_x: float, mm_y: float) -> tuple[float, float]:

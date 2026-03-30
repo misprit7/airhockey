@@ -41,8 +41,14 @@ public:
     // Move cart to absolute position (mm) at given speed (mm/s).
     // All 4 motors move simultaneously, coordinated so the cart
     // travels in a straight line at the requested speed.
-    // Returns false if target is out of bounds or move fails.
+    // Blocks until all motors complete. Returns false on failure.
     bool moveTo(double x, double y, double speed_mm_s);
+
+    // Send position command without waiting for completion.
+    // Use this for real-time streaming control (e.g. 60Hz from web UI).
+    // Motors will servo toward the target; call again to update target.
+    // Returns false if target is out of bounds or command fails.
+    bool commandPosition(double x, double y, double speed_mm_s);
 
     // Move cart by a relative offset (mm).
     bool moveBy(double dx, double dy, double speed_mm_s);

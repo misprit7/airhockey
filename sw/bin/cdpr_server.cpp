@@ -30,7 +30,8 @@ static bool handleCommand(const char *line, CDPR &robot, int client_fd) {
     double x, y, speed, mm;
 
     if (sscanf(line, "MOVE %lf %lf %lf", &x, &y, &speed) == 3) {
-        if (robot.moveTo(x, y, speed)) {
+        // Use non-blocking commandPosition for real-time streaming.
+        if (robot.commandPosition(x, y, speed)) {
             snprintf(resp, sizeof(resp), "OK %.2f %.2f\n", robot.x(), robot.y());
         } else {
             snprintf(resp, sizeof(resp), "ERR moveTo failed\n");

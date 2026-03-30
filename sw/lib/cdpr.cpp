@@ -233,6 +233,71 @@ bool CDPR::moveTo(double x, double y, double speed_mm_s) {
     }
 }
 
+bool CDPR::commandPosition(double x, double y, double speed_mm_s) {
+    if (!enabled_) {
+        fprintf(stderr, "CDPR: Not enabled\n");
+        return false;
+    }
+    if (!pos_known_) {
+        fprintf(stderr, "CDPR: Position not set. Call setPosition() first.\n");
+        return false;
+    }
+    if (!inBounds(x, y)) {
+        fprintf(stderr, "CDPR: Target (%.1f, %.1f) out of bounds\n", x, y);
+        return false;
+    }
+
+    speed_mm_s = std::min(speed_mm_s, cfg_.max_velocity);
+
+    double cur_lengths[4], new_lengths[4], deltas[4];
+    cableLengths(x_, y_, cur_lengths);
+    cableLengths(x, y, new_lengths);
+
+    double max_delta = 0;
+    for (int i = 0; i < 4; i++) {
+        deltas[i] = new_lengths[i] - cur_lengths[i];
+        max_delta = std::max(max_delta, fabs(deltas[i]));
+    }
+
+    if (max_delta < 0.01) {
+        x_ = x;
+        y_ = y;
+        return true;
+    }
+
+    double cart_dist = sqrt((x - x_) * (x - x_) + (y - y_) * (y - y_));
+    double duration_s = cart_dist / speed_mm_s;
+    if (duration_s < 0.01) duration_s = 0.01;
+
+    double accel_rpm_s = mmPerSecToRPM(cfg_.max_acceleration);
+
+    try {
+        for (int i = 0; i < 4; i++) {
+            INode &node = port_->Nodes(i);
+            double motor_speed = fabs(deltas[i]) / duration_s;
+            double vel_rpm = mmPerSecToRPM(motor_speed);
+            if (vel_rpm < 0.1) vel_rpm = 0.1;
+            setMotionParams(node, vel_rpm, accel_rpm_s);
+        }
+
+        for (int i = 0; i < 4; i++) {
+            INode &node = port_->Nodes(i);
+            int counts = mmToCounts(deltas[i], i);
+            node.Motion.MoveWentDone();
+            node.Motion.MovePosnStart(counts);
+        }
+
+        // Update position immediately — don't wait for completion.
+        x_ = x;
+        y_ = y;
+        return true;
+
+    } catch (mnErr &err) {
+        fprintf(stderr, "CDPR commandPosition error: 0x%08x %s\n", err.ErrorCode, err.ErrorMsg);
+        return false;
+    }
+}
+
 bool CDPR::retractAll(double mm, double speed_mm_s) {
     if (!enabled_) {
         fprintf(stderr, "CDPR: Not enabled\n");
