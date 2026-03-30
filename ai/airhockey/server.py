@@ -12,7 +12,7 @@ import numpy as np
 from fastapi import FastAPI, WebSocket, WebSocketDisconnect
 from fastapi.responses import HTMLResponse
 
-from airhockey.dynamics import DelayedDynamics, IdealDynamics
+from airhockey.dynamics import DelayedDynamics, HardwareDynamics, IdealDynamics
 from airhockey.env import AirHockeyEnv
 from airhockey.physics import TableConfig
 from airhockey.recorder import Recorder
@@ -92,6 +92,8 @@ async def live_game(ws: WebSocket):
     await ws.accept()
 
     use_instant = False
+    use_hardware = False
+    hardware_dynamics = None
     agent_dynamics = DelayedDynamics(max_speed=5.0, max_accel=60.0, time_constant=0.01)
     env = AirHockeyEnv(
         agent_dynamics=agent_dynamics,
@@ -141,6 +143,36 @@ async def live_game(ws: WebSocket):
                         env.engine.state.paddle_agent.y,
                     )
                     await ws.send_json({"type": "physics_mode", "instant": use_instant})
+                elif msg.get("type") == "toggle_hardware":
+                    use_hardware = not use_hardware
+                    if use_hardware:
+                        try:
+                            hardware_dynamics = HardwareDynamics(
+                                sim_width=cfg.width,
+                                sim_height=cfg.height,
+                            )
+                            env.agent_dynamics = hardware_dynamics
+                            env.agent_dynamics.reset(
+                                env.engine.state.paddle_agent.x,
+                                env.engine.state.paddle_agent.y,
+                            )
+                        except Exception as e:
+                            print(f"Hardware connect failed: {e}")
+                            use_hardware = False
+                            hardware_dynamics = None
+                    else:
+                        if hardware_dynamics:
+                            try:
+                                hardware_dynamics.client.close()
+                            except Exception:
+                                pass
+                            hardware_dynamics = None
+                        env.agent_dynamics = DelayedDynamics(max_speed=5.0, max_accel=60.0, time_constant=0.01)
+                        env.agent_dynamics.reset(
+                            env.engine.state.paddle_agent.x,
+                            env.engine.state.paddle_agent.y,
+                        )
+                    await ws.send_json({"type": "hardware_mode", "enabled": use_hardware})
                 elif msg.get("type") == "reset":
                     obs, info = env.reset()
                     target_x = cfg.width / 2
@@ -179,6 +211,12 @@ async def live_game(ws: WebSocket):
 
     except WebSocketDisconnect:
         pass
+    finally:
+        if hardware_dynamics:
+            try:
+                hardware_dynamics.client.close()
+            except Exception:
+                pass
 
 
 def main():

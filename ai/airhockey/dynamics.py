@@ -6,7 +6,7 @@ actual paddle position, simulating real-world actuator behavior.
 
 from __future__ import annotations
 
-from dataclasses import dataclass
+from dataclasses import dataclass, field
 
 import numpy as np
 
@@ -126,3 +126,65 @@ class LearnedDynamics(MotorDynamics):
         x += self._rng.normal(0, self.position_noise_std)
         y += self._rng.normal(0, self.position_noise_std)
         return x, y
+
+
+class HardwareDynamics(MotorDynamics):
+    """Drives real CDPR hardware via the cdpr_server.
+
+    Maps between the sim coordinate system (meters, 1.0 x 2.0 table) and
+    the CDPR coordinate system (mm, physical table dimensions).
+
+    The agent controls the bottom half of the sim table (y in [0, height/2]).
+    The CDPR workspace maps to this region.
+    """
+
+    def __init__(
+        self,
+        cdpr_width_mm: float = 606.0,
+        cdpr_height_mm: float = 730.0,
+        sim_width: float = 1.0,
+        sim_height: float = 2.0,
+        speed_mm_s: float = 600.0,
+        host: str = "127.0.0.1",
+        port: int = 8421,
+    ):
+        from airhockey.hardware import CDPRClient
+
+        self.cdpr_width = cdpr_width_mm
+        self.cdpr_height = cdpr_height_mm
+        self.sim_width = sim_width
+        self.sim_half_height = sim_height / 2.0  # agent's half
+        self.speed = speed_mm_s
+        self.x = 0.0
+        self.y = 0.0
+        self.client = CDPRClient(host, port)
+        self.client.connect()
+
+    def reset(self, x: float, y: float) -> None:
+        self.x = x
+        self.y = y
+        mm_x, mm_y = self._sim_to_mm(x, y)
+        self.client.set_position(mm_x, mm_y)
+
+    def update(self, target_x: float, target_y: float, dt: float) -> tuple[float, float]:
+        mm_x, mm_y = self._sim_to_mm(target_x, target_y)
+        try:
+            actual_mm_x, actual_mm_y = self.client.move_to(mm_x, mm_y, self.speed)
+            self.x, self.y = self._mm_to_sim(actual_mm_x, actual_mm_y)
+        except Exception as e:
+            print(f"HardwareDynamics: move failed: {e}")
+            self.x = target_x
+            self.y = target_y
+        return self.x, self.y
+
+    def _sim_to_mm(self, sx: float, sy: float) -> tuple[float, float]:
+        """Convert sim coords (meters) to CDPR coords (mm)."""
+        mm_x = (sx / self.sim_width) * self.cdpr_width
+        mm_y = (sy / self.sim_half_height) * self.cdpr_height
+        return mm_x, mm_y
+
+    def _mm_to_sim(self, mm_x: float, mm_y: float) -> tuple[float, float]:
+        """Convert CDPR coords (mm) to sim coords (meters)."""
+        sx = (mm_x / self.cdpr_width) * self.sim_width
+        sy = (mm_y / self.cdpr_height) * self.sim_half_height
+        return sx, sy

@@ -45,7 +45,7 @@ int main() {
   }
 
   // --- Phase 1: Tension cables ---
-  double tension_mm = 0.0;    // set >0 to tension cables before motion
+  double tension_mm = 5;      // set >0 to tension cables before motion
   double tension_speed = 5.0; // mm/s
 
   if (tension_mm > 0) {
@@ -67,7 +67,8 @@ int main() {
   // --- Phase 2: Square motion ---
   {
     double step = 50.0;
-    double speed = 5.0;
+    // double speed = 800.0;
+    double speed = 800.0;
 
     struct {
       double dx, dy;

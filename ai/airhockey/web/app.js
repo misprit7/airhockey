@@ -282,6 +282,11 @@ function connect() {
         } else if (msg.type === "physics_mode") {
             document.getElementById("btn-physics").textContent =
                 msg.instant ? "Physics: Instant" : "Physics: Realistic";
+        } else if (msg.type === "hardware_mode") {
+            document.getElementById("btn-hardware").textContent =
+                msg.enabled ? "Hardware: ON" : "Hardware: Off";
+            document.getElementById("btn-hardware").style.backgroundColor =
+                msg.enabled ? "#2a7a3a" : "";
         }
     };
 
@@ -352,6 +357,10 @@ document.getElementById("btn-save").addEventListener("click", () => {
 
 document.getElementById("btn-physics").addEventListener("click", () => {
     if (ws) ws.send(JSON.stringify({ type: "toggle_physics" }));
+});
+
+document.getElementById("btn-hardware").addEventListener("click", () => {
+    if (ws) ws.send(JSON.stringify({ type: "toggle_hardware" }));
 });
 
 // Mode switching

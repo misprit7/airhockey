@@ -20,7 +20,7 @@ void sigHandler(int) { g_stop = 1; }
 //
 // Coordinate system: origin at bottom-left, x-right, y-up.
 
-static const double SPOOL_DIAMETER_MM = 20.5;
+static const double SPOOL_DIAMETER_MM = 41.0;
 static const double SPOOL_CIRCUMFERENCE_MM = M_PI * SPOOL_DIAMETER_MM;  // ~64.4mm
 
 // Encoder counts per revolution by motor type.
