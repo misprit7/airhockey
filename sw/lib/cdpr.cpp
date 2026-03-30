@@ -300,6 +300,14 @@ bool CDPR::commandPosition(double x, double y, double speed_mm_s) {
     double accel_rpm_s = mmPerSecToRPM(cfg_.max_acceleration);
 
     try {
+        // Flush the move buffer: stop motors, clear stop, then send one fresh move.
+        for (int i = 0; i < 4; i++) {
+            port_->Nodes(i).Motion.NodeStop(STOP_TYPE_ABRUPT);
+        }
+        for (int i = 0; i < 4; i++) {
+            port_->Nodes(i).Motion.NodeStopClear();
+        }
+
         for (int i = 0; i < 4; i++) {
             INode &node = port_->Nodes(i);
             double delta_mm = fabs(new_lengths[i] - cur_lengths[i]);
@@ -309,8 +317,7 @@ bool CDPR::commandPosition(double x, double y, double speed_mm_s) {
             setMotionParams(node, vel_rpm, accel_rpm_s);
         }
 
-        // Send absolute moves — safe to call repeatedly.
-        // Each call overwrites the previous target, no accumulation.
+        // Send single absolute move per motor. Buffer is clear so no accumulation.
         for (int i = 0; i < 4; i++) {
             INode &node = port_->Nodes(i);
             node.Motion.MoveWentDone();
