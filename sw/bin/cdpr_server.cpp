@@ -30,35 +30,59 @@ static bool handleCommand(const char *line, CDPR &robot, int client_fd) {
     double x, y, speed, mm;
 
     if (sscanf(line, "MOVE %lf %lf %lf", &x, &y, &speed) == 3) {
-        // Use non-blocking commandPosition for real-time streaming.
-        if (robot.commandPosition(x, y, speed)) {
+        // Blocking move — waits for completion. Use for scripted moves.
+        printf("  MOVE (%.1f, %.1f) @ %.0f mm/s\n", x, y, speed);
+        if (robot.moveTo(x, y, speed)) {
             snprintf(resp, sizeof(resp), "OK %.2f %.2f\n", robot.x(), robot.y());
+            printf("  -> OK\n");
         } else {
             snprintf(resp, sizeof(resp), "ERR moveTo failed\n");
+            printf("  -> ERR\n");
+        }
+    } else if (sscanf(line, "CMD %lf %lf %lf", &x, &y, &speed) == 3) {
+        // Non-blocking command — for real-time streaming (web UI).
+        printf("  CMD (%.1f, %.1f) @ %.0f mm/s\n", x, y, speed);
+        if (robot.commandPosition(x, y, speed)) {
+            snprintf(resp, sizeof(resp), "OK %.2f %.2f\n", robot.x(), robot.y());
+            printf("  -> OK\n");
+        } else {
+            snprintf(resp, sizeof(resp), "ERR commandPosition failed\n");
+            printf("  -> ERR commandPosition\n");
         }
     } else if (strncmp(line, "POS", 3) == 0) {
         snprintf(resp, sizeof(resp), "OK %.2f %.2f\n", robot.x(), robot.y());
+        printf("  POS -> (%.1f, %.1f)\n", robot.x(), robot.y());
     } else if (sscanf(line, "RETRACT %lf %lf", &mm, &speed) == 2) {
+        printf("  RETRACT %.1f mm @ %.0f mm/s\n", mm, speed);
         if (robot.retractAll(mm, speed)) {
             snprintf(resp, sizeof(resp), "OK\n");
+            printf("  -> OK\n");
         } else {
             snprintf(resp, sizeof(resp), "ERR retract failed\n");
+            printf("  -> ERR retract\n");
         }
     } else if (strncmp(line, "DISABLE", 7) == 0) {
+        printf("  DISABLE\n");
         robot.disable();
         snprintf(resp, sizeof(resp), "OK\n");
     } else if (strncmp(line, "ENABLE", 6) == 0) {
+        printf("  ENABLE\n");
         if (robot.enable()) {
             snprintf(resp, sizeof(resp), "OK\n");
+            printf("  -> OK\n");
         } else {
             snprintf(resp, sizeof(resp), "ERR enable failed\n");
+            printf("  -> ERR enable\n");
         }
     } else if (strncmp(line, "SETPOS", 6) == 0) {
         if (sscanf(line, "SETPOS %lf %lf", &x, &y) == 2) {
+            printf("  SETPOS (%.1f, %.1f)\n", x, y);
             robot.setPosition(x, y);
             snprintf(resp, sizeof(resp), "OK %.2f %.2f\n", robot.x(), robot.y());
+            printf("  -> OK\n");
         } else {
             snprintf(resp, sizeof(resp), "ERR bad SETPOS args\n");
+            printf("  -> ERR bad SETPOS args\n");
         }
     } else if (strncmp(line, "QUIT", 4) == 0) {
         return false;

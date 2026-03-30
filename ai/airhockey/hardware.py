@@ -44,12 +44,20 @@ class CDPRClient:
         return data.decode().strip()
 
     def move_to(self, x_mm: float, y_mm: float, speed_mm_s: float) -> tuple[float, float]:
-        """Move cart to absolute position. Returns actual (x, y)."""
+        """Blocking move to absolute position. Waits for completion. Returns (x, y)."""
         resp = self._send(f"MOVE {x_mm:.2f} {y_mm:.2f} {speed_mm_s:.1f}")
         if resp.startswith("OK"):
             parts = resp.split()
             return float(parts[1]), float(parts[2])
         raise RuntimeError(f"CDPR move failed: {resp}")
+
+    def command_position(self, x_mm: float, y_mm: float, speed_mm_s: float) -> tuple[float, float]:
+        """Non-blocking position command for real-time streaming. Returns (x, y)."""
+        resp = self._send(f"CMD {x_mm:.2f} {y_mm:.2f} {speed_mm_s:.1f}")
+        if resp.startswith("OK"):
+            parts = resp.split()
+            return float(parts[1]), float(parts[2])
+        raise RuntimeError(f"CDPR cmd failed: {resp}")
 
     def get_position(self) -> tuple[float, float]:
         """Get current cart position."""

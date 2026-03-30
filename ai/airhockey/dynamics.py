@@ -169,7 +169,7 @@ class HardwareDynamics(MotorDynamics):
     def update(self, target_x: float, target_y: float, dt: float) -> tuple[float, float]:
         mm_x, mm_y = self._sim_to_mm(target_x, target_y)
         try:
-            actual_mm_x, actual_mm_y = self.client.move_to(mm_x, mm_y, self.speed)
+            actual_mm_x, actual_mm_y = self.client.command_position(mm_x, mm_y, self.speed)
             self.x, self.y = self._mm_to_sim(actual_mm_x, actual_mm_y)
         except Exception as e:
             print(f"HardwareDynamics: move failed: {e}")
