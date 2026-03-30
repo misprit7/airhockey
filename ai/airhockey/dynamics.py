@@ -144,7 +144,7 @@ class HardwareDynamics(MotorDynamics):
         cdpr_height_mm: float = 730.0,
         sim_width: float = 1.0,
         sim_height: float = 2.0,
-        speed_mm_s: float = 50.0,
+        speed_mm_s: float = 1.0,
         host: str = "127.0.0.1",
         port: int = 8421,
     ):
@@ -161,10 +161,16 @@ class HardwareDynamics(MotorDynamics):
         self.client.connect()
 
     def reset(self, x: float, y: float) -> None:
-        self.x = x
-        self.y = y
-        mm_x, mm_y = self._sim_to_mm(x, y)
-        self.client.set_position(mm_x, mm_y)
+        # Don't send SETPOS — the C++ server calibrates at center on startup.
+        # Just sync our internal tracking with the server's current position.
+        try:
+            mm_x, mm_y = self.client.get_position()
+            self.x, self.y = self._mm_to_sim(mm_x, mm_y)
+            print(f"  HW reset: server at ({mm_x:.1f}, {mm_y:.1f}) mm = sim ({self.x:.3f}, {self.y:.3f})")
+        except Exception as e:
+            print(f"  HW reset: failed to read position: {e}, using sim coords")
+            self.x = x
+            self.y = y
 
     def update(self, target_x: float, target_y: float, dt: float) -> tuple[float, float]:
         mm_x, mm_y = self._sim_to_mm(target_x, target_y)

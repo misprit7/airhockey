@@ -39,9 +39,10 @@ def main():
     cx = WIDTH_MM / 2.0
     cy = HEIGHT_MM / 2.0
 
-    print(f"Setting position to center ({cx:.1f}, {cy:.1f})...")
-    client.set_position(cx, cy)
-    print("Done.\n")
+    # Don't send SETPOS — the server calibrates at center on startup.
+    # Just read back the current position.
+    pos_x, pos_y = client.get_position()
+    print(f"Server position: ({pos_x:.1f}, {pos_y:.1f}) mm\n")
 
     # Small test moves — 50mm square at 50 mm/s
     step = 50.0
