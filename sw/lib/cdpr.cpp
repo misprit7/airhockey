@@ -285,33 +285,24 @@ bool CDPR::commandPosition(double x, double y, double speed_mm_s) {
 
     // Compute absolute encoder targets from the reference baseline.
     double target_encoder[4];
-    double new_lengths[4], cur_lengths[4];
+    double new_lengths[4];
     cableLengths(x, y, new_lengths);
-    cableLengths(x_, y_, cur_lengths);
 
     for (int i = 0; i < 4; i++) {
         double delta_mm = new_lengths[i] - ref_lengths_[i];
         target_encoder[i] = ref_encoder_[i] + mmToCounts(delta_mm, i);
     }
 
-    double cart_dist = sqrt((x - x_) * (x - x_) + (y - y_) * (y - y_));
-    if (cart_dist < 0.01) {
-        x_ = x;
-        y_ = y;
-        return true;
-    }
-    double duration_s = cart_dist / speed_mm_s;
-    if (duration_s < 0.01) duration_s = 0.01;
-
+    // For streaming, always set velocity to the requested speed.
+    // The motor will move at up to this speed toward the absolute target.
+    // Don't try to coordinate velocities — with immediate move mode,
+    // commands arrive frequently and the motor handles tracking.
+    double vel_rpm = mmPerSecToRPM(speed_mm_s);
     double accel_rpm_s = mmPerSecToRPM(cfg_.max_acceleration);
 
     try {
         for (int i = 0; i < 4; i++) {
             INode &node = port_->Nodes(i);
-            double delta_mm = fabs(new_lengths[i] - cur_lengths[i]);
-            double motor_speed = delta_mm / duration_s;
-            double vel_rpm = mmPerSecToRPM(motor_speed);
-            if (vel_rpm < 0.1) vel_rpm = 0.1;
             setMotionParams(node, vel_rpm, accel_rpm_s);
         }
 

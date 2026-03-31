@@ -144,10 +144,11 @@ class HardwareDynamics(MotorDynamics):
         cdpr_height_mm: float = 730.0,
         sim_width: float = 1.0,
         sim_height: float = 2.0,
-        speed_mm_s: float = 10.0,
+        speed_mm_s: float = 30.0,
         host: str = "127.0.0.1",
         port: int = 8421,
     ):
+        import time as _time
         from airhockey.hardware import CDPRClient
 
         self.cdpr_width = cdpr_width_mm
@@ -159,6 +160,9 @@ class HardwareDynamics(MotorDynamics):
         self.y = 0.0
         self.client = CDPRClient(host, port)
         self.client.connect()
+        self._time = _time
+        self._hw_rate = 5.0  # Hz — how often to send commands to hardware
+        self._last_hw_send = 0.0
 
     def reset(self, x: float, y: float) -> None:
         # Don't send SETPOS — the C++ server calibrates at center on startup.
@@ -174,13 +178,15 @@ class HardwareDynamics(MotorDynamics):
 
     def update(self, target_x: float, target_y: float, dt: float) -> tuple[float, float]:
         mm_x, mm_y = self._sim_to_mm(target_x, target_y)
-        print(f"  HW: sim=({target_x:.3f}, {target_y:.3f}) -> mm=({mm_x:.1f}, {mm_y:.1f})")
-        try:
-            actual_mm_x, actual_mm_y = self.client.command_position(mm_x, mm_y, self.speed)
-            self.x, self.y = self._mm_to_sim(actual_mm_x, actual_mm_y)
-        except Exception as e:
-            print(f"HardwareDynamics: move failed: {e}")
-            # Don't update position on failure — keep last known good position.
+        now = self._time.monotonic()
+        if now - self._last_hw_send >= 1.0 / self._hw_rate:
+            self._last_hw_send = now
+            print(f"  HW: sim=({target_x:.3f}, {target_y:.3f}) -> mm=({mm_x:.1f}, {mm_y:.1f})")
+            try:
+                actual_mm_x, actual_mm_y = self.client.command_position(mm_x, mm_y, self.speed)
+                self.x, self.y = self._mm_to_sim(actual_mm_x, actual_mm_y)
+            except Exception as e:
+                print(f"HardwareDynamics: move failed: {e}")
         return self.x, self.y
 
     def _sim_to_mm(self, sx: float, sy: float) -> tuple[float, float]:
