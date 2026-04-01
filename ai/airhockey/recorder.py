@@ -44,7 +44,12 @@ class Recorder:
             return self._current
         return self._episodes[index]
 
-    def save(self, path: str | Path, episode_index: int = -1) -> None:
+    def save(
+        self,
+        path: str | Path,
+        episode_index: int = -1,
+        metadata: dict | None = None,
+    ) -> None:
         episode = self.get_episode(episode_index)
         if not episode:
             return
@@ -57,6 +62,8 @@ class Recorder:
                 v = d[f]
                 columns[f].append(round(float(v), 4) if isinstance(v, float) else v)
         data = {"fields": fields, "columns": columns}
+        if metadata:
+            data["metadata"] = metadata
         Path(path).write_text(json.dumps(data, separators=(",", ":"), default=lambda x: round(float(x), 4)))
 
     @staticmethod

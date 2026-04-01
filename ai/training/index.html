@@ -1,0 +1,1498 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+<meta charset="UTF-8">
+<meta name="viewport" content="width=device-width, initial-scale=1.0">
+<title>Air Hockey RL - Training Documentation</title>
+<style>
+:root {
+  --bg: #1a1a2e;
+  --bg2: #16213e;
+  --bg3: #0f3460;
+  --surface: #1e2a4a;
+  --surface2: #253458;
+  --border: #2a3a5c;
+  --text: #e0e0e0;
+  --text2: #a0a8c0;
+  --accent: #00d4ff;
+  --accent2: #7c3aed;
+  --green: #22c55e;
+  --red: #ef4444;
+  --orange: #f59e0b;
+  --pink: #ec4899;
+  --font: 'Segoe UI', system-ui, -apple-system, sans-serif;
+  --mono: 'Cascadia Code', 'Fira Code', 'JetBrains Mono', monospace;
+}
+
+* { margin: 0; padding: 0; box-sizing: border-box; }
+
+body {
+  background: var(--bg);
+  color: var(--text);
+  font-family: var(--font);
+  line-height: 1.7;
+  overflow-x: hidden;
+}
+
+/* ── Scrollbar ── */
+::-webkit-scrollbar { width: 8px; }
+::-webkit-scrollbar-track { background: var(--bg); }
+::-webkit-scrollbar-thumb { background: var(--border); border-radius: 4px; }
+::-webkit-scrollbar-thumb:hover { background: var(--accent); }
+
+/* ── Navigation ── */
+nav {
+  position: fixed; top: 0; left: 0; right: 0; z-index: 100;
+  background: rgba(26, 26, 46, 0.95);
+  backdrop-filter: blur(12px);
+  border-bottom: 1px solid var(--border);
+  padding: 0 2rem;
+  display: flex; align-items: center; height: 56px;
+}
+nav .logo {
+  font-size: 1.1rem; font-weight: 700;
+  color: var(--accent);
+  margin-right: 2rem;
+  letter-spacing: -0.02em;
+}
+nav .logo span { color: var(--text2); font-weight: 400; }
+nav a {
+  color: var(--text2); text-decoration: none;
+  padding: 0.4rem 0.8rem; font-size: 0.85rem;
+  border-radius: 6px; transition: all 0.2s;
+}
+nav a:hover, nav a.active { color: var(--accent); background: rgba(0,212,255,0.08); }
+
+/* ── Layout ── */
+main { max-width: 1100px; margin: 0 auto; padding: 80px 2rem 4rem; }
+
+section {
+  margin-bottom: 4rem;
+  scroll-margin-top: 72px;
+}
+
+h1 {
+  font-size: 2.4rem; font-weight: 800;
+  background: linear-gradient(135deg, var(--accent), var(--accent2));
+  -webkit-background-clip: text; -webkit-text-fill-color: transparent;
+  margin-bottom: 0.5rem;
+}
+h2 {
+  font-size: 1.6rem; font-weight: 700; color: var(--text);
+  margin-bottom: 1rem; padding-bottom: 0.5rem;
+  border-bottom: 2px solid var(--border);
+}
+h3 { font-size: 1.1rem; color: var(--accent); margin-bottom: 0.5rem; }
+p { color: var(--text2); margin-bottom: 1rem; }
+strong { color: var(--text); }
+
+/* ── Cards ── */
+.card {
+  background: var(--surface);
+  border: 1px solid var(--border);
+  border-radius: 12px;
+  padding: 1.5rem;
+  margin-bottom: 1rem;
+  transition: border-color 0.2s;
+}
+.card:hover { border-color: var(--accent); }
+
+.grid-2 { display: grid; grid-template-columns: 1fr 1fr; gap: 1rem; }
+.grid-3 { display: grid; grid-template-columns: repeat(3, 1fr); gap: 1rem; }
+@media (max-width: 768px) { .grid-2, .grid-3 { grid-template-columns: 1fr; } }
+
+/* ── Pipeline Diagram ── */
+.pipeline {
+  display: flex; align-items: center; gap: 0;
+  padding: 1.5rem; overflow-x: auto;
+  background: var(--surface);
+  border-radius: 12px; border: 1px solid var(--border);
+  margin-bottom: 1.5rem;
+}
+.pipeline-step {
+  display: flex; flex-direction: column; align-items: center;
+  min-width: 120px; padding: 0.8rem;
+  border-radius: 10px; text-align: center;
+  transition: transform 0.2s;
+}
+.pipeline-step:hover { transform: translateY(-2px); }
+.pipeline-step .icon { font-size: 1.8rem; margin-bottom: 0.3rem; }
+.pipeline-step .label { font-size: 0.8rem; font-weight: 600; color: var(--text); }
+.pipeline-step .sub { font-size: 0.7rem; color: var(--text2); }
+.pipeline-arrow {
+  color: var(--accent); font-size: 1.2rem; min-width: 30px;
+  text-align: center; opacity: 0.5;
+}
+
+/* ── Curriculum Stages ── */
+.stage-tabs {
+  display: flex; gap: 0.5rem; margin-bottom: 1rem; flex-wrap: wrap;
+}
+.stage-tab {
+  padding: 0.5rem 1rem; border-radius: 8px;
+  background: var(--surface); border: 1px solid var(--border);
+  color: var(--text2); cursor: pointer;
+  font-size: 0.85rem; font-weight: 600;
+  transition: all 0.2s;
+}
+.stage-tab:hover { border-color: var(--accent); color: var(--text); }
+.stage-tab.active {
+  background: rgba(0,212,255,0.12);
+  border-color: var(--accent);
+  color: var(--accent);
+}
+
+.stage-detail {
+  display: none;
+  animation: fadeIn 0.3s;
+}
+.stage-detail.active { display: block; }
+@keyframes fadeIn { from { opacity: 0; transform: translateY(8px); } to { opacity: 1; transform: none; } }
+
+.stage-header {
+  display: flex; align-items: center; gap: 1rem; margin-bottom: 1rem;
+}
+.stage-number {
+  width: 48px; height: 48px; border-radius: 12px;
+  display: flex; align-items: center; justify-content: center;
+  font-size: 1.4rem; font-weight: 800;
+  background: linear-gradient(135deg, var(--accent), var(--accent2));
+  color: white;
+}
+
+/* ── Reward Table ── */
+.reward-table {
+  width: 100%; border-collapse: collapse;
+  font-size: 0.85rem; margin: 1rem 0;
+}
+.reward-table th {
+  background: var(--bg3); color: var(--accent);
+  padding: 0.6rem 0.8rem; text-align: left;
+  font-weight: 600; border-bottom: 2px solid var(--border);
+}
+.reward-table td {
+  padding: 0.5rem 0.8rem; border-bottom: 1px solid var(--border);
+  color: var(--text2);
+}
+.reward-table tr:hover td { background: rgba(0,212,255,0.04); }
+.reward-table .active-cell { color: var(--green); font-weight: 600; }
+.reward-table .inactive-cell { color: #555; }
+
+/* ── Court Diagram (SVG) ── */
+.court-container {
+  display: flex; justify-content: center; margin: 1rem 0;
+}
+
+/* ── Code blocks ── */
+code {
+  background: var(--bg2); color: var(--accent);
+  padding: 0.15rem 0.4rem; border-radius: 4px;
+  font-family: var(--mono); font-size: 0.85em;
+}
+pre {
+  background: var(--bg2); border: 1px solid var(--border);
+  border-radius: 8px; padding: 1rem; overflow-x: auto;
+  font-family: var(--mono); font-size: 0.82rem;
+  color: var(--text2); margin: 1rem 0;
+  line-height: 1.5;
+}
+
+/* ── Tags / badges ── */
+.badge {
+  display: inline-block;
+  padding: 0.15rem 0.5rem;
+  border-radius: 4px;
+  font-size: 0.75rem;
+  font-weight: 600;
+}
+.badge-green { background: rgba(34,197,94,0.15); color: var(--green); }
+.badge-orange { background: rgba(245,158,11,0.15); color: var(--orange); }
+.badge-red { background: rgba(239,68,68,0.15); color: var(--red); }
+.badge-blue { background: rgba(0,212,255,0.15); color: var(--accent); }
+.badge-purple { background: rgba(124,58,237,0.15); color: var(--accent2); }
+
+/* ── Timeline / Speedup ── */
+.speed-bar {
+  display: flex; align-items: center; gap: 0.8rem; margin: 0.5rem 0;
+}
+.speed-bar .label { min-width: 180px; font-size: 0.85rem; color: var(--text2); }
+.speed-bar .bar {
+  height: 28px; border-radius: 6px;
+  background: linear-gradient(90deg, var(--accent2), var(--accent));
+  display: flex; align-items: center; justify-content: flex-end;
+  padding-right: 0.6rem;
+  font-size: 0.8rem; font-weight: 700; color: white;
+  transition: width 0.8s ease;
+}
+
+/* ── Frame Stack Slider ── */
+.frame-slider {
+  display: flex; flex-direction: column; align-items: center; gap: 1rem;
+}
+.frame-slider input[type="range"] {
+  width: 100%; accent-color: var(--accent);
+}
+.frame-display {
+  display: flex; gap: 0.5rem; justify-content: center; flex-wrap: wrap;
+}
+.frame-box {
+  width: 100px; padding: 0.5rem;
+  background: var(--surface); border: 2px solid var(--border);
+  border-radius: 8px; text-align: center;
+  font-family: var(--mono); font-size: 0.7rem;
+  color: var(--text2); transition: all 0.3s;
+}
+.frame-box.current { border-color: var(--accent); color: var(--accent); }
+.frame-box.stacked { border-color: var(--accent2); opacity: 0.7; }
+
+/* ── MPPI Animation ── */
+.mppi-canvas {
+  width: 100%; height: 300px;
+  background: var(--surface);
+  border: 1px solid var(--border);
+  border-radius: 12px;
+}
+
+/* ── Reward Calculator ── */
+.calc-grid {
+  display: grid; grid-template-columns: 1fr 1fr; gap: 1rem;
+}
+.calc-input label {
+  display: block; font-size: 0.8rem; color: var(--text2); margin-bottom: 0.2rem;
+}
+.calc-input input {
+  width: 100%; padding: 0.4rem 0.6rem;
+  background: var(--bg2); border: 1px solid var(--border);
+  border-radius: 6px; color: var(--text);
+  font-family: var(--mono); font-size: 0.85rem;
+}
+.calc-input input:focus { outline: none; border-color: var(--accent); }
+.calc-result {
+  margin-top: 1rem; padding: 1rem;
+  background: var(--bg2); border-radius: 8px;
+  border: 1px solid var(--border);
+}
+.calc-result .row {
+  display: flex; justify-content: space-between;
+  padding: 0.3rem 0; font-size: 0.85rem;
+}
+.calc-result .row .val { font-family: var(--mono); color: var(--accent); }
+.calc-result .total {
+  border-top: 2px solid var(--border);
+  padding-top: 0.5rem; margin-top: 0.5rem;
+  font-weight: 700; font-size: 1rem;
+}
+
+/* ── Elo Chart ── */
+.elo-bar-chart {
+  display: flex; align-items: flex-end; gap: 4px;
+  height: 120px; padding: 0.5rem;
+  background: var(--surface); border-radius: 8px;
+  border: 1px solid var(--border);
+}
+.elo-bar {
+  flex: 1; border-radius: 4px 4px 0 0;
+  background: linear-gradient(to top, var(--accent2), var(--accent));
+  min-width: 20px; position: relative;
+  transition: height 0.5s;
+}
+.elo-bar .elo-label {
+  position: absolute; top: -18px; left: 50%; transform: translateX(-50%);
+  font-size: 0.65rem; color: var(--text2); white-space: nowrap;
+}
+
+/* ── Stat boxes ── */
+.stat-row { display: flex; gap: 1rem; margin: 1rem 0; flex-wrap: wrap; }
+.stat-box {
+  flex: 1; min-width: 140px;
+  padding: 1rem; background: var(--surface);
+  border: 1px solid var(--border); border-radius: 10px;
+  text-align: center;
+}
+.stat-box .num {
+  font-size: 1.8rem; font-weight: 800;
+  color: var(--accent);
+}
+.stat-box .desc {
+  font-size: 0.78rem; color: var(--text2); margin-top: 0.2rem;
+}
+</style>
+</head>
+<body>
+
+<nav>
+  <div class="logo">AirHockey<span>RL</span></div>
+  <a href="#overview">Overview</a>
+  <a href="#curriculum">Curriculum</a>
+  <a href="#architecture">Architecture</a>
+  <a href="#speed">Speed</a>
+  <a href="#observations">Observations</a>
+  <a href="#selfplay">Self-Play</a>
+  <a href="#sim2real">Sim-to-Real</a>
+  <a href="#lessons">Lessons</a>
+  <a href="#calculator">Calculator</a>
+</nav>
+
+<main>
+
+<!-- ══════════════════════════════════════════════════════════════════════ -->
+<!-- OVERVIEW -->
+<!-- ══════════════════════════════════════════════════════════════════════ -->
+<section id="overview">
+  <h1>Air Hockey RL Training System</h1>
+  <p>Training a robotic air hockey agent in simulation using <strong>TD-MPC2</strong> (model-based RL with learned world model + MPPI planning), then transferring to a physical cable-driven parallel robot. Supports both <strong>curriculum training</strong> (4 stages) and <strong>simple mode</strong> (<code>--simple</code>) for continuous training against an idle opponent.</p>
+
+  <div class="stat-row">
+    <div class="stat-box"><div class="num">4</div><div class="desc">Curriculum Stages</div></div>
+    <div class="stat-box"><div class="num">64</div><div class="desc">Parallel Envs</div></div>
+    <div class="stat-box"><div class="num">5M</div><div class="desc">Model Params</div></div>
+    <div class="stat-box"><div class="num">185</div><div class="desc">FPS (baseline)</div></div>
+  </div>
+
+  <h3>Full Pipeline</h3>
+  <div class="pipeline">
+    <div class="pipeline-step" style="background: rgba(0,212,255,0.08);">
+      <div class="icon">&#9881;</div>
+      <div class="label">System ID</div>
+      <div class="sub">Motor dynamics</div>
+    </div>
+    <div class="pipeline-arrow">&#8594;</div>
+    <div class="pipeline-step" style="background: rgba(124,58,237,0.08);">
+      <div class="icon">&#127918;</div>
+      <div class="label">Sim Training</div>
+      <div class="sub">TD-MPC2 + curriculum</div>
+    </div>
+    <div class="pipeline-arrow">&#8594;</div>
+    <div class="pipeline-step" style="background: rgba(34,197,94,0.08);">
+      <div class="icon">&#127919;</div>
+      <div class="label">Self-Play</div>
+      <div class="sub">Elo-based pool</div>
+    </div>
+    <div class="pipeline-arrow">&#8594;</div>
+    <div class="pipeline-step" style="background: rgba(245,158,11,0.08);">
+      <div class="icon">&#128295;</div>
+      <div class="label">Domain Rand</div>
+      <div class="sub">Friction, delay, etc.</div>
+    </div>
+    <div class="pipeline-arrow">&#8594;</div>
+    <div class="pipeline-step" style="background: rgba(239,68,68,0.08);">
+      <div class="icon">&#129302;</div>
+      <div class="label">Real Robot</div>
+      <div class="sub">CDPR + ClearPath</div>
+    </div>
+  </div>
+
+  <div class="grid-2">
+    <div class="card">
+      <h3>Why TD-MPC2?</h3>
+      <p>Model-based RL learns a <strong>world model</strong> (dynamics + reward predictor) and uses <strong>MPPI planning</strong> at inference. This gives better sample efficiency than model-free methods (SAC/PPO) and natural multi-step lookahead for trajectory planning.</p>
+    </div>
+    <div class="card">
+      <h3>Why Curriculum?</h3>
+      <p>Air hockey is hard: sparse goals, continuous control, fast dynamics. A <strong>4-stage curriculum</strong> progressively introduces reward complexity and opponent difficulty, ensuring the agent builds foundational skills before facing competitive play.</p>
+    </div>
+  </div>
+</section>
+
+<!-- ══════════════════════════════════════════════════════════════════════ -->
+<!-- 4-STAGE CURRICULUM -->
+<!-- ══════════════════════════════════════════════════════════════════════ -->
+<section id="curriculum">
+  <h2>4-Stage Curriculum</h2>
+  <p>Each stage builds on the previous, adding reward components and increasing opponent difficulty. Stages auto-advance when a <strong>reward plateau</strong> is detected. Episode lengths grow with stage complexity. Key design choices: no proximity reward (in curriculum), <strong>forward-only</strong> contact rewards (puck must move toward opponent), shaping decays to 0 in last 40%, goal penalty ramps 0&rarr;full over first 30%, contact cap 5/ep, goals +160/-20 (game) / +130/-20 (self-play), <strong>no entropy bonus</strong> in any stage. Alternatively, use <code>--simple</code> mode for flat training against an idle opponent.</p>
+
+  <div class="stage-tabs">
+    <div class="stage-tab active" onclick="showStage(1)">1. Chase + Hit</div>
+    <div class="stage-tab" onclick="showStage(2)">2. Goalie</div>
+    <div class="stage-tab" onclick="showStage(3)">3. Follower</div>
+    <div class="stage-tab" onclick="showStage(4)">4. Self-Play</div>
+  </div>
+
+  <!-- Stage 1: Chase + Hit -->
+  <div class="stage-detail active" id="stage-1">
+    <div class="card">
+      <div class="stage-header">
+        <div class="stage-number">1</div>
+        <div>
+          <h3 style="margin:0">CHASE + HIT <span class="badge badge-green">vs Idle</span></h3>
+          <p style="margin:0;font-size:0.85rem">Learn to chase and hit the puck forward &mdash; 600 steps/episode</p>
+        </div>
+      </div>
+      <p>The agent learns two foundational skills simultaneously: <strong>move toward the puck</strong> and <strong>hit it forward</strong>. The opponent stands still. No proximity reward &mdash; only <strong>contact</strong> and <strong>directed hit</strong> bonuses for actually making and directing contact. Contact detection uses relaxed thresholds (<code>dist &lt; 0.25</code>, <code>speed_change &gt; 0.2</code>) and only rewards <strong>forward hits</strong> (puck_vy &gt; 0). Contact rewards are capped at <strong>5 per episode</strong> to prevent farming.</p>
+      <div class="grid-2">
+        <div>
+          <h3>Active Rewards</h3>
+          <table class="reward-table">
+            <tr><td>Proximity</td><td class="inactive-cell">off</td></tr>
+            <tr><td>Contact</td><td class="active-cell">+3.0 (max 5/ep)</td></tr>
+            <tr><td>Directed Hit</td><td class="active-cell">2.0 &times; vy</td></tr>
+            <tr><td>Goals</td><td class="inactive-cell">off</td></tr>
+            <tr><td>Entropy</td><td class="inactive-cell">off</td></tr>
+          </table>
+          <p style="font-size:0.8rem;margin-top:0.5rem">Expected reward: <strong>5&ndash;25 per episode</strong>. Short 600-step episodes let the agent get many repetitions quickly.</p>
+        </div>
+        <div>
+          <div class="court-container">
+            <svg width="180" height="280" viewBox="0 0 180 280" style="border-radius:8px">
+              <rect width="180" height="280" fill="#0a1628" rx="8"/>
+              <line x1="0" y1="140" x2="180" y2="140" stroke="#2a3a5c" stroke-width="1" stroke-dasharray="4"/>
+              <rect x="60" y="0" width="60" height="4" fill="#ef4444" rx="2"/>
+              <rect x="60" y="276" width="60" height="4" fill="#22c55e" rx="2"/>
+              <!-- Puck moving up -->
+              <circle cx="85" cy="120" r="8" fill="#f59e0b" opacity="0.9"/>
+              <line x1="85" y1="120" x2="85" y2="80" stroke="#f59e0b" stroke-width="2" marker-end="url(#arrow-y)"/>
+              <!-- Agent near puck -->
+              <circle cx="80" cy="135" r="10" fill="#00d4ff" opacity="0.9"/>
+              <text x="80" y="135" text-anchor="middle" dominant-baseline="central" font-size="7" fill="#1a1a2e" font-weight="800">A</text>
+              <!-- Contact flash -->
+              <circle cx="83" cy="128" r="15" fill="none" stroke="#22c55e" stroke-width="2" opacity="0.6">
+                <animate attributeName="r" values="8;18;8" dur="1.5s" repeatCount="indefinite"/>
+                <animate attributeName="opacity" values="0.6;0;0.6" dur="1.5s" repeatCount="indefinite"/>
+              </circle>
+              <!-- Dotted line: agent to puck -->
+              <line x1="80" y1="145" x2="85" y2="128" stroke="#00d4ff" stroke-width="1" stroke-dasharray="4" opacity="0.4"/>
+              <!-- Idle opponent -->
+              <circle cx="90" cy="40" r="10" fill="#555" opacity="0.5"/>
+              <text x="90" y="40" text-anchor="middle" dominant-baseline="central" font-size="6" fill="#999">idle</text>
+              <text x="10" y="272" font-size="7" fill="#a0a8c0">LR: 3e-4 | 600 steps</text>
+            </svg>
+          </div>
+        </div>
+      </div>
+    </div>
+  </div>
+
+  <!-- Stage 2: Game vs Goalie -->
+  <div class="stage-detail" id="stage-2">
+    <div class="card">
+      <div class="stage-header">
+        <div class="stage-number">2</div>
+        <div>
+          <h3 style="margin:0">GAME vs GOALIE <span class="badge badge-orange">vs Goalie</span></h3>
+          <p style="margin:0;font-size:0.85rem">Score past a blocking opponent &mdash; 1200 steps/episode</p>
+        </div>
+      </div>
+      <p>Full reward suite activated with <strong>reduced shaping weights</strong>. The opponent <strong>guards the goal center</strong>. The agent must learn to aim shots <strong>around the blocker</strong>. Shaping rewards <strong>decay linearly to 0</strong> in the last 40% of the stage. <strong>Penalty ramp:</strong> goal_penalty linearly ramps from 0 to full over the first 30% of the stage, letting the agent learn to score before learning to fear conceding. Contact rewards are <strong>capped at 5 per episode</strong>.</p>
+      <div class="grid-2">
+        <div>
+          <h3>Active Rewards</h3>
+          <table class="reward-table">
+            <tr><td>Proximity</td><td class="inactive-cell">off</td></tr>
+            <tr><td>Contact</td><td class="active-cell">+0.1 (max 5/ep)</td></tr>
+            <tr><td>Directed Hit</td><td class="active-cell">0.1 &times; vy</td></tr>
+            <tr><td>Puck Progress</td><td class="active-cell">0.1 &times; &Delta;y</td></tr>
+            <tr><td>Defense</td><td class="active-cell">0.1 &times; align</td></tr>
+            <tr><td>Shot Placement</td><td class="active-cell">0.2 &times; cos(&theta;)</td></tr>
+            <tr><td>Goal Scored</td><td class="active-cell" style="color:var(--green)">+160</td></tr>
+            <tr><td>Goal Conceded</td><td class="active-cell" style="color:var(--red)">-20 (ramped)</td></tr>
+            <tr><td>Entropy</td><td class="inactive-cell">off</td></tr>
+          </table>
+          <p style="font-size:0.8rem;margin-top:0.5rem">Shaping weights annealed to 0 in last 40% &mdash; goal rewards dominate by end of stage. Goal penalty ramps 0&rarr;-20 over first 30%. Must average <strong>1+ goals/ep</strong> before advancing.</p>
+        </div>
+        <div>
+          <div class="court-container">
+            <svg width="180" height="280" viewBox="0 0 180 280" style="border-radius:8px">
+              <rect width="180" height="280" fill="#0a1628" rx="8"/>
+              <line x1="0" y1="140" x2="180" y2="140" stroke="#2a3a5c" stroke-width="1" stroke-dasharray="4"/>
+              <rect x="60" y="0" width="60" height="4" fill="#ef4444" rx="2"/>
+              <rect x="60" y="276" width="60" height="4" fill="#22c55e" rx="2"/>
+              <!-- Puck -->
+              <circle cx="70" cy="100" r="8" fill="#f59e0b"/>
+              <!-- Agent -->
+              <circle cx="80" cy="200" r="10" fill="#00d4ff"/>
+              <text x="80" y="200" text-anchor="middle" dominant-baseline="central" font-size="7" fill="#1a1a2e" font-weight="800">A</text>
+              <!-- Goalie opponent -->
+              <circle cx="90" cy="15" r="10" fill="#ef4444" opacity="0.7"/>
+              <text x="90" y="15" text-anchor="middle" dominant-baseline="central" font-size="6" fill="white">G</text>
+              <!-- Goalie patrol line -->
+              <line x1="60" y1="15" x2="120" y2="15" stroke="#ef4444" stroke-width="1" stroke-dasharray="3" opacity="0.4"/>
+              <text x="10" y="272" font-size="7" fill="#a0a8c0">LR: 2e-4 | 1200 steps</text>
+            </svg>
+          </div>
+        </div>
+      </div>
+    </div>
+  </div>
+
+  <!-- Stage 3: Game vs Follower -->
+  <div class="stage-detail" id="stage-3">
+    <div class="card">
+      <div class="stage-header">
+        <div class="stage-number">3</div>
+        <div>
+          <h3 style="margin:0">GAME vs FOLLOWER <span class="badge badge-red">vs Follower</span></h3>
+          <p style="margin:0;font-size:0.85rem">Score against a reactive opponent &mdash; 1800 steps/episode</p>
+        </div>
+      </div>
+      <p>The opponent now <strong>actively tracks the puck</strong>, making defense and counter-play essential. Longer episodes (1800 steps) allow full rallies to develop. Contact and directed hit bonuses are <strong>dropped</strong> in this stage &mdash; only puck progress, defense, shot placement, and goals remain. Same penalty ramp as Stage 2. No entropy bonus.</p>
+      <div class="grid-2">
+        <div>
+          <h3>Active Rewards</h3>
+          <table class="reward-table">
+            <tr><td>Contact</td><td class="inactive-cell">off</td></tr>
+            <tr><td>Directed Hit</td><td class="inactive-cell">off</td></tr>
+            <tr><td>Puck Progress</td><td class="active-cell">0.1 &times; &Delta;y</td></tr>
+            <tr><td>Defense</td><td class="active-cell">0.1 &times; align</td></tr>
+            <tr><td>Shot Placement</td><td class="active-cell">0.2 &times; cos(&theta;)</td></tr>
+            <tr><td>Goal Scored</td><td class="active-cell" style="color:var(--green)">+160</td></tr>
+            <tr><td>Goal Conceded</td><td class="active-cell" style="color:var(--red)">-20 (ramped)</td></tr>
+            <tr><td>Entropy</td><td class="inactive-cell">off</td></tr>
+          </table>
+          <p><strong>Key skill:</strong> Reading opponent position and exploiting gaps.</p>
+        </div>
+        <div>
+          <div class="court-container">
+            <svg width="180" height="280" viewBox="0 0 180 280" style="border-radius:8px">
+              <rect width="180" height="280" fill="#0a1628" rx="8"/>
+              <line x1="0" y1="140" x2="180" y2="140" stroke="#2a3a5c" stroke-width="1" stroke-dasharray="4"/>
+              <rect x="60" y="0" width="60" height="4" fill="#ef4444" rx="2"/>
+              <rect x="60" y="276" width="60" height="4" fill="#22c55e" rx="2"/>
+              <!-- Puck -->
+              <circle cx="60" cy="110" r="8" fill="#f59e0b"/>
+              <!-- Agent -->
+              <circle cx="100" cy="180" r="10" fill="#00d4ff"/>
+              <text x="100" y="180" text-anchor="middle" dominant-baseline="central" font-size="7" fill="#1a1a2e" font-weight="800">A</text>
+              <!-- Follower opponent (tracking puck) -->
+              <circle cx="65" cy="35" r="10" fill="#ef4444" opacity="0.7"/>
+              <text x="65" y="35" text-anchor="middle" dominant-baseline="central" font-size="6" fill="white">F</text>
+              <!-- Tracking line -->
+              <line x1="65" y1="45" x2="60" y2="102" stroke="#ef4444" stroke-width="1" stroke-dasharray="3" opacity="0.3"/>
+              <text x="10" y="272" font-size="7" fill="#a0a8c0">LR: 1e-4 | 1800 | h=5</text>
+            </svg>
+          </div>
+        </div>
+      </div>
+    </div>
+  </div>
+
+  <!-- Stage 4: Self-Play -->
+  <div class="stage-detail" id="stage-4">
+    <div class="card">
+      <div class="stage-header">
+        <div class="stage-number">4</div>
+        <div>
+          <h3 style="margin:0">SELF-PLAY <span class="badge badge-purple">vs Opponent Pool</span></h3>
+          <p style="margin:0;font-size:0.85rem">Pure competitive refinement &mdash; 1800 steps/episode</p>
+        </div>
+      </div>
+      <p>All auxiliary rewards are <strong>dropped</strong>. Only <strong>goal rewards</strong> remain &mdash; no entropy bonus. The agent plays against an <strong>Elo-rated pool</strong> of its own past selves. <strong>30% of episodes start with non-zero scores</strong> (score handicaps) to improve robustness. Goal reward is slightly reduced from game stages to balance the harder opponent.</p>
+      <div class="grid-2">
+        <div>
+          <h3>Active Rewards</h3>
+          <table class="reward-table">
+            <tr><td>Proximity</td><td class="inactive-cell">off</td></tr>
+            <tr><td>Contact</td><td class="inactive-cell">off</td></tr>
+            <tr><td>Defense</td><td class="inactive-cell">off</td></tr>
+            <tr><td>Progress</td><td class="inactive-cell">off</td></tr>
+            <tr><td>Placement</td><td class="inactive-cell">off</td></tr>
+            <tr><td>Goal Scored</td><td class="active-cell" style="color:var(--green)">+130</td></tr>
+            <tr><td>Goal Conceded</td><td class="active-cell" style="color:var(--red)">-20</td></tr>
+            <tr><td>Entropy</td><td class="inactive-cell">off</td></tr>
+          </table>
+          <p style="font-size:0.8rem;margin-top:0.5rem">Reduced goal reward (+130 vs +160) vs game stages. No shaping, no entropy &mdash; the agent must rely purely on scoring ability. <strong>Score handicaps</strong> (30% of episodes) test resilience when behind or ahead.</p>
+        </div>
+        <div>
+          <div class="court-container">
+            <svg width="180" height="280" viewBox="0 0 180 280" style="border-radius:8px">
+              <rect width="180" height="280" fill="#0a1628" rx="8"/>
+              <line x1="0" y1="140" x2="180" y2="140" stroke="#2a3a5c" stroke-width="1" stroke-dasharray="4"/>
+              <rect x="60" y="0" width="60" height="4" fill="#ef4444" rx="2"/>
+              <rect x="60" y="276" width="60" height="4" fill="#22c55e" rx="2"/>
+              <!-- Puck -->
+              <circle cx="90" cy="140" r="8" fill="#f59e0b"/>
+              <!-- Agent -->
+              <circle cx="50" cy="210" r="10" fill="#00d4ff"/>
+              <text x="50" y="210" text-anchor="middle" dominant-baseline="central" font-size="7" fill="#1a1a2e" font-weight="800">A</text>
+              <!-- Self-play opponent -->
+              <circle cx="130" cy="50" r="10" fill="#7c3aed" opacity="0.8"/>
+              <text x="130" y="50" text-anchor="middle" dominant-baseline="central" font-size="6" fill="white">SP</text>
+              <!-- Elo badge -->
+              <text x="115" y="72" font-size="6" fill="#7c3aed" opacity="0.7">Elo: 1200</text>
+              <text x="10" y="272" font-size="7" fill="#a0a8c0">LR: 1e-4 | 1800 | h=5</text>
+            </svg>
+          </div>
+        </div>
+      </div>
+    </div>
+  </div>
+
+  <!-- Simple Mode -->
+  <div class="card" style="margin-top:1rem">
+    <h3>Simple Mode (<code>--simple</code>) <span class="badge badge-green">Baseline</span></h3>
+    <p>Continuous training against an <strong>idle opponent</strong> with no curriculum or stage advancement. Uses the original reward weights from Session 2 for maximum simplicity. Confirmed baseline: <strong>v15 scores 8-1 at 350k steps</strong> at 185 FPS, matching original results.</p>
+    <table class="reward-table">
+      <tr><th>Component</th><th>Weight</th></tr>
+      <tr><td>Proximity</td><td class="active-cell">0.1 &times; exp(-3&times;dist)</td></tr>
+      <tr><td>Contact</td><td class="active-cell">+5.0</td></tr>
+      <tr><td>Directed Hit</td><td class="active-cell">2.0 &times; vy</td></tr>
+      <tr><td>Puck Progress</td><td class="active-cell">3.0 &times; &Delta;y</td></tr>
+      <tr><td>Goal Scored</td><td class="active-cell" style="color:var(--green)">+100</td></tr>
+      <tr><td>Goal Conceded</td><td class="active-cell" style="color:var(--red)">-5</td></tr>
+      <tr><td>Entropy</td><td class="inactive-cell">0</td></tr>
+    </table>
+    <pre>python bin/train_tdmpc2_fast.py --simple --steps 500000</pre>
+  </div>
+
+  <!-- Plateau Detection -->
+  <div class="card" style="margin-top:1rem">
+    <h3>Plateau Detection &amp; Stage Advancement</h3>
+    <p>Stages auto-advance when the <strong>PlateauDetector</strong> identifies a reward plateau. It compares recent episodes against a per-stage lookback window: <strong>S1: 5, S2: 8, S3: 10, S4: 15</strong> episodes (longer stages get more lookback). If improvement is below 5%, the agent is ready for the next stage.</p>
+    <pre>if (recent_avg - older_avg) / |older_avg| < threshold (0.05)
+   AND steps >= 150,000
+   AND (stage == 1 OR avg_goals >= 1.0):
+    advance to next stage
+    save checkpoint, reset LR, switch opponent</pre>
+    <p>Minimum <code>150,000</code> steps per stage prevents premature advancement. <strong>Episode staggering</strong>: parallel envs have different episode lengths (randomized &plusmn;10%) so episodes end at different times, producing smooth TensorBoard curves instead of periodic spikes.</p>
+  </div>
+
+  <!-- Per-Stage LR Schedule -->
+  <div class="card" style="margin-top:1rem">
+    <h3>Per-Stage Learning Rate Schedule</h3>
+    <p>Each stage starts at a stage-specific LR and decays via <strong>cosine annealing</strong> to LR/5 over ~450k estimated steps. On stage transition, the LR resets to the new stage's initial value. The shallower decay (LR/5 vs LR/10) prevents the LR from dropping too low before plateau detection triggers advancement.</p>
+    <div style="padding:1rem 0">
+      <svg width="100%" height="180" viewBox="0 0 700 180" preserveAspectRatio="xMidYMid meet">
+        <!-- Grid -->
+        <line x1="60" y1="20" x2="60" y2="150" stroke="#2a3a5c" stroke-width="1"/>
+        <line x1="60" y1="150" x2="680" y2="150" stroke="#2a3a5c" stroke-width="1"/>
+        <!-- Y axis labels -->
+        <text x="55" y="28" text-anchor="end" fill="#a0a8c0" font-size="9">3e-4</text>
+        <text x="55" y="55" text-anchor="end" fill="#a0a8c0" font-size="9">2e-4</text>
+        <text x="55" y="95" text-anchor="end" fill="#a0a8c0" font-size="9">1e-4</text>
+        <text x="55" y="140" text-anchor="end" fill="#a0a8c0" font-size="9">2e-5</text>
+        <!-- Grid lines -->
+        <line x1="60" y1="25" x2="680" y2="25" stroke="#2a3a5c" stroke-width="0.5" stroke-dasharray="3"/>
+        <line x1="60" y1="52" x2="680" y2="52" stroke="#2a3a5c" stroke-width="0.5" stroke-dasharray="3"/>
+        <line x1="60" y1="92" x2="680" y2="92" stroke="#2a3a5c" stroke-width="0.5" stroke-dasharray="3"/>
+        <!-- S1: 3e-4 cosine decay to 6e-5 (LR/5) -->
+        <path d="M60,25 Q120,28 160,42 Q195,56 230,65 Q255,72 280,76" fill="none" stroke="#00d4ff" stroke-width="2.5"/>
+        <!-- S2: 2e-4 reset, cosine to 4e-5 (Goalie) -->
+        <line x1="280" y1="76" x2="280" y2="52" stroke="#22c55e" stroke-width="1" stroke-dasharray="3" opacity="0.5"/>
+        <path d="M280,52 Q340,55 380,68 Q415,82 450,88" fill="none" stroke="#22c55e" stroke-width="2.5"/>
+        <!-- S3: 1e-4 reset, cosine (Follower) -->
+        <line x1="450" y1="88" x2="450" y2="92" stroke="#f59e0b" stroke-width="1" stroke-dasharray="3" opacity="0.5"/>
+        <path d="M450,92 Q500,95 530,108 Q555,118 580,124" fill="none" stroke="#f59e0b" stroke-width="2.5"/>
+        <!-- S4: 1e-4 reset, cosine (Self-play) -->
+        <line x1="580" y1="124" x2="580" y2="92" stroke="#7c3aed" stroke-width="1" stroke-dasharray="3" opacity="0.5"/>
+        <path d="M580,92 Q620,95 645,108 Q665,118 680,124" fill="none" stroke="#7c3aed" stroke-width="2.5"/>
+        <!-- Stage labels -->
+        <text x="170" y="170" text-anchor="middle" fill="#00d4ff" font-size="9" font-weight="600">S1 (3e-4)</text>
+        <text x="365" y="170" text-anchor="middle" fill="#22c55e" font-size="9" font-weight="600">S2 (2e-4)</text>
+        <text x="515" y="170" text-anchor="middle" fill="#f59e0b" font-size="9" font-weight="600">S3 (1e-4)</text>
+        <text x="630" y="170" text-anchor="middle" fill="#7c3aed" font-size="9" font-weight="600">S4 (1e-4)</text>
+        <!-- Stage dividers -->
+        <line x1="280" y1="15" x2="280" y2="155" stroke="#2a3a5c" stroke-width="1" stroke-dasharray="2" opacity="0.5"/>
+        <line x1="450" y1="15" x2="450" y2="155" stroke="#2a3a5c" stroke-width="1" stroke-dasharray="2" opacity="0.5"/>
+        <line x1="580" y1="15" x2="580" y2="155" stroke="#2a3a5c" stroke-width="1" stroke-dasharray="2" opacity="0.5"/>
+      </svg>
+    </div>
+    <p style="font-size:0.8rem;color:var(--text2)">Dashed vertical lines = stage transitions (LR resets). Cosine decay within each stage from initial LR to LR/5 over ~450k steps. Encoder LR is scaled by 0.3&times; (slower feature learning).</p>
+  </div>
+
+  <!-- Expected Reward Scales -->
+  <div class="card" style="margin-top:1rem">
+    <h3>Expected Reward Scale per Stage</h3>
+    <p>Typical per-episode shaped reward ranges (training convergence targets):</p>
+    <div class="stat-row">
+      <div class="stat-box"><div class="num" style="font-size:1.3rem">5&ndash;25</div><div class="desc">Stage 1 (chase + hit)</div></div>
+      <div class="stat-box"><div class="num" style="font-size:1.3rem">30&ndash;60</div><div class="desc">Stages 2&ndash;3 (full suite)</div></div>
+    </div>
+  </div>
+
+  <!-- Full Reward Table -->
+  <div class="card" style="margin-top:1rem">
+    <h3>Complete Reward Weight Table</h3>
+    <div style="overflow-x:auto">
+      <table class="reward-table" id="full-reward-table">
+        <thead>
+          <tr>
+            <th>Component</th>
+            <th>S1</th><th>S2</th><th>S3</th><th>S4</th>
+          </tr>
+        </thead>
+        <tbody>
+          <tr><td>Proximity</td><td class="inactive-cell">0</td><td class="inactive-cell">0</td><td class="inactive-cell">0</td><td class="inactive-cell">0</td></tr>
+          <tr><td>Contact</td><td class="active-cell">3.0 (cap 5)</td><td class="active-cell">0.1 (cap 5)</td><td class="inactive-cell">0</td><td class="inactive-cell">0</td></tr>
+          <tr><td>Directed Hit</td><td class="active-cell">2.0</td><td class="active-cell">0.1</td><td class="inactive-cell">0</td><td class="inactive-cell">0</td></tr>
+          <tr><td>Puck Progress</td><td class="inactive-cell">0</td><td class="active-cell">0.1</td><td class="active-cell">0.1</td><td class="inactive-cell">0</td></tr>
+          <tr><td>Defense</td><td class="inactive-cell">0</td><td class="active-cell">0.1</td><td class="active-cell">0.1</td><td class="inactive-cell">0</td></tr>
+          <tr><td>Shot Placement</td><td class="inactive-cell">0</td><td class="active-cell">0.2</td><td class="active-cell">0.2</td><td class="inactive-cell">0</td></tr>
+          <tr><td>Goal Scored</td><td class="inactive-cell">0</td><td class="active-cell" style="color:var(--green)">+160</td><td class="active-cell" style="color:var(--green)">+160</td><td class="active-cell" style="color:var(--green)">+130</td></tr>
+          <tr><td>Goal Conceded</td><td class="inactive-cell">0</td><td class="active-cell" style="color:var(--red)">-20 (ramped)</td><td class="active-cell" style="color:var(--red)">-20 (ramped)</td><td class="active-cell" style="color:var(--red)">-20</td></tr>
+          <tr><td>Entropy</td><td class="inactive-cell">0</td><td class="inactive-cell">0</td><td class="inactive-cell">0</td><td class="inactive-cell">0</td></tr>
+          <tr><td>Penalty Ramp</td><td class="inactive-cell">&mdash;</td><td class="active-cell">0&rarr;full / 30%</td><td class="active-cell">0&rarr;full / 30%</td><td class="inactive-cell">&mdash;</td></tr>
+          <tr><td>Reward Annealing</td><td class="inactive-cell">&mdash;</td><td class="active-cell">last 40%</td><td class="active-cell">last 40%</td><td class="inactive-cell">&mdash;</td></tr>
+          <tr style="border-top:2px solid var(--accent)"><td><strong>Opponent</strong></td><td>Idle</td><td>Goalie</td><td>Follow</td><td>Pool (MPPI)</td></tr>
+          <tr><td><strong>Learning Rate</strong></td><td>3e-4</td><td>2e-4</td><td>1e-4</td><td>1e-4</td></tr>
+          <tr><td><strong>MPPI Horizon</strong></td><td>5</td><td>5</td><td>5</td><td>5</td></tr>
+          <tr><td><strong>Episode Length</strong></td><td>600</td><td>1200</td><td>1800</td><td>1800</td></tr>
+          <tr><td><strong>Min Steps</strong></td><td colspan="4">150,000 per stage</td></tr>
+          <tr><td><strong>Plateau Lookback</strong></td><td>5 ep</td><td>8 ep</td><td>10 ep</td><td>15 ep</td></tr>
+          <tr><td><strong>Min Goals Gate</strong></td><td class="inactive-cell">&mdash;</td><td>1+/ep</td><td>1+/ep</td><td class="inactive-cell">&mdash;</td></tr>
+          <tr><td><strong>Benchmark Eval</strong></td><td colspan="4">Every 500k steps, 5 games per opponent vs idle/goalie/follow (composite score)</td></tr>
+          <tr><td><strong>Score Handicaps</strong></td><td class="inactive-cell">&mdash;</td><td class="inactive-cell">&mdash;</td><td class="inactive-cell">&mdash;</td><td>30% non-zero</td></tr>
+        </tbody>
+      </table>
+    </div>
+  </div>
+
+  <!-- Key Design Features -->
+  <div class="grid-3" style="margin-top:1rem">
+    <div class="card">
+      <h3>Linear Reward Annealing</h3>
+      <p>In the last <strong>40%</strong> of each game stage, all shaping reward weights decay linearly to 0. This forces the agent to rely on <strong>goal rewards only</strong> by the end of each stage, preventing shaping-reward dependence before advancing.</p>
+    </div>
+    <div class="card">
+      <h3>Penalty Ramp</h3>
+      <p>Goal penalty linearly ramps from <strong>0 to full</strong> over the first <strong>30%</strong> of each game stage. This lets the agent learn to score goals first before being penalized for conceding, preventing an early avoidance phase.</p>
+    </div>
+    <div class="card">
+      <h3>Step-Based Metrics Only</h3>
+      <p>All metrics are tracked per <strong>10k steps</strong> only: goals scored/conceded, contacts, win rate, episodes completed. Per-episode TensorBoard logging has been <strong>removed</strong> to reduce noise and provide consistent monitoring independent of episode length changes across stages.</p>
+    </div>
+  </div>
+  <div class="grid-3" style="margin-top:1rem">
+    <div class="card">
+      <h3>Puck-Stuck Reset</h3>
+      <p>If the puck speed stays below <strong>0.05</strong> for <strong>120 consecutive steps</strong> (2 seconds), the puck is reset to center with a random direction. This prevents episodes from stalling when the puck gets wedged or the agent fails to engage.</p>
+    </div>
+    <div class="card">
+      <h3>Fixed Benchmark Eval</h3>
+      <p>Every <strong>500k steps</strong>, the agent plays <strong>5 games</strong> each against idle, goalie, and follower opponents. A <strong>composite score</strong> tracks progress consistently across stages, catching regressions that within-stage reward curves would miss.</p>
+    </div>
+    <div class="card">
+      <h3>World Model Diagnostics</h3>
+      <p>Per-step <strong>prediction error</strong> of the world model is logged to TensorBoard. This reveals when the dynamics model is struggling with new opponent behaviors or unseen game states, enabling targeted debugging.</p>
+    </div>
+  </div>
+</section>
+
+<!-- ══════════════════════════════════════════════════════════════════════ -->
+<!-- ARCHITECTURE -->
+<!-- ══════════════════════════════════════════════════════════════════════ -->
+<section id="architecture">
+  <h2>TD-MPC2 Architecture</h2>
+
+  <div class="card">
+    <h3>World Model</h3>
+    <p>TD-MPC2 learns a latent-space world model with 5 heads: <strong>encoder</strong>, <strong>dynamics (MLP)</strong>, <strong>reward</strong>, <strong>termination</strong>, and <strong>policy</strong>. Q-values are estimated by a 5-member ensemble. The MLP dynamics model predicts the next latent state from the current state and action &mdash; simple, fast, and 14&times; lower prediction error than GRU (0.0009 vs 0.013).</p>
+    <div style="overflow-x:auto;padding:1rem 0">
+      <svg width="800" height="220" viewBox="0 0 800 220">
+        <!-- Encoder -->
+        <rect x="10" y="80" width="100" height="50" rx="8" fill="#0f3460" stroke="#00d4ff" stroke-width="2"/>
+        <text x="60" y="108" text-anchor="middle" fill="#00d4ff" font-size="13" font-weight="600">Encoder</text>
+        <text x="60" y="122" text-anchor="middle" fill="#a0a8c0" font-size="9">obs &rarr; z</text>
+        <!-- obs input -->
+        <text x="60" y="70" text-anchor="middle" fill="#a0a8c0" font-size="11">obs [14]</text>
+        <line x1="60" y1="74" x2="60" y2="80" stroke="#a0a8c0" stroke-width="1"/>
+        <!-- Arrow to latent -->
+        <line x1="110" y1="105" x2="170" y2="105" stroke="#00d4ff" stroke-width="2" marker-end="url(#arrowBlue)"/>
+        <!-- Latent space -->
+        <rect x="170" y="75" width="80" height="60" rx="8" fill="#1e2a4a" stroke="#7c3aed" stroke-width="2"/>
+        <text x="210" y="103" text-anchor="middle" fill="#7c3aed" font-size="13" font-weight="600">Latent z</text>
+        <text x="210" y="117" text-anchor="middle" fill="#a0a8c0" font-size="9">512-dim</text>
+        <!-- Dynamics (MLP) -->
+        <line x1="250" y1="90" x2="310" y2="55" stroke="#7c3aed" stroke-width="2" marker-end="url(#arrowPurple)"/>
+        <rect x="310" y="15" width="120" height="55" rx="8" fill="#0f3460" stroke="#7c3aed" stroke-width="2"/>
+        <text x="370" y="36" text-anchor="middle" fill="#7c3aed" font-size="12" font-weight="600">Dynamics (MLP)</text>
+        <text x="370" y="51" text-anchor="middle" fill="#a0a8c0" font-size="9">(z, a) &rarr; z'</text>
+        <text x="370" y="64" text-anchor="middle" fill="#22c55e" font-size="8">14x lower error than GRU</text>
+        <!-- Action input to dynamics -->
+        <text x="280" y="22" text-anchor="middle" fill="#f59e0b" font-size="10">action</text>
+        <line x1="280" y1="25" x2="310" y2="35" stroke="#f59e0b" stroke-width="1"/>
+        <!-- Reward head -->
+        <line x1="250" y1="105" x2="310" y2="115" stroke="#7c3aed" stroke-width="2" marker-end="url(#arrowPurple)"/>
+        <rect x="310" y="90" width="100" height="45" rx="8" fill="#0f3460" stroke="#22c55e" stroke-width="2"/>
+        <text x="360" y="112" text-anchor="middle" fill="#22c55e" font-size="12" font-weight="600">Reward</text>
+        <text x="360" y="125" text-anchor="middle" fill="#a0a8c0" font-size="9">z &rarr; r</text>
+        <!-- Policy head -->
+        <line x1="250" y1="120" x2="310" y2="165" stroke="#7c3aed" stroke-width="2" marker-end="url(#arrowPurple)"/>
+        <rect x="310" y="145" width="100" height="45" rx="8" fill="#0f3460" stroke="#ec4899" stroke-width="2"/>
+        <text x="360" y="167" text-anchor="middle" fill="#ec4899" font-size="12" font-weight="600">Policy &pi;</text>
+        <text x="360" y="181" text-anchor="middle" fill="#a0a8c0" font-size="9">z &rarr; a</text>
+        <!-- Q ensemble -->
+        <line x1="410" y1="112" x2="470" y2="112" stroke="#22c55e" stroke-width="2" marker-end="url(#arrowGreen)"/>
+        <rect x="470" y="80" width="120" height="55" rx="8" fill="#0f3460" stroke="#f59e0b" stroke-width="2"/>
+        <text x="530" y="104" text-anchor="middle" fill="#f59e0b" font-size="12" font-weight="600">Q Ensemble</text>
+        <text x="530" y="120" text-anchor="middle" fill="#a0a8c0" font-size="9">5 heads, (z, a) &rarr; Q</text>
+        <!-- MPPI box -->
+        <rect x="640" y="60" width="140" height="100" rx="10" fill="rgba(0,212,255,0.08)" stroke="#00d4ff" stroke-width="2" stroke-dasharray="4"/>
+        <text x="710" y="85" text-anchor="middle" fill="#00d4ff" font-size="13" font-weight="700">MPPI Planner</text>
+        <text x="710" y="102" text-anchor="middle" fill="#a0a8c0" font-size="9">512 trajectories</text>
+        <text x="710" y="115" text-anchor="middle" fill="#a0a8c0" font-size="9">6 iterations</text>
+        <text x="710" y="128" text-anchor="middle" fill="#a0a8c0" font-size="9">horizon: 5 (all stages)</text>
+        <text x="710" y="148" text-anchor="middle" fill="#f59e0b" font-size="10" font-weight="600">&rarr; best action</text>
+        <line x1="590" y1="107" x2="640" y2="107" stroke="#f59e0b" stroke-width="2" marker-end="url(#arrowOrange)"/>
+        <!-- Arrow markers -->
+        <defs>
+          <marker id="arrowBlue" markerWidth="8" markerHeight="6" refX="8" refY="3" orient="auto"><path d="M0,0 L8,3 L0,6" fill="#00d4ff"/></marker>
+          <marker id="arrowPurple" markerWidth="8" markerHeight="6" refX="8" refY="3" orient="auto"><path d="M0,0 L8,3 L0,6" fill="#7c3aed"/></marker>
+          <marker id="arrowGreen" markerWidth="8" markerHeight="6" refX="8" refY="3" orient="auto"><path d="M0,0 L8,3 L0,6" fill="#22c55e"/></marker>
+          <marker id="arrowOrange" markerWidth="8" markerHeight="6" refX="8" refY="3" orient="auto"><path d="M0,0 L8,3 L0,6" fill="#f59e0b"/></marker>
+        </defs>
+      </svg>
+    </div>
+  </div>
+
+  <div class="card">
+    <h3>MLP Dynamics &mdash; Simple Beats Recurrent</h3>
+    <p>The dynamics model uses a standard <strong>feedforward MLP</strong>. GRU-based dynamics was tested and <strong>reverted</strong> &mdash; the MLP achieves <strong>14&times; lower prediction error</strong> (0.0009 vs 0.013) while being simpler and faster. Velocities are provided directly in the observation, so temporal memory is unnecessary.</p>
+    <div class="grid-2">
+      <div>
+        <table class="reward-table">
+          <tr><th>Component</th><th>Detail</th></tr>
+          <tr><td>Input</td><td class="active-cell">z + action &rarr; MLP</td></tr>
+          <tr><td>Output</td><td class="active-cell">z' (next latent)</td></tr>
+          <tr><td>Architecture</td><td>NormedLinear layers + SimNorm</td></tr>
+          <tr><td>World model error</td><td class="active-cell">0.0009 (MLP) vs 0.013 (GRU)</td></tr>
+          <tr><td>No hidden state</td><td>Stateless &mdash; no per-env tracking needed</td></tr>
+        </table>
+      </div>
+      <div>
+        <p><strong>Why MLP over GRU?</strong> With explicit velocities in the 14-dim observation, the encoder already captures full state information. The GRU's hidden state added complexity (per-env tracking, MPPI branching, episode boundary resets) without improving prediction quality &mdash; it actually hurt it by 14&times;.</p>
+        <p style="font-size:0.85rem;color:var(--text2)"><strong>Why not Transformer?</strong> Also tested and removed. At our scale (512-dim latent, 2-dim action), MLP is faster than self-attention for horizons &le;30.</p>
+      </div>
+    </div>
+    <pre>  # MLP dynamics forward pass
+  z_a = torch.cat([z, action], dim=-1)   # concat latent + action
+  z_next = dynamics_mlp(z_a)             # MLP → next latent
+  z_next = sim_norm(z_next)              # SimNorm → next latent z'</pre>
+  </div>
+
+  <div class="card">
+    <h3>MPPI Planning (Batched)</h3>
+    <p>At inference, MPPI samples <strong>512 action trajectories</strong> over a <strong>5-step horizon</strong> with <strong>6 refinement iterations</strong>, evaluates them using the world model's Q-values, and selects the best action. This runs in parallel across all 64 environments in a single batched forward pass.</p>
+    <canvas id="mppi-canvas" class="mppi-canvas"></canvas>
+    <p style="font-size:0.8rem;text-align:center;color:var(--text2);margin-top:0.5rem">Animated: gray = sampled trajectories, colored = elite trajectories, green = selected action</p>
+  </div>
+
+  <div class="card">
+    <h3>Prioritized Experience Replay (PER)</h3>
+    <p>The replay buffer uses <strong>prioritized sampling</strong> based on TD-error magnitude. High-error transitions (surprising outcomes) are replayed more frequently, accelerating learning on difficult scenarios.</p>
+    <div class="grid-2">
+      <div>
+        <table class="reward-table">
+          <tr><td>Priority exponent (&alpha;)</td><td class="active-cell">0.6</td></tr>
+          <tr><td>IS exponent (&beta;)</td><td class="active-cell">0.4 &rarr; 1.0</td></tr>
+          <tr><td>&beta; annealing</td><td>Linear over training</td></tr>
+          <tr><td>Min priority (&epsilon;)</td><td>1e-6</td></tr>
+        </table>
+      </div>
+      <div>
+        <p style="font-size:0.85rem"><strong>&beta; annealing</strong> corrects for the bias introduced by non-uniform sampling. It starts at 0.4 (allowing biased but fast early learning) and linearly increases to 1.0 (fully unbiased) by the end of training, ensuring convergence.</p>
+      </div>
+    </div>
+  </div>
+
+  <div class="grid-2">
+    <div class="card">
+      <h3>Training Loop</h3>
+      <pre>for step in range(total_steps):
+  # 1. Plan actions (batched MPPI)
+  actions = agent.act(obs, t0=reset_mask)
+
+  # 2. Step all N envs
+  obs, rewards, done = batch_env.step(actions)
+
+  # 3. Shape rewards (curriculum stage)
+  shaped = reward_shaper.compute(obs, rewards)
+
+  # 4. Store trajectories in PER buffer
+  buffer.add(trajectories)
+
+  # 5. Gradient update (1 update/step)
+  batch, weights = buffer.sample(prioritized=True)
+  td_errors = agent.update(batch, weights)
+  buffer.update_priorities(td_errors)
+  lr_scheduler.step()
+
+  # 6. Check plateau, advance stage</pre>
+    </div>
+    <div class="card">
+      <h3>Model Components</h3>
+      <table class="reward-table">
+        <tr><th>Component</th><th>Architecture</th></tr>
+        <tr><td>Encoder</td><td>NormedLinear (LayerNorm + Mish)</td></tr>
+        <tr><td>Dynamics (MLP)</td><td>NormedLinear: (z, a) &rarr; z'</td></tr>
+        <tr><td>Reward</td><td>Two-hot classification (101 bins)</td></tr>
+        <tr><td>Policy</td><td>Gaussian, NormedLinear</td></tr>
+        <tr><td>Q-values</td><td>5-head vmap ensemble</td></tr>
+        <tr><td>Normalization</td><td>SimNorm (simplex projection)</td></tr>
+        <tr><td>Target EMA (&rho;)</td><td>0.85 (faster target updates)</td></tr>
+        <tr><td>Total params</td><td>~5M (model_size=5)</td></tr>
+      </table>
+    </div>
+  </div>
+
+
+</section>
+
+<!-- ══════════════════════════════════════════════════════════════════════ -->
+<!-- SPEED OPTIMIZATIONS -->
+<!-- ══════════════════════════════════════════════════════════════════════ -->
+<section id="speed">
+  <h2>Speed Optimizations</h2>
+  <p>From 22 FPS (single env, original TD-MPC2) to <strong>185 FPS</strong> (64 parallel envs, batched MPPI, compiled updates). An <strong>8&times;</strong> throughput improvement. Baseline v15 scores <strong>8-1</strong> at 350k steps.</p>
+
+  <div class="card">
+    <h3>Throughput Timeline</h3>
+    <div style="padding:0.5rem 0">
+      <div class="speed-bar">
+        <div class="label">Baseline (1 env)</div>
+        <div class="bar" style="width:7%;min-width:60px;background:var(--red)">22</div>
+      </div>
+      <div class="speed-bar">
+        <div class="label">+ Batch envs (32)</div>
+        <div class="bar" style="width:20%;min-width:60px">60</div>
+      </div>
+      <div class="speed-bar">
+        <div class="label">+ Batched MPPI</div>
+        <div class="bar" style="width:40%">120</div>
+      </div>
+      <div class="speed-bar">
+        <div class="label">+ torch.compile</div>
+        <div class="bar" style="width:60%">180</div>
+      </div>
+      <div class="speed-bar">
+        <div class="label">+ 64 envs, batch=8192</div>
+        <div class="bar" style="width:80%">250</div>
+      </div>
+      <div class="speed-bar">
+        <div class="label">+ All optimizations (steady)</div>
+        <div class="bar" style="width:100%;background:linear-gradient(90deg,var(--green),var(--accent))">185</div>
+      </div>
+    </div>
+    <p style="font-size:0.8rem;margin-top:0.5rem">FPS = environment frames per second (env steps &times; n_envs / wall time). Measured on RTX 5080.</p>
+  </div>
+
+  <div class="grid-3">
+    <div class="card">
+      <h3>Batched MPPI</h3>
+      <p>Instead of planning separately for each env, MPPI trajectories for all 64 envs are evaluated in a single batched forward pass through the world model. This amortizes GPU kernel launch overhead.</p>
+    </div>
+    <div class="card">
+      <h3>torch.compile</h3>
+      <p><code>torch.compile</code> on the gradient update (<code>_update</code>) gives <strong>1.9-3.4x speedup</strong> with a one-time ~33s warmup. Not applied to planning (graph breaks from <code>randn</code>/<code>topk</code>).</p>
+    </div>
+    <div class="card">
+      <h3>Large Batch Updates</h3>
+      <p>Batch size <code>8192</code> (vs default 256) with 1 update per iteration. GPU scaling is <strong>sub-linear</strong>: a 32&times; batch increase yields ~15&times; throughput gain, since kernel overhead is amortized across more data per launch.</p>
+    </div>
+  </div>
+
+  <div class="card">
+    <h3>Optimal n_envs (RTX 5080 Benchmark)</h3>
+    <table class="reward-table">
+      <tr><th>n_envs</th><th>FPS</th><th>act (ms)</th><th>update (ms)</th><th>Notes</th></tr>
+      <tr><td>8</td><td>~400</td><td>4.2</td><td>15.8</td><td>GPU underutilized</td></tr>
+      <tr><td>32</td><td>~1000</td><td>6.1</td><td>15.9</td><td>Good balance</td></tr>
+      <tr><td>64</td><td>~1400</td><td>8.5</td><td>16.2</td><td>Recommended for training</td></tr>
+      <tr><td class="active-cell">128</td><td class="active-cell">~1676</td><td>14.3</td><td>16.5</td><td class="active-cell">Peak throughput</td></tr>
+      <tr><td>256</td><td>~1600</td><td>25.1</td><td>17.0</td><td>Diminishing returns</td></tr>
+    </table>
+  </div>
+</section>
+
+<!-- ══════════════════════════════════════════════════════════════════════ -->
+<!-- OBSERVATIONS -->
+<!-- ══════════════════════════════════════════════════════════════════════ -->
+<section id="observations">
+  <h2>Observation Space</h2>
+  <p>The observation vector provides <strong>full state information</strong> with explicit positions and velocities for all entities. Frame stacking was tested and removed &mdash; direct velocities are critical for learning quality and give the MLP dynamics model the information it needs without temporal inference.</p>
+
+  <div class="card">
+    <h3>Observation Layout [14 dims] &mdash; Positions + Velocities</h3>
+    <p style="font-size:0.85rem">Each entity has position (x, y) and velocity (vx, vy). No frame stacking, no hidden state &mdash; the observation contains everything needed.</p>
+    <div style="margin:1rem 0">
+      <!-- Puck -->
+      <div style="display:flex;gap:0.3rem;flex-wrap:wrap;margin-bottom:0.5rem;align-items:center">
+        <span style="font-size:0.75rem;color:#f59e0b;min-width:80px;font-weight:700">Puck</span>
+        <div style="padding:0.3rem 0.5rem;background:rgba(245,158,11,0.20);border-radius:5px;font-family:var(--mono);font-size:0.72rem;color:#f59e0b;font-weight:600">px</div>
+        <div style="padding:0.3rem 0.5rem;background:rgba(245,158,11,0.20);border-radius:5px;font-family:var(--mono);font-size:0.72rem;color:#f59e0b;font-weight:600">py</div>
+        <div style="padding:0.3rem 0.5rem;background:rgba(245,158,11,0.12);border-radius:5px;font-family:var(--mono);font-size:0.72rem;color:#f59e0b">pvx</div>
+        <div style="padding:0.3rem 0.5rem;background:rgba(245,158,11,0.12);border-radius:5px;font-family:var(--mono);font-size:0.72rem;color:#f59e0b">pvy</div>
+      </div>
+      <!-- Agent paddle -->
+      <div style="display:flex;gap:0.3rem;flex-wrap:wrap;margin-bottom:0.5rem;align-items:center">
+        <span style="font-size:0.75rem;color:#00d4ff;min-width:80px;font-weight:700">Paddle</span>
+        <div style="padding:0.3rem 0.5rem;background:rgba(0,212,255,0.20);border-radius:5px;font-family:var(--mono);font-size:0.72rem;color:#00d4ff;font-weight:600">ax</div>
+        <div style="padding:0.3rem 0.5rem;background:rgba(0,212,255,0.20);border-radius:5px;font-family:var(--mono);font-size:0.72rem;color:#00d4ff;font-weight:600">ay</div>
+        <div style="padding:0.3rem 0.5rem;background:rgba(0,212,255,0.12);border-radius:5px;font-family:var(--mono);font-size:0.72rem;color:#00d4ff">avx</div>
+        <div style="padding:0.3rem 0.5rem;background:rgba(0,212,255,0.12);border-radius:5px;font-family:var(--mono);font-size:0.72rem;color:#00d4ff">avy</div>
+      </div>
+      <!-- Opponent paddle -->
+      <div style="display:flex;gap:0.3rem;flex-wrap:wrap;margin-bottom:0.5rem;align-items:center">
+        <span style="font-size:0.75rem;color:#ef4444;min-width:80px;font-weight:700">Opponent</span>
+        <div style="padding:0.3rem 0.5rem;background:rgba(239,68,68,0.20);border-radius:5px;font-family:var(--mono);font-size:0.72rem;color:#ef4444;font-weight:600">ox</div>
+        <div style="padding:0.3rem 0.5rem;background:rgba(239,68,68,0.20);border-radius:5px;font-family:var(--mono);font-size:0.72rem;color:#ef4444;font-weight:600">oy</div>
+        <div style="padding:0.3rem 0.5rem;background:rgba(239,68,68,0.12);border-radius:5px;font-family:var(--mono);font-size:0.72rem;color:#ef4444">ovx</div>
+        <div style="padding:0.3rem 0.5rem;background:rgba(239,68,68,0.12);border-radius:5px;font-family:var(--mono);font-size:0.72rem;color:#ef4444">ovy</div>
+      </div>
+      <!-- Context -->
+      <div style="display:flex;gap:0.3rem;flex-wrap:wrap;margin-top:0.8rem;align-items:center;border-top:1px solid var(--border);padding-top:0.5rem">
+        <span style="font-size:0.75rem;color:#7c3aed;min-width:80px;font-weight:700">Context</span>
+        <div style="padding:0.3rem 0.5rem;background:rgba(124,58,237,0.15);border-radius:5px;font-family:var(--mono);font-size:0.72rem;color:#7c3aed">score_diff</div>
+        <div style="padding:0.3rem 0.5rem;background:rgba(124,58,237,0.15);border-radius:5px;font-family:var(--mono);font-size:0.72rem;color:#7c3aed">time_left</div>
+      </div>
+    </div>
+    <p style="font-size:0.85rem"><strong>Total:</strong> 3 entities &times; 4 (pos + vel) + 2 context = <strong>14 dims</strong>. Explicit velocities provide full state information without frame stacking.</p>
+    <p><strong>Action space:</strong> <code>[target_x, target_y]</code> normalized to [-1, 1]. Motor dynamics model converts target positions to paddle movement.</p>
+  </div>
+
+  <div class="card">
+    <h3>Why Explicit Velocities Over Frame Stacking?</h3>
+    <p>Frame stacking (5 position-only frames = 32 dims) was tested but <strong>reverted in favor of explicit velocities</strong> (14 dims). Direct velocity observations proved <strong>critical for learning quality</strong> &mdash; the world model error dropped 14&times; with MLP dynamics on velocity observations vs GRU dynamics on stacked frames. The simpler representation also makes the observation space smaller, the encoder's job easier, and enables a stateless MLP dynamics model.</p>
+    <div class="grid-2" style="margin-top:1rem">
+      <div>
+        <h3 style="color:var(--red)">Frame Stacking (removed)</h3>
+        <table class="reward-table">
+          <tr><td>Dimensions</td><td>32 (5&times;6 + 2)</td></tr>
+          <tr><td>Velocity</td><td>Inferred from frame diffs</td></tr>
+          <tr><td>Dynamics model</td><td>GRU (needed temporal memory)</td></tr>
+          <tr><td>World model error</td><td style="color:var(--red)">0.013</td></tr>
+        </table>
+      </div>
+      <div>
+        <h3 style="color:var(--green)">Explicit Velocities (current)</h3>
+        <table class="reward-table">
+          <tr><td>Dimensions</td><td class="active-cell">14 (3&times;4 + 2)</td></tr>
+          <tr><td>Velocity</td><td class="active-cell">Direct in observation</td></tr>
+          <tr><td>Dynamics model</td><td class="active-cell">MLP (stateless)</td></tr>
+          <tr><td>World model error</td><td class="active-cell">0.0009 (14&times; better)</td></tr>
+        </table>
+      </div>
+    </div>
+  </div>
+</section>
+
+<!-- ══════════════════════════════════════════════════════════════════════ -->
+<!-- SELF-PLAY -->
+<!-- ══════════════════════════════════════════════════════════════════════ -->
+<section id="selfplay">
+  <h2>Self-Play System</h2>
+  <p>Stage 4 uses an <strong>Elo-rated opponent pool</strong> to prevent cyclical forgetting and promote continual improvement. Current run (<strong>selfplay_v15</strong>): 2.15M steps, <strong>81% win rate</strong> vs 43 opponent versions.</p>
+
+  <div class="grid-2">
+    <div class="card">
+      <h3>Opponent Pool</h3>
+      <p>Up to <strong>100 snapshots</strong> of past agent checkpoints are stored on CPU. New snapshots are added every 50k steps. Old snapshots are pruned using a mix of recency, diversity, and difficulty.</p>
+      <p><strong>Sampling:</strong> Opponents are selected based on match quality &mdash; prefer opponents near the current agent's skill level for maximum learning signal.</p>
+      <p><strong>Inference:</strong> Opponents use <strong>full MPPI planning</strong>, same as the training agent. This ensures realistic opponent behavior and proper competitive pressure, at the cost of higher compute per step.</p>
+    </div>
+    <div class="card">
+      <h3>Elo Rating Distribution</h3>
+      <p>Each snapshot tracks win/loss statistics. Elo ratings approximate relative skill levels.</p>
+      <div class="elo-bar-chart" id="elo-chart"></div>
+      <p style="font-size:0.8rem;margin-top:0.5rem;color:var(--text2)">Example pool: older snapshots at lower Elo, recent ones approaching the current agent's skill.</p>
+    </div>
+  </div>
+
+  <div class="card">
+    <h3>Why Self-Play?</h3>
+    <p>Scripted opponents have a <strong>skill ceiling</strong>. Once the agent beats the follower consistently, there's nothing harder to train against. Self-play creates an <strong>endlessly escalating challenge</strong> where the opponent improves alongside the agent. Dropping all auxiliary rewards in Stage 4 ensures the agent optimizes for <strong>pure game-winning ability</strong> without relying on reward-shaping crutches. <strong>Score handicaps</strong> (30% of episodes start with non-zero scores) prevent the agent from only learning to play from 0-0.</p>
+  </div>
+
+  <div class="card">
+    <h3>Game Recording</h3>
+    <p>Periodically during training, a <strong>synchronous 30-second recording</strong> is run on the main thread. An earlier async approach using separate CPU/CUDA streams was removed in favor of this simpler synchronous method. Recordings are saved in columnar JSON and viewable in the web UI for debugging agent behavior at each stage. <strong>Puck-stuck reset</strong>: if puck speed stays below 0.05 for 120 steps (2 seconds), the puck resets to center with a random direction.</p>
+  </div>
+</section>
+
+<!-- ══════════════════════════════════════════════════════════════════════ -->
+<!-- SIM-TO-REAL -->
+<!-- ══════════════════════════════════════════════════════════════════════ -->
+<section id="sim2real">
+  <h2>Sim-to-Real Transfer</h2>
+  <p>Bridging the simulation-to-reality gap through domain randomization, system identification, and observation design.</p>
+
+  <div class="grid-2">
+    <div class="card">
+      <h3>Domain Randomization</h3>
+      <p>Each environment episode randomizes physical parameters:</p>
+      <table class="reward-table">
+        <tr><td>Motor max speed</td><td>2.0 - 4.5 m/s</td></tr>
+        <tr><td>Motor max accel</td><td>20 - 45 m/s&sup2;</td></tr>
+        <tr><td>Time constant</td><td>10 - 40 ms</td></tr>
+        <tr><td>Puck friction</td><td>Configurable</td></tr>
+        <tr><td>Wall restitution</td><td>Configurable</td></tr>
+        <tr><td>Camera delay</td><td>0-3 frames</td></tr>
+      </table>
+      <p style="font-size:0.8rem;margin-top:0.5rem">The agent must be robust to the full range, ensuring the real hardware falls within the training distribution.</p>
+    </div>
+    <div class="card">
+      <h3>System Identification</h3>
+      <p><strong>Goal:</strong> Learn the real hardware's motor dynamics so the simulator matches reality.</p>
+      <p><strong>Method:</strong></p>
+      <ol style="color:var(--text2);font-size:0.9rem;padding-left:1.2rem">
+        <li>Send step/ramp commands to real motors</li>
+        <li>Record position response at high rate</li>
+        <li>Fit delayed-dynamics model parameters</li>
+        <li>Use fitted params as center of domain randomization</li>
+      </ol>
+      <p><strong>Hardware:</strong> Teknic ClearPath-SC servos (CPM-SCSK-2331P), SC4-Hub USB interface, sFoundation C++ API.</p>
+    </div>
+  </div>
+
+  <div class="card">
+    <h3>Transfer Strategy</h3>
+    <div class="pipeline">
+      <div class="pipeline-step" style="background:rgba(0,212,255,0.08)">
+        <div class="icon">&#128270;</div>
+        <div class="label">Sys ID</div>
+        <div class="sub">Measure real motors</div>
+      </div>
+      <div class="pipeline-arrow">&#8594;</div>
+      <div class="pipeline-step" style="background:rgba(124,58,237,0.08)">
+        <div class="icon">&#127922;</div>
+        <div class="label">Domain Rand</div>
+        <div class="sub">Train over param range</div>
+      </div>
+      <div class="pipeline-arrow">&#8594;</div>
+      <div class="pipeline-step" style="background:rgba(34,197,94,0.08)">
+        <div class="icon">&#129302;</div>
+        <div class="label">Zero-Shot</div>
+        <div class="sub">Deploy trained policy</div>
+      </div>
+      <div class="pipeline-arrow">&#8594;</div>
+      <div class="pipeline-step" style="background:rgba(245,158,11,0.08)">
+        <div class="icon">&#128736;</div>
+        <div class="label">Fine-Tune</div>
+        <div class="sub">Optional on-hardware</div>
+      </div>
+    </div>
+  </div>
+</section>
+
+<!-- ══════════════════════════════════════════════════════════════════════ -->
+<!-- LESSONS LEARNED -->
+<!-- ══════════════════════════════════════════════════════════════════════ -->
+<section id="lessons">
+  <h2>Lessons Learned</h2>
+  <p>Key failures from earlier training iterations and the fixes applied.</p>
+
+  <div class="grid-2">
+    <div class="card">
+      <h3 style="color:var(--red)">Shaping Rewards Dominated Goals</h3>
+      <p><strong>Problem:</strong> With higher shaping weights (contact 1.0, directed 0.5, placement 0.5) and lower goal rewards (+80/-40), auxiliary rewards contributed more total reward than goals. The agent optimized for hitting and shaping the puck rather than actually scoring.</p>
+      <p><strong>Fix:</strong> <strong>Cut all shaping weights drastically</strong> (contact 0.1, directed 0.1, defense 0.1, progress 0.1, placement 0.2). Removed proximity entirely. Added <strong>linear reward annealing</strong> &mdash; shaping decays to 0 in the last 40% of each stage. Added <strong>contact cap</strong> (max 5 per episode) and <strong>penalty ramp</strong> (0&rarr;full over first 30%). Boosted goal reward to <strong>+160/-20</strong> so goals dominate the signal.</p>
+    </div>
+    <div class="card">
+      <h3 style="color:var(--red)">Agent Rushing Without Scoring</h3>
+      <p><strong>Problem:</strong> The agent advanced stages by plateauing on shaping rewards without ever learning to score goals. It could chase and hit the puck consistently but couldn't convert hits into goals.</p>
+      <p><strong>Fix:</strong> The <strong>min goals gate</strong> (1+ goals/ep) blocks advancement until scoring ability is proven. Combined with reduced shaping weights, goal rewards now dominate the signal. The <strong>Corner stage was removed</strong> entirely &mdash; it added training time without teaching useful skills beyond what Goalie provides.</p>
+    </div>
+  </div>
+
+  <div class="grid-2">
+    <div class="card">
+      <h3 style="color:var(--red)">No Fixed Benchmark</h3>
+      <p><strong>Problem:</strong> Progress was only measured by within-stage reward curves, which made it hard to compare across stages or detect regressions. Reward scale changes between stages masked actual skill degradation.</p>
+      <p><strong>Fix:</strong> Added <strong>fixed benchmark evaluation</strong> every 500k steps. The agent plays 5 games each against idle, goalie, and follower opponents with a composite score, providing a consistent skill metric across all stages.</p>
+    </div>
+    <div class="card">
+      <h3 style="color:var(--red)">Self-Play Fragility</h3>
+      <p><strong>Problem:</strong> The agent learned to play well from a 0-0 start but collapsed when behind. In real games, falling behind early led to increasingly poor play as the agent had no experience recovering from a deficit.</p>
+      <p><strong>Fix:</strong> Added <strong>score handicaps</strong> in self-play: 30% of episodes start with non-zero scores (random advantage/disadvantage). This forces the agent to learn comeback strategies and to maintain composure when ahead.</p>
+    </div>
+  </div>
+
+  <div class="card">
+    <h3>Design Evolution Summary</h3>
+    <table class="reward-table">
+      <tr><th>Decision</th><th>Current</th><th>Rationale</th></tr>
+      <tr><td>Curriculum stages</td><td class="active-cell">4 (Chase+Hit, Goalie, Follower, Self-Play)</td><td>Corner stage was redundant with Goalie</td></tr>
+      <tr><td>Shaping weights</td><td class="active-cell">Low (0.1&ndash;0.2) with annealing</td><td>High weights caused shaping domination over goal rewards</td></tr>
+      <tr><td>Proximity reward</td><td class="active-cell">Removed</td><td>Not needed with contact + directed hit</td></tr>
+      <tr><td>Contact cap</td><td class="active-cell">5/episode</td><td>Prevent contact farming</td></tr>
+      <tr><td>Reward annealing</td><td class="active-cell">Linear, last 40%</td><td>Force goal-reward reliance by end of stage</td></tr>
+      <tr><td>Penalty ramp</td><td class="active-cell">0&rarr;full over first 30%</td><td>Let agent learn to score before being penalized</td></tr>
+      <tr><td>Game goals (S2-3)</td><td class="active-cell">+160/-20</td><td>High positive signal, low penalty with ramp</td></tr>
+      <tr><td>Self-play goals (S4)</td><td class="active-cell">+130/-20</td><td>Slightly reduced for harder opponent</td></tr>
+      <tr><td>Benchmark eval</td><td class="active-cell">Every 500k steps, 5 games/opponent</td><td>Consistent progress metric across stages</td></tr>
+      <tr><td>Score handicaps</td><td class="active-cell">30% non-zero starts</td><td>Train comeback and composure</td></tr>
+      <tr><td>Dynamics model</td><td class="active-cell">MLP (reverted from GRU)</td><td>14&times; lower world model error (0.0009 vs 0.013)</td></tr>
+      <tr><td>MPPI</td><td class="active-cell">512 samples, 6 iterations</td><td>Full quality planning with batched MPPI</td></tr>
+      <tr><td>Observations</td><td class="active-cell">14-dim (pos + vel, no frame stacking)</td><td>Critical for learning quality; 14&times; lower world model error</td></tr>
+      <tr><td>Entropy reward</td><td class="active-cell">Removed (all stages = 0)</td><td>Did not help; simpler without it</td></tr>
+      <tr><td>Puck-stuck reset</td><td class="active-cell">Speed &lt; 0.05 for 120 steps &rarr; reset</td><td>Prevents stalled episodes</td></tr>
+      <tr><td>Simple mode</td><td class="active-cell"><code>--simple</code> flag</td><td>Flat training vs idle, original reward weights, confirmed 8-1 baseline</td></tr>
+      <tr><td>Recordings</td><td class="active-cell">Synchronous 30s</td><td>Simpler than async, avoids CUDA graph state issues</td></tr>
+      <tr><td>Metrics</td><td class="active-cell">Step-based only (per 10k)</td><td>Reduce noise, consistent across stages</td></tr>
+    </table>
+  </div>
+
+  <div class="card">
+    <h3>GRU and Transformer Dynamics: Both Worse Than MLP</h3>
+    <p><strong>Both tested and reverted.</strong> GRU dynamics had <strong>14&times; higher world model error</strong> (0.013 vs 0.0009) compared to a simple MLP. With explicit velocities in the observation, temporal memory is unnecessary &mdash; the full state is available at every timestep. Transformer-based dynamics was also benchmarked but at our scale (512-dim latent, 2-dim action), self-attention overhead far exceeds any benefit for horizons &le;30. <strong>Simple MLP wins on both accuracy and speed.</strong></p>
+  </div>
+</section>
+
+<!-- ══════════════════════════════════════════════════════════════════════ -->
+<!-- REWARD CALCULATOR -->
+<!-- ══════════════════════════════════════════════════════════════════════ -->
+<section id="calculator">
+  <h2>Reward Calculator</h2>
+  <p>Enter a game state to see what reward each component produces. Uses Stage 2 weights (+160/-20 goals, penalty ramp, contact cap 5/ep, no entropy).</p>
+
+  <div class="card">
+    <div class="calc-grid">
+      <div class="calc-input">
+        <label>Puck X (0-1)</label>
+        <input type="number" id="calc-puck-x" value="0.5" step="0.05" min="0" max="1" oninput="calcReward()"/>
+      </div>
+      <div class="calc-input">
+        <label>Puck Y (0-2)</label>
+        <input type="number" id="calc-puck-y" value="0.8" step="0.05" min="0" max="2" oninput="calcReward()"/>
+      </div>
+      <div class="calc-input">
+        <label>Puck VX</label>
+        <input type="number" id="calc-puck-vx" value="0.0" step="0.1" oninput="calcReward()"/>
+      </div>
+      <div class="calc-input">
+        <label>Puck VY</label>
+        <input type="number" id="calc-puck-vy" value="1.5" step="0.1" oninput="calcReward()"/>
+      </div>
+      <div class="calc-input">
+        <label>Paddle X (0-1)</label>
+        <input type="number" id="calc-pad-x" value="0.5" step="0.05" min="0" max="1" oninput="calcReward()"/>
+      </div>
+      <div class="calc-input">
+        <label>Paddle Y (0-1)</label>
+        <input type="number" id="calc-pad-y" value="0.4" step="0.05" min="0" max="1" oninput="calcReward()"/>
+      </div>
+      <div class="calc-input">
+        <label>Prev Puck Speed</label>
+        <input type="number" id="calc-prev-speed" value="0.2" step="0.1" min="0" oninput="calcReward()"/>
+      </div>
+      <div class="calc-input">
+        <label>Goal Scored?</label>
+        <select id="calc-goal" oninput="calcReward()" style="width:100%;padding:0.4rem;background:var(--bg2);border:1px solid var(--border);border-radius:6px;color:var(--text)">
+          <option value="0">No goal</option>
+          <option value="1">Agent scored (+1)</option>
+          <option value="-1">Opponent scored (-1)</option>
+        </select>
+      </div>
+    </div>
+
+    <div class="calc-result" id="calc-result">
+      <div class="row"><span>Proximity</span><span class="val" id="cr-prox">-</span></div>
+      <div class="row"><span>Contact</span><span class="val" id="cr-contact">-</span></div>
+      <div class="row"><span>Directed Hit</span><span class="val" id="cr-directed">-</span></div>
+      <div class="row"><span>Shot Placement</span><span class="val" id="cr-placement">-</span></div>
+      <div class="row"><span>Defense</span><span class="val" id="cr-defense">-</span></div>
+      <div class="row"><span>Goal</span><span class="val" id="cr-goal">-</span></div>
+      <div class="row total"><span>Total Shaped Reward</span><span class="val" id="cr-total">-</span></div>
+    </div>
+  </div>
+</section>
+
+</main>
+
+<script>
+// ── Stage tab switching ──
+function showStage(n) {
+  document.querySelectorAll('.stage-tab').forEach((t, i) => t.classList.toggle('active', i === n - 1));
+  document.querySelectorAll('.stage-detail').forEach((d, i) => d.classList.toggle('active', i === n - 1));
+}
+
+// ── Frame display (removed - using explicit velocities now) ──
+function initFrameDisplay() {}
+function updateFrameDisplay() {}
+
+// ── Elo chart ──
+function initEloChart() {
+  const chart = document.getElementById('elo-chart');
+  const elos = [800, 850, 920, 980, 1020, 1050, 1080, 1100, 1130, 1150, 1160, 1180, 1190, 1200];
+  const maxElo = Math.max(...elos);
+  elos.forEach((elo, i) => {
+    const bar = document.createElement('div');
+    bar.className = 'elo-bar';
+    bar.style.height = ((elo / maxElo) * 100) + '%';
+    if (i === elos.length - 1) {
+      bar.style.background = 'linear-gradient(to top, #00d4ff, #22c55e)';
+      bar.innerHTML = `<span class="elo-label" style="color:#22c55e">${elo}</span>`;
+    } else if (i % 3 === 0) {
+      bar.innerHTML = `<span class="elo-label">${elo}</span>`;
+    }
+    chart.appendChild(bar);
+  });
+}
+
+// ── MPPI animation ──
+function initMPPI() {
+  const canvas = document.getElementById('mppi-canvas');
+  const ctx = canvas.getContext('2d');
+  canvas.width = canvas.offsetWidth * 2;
+  canvas.height = canvas.offsetHeight * 2;
+  ctx.scale(2, 2);
+  const W = canvas.offsetWidth, H = canvas.offsetHeight;
+
+  let frame = 0;
+  const trajectories = [];
+  const numTraj = 40;
+  const horizon = 5;
+
+  // Generate random trajectories
+  for (let t = 0; t < numTraj; t++) {
+    const points = [{x: W * 0.15, y: H * 0.7}];
+    let x = points[0].x, y = points[0].y;
+    for (let h = 0; h < horizon; h++) {
+      x += (Math.random() - 0.3) * (W * 0.15);
+      y -= Math.random() * (H * 0.12) + H * 0.02;
+      points.push({x: Math.max(20, Math.min(W - 20, x)), y: Math.max(20, Math.min(H - 20, y))});
+    }
+    trajectories.push(points);
+  }
+
+  // Score trajectories (closer to goal = higher)
+  const scores = trajectories.map(pts => {
+    const last = pts[pts.length - 1];
+    return -Math.hypot(last.x - W * 0.5, last.y - H * 0.15);
+  });
+  const sortedIdx = scores.map((_, i) => i).sort((a, b) => scores[b] - scores[a]);
+  const eliteIdx = new Set(sortedIdx.slice(0, 8));
+
+  function draw() {
+    ctx.clearRect(0, 0, W, H);
+
+    // Draw goal
+    ctx.fillStyle = 'rgba(239, 68, 68, 0.3)';
+    ctx.fillRect(W * 0.3, 5, W * 0.4, 10);
+    ctx.fillStyle = '#ef4444';
+    ctx.font = '11px sans-serif';
+    ctx.textAlign = 'center';
+    ctx.fillText('GOAL', W * 0.5, 30);
+
+    // Draw puck
+    ctx.beginPath();
+    ctx.arc(W * 0.15, H * 0.7, 8, 0, Math.PI * 2);
+    ctx.fillStyle = '#f59e0b';
+    ctx.fill();
+
+    const progress = Math.min(1, (frame % 120) / 60);
+    const phase = frame % 120 < 60 ? 'sample' : 'select';
+
+    // Draw trajectories
+    trajectories.forEach((pts, idx) => {
+      const isElite = eliteIdx.has(idx);
+      const isBest = idx === sortedIdx[0];
+
+      if (phase === 'sample') {
+        const drawPts = Math.floor(progress * pts.length);
+        if (drawPts < 2) return;
+        ctx.beginPath();
+        ctx.moveTo(pts[0].x, pts[0].y);
+        for (let i = 1; i < drawPts; i++) ctx.lineTo(pts[i].x, pts[i].y);
+        ctx.strokeStyle = 'rgba(160, 168, 192, 0.15)';
+        ctx.lineWidth = 1;
+        ctx.stroke();
+      } else {
+        ctx.beginPath();
+        ctx.moveTo(pts[0].x, pts[0].y);
+        for (let i = 1; i < pts.length; i++) ctx.lineTo(pts[i].x, pts[i].y);
+
+        if (isBest) {
+          ctx.strokeStyle = '#22c55e';
+          ctx.lineWidth = 3;
+          ctx.globalAlpha = Math.min(1, (progress - 0) * 2);
+        } else if (isElite) {
+          ctx.strokeStyle = '#00d4ff';
+          ctx.lineWidth = 2;
+          ctx.globalAlpha = 0.5 * Math.min(1, progress * 2);
+        } else {
+          ctx.strokeStyle = 'rgba(160, 168, 192, 0.08)';
+          ctx.lineWidth = 1;
+          ctx.globalAlpha = 1 - progress;
+        }
+        ctx.stroke();
+        ctx.globalAlpha = 1;
+      }
+    });
+
+    // Phase label
+    ctx.fillStyle = '#a0a8c0';
+    ctx.font = '12px sans-serif';
+    ctx.textAlign = 'right';
+    ctx.fillText(phase === 'sample' ? 'Sampling trajectories...' : 'Selecting elites...', W - 15, H - 12);
+
+    frame++;
+    requestAnimationFrame(draw);
+  }
+  draw();
+}
+
+// ── Reward calculator ──
+function calcReward() {
+  const px = parseFloat(document.getElementById('calc-puck-x').value) || 0;
+  const py = parseFloat(document.getElementById('calc-puck-y').value) || 0;
+  const pvx = parseFloat(document.getElementById('calc-puck-vx').value) || 0;
+  const pvy = parseFloat(document.getElementById('calc-puck-vy').value) || 0;
+  const ax = parseFloat(document.getElementById('calc-pad-x').value) || 0;
+  const ay = parseFloat(document.getElementById('calc-pad-y').value) || 0;
+  const prevSpeed = parseFloat(document.getElementById('calc-prev-speed').value) || 0;
+  const goal = parseInt(document.getElementById('calc-goal').value) || 0;
+
+  const dist = Math.hypot(px - ax, py - ay);
+  const puckSpeed = Math.hypot(pvx, pvy);
+  const speedChange = puckSpeed - prevSpeed;
+
+  // Stage 2 weights (+160/-20 goals, reduced shaping, contact cap 5/ep)
+  const proximity = 0; // no proximity in any stage
+  let contact = 0, directed = 0, placement = 0;
+
+  if (dist < 0.25 && speedChange > 0.2 && pvy > 0) { // forward hits only
+    contact = 0.1; // capped at 5/ep
+    directed = 0.1 * pvy;
+    const dx = 0.5 - px, dy = 2.0 - py;
+    const goalDist = Math.hypot(dx, dy);
+    const alignment = (pvx * dx + pvy * dy) / (puckSpeed * goalDist + 1e-8);
+    placement = 0.2 * Math.max(0, Math.min(1, alignment));
+  }
+
+  let defense = 0;
+  if (pvy < -0.3 && ay < py) {
+    defense = 0.1 * Math.exp(-3 * Math.abs(px - ax));
+  }
+
+  let goalReward = 0;
+  if (goal > 0) goalReward = 160;
+  else if (goal < 0) goalReward = -20;
+
+  const total = proximity + contact + directed + placement + defense + goalReward;
+
+  document.getElementById('cr-prox').textContent = proximity.toFixed(4);
+  document.getElementById('cr-contact').textContent = contact.toFixed(4);
+  document.getElementById('cr-directed').textContent = directed.toFixed(4);
+  document.getElementById('cr-placement').textContent = placement.toFixed(4);
+  document.getElementById('cr-defense').textContent = defense.toFixed(4);
+  document.getElementById('cr-goal').textContent = goalReward.toFixed(1);
+  document.getElementById('cr-total').textContent = total.toFixed(4);
+
+  // Color the total
+  const totalEl = document.getElementById('cr-total');
+  if (total > 10) totalEl.style.color = '#22c55e';
+  else if (total < -1) totalEl.style.color = '#ef4444';
+  else totalEl.style.color = '#00d4ff';
+}
+
+// ── Nav highlighting ──
+function updateNav() {
+  const sections = document.querySelectorAll('section');
+  const links = document.querySelectorAll('nav a');
+  let current = '';
+  sections.forEach(s => {
+    if (window.scrollY >= s.offsetTop - 100) current = s.id;
+  });
+  links.forEach(a => a.classList.toggle('active', a.getAttribute('href') === '#' + current));
+}
+window.addEventListener('scroll', updateNav);
+
+// ── Init ──
+initFrameDisplay();
+initEloChart();
+initMPPI();
+calcReward();
+updateNav();
+</script>
+
+</body>
+</html>

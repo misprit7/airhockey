@@ -9,7 +9,7 @@ type: user
 - Prefers to see training replays visually rather than just metrics
 - Wants to understand why things work, not just have them work (asked about SAC internals, on-policy vs off-policy, network sizing)
 - Impatient with slow training — always looking to optimize throughput
-- Has a 4090 GPU
+- Has an RTX 5080 GPU (16.3 GB)
 - Likes to iterate quickly: make a change, run training, watch replays, adjust
 - Prefers me to commit periodically without asking
 - Has Teknic ClearPath-SC motors (CPM-SCSK-2331P-ELNA) for the physical build

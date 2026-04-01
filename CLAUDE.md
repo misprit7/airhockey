@@ -12,17 +12,25 @@ Robotic air hockey table that uses reinforcement learning trained in simulation,
 - `ai/` - RL training, simulation, and visualization
   - `airhockey/` - Python package
     - `physics.py` - Core 2D physics engine (puck, paddles, walls, collisions)
+    - `batch_physics.py` - Vectorized NumPy physics for N parallel environments
+    - `batch_env.py` - Batch environment wrapper (same interface, batched arrays)
     - `dynamics.py` - Pluggable motor dynamics models (ideal, delayed, learned)
     - `env.py` - Gymnasium environment wrapping the physics
-    - `rewards.py` - Curriculum reward shaping (3 stages)
+    - `rewards.py` - Curriculum reward shaping (4 stages)
+    - `curriculum.py` - Per-stage cosine LR scheduler
     - `recorder.py` - Game recording and replay
     - `server.py` - FastAPI WebSocket server for real-time visualization
     - `web/` - Browser-based visualization UI
   - `bin/` - Training scripts
     - `train.py` - SAC curriculum training
-    - `train_tdmpc2.py` - TD-MPC2 model-based training
+    - `train_tdmpc2.py` - TD-MPC2 model-based training (vectorized envs)
+    - `train_tdmpc2_fast.py` - Optimized TD-MPC2 (batched MPPI, all speedups, self-play)
     - `train_selfplay.py` - Self-play training with TD-MPC2
     - `run_full_pipeline.sh` - Pretrain + self-play pipeline
+    - `profile_loop.py` - Training loop profiler (per-component timing)
+  - `tests/` - Test suite
+    - `test_batch_physics.py` - Vectorized physics correctness tests
+    - `test_validation.py` - Reward shaping equivalence and env consistency tests
 - `sw/` - Physical robot control software
   - `bin/` - Control programs
     - `test_motor.cpp` - Basic motor communication and movement test
@@ -53,11 +61,29 @@ cd ai && bash bin/run_full_pipeline.sh
 # Run SAC curriculum training
 cd ai && python bin/train.py --curriculum
 
-# Run TD-MPC2 training
+# Run TD-MPC2 training (original)
 cd ai && python bin/train_tdmpc2.py --steps 500000
 
-# Run self-play
+# Run TD-MPC2 fast training (batched MPPI, all speedups)
+cd ai && python bin/train_tdmpc2_fast.py --steps 2000000
+
+# Fast training with full MPPI quality (no speed reduction)
+cd ai && python bin/train_tdmpc2_fast.py --no-fast --steps 2000000
+
+# Auto-curriculum (stages 1-4, auto-advancing on plateau)
+cd ai && python bin/train_tdmpc2_fast.py --curriculum --steps 5000000
+
+# Run a specific curriculum stage only
+cd ai && python bin/train_tdmpc2_fast.py --stage 4 --steps 1000000
+
+# Fast training self-play (resumes from pretrained agent)
+cd ai && python bin/train_tdmpc2_fast.py --resume runs/tdmpc2_pretrain/agent.pt --steps 5000000
+
+# Run self-play (original)
 cd ai && python bin/train_selfplay.py --resume runs/tdmpc2_pretrain/agent.pt
+
+# Profile training loop components
+cd ai && python bin/profile_loop.py
 ```
 
 ## Hardware
@@ -77,13 +103,24 @@ cd sw && bin/test_motor
 cd sw && bin/test_motor /dev/ttyACM0
 ```
 
+## World Model Architecture (TD-MPC2 + GRU)
+The world model uses a GRU-based recurrent dynamics model (similar to DreamerV3 RSSM but without stochastic component):
+- **Encoder**: MLP (obs_dim → latent_dim=512 via enc_dim=256, 2 layers, SimNorm output)
+- **Dynamics**: `nn.GRUCell(latent_dim + action_dim, latent_dim)` + SimNorm. Returns `(z_next, h_next)` — z is the SimNorm of the GRU hidden state. Hidden state h persists per-env across timesteps.
+- **Reward**: MLP(latent_dim + action_dim → num_bins=101, two-hot encoding)
+- **Policy prior**: MLP(latent_dim → 2×action_dim), Gaussian with squashed output
+- **Q-functions**: 5× ensemble MLP(latent_dim + action_dim → num_bins=101)
+- **act()** returns `(actions, h_next)` tuple — all callers must unpack both values
+- **Training** uses h=None per trajectory slice (deliberate train/inference mismatch, same as DreamerV3)
+- External repo at `/home/rbhagat/projects/tdmpc2` — `tdmpc2.py` and `common/world_model.py` are modified
+
 ## Tech Stack
 - Python, NumPy for physics/env
 - Gymnasium for RL environment API
 - FastAPI + WebSocket for visualization server
 - Vanilla JS + Canvas for web UI
 - Stable-Baselines3 for RL training (SAC)
-- TD-MPC2 for model-based planning (external repo at ../tdmpc2)
+- TD-MPC2 for model-based planning (external repo at /home/rbhagat/projects/tdmpc2)
 
 ## Training Learnings
 - **Algorithm**: SAC works much better than PPO for this continuous control task.

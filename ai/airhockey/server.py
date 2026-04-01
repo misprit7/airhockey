@@ -68,7 +68,18 @@ def _recording_label(stem: str) -> str:
 @app.get("/api/recordings")
 async def list_recordings():
     files = sorted(RECORDINGS_DIR.glob("*.json"), key=lambda f: f.stat().st_mtime, reverse=True)
-    return [{"name": f.stem, "path": f.name, "label": _recording_label(f.stem)} for f in files]
+    result = []
+    for f in files:
+        entry = {"name": f.stem, "path": f.name, "label": _recording_label(f.stem)}
+        # Extract metadata (stage info) if present
+        try:
+            data = json.loads(f.read_text())
+            if isinstance(data, dict) and "metadata" in data:
+                entry["metadata"] = data["metadata"]
+        except Exception:
+            pass
+        result.append(entry)
+    return result
 
 
 @app.get("/api/recordings/{filename}")
@@ -82,8 +93,11 @@ async def get_recording(filename: str):
         fields = data["fields"]
         columns = data["columns"]
         n = len(columns[fields[0]])
-        return [{f: columns[f][i] for f in fields} for i in range(n)]
-    return data
+        frames = [{f: columns[f][i] for f in fields} for i in range(n)]
+        metadata = data.get("metadata")
+        return {"frames": frames, "metadata": metadata}
+    # Old row-based format (no metadata)
+    return {"frames": data, "metadata": None}
 
 
 @app.websocket("/ws/live")

@@ -413,7 +413,10 @@ async function loadRecordingsList() {
 async function loadRecording(path, li) {
     try {
         const resp = await fetch(`/api/recordings/${path}`);
-        replayData = await resp.json();
+        const data = await resp.json();
+        // API returns {frames, metadata} or legacy flat array
+        replayData = data.frames || data;
+        const metadata = data.metadata || null;
         replayIndex = 0;
         puckTrail = [];
 
@@ -423,6 +426,24 @@ async function loadRecording(path, li) {
 
         const controls = document.getElementById("replay-controls");
         controls.classList.remove("hidden");
+
+        // Show stage info if available
+        const stageEl = document.getElementById("stage-info");
+        if (metadata && metadata.stage !== undefined) {
+            const name = metadata.stage_name || `Stage ${metadata.stage}`;
+            const step = metadata.step;
+            let text = name;
+            if (step !== undefined) {
+                const stepLabel = step >= 1_000_000
+                    ? `${(step / 1_000_000).toFixed(1)}M`
+                    : step >= 1_000 ? `${Math.floor(step / 1_000)}k` : `${step}`;
+                text += ` \u2022 Step ${stepLabel}`;
+            }
+            stageEl.textContent = text;
+            stageEl.classList.remove("hidden");
+        } else {
+            stageEl.classList.add("hidden");
+        }
 
         const slider = document.getElementById("replay-slider");
         slider.max = replayData.length - 1;
@@ -562,10 +583,31 @@ async function initReplayMode() {
             // Auto-load the most recent
             activeRecordingPath = recordings[0].path;
             const recResp = await fetch(`/api/recordings/${recordings[0].path}`);
-            replayData = await recResp.json();
+            const recData = await recResp.json();
+            replayData = recData.frames || recData;
+            const metadata = recData.metadata || null;
             replayIndex = 0;
             const controls = document.getElementById("replay-controls");
             controls.classList.remove("hidden");
+
+            // Show stage info if available
+            const stageEl = document.getElementById("stage-info");
+            if (metadata && metadata.stage !== undefined) {
+                const name = metadata.stage_name || `Stage ${metadata.stage}`;
+                const step = metadata.step;
+                let text = name;
+                if (step !== undefined) {
+                    const stepLabel = step >= 1_000_000
+                        ? `${(step / 1_000_000).toFixed(1)}M`
+                        : step >= 1_000 ? `${Math.floor(step / 1_000)}k` : `${step}`;
+                    text += ` \u2022 Step ${stepLabel}`;
+                }
+                stageEl.textContent = text;
+                stageEl.classList.remove("hidden");
+            } else {
+                stageEl.classList.add("hidden");
+            }
+
             const slider = document.getElementById("replay-slider");
             slider.max = replayData.length - 1;
             slider.value = 0;

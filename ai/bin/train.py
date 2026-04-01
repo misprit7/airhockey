@@ -37,17 +37,15 @@ from stable_baselines3.common.vec_env import SubprocVecEnv
 from airhockey.dynamics import DelayedDynamics, IdealDynamics
 from airhockey.env import AirHockeyEnv
 from airhockey.recorder import Recorder
-from airhockey.rewards import STAGE_CONTACT, STAGE_PROXIMITY, STAGE_SCORING, ShapedRewardWrapper
+from airhockey.rewards import STAGE_PROXIMITY, STAGE_SCORING, ShapedRewardWrapper
 
 STAGE_NAMES = {
-    STAGE_PROXIMITY: "proximity",
-    STAGE_CONTACT: "contact",
+    STAGE_PROXIMITY: "chase+hit",
     STAGE_SCORING: "scoring",
 }
 
 STAGE_DEFAULTS = {
     STAGE_PROXIMITY: {"timesteps": 500_000},
-    STAGE_CONTACT: {"timesteps": 1_000_000},
     STAGE_SCORING: {"timesteps": 2_000_000},
 }
 
@@ -238,7 +236,7 @@ def main():
     if args.curriculum:
         # Run all 3 stages sequentially
         model_path = args.resume
-        for stage in [STAGE_PROXIMITY, STAGE_CONTACT, STAGE_SCORING]:
+        for stage in [STAGE_PROXIMITY, STAGE_SCORING]:
             stage_name = STAGE_NAMES[stage]
             run_name = args.run_name or "curriculum"
             ts = args.timesteps or STAGE_DEFAULTS[stage]["timesteps"]

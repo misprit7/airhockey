@@ -15,15 +15,13 @@ from airhockey.recorder import FrameData, Recorder
 
 
 class AirHockeyEnv(gym.Env):
-    """Air hockey environment.
+    """Air hockey environment with 14-dim observation.
 
-    Observation (12,):
-        [0:2]   puck position (x, y)
-        [2:4]   puck velocity (vx, vy)
-        [4:6]   agent paddle position (x, y)
-        [6:8]   agent paddle velocity (vx, vy)
-        [8:10]  opponent paddle position (x, y)
-        [10:12] opponent paddle velocity (vx, vy)
+    Observation layout (14 dims):
+        puck_x, puck_y, puck_vx, puck_vy,
+        paddle_x, paddle_y, paddle_vx, paddle_vy,
+        opp_x, opp_y, opp_vx, opp_vy,
+        score_diff, time_remaining
 
     Action (2,):
         Target (x, y) position for the agent's paddle.
@@ -31,6 +29,8 @@ class AirHockeyEnv(gym.Env):
     Camera delay is simulated by buffering observations and returning
     a delayed version.
     """
+
+    OBS_DIM = 14
 
     metadata = {"render_modes": ["human"]}
 
@@ -43,9 +43,11 @@ class AirHockeyEnv(gym.Env):
         action_dt: float = 1 / 60,  # 60 Hz agent control
         camera_delay: float = 0.0,  # seconds of observation delay
         max_episode_time: float = 60.0,  # seconds
+        max_episode_steps: int | None = None,
         max_score: int = 7,
         opponent_policy: str = "idle",  # "idle", "follow", "random"
         record: bool = False,
+        frame_stack: int = 1,  # kept for API compat, must be 1
     ):
         super().__init__()
 
@@ -56,24 +58,24 @@ class AirHockeyEnv(gym.Env):
         self.action_dt = action_dt
         self.camera_delay = camera_delay
         self.max_episode_time = max_episode_time
+        self.max_episode_steps = max_episode_steps
         self.max_score = max_score
         self.opponent_policy = opponent_policy
+        self.frame_stack = 1  # always 1; velocities replace stacking
+        self._step_count = 0
 
         self.engine = PhysicsEngine(self.table_config)
 
         # Observation and action spaces
         cfg = self.table_config
-        high_obs = np.array(
-            [
-                cfg.width, cfg.height,  # puck pos
-                cfg.max_puck_speed, cfg.max_puck_speed,  # puck vel
-                cfg.width, cfg.height,  # agent paddle pos
-                10.0, 10.0,  # agent paddle vel
-                cfg.width, cfg.height,  # opponent paddle pos
-                10.0, 10.0,  # opponent paddle vel
-            ],
-            dtype=np.float32,
-        )
+        # Bounds: positions [0, width/height], velocities large, context [-1, 1]
+        vel_max = 10.0  # generous velocity bound
+        high_obs = np.array([
+            cfg.width, cfg.height, vel_max, vel_max,      # puck
+            cfg.width, cfg.height, vel_max, vel_max,      # paddle
+            cfg.width, cfg.height, vel_max, vel_max,      # opponent
+            1.0, 1.0,                                     # context
+        ], dtype=np.float32)
         self.observation_space = spaces.Box(-high_obs, high_obs, dtype=np.float32)
 
         # Action: normalized [-1, 1] mapped to paddle position in agent's half
@@ -96,6 +98,15 @@ class AirHockeyEnv(gym.Env):
         self.recorder = Recorder() if record else None
         self._rng: np.random.Generator | None = None
 
+        # Previous paddle positions for velocity estimation
+        self._prev_agent_x: float = 0.0
+        self._prev_agent_y: float = 0.0
+        self._prev_opp_x: float = 0.0
+        self._prev_opp_y: float = 0.0
+
+        # Puck-stuck detection: reset if speed < threshold for N consecutive steps
+        self._puck_slow_count: int = 0
+
     def reset(
         self,
         *,
@@ -104,11 +115,34 @@ class AirHockeyEnv(gym.Env):
     ) -> tuple[np.ndarray, dict[str, Any]]:
         super().reset(seed=seed)
         self._rng = np.random.default_rng(seed)
+        self._step_count = 0
+        self._puck_slow_count = 0
 
         state = self.engine.reset(self._rng)
 
         self.agent_dynamics.reset(state.paddle_agent.x, state.paddle_agent.y)
+
+        # Override opponent position for stationary policies
+        cfg = self.table_config
+        if self.opponent_policy == "corner":
+            corners = [
+                (cfg.paddle_radius, cfg.height - cfg.paddle_radius),
+                (cfg.width - cfg.paddle_radius, cfg.height - cfg.paddle_radius),
+            ]
+            cx, cy = corners[self._rng.integers(0, len(corners))]
+            state.paddle_opponent.x = cx
+            state.paddle_opponent.y = cy
+        elif self.opponent_policy == "goalie":
+            state.paddle_opponent.x = cfg.width / 2
+            state.paddle_opponent.y = cfg.height - cfg.paddle_radius
+
         self.opponent_dynamics.reset(state.paddle_opponent.x, state.paddle_opponent.y)
+
+        # Init previous positions (zero velocity at start)
+        self._prev_agent_x = state.paddle_agent.x
+        self._prev_agent_y = state.paddle_agent.y
+        self._prev_opp_x = state.paddle_opponent.x
+        self._prev_opp_y = state.paddle_opponent.y
 
         self._obs_buffer.clear()
         obs = self._make_obs(state)
@@ -158,22 +192,30 @@ class AirHockeyEnv(gym.Env):
             elif state.goal_scored == -1:
                 reward -= 1.0
 
+        self._step_count += 1
         obs = self._make_obs(state)
 
-        # XXX REMOVE THIS FOR SELF-PLAY OR REAL OPPONENTS XXX
-        # Reset puck if it comes to rest in opponent's half (idle opponent can't return it)
-        puck = state.puck
-        if (puck.y > self.table_config.height / 2
-                and abs(puck.vx) < 0.05 and abs(puck.vy) < 0.05):
-            self.engine._reset_puck_after_goal(toward_agent=True)
-        # XXX END REMOVE XXX
+        # Universal puck-stuck reset: if puck speed < 0.05 for 120 steps (~2s),
+        # reset to center heading toward a random side.
+        puck_speed = np.hypot(state.puck.vx, state.puck.vy)
+        if puck_speed < 0.05:
+            self._puck_slow_count += 1
+        else:
+            self._puck_slow_count = 0
+
+        if self._puck_slow_count >= 120:
+            self.engine._reset_puck_after_goal(toward_agent=self._rng.random() < 0.5)
+            self._puck_slow_count = 0
 
         # Check termination
         terminated = (
             state.score_agent >= self.max_score
             or state.score_opponent >= self.max_score
         )
-        truncated = state.time >= self.max_episode_time
+        if self.max_episode_steps is not None:
+            truncated = self._step_count >= self.max_episode_steps
+        else:
+            truncated = state.time >= self.max_episode_time
 
         if self.recorder:
             self.recorder.record(self._make_frame(state))
@@ -203,22 +245,33 @@ class AirHockeyEnv(gym.Env):
     def mirror_obs(self, obs: np.ndarray) -> np.ndarray:
         """Mirror observation so opponent sees the game from its perspective.
 
-        Flips y-axis and swaps agent/opponent paddle data.
+        Flip y positions, negate y velocities, swap agent/opponent.
+        Negate score_diff; time_remaining unchanged.
         """
         cfg = self.table_config
         mirrored = obs.copy()
-        # Flip puck y and vy
-        mirrored[1] = cfg.height - obs[1]
-        mirrored[3] = -obs[3]
-        # Swap agent (4:8) and opponent (8:12), flip y and vy
-        mirrored[4] = obs[8]       # opp x -> agent x
-        mirrored[5] = cfg.height - obs[9]  # opp y flipped -> agent y
-        mirrored[6] = obs[10]      # opp vx -> agent vx
-        mirrored[7] = -obs[11]     # opp vy flipped -> agent vy
-        mirrored[8] = obs[4]       # agent x -> opp x
-        mirrored[9] = cfg.height - obs[5]  # agent y flipped -> opp y
-        mirrored[10] = obs[6]      # agent vx -> opp vx
-        mirrored[11] = -obs[7]     # agent vy flipped -> opp vy
+        # Obs: [puck_x, puck_y, puck_vx, puck_vy,
+        #        pad_x, pad_y, pad_vx, pad_vy,
+        #        opp_x, opp_y, opp_vx, opp_vy,
+        #        score_diff, time_remaining]
+
+        # Puck: flip y, negate vy
+        mirrored[1] = cfg.height - obs[1]    # puck_y
+        mirrored[3] = -obs[3]                # puck_vy
+
+        # Swap agent/opponent and flip y, negate vy
+        mirrored[4] = obs[8]                 # opp_x → pad_x
+        mirrored[5] = cfg.height - obs[9]    # opp_y → pad_y (flipped)
+        mirrored[6] = obs[10]                # opp_vx → pad_vx
+        mirrored[7] = -obs[11]               # opp_vy → pad_vy (negated)
+        mirrored[8] = obs[4]                 # pad_x → opp_x
+        mirrored[9] = cfg.height - obs[5]    # pad_y → opp_y (flipped)
+        mirrored[10] = obs[6]                # pad_vx → opp_vx
+        mirrored[11] = -obs[7]               # pad_vy → opp_vy (negated)
+
+        # Context
+        mirrored[12] = -obs[12]  # negate score_diff
+        # time_remaining unchanged
         return mirrored
 
     def mirror_action_to_opponent(self, action: np.ndarray) -> tuple[float, float]:
@@ -229,8 +282,9 @@ class AirHockeyEnv(gym.Env):
         r = cfg.paddle_radius
         # x: same mapping as agent
         x = r + (action[0] + 1.0) * 0.5 * (cfg.width - 2 * r)
-        # y: maps to opponent's half (mirrored, so agent's [0,1] -> opponent's [height/2, height])
-        y = (cfg.height / 2 + r) + (action[1] + 1.0) * 0.5 * (cfg.height / 2 - 2 * r)
+        # y: mirrored — y=-1 means "near own goal" = back wall (height - r),
+        # y=+1 means "opponent's side" = midfield (height/2 + r)
+        y = (cfg.height - r) - (action[1] + 1.0) * 0.5 * (cfg.height / 2 - 2 * r)
         return float(x), float(y)
 
     def _opponent_action(self, state: PhysicsState, dt: float) -> tuple[float, float]:
@@ -254,6 +308,14 @@ class AirHockeyEnv(gym.Env):
             target_y = self._rng.uniform(cfg.height / 2 + cfg.paddle_radius, cfg.height - cfg.paddle_radius)
             return self.opponent_dynamics.update(target_x, target_y, dt)
 
+        elif self.opponent_policy == "corner":
+            # Stationary in a random corner (chosen at reset)
+            return opp.x, opp.y
+
+        elif self.opponent_policy == "goalie":
+            # Stationary centered in front of goal
+            return opp.x, opp.y
+
         elif self.opponent_policy == "external":
             target = getattr(self, '_external_opponent_target', (opp.x, opp.y))
             return self.opponent_dynamics.update(target[0], target[1], dt)
@@ -261,17 +323,33 @@ class AirHockeyEnv(gym.Env):
         return opp.x, opp.y
 
     def _make_obs(self, state: PhysicsState) -> np.ndarray:
-        return np.array(
-            [
-                state.puck.x, state.puck.y,
-                state.puck.vx, state.puck.vy,
-                state.paddle_agent.x, state.paddle_agent.y,
-                state.paddle_agent.vx, state.paddle_agent.vy,
-                state.paddle_opponent.x, state.paddle_opponent.y,
-                state.paddle_opponent.vx, state.paddle_opponent.vy,
-            ],
-            dtype=np.float32,
-        )
+        """Build 14-dim observation with positions + velocities + context."""
+        dt = self.action_dt
+        # Paddle velocities from finite differences
+        agent_vx = (state.paddle_agent.x - self._prev_agent_x) / dt
+        agent_vy = (state.paddle_agent.y - self._prev_agent_y) / dt
+        opp_vx = (state.paddle_opponent.x - self._prev_opp_x) / dt
+        opp_vy = (state.paddle_opponent.y - self._prev_opp_y) / dt
+
+        # Update previous positions
+        self._prev_agent_x = state.paddle_agent.x
+        self._prev_agent_y = state.paddle_agent.y
+        self._prev_opp_x = state.paddle_opponent.x
+        self._prev_opp_y = state.paddle_opponent.y
+
+        # Context
+        score_diff = (state.score_agent - state.score_opponent) / max(self.max_score, 1)
+        if self.max_episode_steps is not None:
+            time_remaining = max(0, self.max_episode_steps - self._step_count) / self.max_episode_steps
+        else:
+            time_remaining = max(0.0, self.max_episode_time - state.time) / self.max_episode_time
+
+        return np.array([
+            state.puck.x, state.puck.y, state.puck.vx, state.puck.vy,
+            state.paddle_agent.x, state.paddle_agent.y, agent_vx, agent_vy,
+            state.paddle_opponent.x, state.paddle_opponent.y, opp_vx, opp_vy,
+            score_diff, time_remaining,
+        ], dtype=np.float32)
 
     def _get_delayed_obs(self, current_obs: np.ndarray) -> np.ndarray:
         if self._delay_steps == 0:
@@ -284,6 +362,8 @@ class AirHockeyEnv(gym.Env):
             "score_agent": state.score_agent,
             "score_opponent": state.score_opponent,
             "time": state.time,
+            "puck_vx": state.puck.vx,
+            "puck_vy": state.puck.vy,
         }
 
     def _make_frame(self, state: PhysicsState) -> FrameData:
