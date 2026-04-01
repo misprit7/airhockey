@@ -144,7 +144,7 @@ class HardwareDynamics(MotorDynamics):
         cdpr_height_mm: float = 730.0,
         sim_width: float = 1.0,
         sim_height: float = 2.0,
-        speed_mm_s: float = 30.0,
+        speed_mm_s: float = 200.0,
         host: str = "127.0.0.1",
         port: int = 8421,
     ):

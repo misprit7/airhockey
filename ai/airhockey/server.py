@@ -132,70 +132,68 @@ async def live_game(ws: WebSocket):
 
     try:
         while True:
-            # Check for client messages (paddle target from mouse)
+            # Drain all pending messages, keeping only the latest mouse position.
             try:
-                msg = await asyncio.wait_for(ws.receive_json(), timeout=0.001)
-                if msg.get("type") == "move":
-                    target_x = msg["x"]
-                    target_y = msg["y"]
-                elif msg.get("type") == "save":
-                    recording = env.get_recording()
-                    if recording:
-                        rec = Recorder()
-                        rec._current = recording
-                        ts = int(time.time())
-                        rec.save(RECORDINGS_DIR / f"game_{ts}.json")
-                        await ws.send_json({"type": "saved", "name": f"game_{ts}"})
-                elif msg.get("type") == "toggle_physics":
-                    use_instant = not use_instant
-                    if use_instant:
-                        env.agent_dynamics = IdealDynamics()
-                    else:
-                        env.agent_dynamics = DelayedDynamics(max_speed=5.0, max_accel=60.0, time_constant=0.01)
-                    env.agent_dynamics.reset(
-                        env.engine.state.paddle_agent.x,
-                        env.engine.state.paddle_agent.y,
-                    )
-                    await ws.send_json({"type": "physics_mode", "instant": use_instant})
-                elif msg.get("type") == "toggle_hardware":
-                    use_hardware = not use_hardware
-                    if use_hardware:
-                        try:
-                            hardware_dynamics = HardwareDynamics(
-                                sim_width=cfg.width,
-                                sim_height=cfg.height,
-                            )
-                            # Reset hardware to CDPR center, which matches
-                            # the physical cart starting position.
-                            hw_center_x = cfg.width / 2
-                            hw_center_y = cfg.height / 4  # agent's half center
-                            env.agent_dynamics = hardware_dynamics
-                            env.agent_dynamics.reset(hw_center_x, hw_center_y)
-                            # Also update the mouse target so the first
-                            # frame doesn't jump somewhere unexpected.
-                            target_x = hw_center_x
-                            target_y = hw_center_y
-                        except Exception as e:
-                            print(f"Hardware connect failed: {e}")
-                            use_hardware = False
-                            hardware_dynamics = None
-                    else:
-                        if hardware_dynamics:
-                            try:
-                                hardware_dynamics.client.close()
-                            except Exception:
-                                pass
-                            hardware_dynamics = None
-                        env.agent_dynamics = DelayedDynamics(max_speed=5.0, max_accel=60.0, time_constant=0.01)
+                while True:
+                    msg = await asyncio.wait_for(ws.receive_json(), timeout=0.001)
+                    msg_type = msg.get("type")
+                    if msg_type == "move":
+                        target_x = msg["x"]
+                        target_y = msg["y"]
+                    elif msg_type == "save":
+                        recording = env.get_recording()
+                        if recording:
+                            rec = Recorder()
+                            rec._current = recording
+                            ts = int(time.time())
+                            rec.save(RECORDINGS_DIR / f"game_{ts}.json")
+                            await ws.send_json({"type": "saved", "name": f"game_{ts}"})
+                    elif msg_type == "toggle_physics":
+                        use_instant = not use_instant
+                        if use_instant:
+                            env.agent_dynamics = IdealDynamics()
+                        else:
+                            env.agent_dynamics = DelayedDynamics(max_speed=5.0, max_accel=60.0, time_constant=0.01)
                         env.agent_dynamics.reset(
                             env.engine.state.paddle_agent.x,
                             env.engine.state.paddle_agent.y,
                         )
-                    await ws.send_json({"type": "hardware_mode", "enabled": use_hardware})
-                elif msg.get("type") == "reset":
-                    obs, info = env.reset()
-                    target_x = cfg.width / 2
-                    target_y = cfg.height * 0.15
+                        await ws.send_json({"type": "physics_mode", "instant": use_instant})
+                    elif msg_type == "toggle_hardware":
+                        use_hardware = not use_hardware
+                        if use_hardware:
+                            try:
+                                hardware_dynamics = HardwareDynamics(
+                                    sim_width=cfg.width,
+                                    sim_height=cfg.height,
+                                )
+                                hw_center_x = cfg.width / 2
+                                hw_center_y = cfg.height / 4
+                                env.agent_dynamics = hardware_dynamics
+                                env.agent_dynamics.reset(hw_center_x, hw_center_y)
+                                target_x = hw_center_x
+                                target_y = hw_center_y
+                            except Exception as e:
+                                print(f"Hardware connect failed: {e}")
+                                use_hardware = False
+                                hardware_dynamics = None
+                        else:
+                            if hardware_dynamics:
+                                try:
+                                    hardware_dynamics.client.close()
+                                except Exception:
+                                    pass
+                                hardware_dynamics = None
+                            env.agent_dynamics = DelayedDynamics(max_speed=5.0, max_accel=60.0, time_constant=0.01)
+                            env.agent_dynamics.reset(
+                                env.engine.state.paddle_agent.x,
+                                env.engine.state.paddle_agent.y,
+                            )
+                        await ws.send_json({"type": "hardware_mode", "enabled": use_hardware})
+                    elif msg_type == "reset":
+                        obs, info = env.reset()
+                        target_x = cfg.width / 2
+                        target_y = cfg.height * 0.15
             except (TimeoutError, asyncio.TimeoutError):
                 pass
 

@@ -324,6 +324,7 @@ bool CDPR::commandPosition(double x, double y, double speed_mm_s) {
             setMotionParams(node, vel_rpm, accel_rpm_s);
         }
 
+        // Detailed log to stderr (→ cdpr_debug.log)
         fprintf(stderr, "  cmdPos: cart(%.1f,%.1f) speed=%.0f dur=%.2fs\n"
                         "    target_len [%.1f, %.1f, %.1f, %.1f]\n"
                         "    ref_len    [%.1f, %.1f, %.1f, %.1f]\n"
@@ -341,6 +342,13 @@ bool CDPR::commandPosition(double x, double y, double speed_mm_s) {
                 target_encoder[0] - actual_enc[0], target_encoder[1] - actual_enc[1],
                 target_encoder[2] - actual_enc[2], target_encoder[3] - actual_enc[3],
                 remaining_mm[0], remaining_mm[1], remaining_mm[2], remaining_mm[3]);
+        // Summary to stdout (visible on screen)
+        printf("    enc: actual[%.0f,%.0f,%.0f,%.0f] -> target[%.0f,%.0f,%.0f,%.0f] delta[%.0f,%.0f,%.0f,%.0f]\n",
+                actual_enc[0], actual_enc[1], actual_enc[2], actual_enc[3],
+                target_encoder[0], target_encoder[1], target_encoder[2], target_encoder[3],
+                target_encoder[0] - actual_enc[0], target_encoder[1] - actual_enc[1],
+                target_encoder[2] - actual_enc[2], target_encoder[3] - actual_enc[3]);
+        fflush(stdout);
 
         for (int i = 0; i < 4; i++) {
             INode &node = port_->Nodes(i);
@@ -399,6 +407,14 @@ bool CDPR::retractAll(double mm, double speed_mm_s) {
         fprintf(stderr, "CDPR retractAll error: 0x%08x %s\n", err.ErrorCode, err.ErrorMsg);
         return false;
     }
+}
+
+bool CDPR::tension() {
+    if (cfg_.tension_mm <= 0) return true;
+    printf("Tensioning: retract %.1fmm at %.0f mm/s...\n", cfg_.tension_mm, cfg_.tension_speed);
+    bool ok = retractAll(cfg_.tension_mm, cfg_.tension_speed);
+    printf("Tensioning: %s\n", ok ? "done" : "FAILED");
+    return ok;
 }
 
 bool CDPR::moveBy(double dx, double dy, double speed_mm_s) {

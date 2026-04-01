@@ -72,4 +72,13 @@ struct CDPRConfig {
 
   // Margin from motor positions to keep the cart away from edges (mm).
   double edge_margin = 30.0;
+
+  // ---- Startup tensioning ----
+
+  // Amount to retract all cables on startup to take up slack (mm).
+  // Set to 0 to disable. Applied before setPosition calibration.
+  double tension_mm = 2.0;
+
+  // Speed for tensioning (mm/s).
+  double tension_speed = 5.0;
 };

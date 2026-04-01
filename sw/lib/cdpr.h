@@ -71,6 +71,10 @@ public:
     // This is a raw operation that bypasses IK — use for tensioning.
     bool retractAll(double mm, double speed_mm_s);
 
+    // Apply startup tensioning from config (retract tension_mm at tension_speed).
+    // Does nothing if tension_mm <= 0.
+    bool tension();
+
     // Check if a position is within the reachable workspace.
     bool inBounds(double x, double y) const;
 

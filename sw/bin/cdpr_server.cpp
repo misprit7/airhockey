@@ -156,6 +156,9 @@ int main(int argc, char *argv[]) {
     }
     logf("Motors enabled.\n");
 
+    // Apply startup tensioning before calibrating position.
+    robot.tension();
+
     // Start at center.
     double cx = config.width / 2.0;
     double cy = config.height / 2.0;
