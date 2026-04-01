@@ -293,38 +293,54 @@ bool CDPR::commandPosition(double x, double y, double speed_mm_s) {
         target_encoder[i] = ref_encoder_[i] + mmToCounts(delta_mm, i);
     }
 
-    // For streaming, always set velocity to the requested speed.
-    // The motor will move at up to this speed toward the absolute target.
-    // Don't try to coordinate velocities — with immediate move mode,
-    // commands arrive frequently and the motor handles tracking.
-    double vel_rpm = mmPerSecToRPM(speed_mm_s);
     double accel_rpm_s = mmPerSecToRPM(cfg_.max_acceleration);
 
     try {
-        // Read actual encoder positions for logging.
+        // Read actual encoder positions to compute how far each motor
+        // needs to move, then scale velocities so all arrive together.
         double actual_enc[4];
+        double remaining_mm[4];
+        double max_remaining = 0;
         for (int i = 0; i < 4; i++) {
             INode &node = port_->Nodes(i);
             node.Motion.PosnMeasured.Refresh();
             actual_enc[i] = node.Motion.PosnMeasured.Value();
+            // Convert encoder delta to mm.
+            double delta_counts = target_encoder[i] - actual_enc[i];
+            remaining_mm[i] = fabs(delta_counts / cfg_.counts_per_rev[i] * spool_circumference_);
+            max_remaining = std::max(max_remaining, remaining_mm[i]);
+        }
+
+        // Duration for the longest cable move at requested speed.
+        double duration_s = max_remaining / speed_mm_s;
+        if (duration_s < 0.01) duration_s = 0.01;
+
+        // Scale each motor's velocity proportionally.
+        for (int i = 0; i < 4; i++) {
+            INode &node = port_->Nodes(i);
+            double motor_speed_mm = remaining_mm[i] / duration_s;
+            double vel_rpm = mmPerSecToRPM(motor_speed_mm);
+            if (vel_rpm < 0.1) vel_rpm = 0.1;
             setMotionParams(node, vel_rpm, accel_rpm_s);
         }
 
-        fprintf(stderr, "  cmdPos: cart(%.1f,%.1f) speed=%.0f vel=%.1frpm\n"
+        fprintf(stderr, "  cmdPos: cart(%.1f,%.1f) speed=%.0f dur=%.2fs\n"
                         "    target_len [%.1f, %.1f, %.1f, %.1f]\n"
                         "    ref_len    [%.1f, %.1f, %.1f, %.1f]\n"
                         "    ref_enc    [%.0f, %.0f, %.0f, %.0f]\n"
                         "    actual_enc [%.0f, %.0f, %.0f, %.0f]\n"
                         "    target_enc [%.0f, %.0f, %.0f, %.0f]\n"
-                        "    delta_enc  [%.0f, %.0f, %.0f, %.0f]\n",
-                x, y, speed_mm_s, vel_rpm,
+                        "    delta_enc  [%.0f, %.0f, %.0f, %.0f]\n"
+                        "    remain_mm  [%.1f, %.1f, %.1f, %.1f]\n",
+                x, y, speed_mm_s, duration_s,
                 new_lengths[0], new_lengths[1], new_lengths[2], new_lengths[3],
                 ref_lengths_[0], ref_lengths_[1], ref_lengths_[2], ref_lengths_[3],
                 ref_encoder_[0], ref_encoder_[1], ref_encoder_[2], ref_encoder_[3],
                 actual_enc[0], actual_enc[1], actual_enc[2], actual_enc[3],
                 target_encoder[0], target_encoder[1], target_encoder[2], target_encoder[3],
                 target_encoder[0] - actual_enc[0], target_encoder[1] - actual_enc[1],
-                target_encoder[2] - actual_enc[2], target_encoder[3] - actual_enc[3]);
+                target_encoder[2] - actual_enc[2], target_encoder[3] - actual_enc[3],
+                remaining_mm[0], remaining_mm[1], remaining_mm[2], remaining_mm[3]);
 
         for (int i = 0; i < 4; i++) {
             INode &node = port_->Nodes(i);
