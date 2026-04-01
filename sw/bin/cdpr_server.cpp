@@ -43,7 +43,8 @@ static void logf(const char *fmt, ...) {
 //   ENABLE\n                      →  OK\n
 //   QUIT\n                        →  (closes connection)
 
-static bool handleCommand(const char *line, CDPR &robot, int client_fd) {
+// Return: 1 = continue, 0 = quit, -1 = error (disable motors and exit)
+static int handleCommand(const char *line, CDPR &robot, int client_fd) {
     char resp[256];
     double x, y, speed, mm;
 
@@ -55,7 +56,9 @@ static bool handleCommand(const char *line, CDPR &robot, int client_fd) {
             logf("  -> OK\n");
         } else {
             snprintf(resp, sizeof(resp), "ERR moveTo failed\n");
-            logf("  -> ERR\n");
+            logf("  -> ERR: disabling motors and exiting\n");
+            write(client_fd, resp, strlen(resp));
+            return -1;
         }
     } else if (sscanf(line, "CMD %lf %lf %lf", &x, &y, &speed) == 3) {
         // Non-blocking command — for real-time streaming (web UI).
@@ -65,7 +68,9 @@ static bool handleCommand(const char *line, CDPR &robot, int client_fd) {
             logf("  -> OK\n");
         } else {
             snprintf(resp, sizeof(resp), "ERR commandPosition failed\n");
-            logf("  -> ERR commandPosition\n");
+            logf("  -> ERR commandPosition: disabling motors and exiting\n");
+            write(client_fd, resp, strlen(resp));
+            return -1;
         }
     } else if (strncmp(line, "POS", 3) == 0) {
         snprintf(resp, sizeof(resp), "OK %.2f %.2f\n", robot.x(), robot.y());
@@ -105,13 +110,13 @@ static bool handleCommand(const char *line, CDPR &robot, int client_fd) {
             logf("  -> ERR bad SETPOS args\n");
         }
     } else if (strncmp(line, "QUIT", 4) == 0) {
-        return false;
+        return 0;
     } else {
         snprintf(resp, sizeof(resp), "ERR unknown command\n");
     }
 
     write(client_fd, resp, strlen(resp));
-    return true;
+    return 1;
 }
 
 int main(int argc, char *argv[]) {
@@ -226,10 +231,17 @@ int main(int argc, char *argv[]) {
                 char *nl;
                 while ((nl = strchr(start, '\n')) != NULL) {
                     *nl = '\0';
-                    if (!handleCommand(start, robot, client_fd)) {
+                    int rc = handleCommand(start, robot, client_fd);
+                    if (rc == 0) {
                         close(client_fd);
                         client_fd = -1;
                         logf("Client disconnected (QUIT).\n");
+                        break;
+                    } else if (rc < 0) {
+                        logf("ERROR: command failed, disabling motors and shutting down.\n");
+                        close(client_fd);
+                        client_fd = -1;
+                        g_stop = 1;
                         break;
                     }
                     start = nl + 1;

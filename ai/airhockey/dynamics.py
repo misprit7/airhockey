@@ -161,7 +161,7 @@ class HardwareDynamics(MotorDynamics):
         self.client = CDPRClient(host, port)
         self.client.connect()
         self._time = _time
-        self._hw_rate = 5.0  # Hz — how often to send commands to hardware
+        self._hw_rate = 10.0  # Hz — how often to send commands to hardware
         self._last_hw_send = 0.0
 
     def reset(self, x: float, y: float) -> None:
