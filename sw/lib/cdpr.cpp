@@ -301,14 +301,31 @@ bool CDPR::commandPosition(double x, double y, double speed_mm_s) {
     double accel_rpm_s = mmPerSecToRPM(cfg_.max_acceleration);
 
     try {
+        // Read actual encoder positions for logging.
+        double actual_enc[4];
         for (int i = 0; i < 4; i++) {
             INode &node = port_->Nodes(i);
+            node.Motion.PosnMeasured.Refresh();
+            actual_enc[i] = node.Motion.PosnMeasured.Value();
             setMotionParams(node, vel_rpm, accel_rpm_s);
         }
 
-        fprintf(stderr, "  cmdPos: target(%.1f,%.1f) enc[%.0f,%.0f,%.0f,%.0f] len[%.1f,%.1f,%.1f,%.1f]\n",
-                x, y, target_encoder[0], target_encoder[1], target_encoder[2], target_encoder[3],
-                new_lengths[0], new_lengths[1], new_lengths[2], new_lengths[3]);
+        fprintf(stderr, "  cmdPos: cart(%.1f,%.1f) speed=%.0f vel=%.1frpm\n"
+                        "    target_len [%.1f, %.1f, %.1f, %.1f]\n"
+                        "    ref_len    [%.1f, %.1f, %.1f, %.1f]\n"
+                        "    ref_enc    [%.0f, %.0f, %.0f, %.0f]\n"
+                        "    actual_enc [%.0f, %.0f, %.0f, %.0f]\n"
+                        "    target_enc [%.0f, %.0f, %.0f, %.0f]\n"
+                        "    delta_enc  [%.0f, %.0f, %.0f, %.0f]\n",
+                x, y, speed_mm_s, vel_rpm,
+                new_lengths[0], new_lengths[1], new_lengths[2], new_lengths[3],
+                ref_lengths_[0], ref_lengths_[1], ref_lengths_[2], ref_lengths_[3],
+                ref_encoder_[0], ref_encoder_[1], ref_encoder_[2], ref_encoder_[3],
+                actual_enc[0], actual_enc[1], actual_enc[2], actual_enc[3],
+                target_encoder[0], target_encoder[1], target_encoder[2], target_encoder[3],
+                target_encoder[0] - actual_enc[0], target_encoder[1] - actual_enc[1],
+                target_encoder[2] - actual_enc[2], target_encoder[3] - actual_enc[3]);
+
         for (int i = 0; i < 4; i++) {
             INode &node = port_->Nodes(i);
             node.Motion.MoveWentDone();

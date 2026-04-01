@@ -125,6 +125,14 @@ int main(int argc, char *argv[]) {
 
     mkdir("logs", 0755);
     g_log = fopen("logs/cdpr_server.log", "w");
+    // Also redirect stderr to a log file so CDPR library debug output is captured.
+    FILE *errlog = fopen("logs/cdpr_debug.log", "w");
+    if (errlog) {
+        dup2(fileno(errlog), STDERR_FILENO);
+        fclose(errlog);
+        // stderr is now the debug log; make it line-buffered
+        setvbuf(stderr, NULL, _IOLBF, 0);
+    }
     if (!g_log) {
         fprintf(stderr, "Warning: could not open cdpr_server.log\n");
     }
