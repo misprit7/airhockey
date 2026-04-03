@@ -323,7 +323,7 @@ pre {
 <nav>
   <div class="logo">AirHockey<span>RL</span></div>
   <a href="#overview">Overview</a>
-  <a href="#curriculum">Curriculum</a>
+  <a href="#rewards">Rewards</a>
   <a href="#architecture">Architecture</a>
   <a href="#speed">Speed</a>
   <a href="#observations">Observations</a>
@@ -340,16 +340,21 @@ pre {
 <!-- ══════════════════════════════════════════════════════════════════════ -->
 <section id="overview">
   <h1>Air Hockey RL Training System</h1>
-  <p>Training a robotic air hockey agent in simulation using <strong>TD-MPC2</strong> (model-based RL with learned world model + MPPI planning), then transferring to a physical cable-driven parallel robot. Supports both <strong>curriculum training</strong> (4 stages) and <strong>simple mode</strong> (<code>--simple</code>) for continuous training against an idle opponent.</p>
+  <p>Training a robotic air hockey agent in simulation using <strong>TD-MPC2</strong> (model-based RL with learned world model + MPPI planning), then transferring to a physical cable-driven parallel robot. Two-phase pipeline: <strong>pretrain</strong> with <code>--simple</code> (idle opponent, original rewards), then <strong>self-play</strong> with <code>--resume</code> (Elo-rated pool, reward annealing to goals-only).</p>
 
   <div class="stat-row">
-    <div class="stat-box"><div class="num">4</div><div class="desc">Curriculum Stages</div></div>
     <div class="stat-box"><div class="num">64</div><div class="desc">Parallel Envs</div></div>
     <div class="stat-box"><div class="num">5M</div><div class="desc">Model Params</div></div>
-    <div class="stat-box"><div class="num">185</div><div class="desc">FPS (baseline)</div></div>
+    <div class="stat-box"><div class="num">185</div><div class="desc">FPS (pretrain)</div></div>
+    <div class="stat-box"><div class="num">74</div><div class="desc">FPS (self-play)</div></div>
   </div>
 
-  <h3>Full Pipeline</h3>
+  <div class="card" style="border-color:var(--green);margin-bottom:1.5rem">
+    <h3 style="color:var(--green)">Current Status</h3>
+    <p><strong>v15 pretrain complete</strong> (2M steps, scores 8-1 at 300k). <strong>Self-play v20 running</strong> at 400k steps: <strong>80% win rate</strong>, Elo 1161, scoring 29 goals/10k steps, 74 FPS. Latest recording: <strong>7-6 competitive game</strong>.</p>
+  </div>
+
+  <h3>Training Pipeline</h3>
   <div class="pipeline">
     <div class="pipeline-step" style="background: rgba(0,212,255,0.08);">
       <div class="icon">&#9881;</div>
@@ -357,16 +362,16 @@ pre {
       <div class="sub">Motor dynamics</div>
     </div>
     <div class="pipeline-arrow">&#8594;</div>
-    <div class="pipeline-step" style="background: rgba(124,58,237,0.08);">
+    <div class="pipeline-step" style="background: rgba(34,197,94,0.08);">
       <div class="icon">&#127918;</div>
-      <div class="label">Sim Training</div>
-      <div class="sub">TD-MPC2 + curriculum</div>
+      <div class="label">Pretrain</div>
+      <div class="sub">--simple, idle opp</div>
     </div>
     <div class="pipeline-arrow">&#8594;</div>
-    <div class="pipeline-step" style="background: rgba(34,197,94,0.08);">
+    <div class="pipeline-step" style="background: rgba(124,58,237,0.08);">
       <div class="icon">&#127919;</div>
       <div class="label">Self-Play</div>
-      <div class="sub">Elo-based pool</div>
+      <div class="sub">--resume, Elo pool</div>
     </div>
     <div class="pipeline-arrow">&#8594;</div>
     <div class="pipeline-step" style="background: rgba(245,158,11,0.08);">
@@ -388,20 +393,81 @@ pre {
       <p>Model-based RL learns a <strong>world model</strong> (dynamics + reward predictor) and uses <strong>MPPI planning</strong> at inference. This gives better sample efficiency than model-free methods (SAC/PPO) and natural multi-step lookahead for trajectory planning.</p>
     </div>
     <div class="card">
-      <h3>Why Curriculum?</h3>
-      <p>Air hockey is hard: sparse goals, continuous control, fast dynamics. A <strong>4-stage curriculum</strong> progressively introduces reward complexity and opponent difficulty, ensuring the agent builds foundational skills before facing competitive play.</p>
+      <h3>Two-Phase Pipeline</h3>
+      <p><strong>Phase 1 (Pretrain):</strong> <code>--simple</code> mode trains against an idle opponent with rich shaping rewards. Builds foundational hitting, aiming, and scoring skills. <strong>Phase 2 (Self-Play):</strong> <code>--resume</code> loads the pretrained agent, starts an Elo pool, and anneals shaping rewards to goals-only over 500k steps.</p>
+      <pre>python bin/train_tdmpc2_fast.py --simple --steps 2000000
+python bin/train_tdmpc2_fast.py --resume runs/simple/agent.pt --steps 5000000</pre>
     </div>
   </div>
 </section>
 
 <!-- ══════════════════════════════════════════════════════════════════════ -->
-<!-- 4-STAGE CURRICULUM -->
+<!-- REWARD DESIGN & TRAINING PHASES -->
 <!-- ══════════════════════════════════════════════════════════════════════ -->
-<section id="curriculum">
-  <h2>4-Stage Curriculum</h2>
-  <p>Each stage builds on the previous, adding reward components and increasing opponent difficulty. Stages auto-advance when a <strong>reward plateau</strong> is detected. Episode lengths grow with stage complexity. Key design choices: no proximity reward (in curriculum), <strong>forward-only</strong> contact rewards (puck must move toward opponent), shaping decays to 0 in last 40%, goal penalty ramps 0&rarr;full over first 30%, contact cap 5/ep, goals +160/-20 (game) / +130/-20 (self-play), <strong>no entropy bonus</strong> in any stage. Alternatively, use <code>--simple</code> mode for flat training against an idle opponent.</p>
+<section id="rewards">
+  <h2>Reward Design &amp; Training Phases</h2>
+  <p>Training uses a <strong>two-phase pipeline</strong>: pretrain against an idle opponent with rich shaping rewards (<code>--simple</code>), then self-play with reward annealing (<code>--resume</code>). A 4-stage curriculum (<code>--curriculum</code>) is also available in the code but <strong>not recommended</strong> &mdash; the simple two-phase approach consistently produces better results.</p>
 
-  <div class="stage-tabs">
+  <!-- ── Phase 1: Pretrain ── -->
+  <div class="card" style="border-left:3px solid var(--green)">
+    <h3>Phase 1: Pretrain (<code>--simple</code>) <span class="badge badge-green">Recommended</span></h3>
+    <p>Continuous training against an <strong>idle opponent</strong> with no curriculum or stage advancement. Uses rich shaping rewards for maximum learning signal. <strong>v15 pretrain complete</strong> (2M steps, scores <strong>8-1 at 300k steps</strong>, 185 FPS). The pretrained agent is then used as the starting point for self-play.</p>
+    <table class="reward-table">
+      <tr><th>Component</th><th>Weight</th></tr>
+      <tr><td>Proximity</td><td class="active-cell">0.1 &times; exp(-3&times;dist)</td></tr>
+      <tr><td>Contact</td><td class="active-cell">+5.0</td></tr>
+      <tr><td>Directed Hit</td><td class="active-cell">2.0 &times; vy</td></tr>
+      <tr><td>Puck Progress</td><td class="active-cell">3.0 &times; &Delta;y</td></tr>
+      <tr><td>Goal Scored</td><td class="active-cell" style="color:var(--green)">+100</td></tr>
+      <tr><td>Goal Conceded</td><td class="active-cell" style="color:var(--red)">-5</td></tr>
+      <tr><td>Entropy</td><td class="inactive-cell">0</td></tr>
+    </table>
+    <pre>python bin/train_tdmpc2_fast.py --simple --steps 2000000</pre>
+  </div>
+
+  <!-- ── Phase 2: Self-Play ── -->
+  <div class="card" style="margin-top:1rem;border-left:3px solid var(--accent2)">
+    <h3>Phase 2: Self-Play (<code>--resume</code>) <span class="badge badge-purple">Recommended</span></h3>
+    <p>Resumes from the pretrained agent and trains against an <strong>Elo-rated opponent pool</strong>. Starts with the <strong>same rewards as pretrain</strong> (critical &mdash; the world model's reward head learned these) and <strong>anneals shaping rewards to zero</strong> over 500k steps, leaving only goal rewards. This avoids the reward mismatch that broke planning in v19.</p>
+    <table class="reward-table">
+      <tr><th>Component</th><th>Start (step 0)</th><th>End (step 500k+)</th></tr>
+      <tr><td>Proximity</td><td class="active-cell">0.1</td><td class="inactive-cell">0 (annealed)</td></tr>
+      <tr><td>Contact</td><td class="active-cell">+5.0</td><td class="inactive-cell">0 (annealed)</td></tr>
+      <tr><td>Directed Hit</td><td class="active-cell">2.0</td><td class="inactive-cell">0 (annealed)</td></tr>
+      <tr><td>Puck Progress</td><td class="active-cell">3.0</td><td class="inactive-cell">0 (annealed)</td></tr>
+      <tr><td>Goal Scored</td><td class="active-cell" style="color:var(--green)">+100</td><td class="active-cell" style="color:var(--green)">+100 (kept)</td></tr>
+      <tr><td>Goal Conceded</td><td class="active-cell" style="color:var(--red)">-5</td><td class="active-cell" style="color:var(--red)">-5 (kept)</td></tr>
+    </table>
+    <pre>python bin/train_tdmpc2_fast.py --resume runs/simple/agent.pt --steps 5000000</pre>
+  </div>
+
+  <!-- ── General Design Features ── -->
+  <div class="grid-3" style="margin-top:1.5rem">
+    <div class="card">
+      <h3>Puck-Stuck Reset</h3>
+      <p>If the puck speed stays below <strong>0.05</strong> for <strong>120 consecutive steps</strong> (2 seconds), the puck is reset to center with a random direction. Prevents stalled episodes.</p>
+    </div>
+    <div class="card">
+      <h3>Fixed Benchmark Eval</h3>
+      <p>Every <strong>500k steps</strong>, the agent plays <strong>5 games</strong> each against idle, goalie, and follower opponents. A <strong>composite score</strong> tracks progress consistently.</p>
+    </div>
+    <div class="card">
+      <h3>Step-Based Metrics</h3>
+      <p>All metrics tracked per <strong>10k steps</strong>: goals, contacts, win rate, episodes. Per-episode logging removed to reduce noise.</p>
+    </div>
+  </div>
+
+  <!-- ══════════════════════════════════════════════════════════════════ -->
+  <!-- 4-STAGE CURRICULUM (available but not recommended) -->
+  <!-- ══════════════════════════════════════════════════════════════════ -->
+  <div class="card" style="margin-top:2rem;border-color:var(--orange);opacity:0.85">
+    <h3 style="color:var(--orange)">4-Stage Curriculum (<code>--curriculum</code>) <span class="badge badge-orange">Available, Not Recommended</span></h3>
+    <p>A 4-stage auto-advancing curriculum is implemented in the codebase but <strong>never produced better results than the simple two-phase pipeline</strong>. The added complexity of stage transitions, plateau detection, and reward schedule changes introduced more failure modes than it solved. Documented here for reference.</p>
+    <details style="margin-top:0.5rem">
+      <summary style="cursor:pointer;color:var(--accent);font-weight:600;font-size:0.9rem">Show curriculum stage details</summary>
+      <pre style="margin-top:0.5rem">python bin/train_tdmpc2_fast.py --curriculum --steps 5000000</pre>
+
+  <div class="stage-tabs" style="margin-top:1rem">
     <div class="stage-tab active" onclick="showStage(1)">1. Chase + Hit</div>
     <div class="stage-tab" onclick="showStage(2)">2. Goalie</div>
     <div class="stage-tab" onclick="showStage(3)">3. Follower</div>
@@ -616,91 +682,10 @@ pre {
     </div>
   </div>
 
-  <!-- Simple Mode -->
-  <div class="card" style="margin-top:1rem">
-    <h3>Simple Mode (<code>--simple</code>) <span class="badge badge-green">Baseline</span></h3>
-    <p>Continuous training against an <strong>idle opponent</strong> with no curriculum or stage advancement. Uses the original reward weights from Session 2 for maximum simplicity. Confirmed baseline: <strong>v15 scores 8-1 at 350k steps</strong> at 185 FPS, matching original results.</p>
-    <table class="reward-table">
-      <tr><th>Component</th><th>Weight</th></tr>
-      <tr><td>Proximity</td><td class="active-cell">0.1 &times; exp(-3&times;dist)</td></tr>
-      <tr><td>Contact</td><td class="active-cell">+5.0</td></tr>
-      <tr><td>Directed Hit</td><td class="active-cell">2.0 &times; vy</td></tr>
-      <tr><td>Puck Progress</td><td class="active-cell">3.0 &times; &Delta;y</td></tr>
-      <tr><td>Goal Scored</td><td class="active-cell" style="color:var(--green)">+100</td></tr>
-      <tr><td>Goal Conceded</td><td class="active-cell" style="color:var(--red)">-5</td></tr>
-      <tr><td>Entropy</td><td class="inactive-cell">0</td></tr>
-    </table>
-    <pre>python bin/train_tdmpc2_fast.py --simple --steps 500000</pre>
-  </div>
+  <!-- Curriculum-specific: Plateau, LR, reward tables (inside details) -->
 
-  <!-- Plateau Detection -->
   <div class="card" style="margin-top:1rem">
-    <h3>Plateau Detection &amp; Stage Advancement</h3>
-    <p>Stages auto-advance when the <strong>PlateauDetector</strong> identifies a reward plateau. It compares recent episodes against a per-stage lookback window: <strong>S1: 5, S2: 8, S3: 10, S4: 15</strong> episodes (longer stages get more lookback). If improvement is below 5%, the agent is ready for the next stage.</p>
-    <pre>if (recent_avg - older_avg) / |older_avg| < threshold (0.05)
-   AND steps >= 150,000
-   AND (stage == 1 OR avg_goals >= 1.0):
-    advance to next stage
-    save checkpoint, reset LR, switch opponent</pre>
-    <p>Minimum <code>150,000</code> steps per stage prevents premature advancement. <strong>Episode staggering</strong>: parallel envs have different episode lengths (randomized &plusmn;10%) so episodes end at different times, producing smooth TensorBoard curves instead of periodic spikes.</p>
-  </div>
-
-  <!-- Per-Stage LR Schedule -->
-  <div class="card" style="margin-top:1rem">
-    <h3>Per-Stage Learning Rate Schedule</h3>
-    <p>Each stage starts at a stage-specific LR and decays via <strong>cosine annealing</strong> to LR/5 over ~450k estimated steps. On stage transition, the LR resets to the new stage's initial value. The shallower decay (LR/5 vs LR/10) prevents the LR from dropping too low before plateau detection triggers advancement.</p>
-    <div style="padding:1rem 0">
-      <svg width="100%" height="180" viewBox="0 0 700 180" preserveAspectRatio="xMidYMid meet">
-        <!-- Grid -->
-        <line x1="60" y1="20" x2="60" y2="150" stroke="#2a3a5c" stroke-width="1"/>
-        <line x1="60" y1="150" x2="680" y2="150" stroke="#2a3a5c" stroke-width="1"/>
-        <!-- Y axis labels -->
-        <text x="55" y="28" text-anchor="end" fill="#a0a8c0" font-size="9">3e-4</text>
-        <text x="55" y="55" text-anchor="end" fill="#a0a8c0" font-size="9">2e-4</text>
-        <text x="55" y="95" text-anchor="end" fill="#a0a8c0" font-size="9">1e-4</text>
-        <text x="55" y="140" text-anchor="end" fill="#a0a8c0" font-size="9">2e-5</text>
-        <!-- Grid lines -->
-        <line x1="60" y1="25" x2="680" y2="25" stroke="#2a3a5c" stroke-width="0.5" stroke-dasharray="3"/>
-        <line x1="60" y1="52" x2="680" y2="52" stroke="#2a3a5c" stroke-width="0.5" stroke-dasharray="3"/>
-        <line x1="60" y1="92" x2="680" y2="92" stroke="#2a3a5c" stroke-width="0.5" stroke-dasharray="3"/>
-        <!-- S1: 3e-4 cosine decay to 6e-5 (LR/5) -->
-        <path d="M60,25 Q120,28 160,42 Q195,56 230,65 Q255,72 280,76" fill="none" stroke="#00d4ff" stroke-width="2.5"/>
-        <!-- S2: 2e-4 reset, cosine to 4e-5 (Goalie) -->
-        <line x1="280" y1="76" x2="280" y2="52" stroke="#22c55e" stroke-width="1" stroke-dasharray="3" opacity="0.5"/>
-        <path d="M280,52 Q340,55 380,68 Q415,82 450,88" fill="none" stroke="#22c55e" stroke-width="2.5"/>
-        <!-- S3: 1e-4 reset, cosine (Follower) -->
-        <line x1="450" y1="88" x2="450" y2="92" stroke="#f59e0b" stroke-width="1" stroke-dasharray="3" opacity="0.5"/>
-        <path d="M450,92 Q500,95 530,108 Q555,118 580,124" fill="none" stroke="#f59e0b" stroke-width="2.5"/>
-        <!-- S4: 1e-4 reset, cosine (Self-play) -->
-        <line x1="580" y1="124" x2="580" y2="92" stroke="#7c3aed" stroke-width="1" stroke-dasharray="3" opacity="0.5"/>
-        <path d="M580,92 Q620,95 645,108 Q665,118 680,124" fill="none" stroke="#7c3aed" stroke-width="2.5"/>
-        <!-- Stage labels -->
-        <text x="170" y="170" text-anchor="middle" fill="#00d4ff" font-size="9" font-weight="600">S1 (3e-4)</text>
-        <text x="365" y="170" text-anchor="middle" fill="#22c55e" font-size="9" font-weight="600">S2 (2e-4)</text>
-        <text x="515" y="170" text-anchor="middle" fill="#f59e0b" font-size="9" font-weight="600">S3 (1e-4)</text>
-        <text x="630" y="170" text-anchor="middle" fill="#7c3aed" font-size="9" font-weight="600">S4 (1e-4)</text>
-        <!-- Stage dividers -->
-        <line x1="280" y1="15" x2="280" y2="155" stroke="#2a3a5c" stroke-width="1" stroke-dasharray="2" opacity="0.5"/>
-        <line x1="450" y1="15" x2="450" y2="155" stroke="#2a3a5c" stroke-width="1" stroke-dasharray="2" opacity="0.5"/>
-        <line x1="580" y1="15" x2="580" y2="155" stroke="#2a3a5c" stroke-width="1" stroke-dasharray="2" opacity="0.5"/>
-      </svg>
-    </div>
-    <p style="font-size:0.8rem;color:var(--text2)">Dashed vertical lines = stage transitions (LR resets). Cosine decay within each stage from initial LR to LR/5 over ~450k steps. Encoder LR is scaled by 0.3&times; (slower feature learning).</p>
-  </div>
-
-  <!-- Expected Reward Scales -->
-  <div class="card" style="margin-top:1rem">
-    <h3>Expected Reward Scale per Stage</h3>
-    <p>Typical per-episode shaped reward ranges (training convergence targets):</p>
-    <div class="stat-row">
-      <div class="stat-box"><div class="num" style="font-size:1.3rem">5&ndash;25</div><div class="desc">Stage 1 (chase + hit)</div></div>
-      <div class="stat-box"><div class="num" style="font-size:1.3rem">30&ndash;60</div><div class="desc">Stages 2&ndash;3 (full suite)</div></div>
-    </div>
-  </div>
-
-  <!-- Full Reward Table -->
-  <div class="card" style="margin-top:1rem">
-    <h3>Complete Reward Weight Table</h3>
+    <h3>Complete Curriculum Reward Weight Table</h3>
     <div style="overflow-x:auto">
       <table class="reward-table" id="full-reward-table">
         <thead>
@@ -718,51 +703,16 @@ pre {
           <tr><td>Shot Placement</td><td class="inactive-cell">0</td><td class="active-cell">0.2</td><td class="active-cell">0.2</td><td class="inactive-cell">0</td></tr>
           <tr><td>Goal Scored</td><td class="inactive-cell">0</td><td class="active-cell" style="color:var(--green)">+160</td><td class="active-cell" style="color:var(--green)">+160</td><td class="active-cell" style="color:var(--green)">+130</td></tr>
           <tr><td>Goal Conceded</td><td class="inactive-cell">0</td><td class="active-cell" style="color:var(--red)">-20 (ramped)</td><td class="active-cell" style="color:var(--red)">-20 (ramped)</td><td class="active-cell" style="color:var(--red)">-20</td></tr>
-          <tr><td>Entropy</td><td class="inactive-cell">0</td><td class="inactive-cell">0</td><td class="inactive-cell">0</td><td class="inactive-cell">0</td></tr>
-          <tr><td>Penalty Ramp</td><td class="inactive-cell">&mdash;</td><td class="active-cell">0&rarr;full / 30%</td><td class="active-cell">0&rarr;full / 30%</td><td class="inactive-cell">&mdash;</td></tr>
-          <tr><td>Reward Annealing</td><td class="inactive-cell">&mdash;</td><td class="active-cell">last 40%</td><td class="active-cell">last 40%</td><td class="inactive-cell">&mdash;</td></tr>
           <tr style="border-top:2px solid var(--accent)"><td><strong>Opponent</strong></td><td>Idle</td><td>Goalie</td><td>Follow</td><td>Pool (MPPI)</td></tr>
-          <tr><td><strong>Learning Rate</strong></td><td>3e-4</td><td>2e-4</td><td>1e-4</td><td>1e-4</td></tr>
-          <tr><td><strong>MPPI Horizon</strong></td><td>5</td><td>5</td><td>5</td><td>5</td></tr>
           <tr><td><strong>Episode Length</strong></td><td>600</td><td>1200</td><td>1800</td><td>1800</td></tr>
-          <tr><td><strong>Min Steps</strong></td><td colspan="4">150,000 per stage</td></tr>
-          <tr><td><strong>Plateau Lookback</strong></td><td>5 ep</td><td>8 ep</td><td>10 ep</td><td>15 ep</td></tr>
-          <tr><td><strong>Min Goals Gate</strong></td><td class="inactive-cell">&mdash;</td><td>1+/ep</td><td>1+/ep</td><td class="inactive-cell">&mdash;</td></tr>
-          <tr><td><strong>Benchmark Eval</strong></td><td colspan="4">Every 500k steps, 5 games per opponent vs idle/goalie/follow (composite score)</td></tr>
-          <tr><td><strong>Score Handicaps</strong></td><td class="inactive-cell">&mdash;</td><td class="inactive-cell">&mdash;</td><td class="inactive-cell">&mdash;</td><td>30% non-zero</td></tr>
+          <tr><td><strong>Learning Rate</strong></td><td>3e-4</td><td>2e-4</td><td>1e-4</td><td>1e-4</td></tr>
         </tbody>
       </table>
     </div>
+    <p style="font-size:0.8rem;margin-top:0.5rem">Stages auto-advance via plateau detection (min 150k steps per stage). Shaping rewards anneal to 0 in last 40% of each stage. Goal penalty ramps 0&rarr;full over first 30%.</p>
   </div>
 
-  <!-- Key Design Features -->
-  <div class="grid-3" style="margin-top:1rem">
-    <div class="card">
-      <h3>Linear Reward Annealing</h3>
-      <p>In the last <strong>40%</strong> of each game stage, all shaping reward weights decay linearly to 0. This forces the agent to rely on <strong>goal rewards only</strong> by the end of each stage, preventing shaping-reward dependence before advancing.</p>
-    </div>
-    <div class="card">
-      <h3>Penalty Ramp</h3>
-      <p>Goal penalty linearly ramps from <strong>0 to full</strong> over the first <strong>30%</strong> of each game stage. This lets the agent learn to score goals first before being penalized for conceding, preventing an early avoidance phase.</p>
-    </div>
-    <div class="card">
-      <h3>Step-Based Metrics Only</h3>
-      <p>All metrics are tracked per <strong>10k steps</strong> only: goals scored/conceded, contacts, win rate, episodes completed. Per-episode TensorBoard logging has been <strong>removed</strong> to reduce noise and provide consistent monitoring independent of episode length changes across stages.</p>
-    </div>
-  </div>
-  <div class="grid-3" style="margin-top:1rem">
-    <div class="card">
-      <h3>Puck-Stuck Reset</h3>
-      <p>If the puck speed stays below <strong>0.05</strong> for <strong>120 consecutive steps</strong> (2 seconds), the puck is reset to center with a random direction. This prevents episodes from stalling when the puck gets wedged or the agent fails to engage.</p>
-    </div>
-    <div class="card">
-      <h3>Fixed Benchmark Eval</h3>
-      <p>Every <strong>500k steps</strong>, the agent plays <strong>5 games</strong> each against idle, goalie, and follower opponents. A <strong>composite score</strong> tracks progress consistently across stages, catching regressions that within-stage reward curves would miss.</p>
-    </div>
-    <div class="card">
-      <h3>World Model Diagnostics</h3>
-      <p>Per-step <strong>prediction error</strong> of the world model is logged to TensorBoard. This reveals when the dynamics model is struggling with new opponent behaviors or unseen game states, enabling targeted debugging.</p>
-    </div>
+    </details>
   </div>
 </section>
 
@@ -899,9 +849,9 @@ pre {
   # 4. Store trajectories in PER buffer
   buffer.add(trajectories)
 
-  # 5. Gradient update (1 update/step)
+  # 5. Gradient update (compiled _update)
   batch, weights = buffer.sample(prioritized=True)
-  td_errors = agent.update(batch, weights)
+  td_errors = agent.update(batch, weights)  # compiled
   buffer.update_priorities(td_errors)
   lr_scheduler.step()
 
@@ -931,7 +881,7 @@ pre {
 <!-- ══════════════════════════════════════════════════════════════════════ -->
 <section id="speed">
   <h2>Speed Optimizations</h2>
-  <p>From 22 FPS (single env, original TD-MPC2) to <strong>185 FPS</strong> (64 parallel envs, batched MPPI, compiled updates). An <strong>8&times;</strong> throughput improvement. Baseline v15 scores <strong>8-1</strong> at 350k steps.</p>
+  <p>From 22 FPS (single env, original TD-MPC2) to <strong>185 FPS pretrain</strong> / <strong>74 FPS self-play</strong> (64 parallel envs, batched MPPI, compiled updates). An <strong>8&times;</strong> throughput improvement. Baseline v15 scores <strong>8-1</strong> at 300k steps. Self-play is slower due to dual-agent MPPI planning.</p>
 
   <div class="card">
     <h3>Throughput Timeline</h3>
@@ -957,11 +907,15 @@ pre {
         <div class="bar" style="width:80%">250</div>
       </div>
       <div class="speed-bar">
-        <div class="label">+ All optimizations (steady)</div>
+        <div class="label">+ All optimizations (pretrain)</div>
         <div class="bar" style="width:100%;background:linear-gradient(90deg,var(--green),var(--accent))">185</div>
       </div>
+      <div class="speed-bar">
+        <div class="label">Self-play (dual MPPI)</div>
+        <div class="bar" style="width:40%;background:linear-gradient(90deg,var(--accent2),var(--pink))">74</div>
+      </div>
     </div>
-    <p style="font-size:0.8rem;margin-top:0.5rem">FPS = environment frames per second (env steps &times; n_envs / wall time). Measured on RTX 5080.</p>
+    <p style="font-size:0.8rem;margin-top:0.5rem">FPS = environment frames per second (env steps &times; n_envs / wall time). Measured on RTX 5080. Self-play is ~2.5x slower due to opponent also running full MPPI planning.</p>
   </div>
 
   <div class="grid-3">
@@ -971,11 +925,11 @@ pre {
     </div>
     <div class="card">
       <h3>torch.compile</h3>
-      <p><code>torch.compile</code> on the gradient update (<code>_update</code>) gives <strong>1.9-3.4x speedup</strong> with a one-time ~33s warmup. Not applied to planning (graph breaks from <code>randn</code>/<code>topk</code>).</p>
+      <p><code>torch.compile</code> on <code>_update</code>, <strong>rollout</strong> (fused dynamics+reward), <strong>encoder</strong>, and <strong>Q-ensemble</strong>. Gives <strong>1.9-3.4x speedup</strong> with ~33s warmup. Not applied to planning (graph breaks from <code>randn</code>/<code>topk</code>).</p>
     </div>
     <div class="card">
-      <h3>Large Batch Updates</h3>
-      <p>Batch size <code>8192</code> (vs default 256) with 1 update per iteration. GPU scaling is <strong>sub-linear</strong>: a 32&times; batch increase yields ~15&times; throughput gain, since kernel overhead is amortized across more data per launch.</p>
+      <h3>Fused Dynamics+Reward</h3>
+      <p>The <code>_rollout_dynamics_reward</code> function unrolls dynamics and reward in a single compiled loop with <strong>shared cat</strong> (<code>torch.cat([z, a])</code> computed once per step). Combined with compiled encoder and Q-ensemble, this fuses multiple GPU kernels into fewer launches.</p>
     </div>
   </div>
 
@@ -1069,31 +1023,36 @@ pre {
 <!-- ══════════════════════════════════════════════════════════════════════ -->
 <section id="selfplay">
   <h2>Self-Play System</h2>
-  <p>Stage 4 uses an <strong>Elo-rated opponent pool</strong> to prevent cyclical forgetting and promote continual improvement. Current run (<strong>selfplay_v15</strong>): 2.15M steps, <strong>81% win rate</strong> vs 43 opponent versions.</p>
+  <p>Self-play is the second phase of training, resuming from a pretrained agent. It uses an <strong>Elo-rated opponent pool</strong> to prevent cyclical forgetting and promote continual improvement. Current run (<strong>v20</strong>): 400k steps, <strong>80% win rate</strong>, Elo 1161, scoring <strong>29 goals/10k steps</strong> at 74 FPS. Latest recording: <strong>7-6 competitive game</strong>.</p>
 
   <div class="grid-2">
     <div class="card">
       <h3>Opponent Pool</h3>
-      <p>Up to <strong>100 snapshots</strong> of past agent checkpoints are stored on CPU. New snapshots are added every 50k steps. Old snapshots are pruned using a mix of recency, diversity, and difficulty.</p>
-      <p><strong>Sampling:</strong> Opponents are selected based on match quality &mdash; prefer opponents near the current agent's skill level for maximum learning signal.</p>
-      <p><strong>Inference:</strong> Opponents use <strong>full MPPI planning</strong>, same as the training agent. This ensures realistic opponent behavior and proper competitive pressure, at the cost of higher compute per step.</p>
+      <p>Up to <strong>100 snapshots</strong> of past agent checkpoints are stored on CPU. New snapshots are added every 50k steps. Old snapshots are pruned by evicting the one with the lowest match quality (furthest Elo from current agent). Works well with <strong>40+ snapshots</strong>.</p>
+      <p><strong>Sampling:</strong> Opponents are selected based on <strong>match quality</strong> (Elo proximity), with 2% exploration floor and 10% minimum probability for the most recent snapshot.</p>
+      <p><strong>Inference:</strong> Opponents use <strong>full MPPI planning</strong>, same as the training agent. This ensures realistic opponent behavior and proper competitive pressure (74 FPS vs 185 FPS pretrain due to dual-agent planning).</p>
     </div>
     <div class="card">
       <h3>Elo Rating Distribution</h3>
       <p>Each snapshot tracks win/loss statistics. Elo ratings approximate relative skill levels.</p>
       <div class="elo-bar-chart" id="elo-chart"></div>
-      <p style="font-size:0.8rem;margin-top:0.5rem;color:var(--text2)">Example pool: older snapshots at lower Elo, recent ones approaching the current agent's skill.</p>
+      <p style="font-size:0.8rem;margin-top:0.5rem;color:var(--text2)">v20 pool: current agent Elo 1161. Older snapshots at lower Elo, recent ones approaching the current agent's skill.</p>
     </div>
   </div>
 
   <div class="card">
-    <h3>Why Self-Play?</h3>
-    <p>Scripted opponents have a <strong>skill ceiling</strong>. Once the agent beats the follower consistently, there's nothing harder to train against. Self-play creates an <strong>endlessly escalating challenge</strong> where the opponent improves alongside the agent. Dropping all auxiliary rewards in Stage 4 ensures the agent optimizes for <strong>pure game-winning ability</strong> without relying on reward-shaping crutches. <strong>Score handicaps</strong> (30% of episodes start with non-zero scores) prevent the agent from only learning to play from 0-0.</p>
+    <h3>Self-Play Reward Annealing</h3>
+    <p>Self-play starts with the <strong>same rewards the agent was pretrained with</strong> (proximity=0.1, contact=5, directed_hit=2, progress=3, goals=+100/-5). This is critical &mdash; the world model's reward head learned these weights during pretrain, so MPPI planning depends on them matching. Over <strong>500k steps</strong>, auxiliary shaping rewards are linearly <strong>annealed to zero</strong>, leaving only goal rewards. This smooth transition avoids the reward mismatch that broke planning in v19.</p>
   </div>
 
   <div class="card">
-    <h3>Game Recording</h3>
-    <p>Periodically during training, a <strong>synchronous 30-second recording</strong> is run on the main thread. An earlier async approach using separate CPU/CUDA streams was removed in favor of this simpler synchronous method. Recordings are saved in columnar JSON and viewable in the web UI for debugging agent behavior at each stage. <strong>Puck-stuck reset</strong>: if puck speed stays below 0.05 for 120 steps (2 seconds), the puck resets to center with a random direction.</p>
+    <h3>Why Self-Play?</h3>
+    <p>Scripted opponents have a <strong>skill ceiling</strong>. Once the agent beats the follower consistently, there's nothing harder to train against. Self-play creates an <strong>endlessly escalating challenge</strong> where the opponent improves alongside the agent. <strong>Score handicaps</strong> (30% of episodes start with non-zero scores) prevent the agent from only learning to play from 0-0.</p>
+  </div>
+
+  <div class="card">
+    <h3>Game Recording &amp; Match Tool</h3>
+    <p>Periodically during training, a <strong>synchronous recording</strong> is run on the main thread. Recordings are saved in columnar JSON and viewable in the web UI. Can also <strong>record any checkpoint vs any checkpoint</strong> for direct comparison (e.g., <code>match_latest_vs_early.json</code> showed 6-0). <strong>Puck-stuck reset</strong>: if puck speed stays below 0.05 for 120 steps (2 seconds), the puck resets to center with a random direction.</p>
   </div>
 </section>
 
@@ -1184,6 +1143,19 @@ pre {
 
   <div class="grid-2">
     <div class="card">
+      <h3 style="color:var(--red)">Mirror Action Bug (Critical)</h3>
+      <p><strong>Problem:</strong> Opponent <strong>y-action was inverted</strong> when mirroring to the opponent's coordinate frame. All previous self-play opponents were playing with inverted vertical controls, making them dramatically weaker than they should have been. Win rates were inflated.</p>
+      <p><strong>Fix:</strong> Fixed <code>mirror_action_to_opponent</code> to correctly negate the y-action. This was a critical bug that invalidated all prior self-play results.</p>
+    </div>
+    <div class="card">
+      <h3 style="color:var(--red)">Reward Mismatch Broke Planning (v19)</h3>
+      <p><strong>Problem:</strong> Self-play v19 switched to different reward weights than pretrain used. The world model's <strong>reward head had learned the pretrain rewards</strong>, so MPPI planning used wrong reward predictions. The agent's play quality collapsed.</p>
+      <p><strong>Fix:</strong> Self-play now starts with the <strong>exact same rewards as pretrain</strong> and <strong>anneals</strong> shaping rewards to zero over 500k steps, giving the reward head time to adapt.</p>
+    </div>
+  </div>
+
+  <div class="grid-2">
+    <div class="card">
       <h3 style="color:var(--red)">No Fixed Benchmark</h3>
       <p><strong>Problem:</strong> Progress was only measured by within-stage reward curves, which made it hard to compare across stages or detect regressions. Reward scale changes between stages masked actual skill degradation.</p>
       <p><strong>Fix:</strong> Added <strong>fixed benchmark evaluation</strong> every 500k steps. The agent plays 5 games each against idle, goalie, and follower opponents with a composite score, providing a consistent skill metric across all stages.</p>
@@ -1199,14 +1171,9 @@ pre {
     <h3>Design Evolution Summary</h3>
     <table class="reward-table">
       <tr><th>Decision</th><th>Current</th><th>Rationale</th></tr>
-      <tr><td>Curriculum stages</td><td class="active-cell">4 (Chase+Hit, Goalie, Follower, Self-Play)</td><td>Corner stage was redundant with Goalie</td></tr>
-      <tr><td>Shaping weights</td><td class="active-cell">Low (0.1&ndash;0.2) with annealing</td><td>High weights caused shaping domination over goal rewards</td></tr>
-      <tr><td>Proximity reward</td><td class="active-cell">Removed</td><td>Not needed with contact + directed hit</td></tr>
-      <tr><td>Contact cap</td><td class="active-cell">5/episode</td><td>Prevent contact farming</td></tr>
-      <tr><td>Reward annealing</td><td class="active-cell">Linear, last 40%</td><td>Force goal-reward reliance by end of stage</td></tr>
-      <tr><td>Penalty ramp</td><td class="active-cell">0&rarr;full over first 30%</td><td>Let agent learn to score before being penalized</td></tr>
-      <tr><td>Game goals (S2-3)</td><td class="active-cell">+160/-20</td><td>High positive signal, low penalty with ramp</td></tr>
-      <tr><td>Self-play goals (S4)</td><td class="active-cell">+130/-20</td><td>Slightly reduced for harder opponent</td></tr>
+      <tr><td>Training approach</td><td class="active-cell">Two-phase: pretrain + self-play</td><td>4-stage curriculum available but not recommended</td></tr>
+      <tr><td>Pretrain rewards</td><td class="active-cell">proximity=0.1, contact=5, directed=2, progress=3, goals +100/-5</td><td>Rich shaping for fast skill acquisition vs idle</td></tr>
+      <tr><td>Self-play rewards</td><td class="active-cell">Same as pretrain, annealed to goals-only over 500k</td><td>Reward head must match pretrain; mismatch broke v19</td></tr>
       <tr><td>Benchmark eval</td><td class="active-cell">Every 500k steps, 5 games/opponent</td><td>Consistent progress metric across stages</td></tr>
       <tr><td>Score handicaps</td><td class="active-cell">30% non-zero starts</td><td>Train comeback and composure</td></tr>
       <tr><td>Dynamics model</td><td class="active-cell">MLP (reverted from GRU)</td><td>14&times; lower world model error (0.0009 vs 0.013)</td></tr>
@@ -1214,15 +1181,23 @@ pre {
       <tr><td>Observations</td><td class="active-cell">14-dim (pos + vel, no frame stacking)</td><td>Critical for learning quality; 14&times; lower world model error</td></tr>
       <tr><td>Entropy reward</td><td class="active-cell">Removed (all stages = 0)</td><td>Did not help; simpler without it</td></tr>
       <tr><td>Puck-stuck reset</td><td class="active-cell">Speed &lt; 0.05 for 120 steps &rarr; reset</td><td>Prevents stalled episodes</td></tr>
-      <tr><td>Simple mode</td><td class="active-cell"><code>--simple</code> flag</td><td>Flat training vs idle, original reward weights, confirmed 8-1 baseline</td></tr>
-      <tr><td>Recordings</td><td class="active-cell">Synchronous 30s</td><td>Simpler than async, avoids CUDA graph state issues</td></tr>
+      <tr><td>Two-phase pipeline</td><td class="active-cell"><code>--simple</code> pretrain, then <code>--resume</code> self-play</td><td>Pretrain builds skills, self-play refines competition</td></tr>
+      <tr><td>Self-play rewards</td><td class="active-cell">Match pretrain, anneal over 500k</td><td>Mismatch broke planning in v19</td></tr>
+      <tr><td>Mirror action fix</td><td class="active-cell">Correct y-axis negation</td><td>Bug inverted all prior opponents' controls</td></tr>
+      <tr><td>Recordings</td><td class="active-cell">Sync + match tool (any vs any)</td><td>Direct checkpoint comparison (6-0 latest vs early)</td></tr>
       <tr><td>Metrics</td><td class="active-cell">Step-based only (per 10k)</td><td>Reduce noise, consistent across stages</td></tr>
     </table>
   </div>
 
-  <div class="card">
-    <h3>GRU and Transformer Dynamics: Both Worse Than MLP</h3>
-    <p><strong>Both tested and reverted.</strong> GRU dynamics had <strong>14&times; higher world model error</strong> (0.013 vs 0.0009) compared to a simple MLP. With explicit velocities in the observation, temporal memory is unnecessary &mdash; the full state is available at every timestep. Transformer-based dynamics was also benchmarked but at our scale (512-dim latent, 2-dim action), self-attention overhead far exceeds any benefit for horizons &le;30. <strong>Simple MLP wins on both accuracy and speed.</strong></p>
+  <div class="grid-2">
+    <div class="card">
+      <h3>GRU and Transformer Dynamics: Both Worse Than MLP</h3>
+      <p><strong>Both tested and reverted.</strong> GRU dynamics had <strong>14&times; higher world model error</strong> (0.013 vs 0.0009) compared to a simple MLP. With explicit velocities in the observation, temporal memory is unnecessary &mdash; the full state is available at every timestep. Transformer-based dynamics was also benchmarked but at our scale (512-dim latent, 2-dim action), self-attention overhead far exceeds any benefit for horizons &le;30. <strong>Simple MLP wins on both accuracy and speed.</strong></p>
+    </div>
+    <div class="card">
+      <h3>Sequential Env Stepping: 5x Slower</h3>
+      <p>The original TD-MPC2 codebase stepped environments <strong>sequentially</strong> (one env at a time). Batching all 64 envs into vectorized NumPy operations gave a <strong>5&times; speedup</strong> on the env stepping alone. Combined with batched MPPI (one GPU forward pass for all envs), this was the single largest throughput improvement.</p>
+    </div>
   </div>
 </section>
 
@@ -1231,7 +1206,7 @@ pre {
 <!-- ══════════════════════════════════════════════════════════════════════ -->
 <section id="calculator">
   <h2>Reward Calculator</h2>
-  <p>Enter a game state to see what reward each component produces. Uses Stage 2 weights (+160/-20 goals, penalty ramp, contact cap 5/ep, no entropy).</p>
+  <p>Enter a game state to see what reward each component produces. Uses <strong>pretrain weights</strong> (proximity=0.1, contact=5, directed=2, progress=3, goals +100/-5).</p>
 
   <div class="card">
     <div class="calc-grid">
@@ -1301,7 +1276,7 @@ function updateFrameDisplay() {}
 // ── Elo chart ──
 function initEloChart() {
   const chart = document.getElementById('elo-chart');
-  const elos = [800, 850, 920, 980, 1020, 1050, 1080, 1100, 1130, 1150, 1160, 1180, 1190, 1200];
+  const elos = [850, 900, 940, 970, 1000, 1020, 1040, 1060, 1080, 1100, 1120, 1140, 1161];
   const maxElo = Math.max(...elos);
   elos.forEach((elo, i) => {
     const bar = document.createElement('div');
@@ -1435,27 +1410,20 @@ function calcReward() {
   const puckSpeed = Math.hypot(pvx, pvy);
   const speedChange = puckSpeed - prevSpeed;
 
-  // Stage 2 weights (+160/-20 goals, reduced shaping, contact cap 5/ep)
-  const proximity = 0; // no proximity in any stage
+  // Pretrain weights (proximity=0.1, contact=5, directed=2, progress=3, goals +100/-5)
+  const proximity = 0.1 * Math.exp(-3 * dist);
   let contact = 0, directed = 0, placement = 0;
 
   if (dist < 0.25 && speedChange > 0.2 && pvy > 0) { // forward hits only
-    contact = 0.1; // capped at 5/ep
-    directed = 0.1 * pvy;
-    const dx = 0.5 - px, dy = 2.0 - py;
-    const goalDist = Math.hypot(dx, dy);
-    const alignment = (pvx * dx + pvy * dy) / (puckSpeed * goalDist + 1e-8);
-    placement = 0.2 * Math.max(0, Math.min(1, alignment));
+    contact = 5.0;
+    directed = 2.0 * pvy;
   }
 
   let defense = 0;
-  if (pvy < -0.3 && ay < py) {
-    defense = 0.1 * Math.exp(-3 * Math.abs(px - ax));
-  }
 
   let goalReward = 0;
-  if (goal > 0) goalReward = 160;
-  else if (goal < 0) goalReward = -20;
+  if (goal > 0) goalReward = 100;
+  else if (goal < 0) goalReward = -5;
 
   const total = proximity + contact + directed + placement + defense + goalReward;
 

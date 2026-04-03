@@ -204,6 +204,9 @@ class AirHockeyEnv(gym.Env):
             self._puck_slow_count = 0
 
         if self._puck_slow_count >= 120:
+            # Penalize if puck stalled on agent's side (agent should have hit it)
+            if state.puck.y < self.table_config.height / 2:
+                reward -= 0.5
             self.engine._reset_puck_after_goal(toward_agent=self._rng.random() < 0.5)
             self._puck_slow_count = 0
 

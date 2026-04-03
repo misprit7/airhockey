@@ -166,10 +166,13 @@ class PlateauDetector:
 # ---------------------------------------------------------------------------
 
 class OpponentPool:
-    """Elo-rated opponent pool for self-play.
+    """Opponent pool for self-play with score-differential matchmaking.
 
-    Stores up to `max_size` opponent state dicts on CPU. Uses Elo ratings
-    to select opponents of similar strength for maximum learning signal.
+    Stores up to `max_size` opponent state dicts on CPU. Selects opponents
+    using a mix of challenge-matching (close score differentials) and old
+    opponent refresh (prevents forgetting).
+
+    Elo is tracked for monitoring but NOT used for selection.
     """
 
     K = 32  # Elo K-factor
@@ -177,72 +180,88 @@ class OpponentPool:
 
     def __init__(self, max_size: int = 100):
         self.max_size = max_size
-        self.snapshots: list[dict] = []  # list of CPU state dicts
-        self.elos: list[float] = []      # per-snapshot Elo rating
-        self.agent_elo: float = self.INITIAL_ELO  # learning agent's Elo
+        self.snapshots: list[dict] = []    # CPU state dicts
+        self.elos: list[float] = []        # per-snapshot Elo (monitoring only)
+        self.score_diffs: list[list[float]] = []  # per-snapshot recent score diffs
+        self.agent_elo: float = self.INITIAL_ELO
 
     def add(self, agent) -> int:
         """Save a snapshot of the agent. Returns snapshot index."""
         sd = {k: v.cpu().clone() if isinstance(v, torch.Tensor) else v for k, v in agent.state_dict().items()}
         if len(self.snapshots) >= self.max_size:
-            # Evict snapshot with lowest match quality (furthest from agent Elo)
             evict = self._worst_match_idx()
             self.snapshots.pop(evict)
             self.elos.pop(evict)
+            self.score_diffs.pop(evict)
         self.snapshots.append(sd)
-        self.elos.append(self.agent_elo)  # new snapshot inherits agent's current Elo
+        self.elos.append(self.agent_elo)
+        self.score_diffs.append([])
         return len(self.snapshots) - 1
 
-    def sample(self, rng: np.random.Generator) -> int:
-        """Sample an opponent index weighted by Elo match quality."""
+    def sample(self, rng: np.random.Generator) -> tuple[int, str]:
+        """Sample an opponent. Returns (index, reason_str)."""
         n = len(self.snapshots)
         if n == 0:
             raise ValueError("Pool is empty")
         if n == 1:
-            return 0
+            return 0, "ONLY"
 
-        # Compute match quality: peaks when elos are close
-        elos = np.array(self.elos)
-        quality = np.exp(-np.abs(self.agent_elo - elos) / 200.0)
+        # 50% chance: uniform random from entire pool
+        if rng.random() < 0.5:
+            return int(rng.integers(0, n)), "RANDOM"
 
-        # Exploration temperature: ensure all opponents get some probability
-        quality = quality + 0.02
+        # 50% chance: pick by challenge level (closest score diff to 0)
+        weights = np.empty(n)
+        for i in range(n):
+            if self.score_diffs[i]:
+                avg_diff = np.mean(self.score_diffs[i])
+                weights[i] = np.exp(-abs(avg_diff) / 2.0)
+            else:
+                weights[i] = 1.0  # untested = high priority
 
-        # Guarantee most recent snapshot gets at least 10% probability
-        probs = quality / quality.sum()
-        recent_min = 0.10
-        if probs[-1] < recent_min:
-            deficit = recent_min - probs[-1]
-            probs[:-1] *= (1.0 - recent_min) / probs[:-1].sum()
-            probs[-1] = recent_min
+        # Most recent always gets at least 10%
+        weights[-1] = max(weights[-1], weights.sum() * 0.1)
+        probs = weights / weights.sum()
+        return int(rng.choice(n, p=probs)), "CHALLENGE"
 
-        return int(rng.choice(n, p=probs))
+    def __len__(self) -> int:
+        return len(self.snapshots)
 
     def load_into(self, opponent, idx: int) -> None:
         """Load snapshot at idx into the opponent agent."""
         opponent.load_state_dict(self.snapshots[idx], strict=False)
 
-    def record_outcome(self, idx: int, agent_won: bool, draw: bool = False) -> None:
-        """Update Elo ratings after a game against snapshot at idx."""
+    def record_outcome(self, idx: int, agent_goals: int, opp_goals: int) -> None:
+        """Record game result with score differential and update Elo."""
         if not (0 <= idx < len(self.elos)):
             return
 
+        # Score differential tracking (keep last 10 games)
+        diff = agent_goals - opp_goals
+        self.score_diffs[idx].append(diff)
+        if len(self.score_diffs[idx]) > 10:
+            self.score_diffs[idx] = self.score_diffs[idx][-10:]
+
+        # Elo update (for monitoring)
         elo_opp = self.elos[idx]
         expected_a = 1.0 / (1.0 + 10.0 ** ((elo_opp - self.agent_elo) / 400.0))
-        if draw:
+        if agent_goals == opp_goals:
             actual_a = 0.5
         else:
-            actual_a = 1.0 if agent_won else 0.0
-
+            actual_a = 1.0 if agent_goals > opp_goals else 0.0
         self.agent_elo += self.K * (actual_a - expected_a)
         self.elos[idx] += self.K * ((1.0 - actual_a) - (1.0 - expected_a))
 
+    def avg_diff(self, idx: int) -> float:
+        """Average score differential against snapshot idx."""
+        if 0 <= idx < len(self.score_diffs) and self.score_diffs[idx]:
+            return np.mean(self.score_diffs[idx])
+        return 0.0
+
     def get_elo(self, idx: int) -> float:
-        """Get Elo rating of snapshot at idx."""
         return self.elos[idx] if 0 <= idx < len(self.elos) else 0.0
 
     def elo_summary(self) -> str:
-        """Return a string summarizing Elo distribution in the pool."""
         if not self.elos:
             return "empty pool"
         elos = np.array(self.elos)
@@ -251,17 +270,19 @@ class OpponentPool:
                 f"max={elos.max():.0f} std={elos.std():.0f}")
 
     def _worst_match_idx(self) -> int:
-        """Find snapshot with lowest match quality (furthest from agent Elo).
+        """Find snapshot with worst challenge value for eviction.
         Never evict the most recent snapshot."""
         n = len(self.snapshots)
         if n <= 1:
             return 0
-        worst_idx = 0
-        worst_quality = float('inf')
-        for i in range(n - 1):  # skip last (most recent)
-            quality = np.exp(-abs(self.agent_elo - self.elos[i]) / 200.0)
-            if quality < worst_quality:
-                worst_quality = quality
+        worst_idx, worst_val = 0, float('inf')
+        for i in range(n - 1):
+            if self.score_diffs[i]:
+                val = np.exp(-abs(np.mean(self.score_diffs[i])) / 2.0)
+            else:
+                val = 1.0
+            if val < worst_val:
+                worst_val = val
                 worst_idx = i
         return worst_idx
 
@@ -607,6 +628,9 @@ def main():
     parser.add_argument("--resume", type=str, default=None,
                         help="Resume from checkpoint (enables self-play mode)")
     parser.add_argument("--opponent-update-freq", type=int, default=50_000)
+    parser.add_argument("--opponent-mix", type=str, default="32:12:12:8",
+                        help="Opponent mix for self-play: external:follow:goalie:idle "
+                             "counts (e.g. '32:12:12:8'). Set to '0' to disable.")
 
     # Curriculum
     parser.add_argument("--curriculum", action="store_true",
@@ -679,6 +703,25 @@ def main():
     run_dir.mkdir(parents=True, exist_ok=True)
     recordings_dir = Path("recordings")
     n_envs = args.n_envs
+
+    # --- Parse opponent mix for self-play ---
+    opp_mix = None
+    if self_play and args.opponent_mix and args.opponent_mix != "0":
+        parts = [int(p) for p in args.opponent_mix.split(":")]
+        assert len(parts) == 4, (
+            f"--opponent-mix expects 4 colon-separated counts "
+            f"(external:follow:goalie:idle), got {len(parts)}"
+        )
+        opp_mix = {
+            "external": parts[0],
+            "follow": parts[1],
+            "goalie": parts[2],
+            "idle": parts[3],
+        }
+        mix_total = sum(parts)
+        if mix_total != n_envs:
+            print(f"Adjusting n_envs from {n_envs} to {mix_total} to match --opponent-mix")
+            n_envs = mix_total
 
     # --- Auto-resume: detect existing checkpoint in run directory ---
     auto_ckpt = run_dir / 'training_state.pt'
@@ -834,6 +877,7 @@ def main():
         agent_dynamics=dyn_type,
         opponent_dynamics=dyn_type,
         opponent_policy=opp_policy,
+        opponent_mix=opp_mix,
         action_dt=1 / 60,
         max_episode_time=30.0,
         max_episode_steps=episode_steps,
@@ -843,6 +887,8 @@ def main():
         frame_stack=frame_stack,
         score_handicap=(current_stage == STAGE_SELFPLAY) if use_curriculum else self_play,
     )
+    # Mask for self-play (external) envs — used to subset opponent planning
+    sp_mask = batch_env.external_mask if self_play else None
 
     # Reward shaping — use curriculum stage config if active
     def _make_reward_shaper(stage_num=None):
@@ -859,7 +905,16 @@ def main():
         if stage_num is not None and stage_num in STAGE_DEFAULTS:
             return BatchRewardShaper(n_envs, stage=stage_num)
         elif self_play:
-            return BatchRewardShaper(n_envs, stage=STAGE_SELFPLAY)
+            # Use same rewards the agent was pretrained with — the world model's
+            # reward head learned these, so MPPI planning depends on them matching.
+            return BatchRewardShaper(
+                n_envs, stage=STAGE_SCORING,
+                proximity_weight=0.1, contact_reward=5.0,
+                directed_hit_weight=2.0, puck_progress_weight=3.0,
+                goal_reward=100.0, goal_penalty=-5.0,
+                defense_weight=0, shot_placement_weight=0, entropy_weight=0,
+                max_contacts_per_episode=999,
+            )
         else:
             return BatchRewardShaper(n_envs, stage=STAGE_SCORING)
 
@@ -1019,16 +1074,18 @@ def main():
             agent.save(run_dir / "agent.pt")
             # Add current agent to opponent pool, sample next opponent
             opp_pool.add(agent)
-            current_opp_idx = opp_pool.sample(batch_env._rng)
+            current_opp_idx, select_reason = opp_pool.sample(batch_env._rng)
             opp_pool.load_into(opponent, current_opp_idx)
             opp_elo = opp_pool.get_elo(current_opp_idx)
-            print(f"[Step {step:,}] Pool size={len(opp_pool)}, "
-                  f"agent Elo={opp_pool.agent_elo:.0f}, "
-                  f"opponent #{current_opp_idx} Elo={opp_elo:.0f}")
+            avg_diff = opp_pool.avg_diff(current_opp_idx)
+            print(f"[Step {step:,}] Selected opponent #{current_opp_idx} "
+                  f"({select_reason}, avg_diff={avg_diff:+.1f}), "
+                  f"pool={len(opp_pool)}, agent_elo={opp_pool.agent_elo:.0f}")
             # TensorBoard logging
             logger.writer.add_scalar('selfplay/agent_elo', opp_pool.agent_elo, step)
             logger.writer.add_scalar('selfplay/opponent_elo', opp_elo, step)
             logger.writer.add_scalar('selfplay/pool_size', len(opp_pool), step)
+            logger.writer.add_scalar('selfplay/opponent_avg_diff', avg_diff, step)
             # Elo distribution summary every 100k steps
             if step % 100_000 < args.opponent_update_freq:
                 print(f"[Elo] {opp_pool.elo_summary()}")
@@ -1050,17 +1107,19 @@ def main():
             if need_replan:
                 # Concurrent agent + opponent planning via CUDA streams
                 if self_play and agent_stream is not None:
-                    opp_obs_np = batch_env.mirror_obs(obs_all)
+                    opp_obs_np = batch_env.mirror_obs(obs_all[sp_mask])
                     opp_obs_t = torch.from_numpy(opp_obs_np).float()
+                    t0_sp = torch.from_numpy(t0_all[sp_mask])
                     with torch.cuda.stream(agent_stream):
                         actions_t = agent.act(obs_t, t0=t0_mask)
                     with torch.cuda.stream(opp_stream):
                         with torch.no_grad():
-                            opp_actions_t = opponent.act(opp_obs_t, t0=t0_mask, eval_mode=True)
+                            opp_actions_t = opponent.act(opp_obs_t, t0=t0_sp, eval_mode=True)
                     torch.cuda.synchronize()
                     opp_actions_np = opp_actions_t.numpy()
                     opp_tx, opp_ty = batch_env.mirror_action_to_opponent(opp_actions_np)
-                    batch_env.set_opponent_actions(opp_tx, opp_ty)
+                    batch_env._ext_opp_target_x[sp_mask] = opp_tx
+                    batch_env._ext_opp_target_y[sp_mask] = opp_ty
                 else:
                     actions_t = agent.act(obs_t, t0=t0_mask)
                 # Cache the refined plan for action chunking
@@ -1074,13 +1133,15 @@ def main():
 
                 # Opponent still needs to plan every step even during action chunking
                 if self_play:
-                    opp_obs_np = batch_env.mirror_obs(obs_all)
+                    opp_obs_np = batch_env.mirror_obs(obs_all[sp_mask])
                     opp_obs_t = torch.from_numpy(opp_obs_np).float()
+                    t0_sp = torch.from_numpy(t0_all[sp_mask])
                     with torch.no_grad():
-                        opp_actions_t = opponent.act(opp_obs_t, t0=t0_mask, eval_mode=True)
+                        opp_actions_t = opponent.act(opp_obs_t, t0=t0_sp, eval_mode=True)
                     opp_actions_np = opp_actions_t.numpy()
                     opp_tx, opp_ty = batch_env.mirror_action_to_opponent(opp_actions_np)
-                    batch_env.set_opponent_actions(opp_tx, opp_ty)
+                    batch_env._ext_opp_target_x[sp_mask] = opp_tx
+                    batch_env._ext_opp_target_y[sp_mask] = opp_ty
 
             if chunk_step >= replan_k:
                 chunk_step = 0
@@ -1093,11 +1154,16 @@ def main():
         # --- Step all envs at once ---
         obs_all, raw_rewards, terminated, truncated, info = batch_env.step(actions_np)
 
-        # Update reward annealing progress within current stage
+        # Update reward annealing progress
         if use_curriculum:
             steps_in_stage_now = step - stage_step_start
             estimated = STAGE_PLATEAU_CONFIG[current_stage]["min_steps"] * 3
             reward_shaper.set_progress(steps_in_stage_now / estimated)
+        elif self_play:
+            # Linear decay of auxiliary rewards over 500k steps, goals stay constant
+            anneal_steps = 500_000
+            reward_shaper._anneal_decay = min(1.0, step / anneal_steps)
+            reward_shaper._penalty_ramp = 1.0
 
         shaped_rewards = reward_shaper.compute(obs_all, raw_rewards, actions=actions_np, info=info)
         obs_t = torch.from_numpy(obs_all).float()
@@ -1142,13 +1208,10 @@ def main():
                 step_episodes_completed += 1
                 if score_a > score_o:
                     step_wins += 1
-                if self_play:
+                if self_play and (sp_mask is None or sp_mask[i]):
                     logger.record_outcome(score_a, score_o)
                     if opp_pool is not None and current_opp_idx >= 0:
-                        is_draw = (score_a == score_o)
-                        opp_pool.record_outcome(
-                            current_opp_idx, agent_won=(score_a > score_o), draw=is_draw,
-                        )
+                        opp_pool.record_outcome(current_opp_idx, score_a, score_o)
                 logger.log_train(step, ep_reward, len(tds_list[i]),
                                  step / max(elapsed, 1), score_a, score_o)
 

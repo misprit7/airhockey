@@ -361,8 +361,8 @@ class TestEloOpponentPool:
         idx = pool.add(agent)
         assert idx == 0
         assert len(pool) == 1
-        sampled = pool.sample(np.random.default_rng(0))
-        assert sampled == 0
+        sampled_idx, reason = pool.sample(np.random.default_rng(0))
+        assert sampled_idx == 0
 
     def test_elo_updates_on_win(self):
         pool = OpponentPool(max_size=10)
@@ -371,7 +371,7 @@ class TestEloOpponentPool:
         initial_agent_elo = pool.agent_elo
         initial_opp_elo = pool.elos[0]
 
-        pool.record_outcome(0, agent_won=True)
+        pool.record_outcome(0, agent_goals=7, opp_goals=3)
         assert pool.agent_elo > initial_agent_elo
         assert pool.elos[0] < initial_opp_elo
 
@@ -381,7 +381,7 @@ class TestEloOpponentPool:
         pool.add(agent)
         initial_agent_elo = pool.agent_elo
 
-        pool.record_outcome(0, agent_won=False)
+        pool.record_outcome(0, agent_goals=2, opp_goals=7)
         assert pool.agent_elo < initial_agent_elo
 
     def test_elo_draw(self):
@@ -390,9 +390,20 @@ class TestEloOpponentPool:
         pool.add(agent)
         # Both start at same Elo -> draw should not change ratings much
         elo_before = pool.agent_elo
-        pool.record_outcome(0, agent_won=False, draw=True)
+        pool.record_outcome(0, agent_goals=3, opp_goals=3)
         # With equal Elo, expected=0.5, actual=0.5 -> no change
         assert abs(pool.agent_elo - elo_before) < 0.01
+
+    def test_score_diff_tracking(self):
+        pool = OpponentPool(max_size=10)
+        agent = self._make_mock_agent()
+        pool.add(agent)
+        pool.record_outcome(0, agent_goals=7, opp_goals=3)
+        pool.record_outcome(0, agent_goals=5, opp_goals=5)
+        assert len(pool.score_diffs[0]) == 2
+        assert pool.score_diffs[0][0] == 4.0   # 7-3
+        assert pool.score_diffs[0][1] == 0.0   # 5-5
+        assert pool.avg_diff(0) == 2.0
 
     def test_eviction_at_capacity(self):
         pool = OpponentPool(max_size=3)
@@ -408,10 +419,21 @@ class TestEloOpponentPool:
             pool.add(agent)
 
         rng = np.random.default_rng(42)
-        samples = [pool.sample(rng) for _ in range(50)]
+        samples = [pool.sample(rng)[0] for _ in range(50)]
         unique = set(samples)
         # Should sample at least 2 different opponents
         assert len(unique) >= 2
+
+    def test_random_and_challenge_sampling(self):
+        """Both RANDOM and CHALLENGE selection modes should occur."""
+        pool = OpponentPool(max_size=20)
+        for i in range(10):
+            agent = self._make_mock_agent(float(i))
+            pool.add(agent)
+        rng = np.random.default_rng(42)
+        reasons = [pool.sample(rng)[1] for _ in range(100)]
+        assert "RANDOM" in reasons
+        assert "CHALLENGE" in reasons
 
 
 # ---------------------------------------------------------------------------

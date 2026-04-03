@@ -13,6 +13,23 @@ import numpy as np
 from airhockey.batch_physics import BatchPhysicsEngine
 from airhockey.physics import TableConfig
 
+# Per-env opponent policy IDs
+OPP_IDLE = 0
+OPP_FOLLOW = 1
+OPP_GOALIE = 2
+OPP_EXTERNAL = 3
+OPP_CORNER = 4
+OPP_RANDOM = 5
+
+_OPP_POLICY_MAP = {
+    "idle": OPP_IDLE,
+    "follow": OPP_FOLLOW,
+    "goalie": OPP_GOALIE,
+    "external": OPP_EXTERNAL,
+    "corner": OPP_CORNER,
+    "random": OPP_RANDOM,
+}
+
 
 class BatchAirHockeyEnv:
     """Batch air hockey environment — N envs stepped simultaneously.
@@ -43,6 +60,7 @@ class BatchAirHockeyEnv:
         max_episode_steps: int | None = None,
         max_score: int = 7,
         opponent_policy: str = "idle",
+        opponent_mix: dict[str, int] | None = None,
         camera_delay: float | tuple[float, float] = 0.0,
         domain_randomize: bool = False,
         frame_stack: int = 1,  # kept for API compat, must be 1
@@ -65,6 +83,21 @@ class BatchAirHockeyEnv:
         self.opponent_dynamics_type = opponent_dynamics
         self.domain_randomize = domain_randomize
         self.frame_stack = 1  # always 1; velocities replace stacking
+
+        # Per-env opponent policy
+        if opponent_mix is not None:
+            total = sum(opponent_mix.values())
+            assert total == n_envs, (
+                f"opponent_mix sums to {total}, expected n_envs={n_envs}"
+            )
+            ids = []
+            for policy_name, count in opponent_mix.items():
+                ids.extend([_OPP_POLICY_MAP[policy_name]] * count)
+            self._opp_policy_id = np.array(ids, dtype=np.int8)
+        else:
+            self._opp_policy_id = np.full(
+                n_envs, _OPP_POLICY_MAP[opponent_policy], dtype=np.int8
+            )
 
         self.engine = BatchPhysicsEngine(n_envs, self.table_config,
                                          domain_randomize=domain_randomize)
@@ -202,19 +235,25 @@ class BatchAirHockeyEnv:
         self._agent_dyn["vx"][idx] = 0.0
         self._agent_dyn["vy"][idx] = 0.0
 
-        # Override opponent position for stationary policies
+        # Override opponent position for stationary policies (per-env)
         cfg = self.table_config
-        if self.opponent_policy == "corner":
+        resetting = np.ones(self.n_envs, dtype=bool) if mask is None else mask
+
+        goalie_reset = resetting & (self._opp_policy_id == OPP_GOALIE)
+        if np.any(goalie_reset):
+            self.engine.paddle_opp_x[goalie_reset] = cfg.width / 2
+            self.engine.paddle_opp_y[goalie_reset] = cfg.height - cfg.paddle_radius
+
+        corner_reset = resetting & (self._opp_policy_id == OPP_CORNER)
+        if np.any(corner_reset):
+            n_c = int(corner_reset.sum())
             corners = np.array([
                 [cfg.paddle_radius, cfg.height - cfg.paddle_radius],
                 [cfg.width - cfg.paddle_radius, cfg.height - cfg.paddle_radius],
             ])
-            picks = self._rng.integers(0, len(corners), size=n)
-            self.engine.paddle_opp_x[idx] = corners[picks, 0]
-            self.engine.paddle_opp_y[idx] = corners[picks, 1]
-        elif self.opponent_policy == "goalie":
-            self.engine.paddle_opp_x[idx] = cfg.width / 2
-            self.engine.paddle_opp_y[idx] = cfg.height - cfg.paddle_radius
+            picks = self._rng.integers(0, len(corners), size=n_c)
+            self.engine.paddle_opp_x[corner_reset] = corners[picks, 0]
+            self.engine.paddle_opp_y[corner_reset] = corners[picks, 1]
 
         self._opp_dyn["x"][idx] = self.engine.paddle_opp_x[idx]
         self._opp_dyn["y"][idx] = self.engine.paddle_opp_y[idx]
@@ -305,6 +344,10 @@ class BatchAirHockeyEnv:
         self._puck_slow_count = np.where(slow, self._puck_slow_count + 1, 0)
         stuck = self._puck_slow_count >= 120
         if np.any(stuck):
+            # Penalize if puck stalled on agent's side (agent should have hit it)
+            on_agent_side = stuck & (self.engine.puck_y < self.table_config.height / 2)
+            rewards[on_agent_side] -= 0.5
+
             n_stuck = int(stuck.sum())
             rng = self._rng
             # Random direction: 50% toward agent, 50% toward opponent
@@ -404,6 +447,11 @@ class BatchAirHockeyEnv:
         """Set external opponent targets for all envs."""
         self._ext_opp_target_x = target_x.copy()
         self._ext_opp_target_y = target_y.copy()
+
+    @property
+    def external_mask(self) -> np.ndarray:
+        """Boolean mask [N] — True for envs using external (self-play) opponent."""
+        return self._opp_policy_id == OPP_EXTERNAL
 
     def mirror_obs(self, obs: np.ndarray) -> np.ndarray:
         """Mirror observations [N, 14] for opponent perspective.
@@ -506,47 +554,37 @@ class BatchAirHockeyEnv:
         return dyn["x"].copy(), dyn["y"].copy()
 
     def _opponent_action(self, dt: float) -> tuple[np.ndarray, np.ndarray]:
-        """Vectorized opponent policies. Returns target (x, y) arrays."""
+        """Vectorized per-env opponent policies. Returns target (x, y) arrays."""
         cfg = self.table_config
 
-        if self.opponent_policy == "idle":
-            return self._update_dynamics(
-                self._opp_dyn,
-                self.engine.paddle_opp_x.copy(),
-                self.engine.paddle_opp_y.copy(),
-                dt,
-            )
+        # Default: hold current position (idle, goalie, corner)
+        target_x = self.engine.paddle_opp_x.copy()
+        target_y = self.engine.paddle_opp_y.copy()
 
-        elif self.opponent_policy == "follow":
-            target_x = self.engine.puck_x.copy()
-            target_y = np.full(self.n_envs, cfg.height * 0.85)
-            return self._update_dynamics(self._opp_dyn, target_x, target_y, dt)
+        # Follow: track puck x, stay near back wall
+        follow = self._opp_policy_id == OPP_FOLLOW
+        target_x[follow] = self.engine.puck_x[follow]
+        target_y[follow] = cfg.height * 0.85
 
-        elif self.opponent_policy == "random":
-            target_x = self._rng.uniform(
-                cfg.paddle_radius, cfg.width - cfg.paddle_radius, size=self.n_envs
+        # Random: random target each step
+        random_mask = self._opp_policy_id == OPP_RANDOM
+        n_rand = int(random_mask.sum())
+        if n_rand > 0:
+            target_x[random_mask] = self._rng.uniform(
+                cfg.paddle_radius, cfg.width - cfg.paddle_radius, size=n_rand
             )
-            target_y = self._rng.uniform(
+            target_y[random_mask] = self._rng.uniform(
                 cfg.height / 2 + cfg.paddle_radius,
                 cfg.height - cfg.paddle_radius,
-                size=self.n_envs,
-            )
-            return self._update_dynamics(self._opp_dyn, target_x, target_y, dt)
-
-        elif self.opponent_policy in ("corner", "goalie"):
-            # Stationary — position set at reset, don't move
-            return self.engine.paddle_opp_x.copy(), self.engine.paddle_opp_y.copy()
-
-        elif self.opponent_policy == "external":
-            return self._update_dynamics(
-                self._opp_dyn,
-                self._ext_opp_target_x,
-                self._ext_opp_target_y,
-                dt,
+                size=n_rand,
             )
 
-        # Fallback: don't move
-        return self.engine.paddle_opp_x.copy(), self.engine.paddle_opp_y.copy()
+        # External: use provided targets
+        ext = self._opp_policy_id == OPP_EXTERNAL
+        target_x[ext] = self._ext_opp_target_x[ext]
+        target_y[ext] = self._ext_opp_target_y[ext]
+
+        return self._update_dynamics(self._opp_dyn, target_x, target_y, dt)
 
     def _clamp_to_half(
         self, x: np.ndarray, y: np.ndarray, agent: bool
