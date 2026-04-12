@@ -1,85 +1,61 @@
 #include <Arduino.h>
-#include <math.h>
+#include "cdpr.h"
 
-// Pin assignments
-constexpr int kStepPins[] = {6, 7, 8, 9};
-constexpr int kDirPins[]  = {34, 35, 36, 37};
-constexpr int kNumMotors = 4;
+// ============================================================================
+// Instance configuration
+// ============================================================================
 
-// Sine oscillation parameters
-constexpr float kMaxStepsPerSec = 100.0f;  // peak step rate
-constexpr float kOscFreqHz = 0.25f;        // full cycle period = 4s
-constexpr uint32_t kLoopUs = 100;          // 10 kHz control loop
-constexpr uint32_t kPulseWidthUs = 2;
+static const int stepPins[4] = {6, 7, 8, 9};
+static const int dirPins[4]  = {34, 35, 36, 37};
 
-// LED heartbeat
-constexpr uint32_t kBlinkIntervalUs = 500000;
-static uint32_t lastBlinkUs = 0;
-static bool ledState = false;
+static CDPR cdpr(stepPins, dirPins);
 
-// Per-motor step accumulator (fractional step tracking)
-static float stepAccum[kNumMotors] = {};
-static uint32_t loopStartUs = 0;
-static int activeMotor = 0;
-static float cycleStartTime = 0;
+// ============================================================================
+// Setup
+// ============================================================================
 
 void setup() {
-  for (int i = 0; i < kNumMotors; i++) {
-    pinMode(kStepPins[i], OUTPUT);
-    pinMode(kDirPins[i], OUTPUT);
-    digitalWriteFast(kStepPins[i], LOW);
-    digitalWriteFast(kDirPins[i], LOW);
-  }
+  Serial.begin(115200);
   pinMode(LED_BUILTIN, OUTPUT);
-  digitalWriteFast(LED_BUILTIN, LOW);
 
-  loopStartUs = micros();
-  lastBlinkUs = loopStartUs;
+  float cx = TABLE_WIDTH / 2.0f;
+  float cy = TABLE_HEIGHT / 2.0f;
+  cdpr.begin(cx, cy);
+  cdpr.startTimer();
+
+  Serial.println("CDPR motion controller ready");
+  Serial.printf("Tick rate: %lu Hz (%.1f us)\n", (unsigned long)DEFAULT_TICK_RATE_HZ, 1e6f / DEFAULT_TICK_RATE_HZ);
+  Serial.printf("Table: %.0f x %.0f mm\n", TABLE_WIDTH, TABLE_HEIGHT);
+  Serial.printf("Spool circumference: %.1f mm\n", SPOOL_CIRCUMFERENCE_MM);
+  Serial.printf("Counts/rev: %d\n", COUNTS_PER_REV);
 }
 
+// ============================================================================
+// Main loop — serial commands + status reporting
+// ============================================================================
+
+static uint32_t lastStatusMs = 0;
+constexpr uint32_t STATUS_INTERVAL_MS = 500;
+
 void loop() {
-  uint32_t now = micros();
-  float t = (now - loopStartUs) * 1e-6f;
-  float dt = kLoopUs * 1e-6f;
+  // TODO: Parse serial commands to call cdpr.setTarget(x, y)
 
-  // One motor at a time, full sine cycle then switch
-  float cycleT = t - cycleStartTime;
-  float cyclePeriod = 1.0f / kOscFreqHz;
-  if (cycleT >= cyclePeriod) {
-    cycleStartTime += cyclePeriod;
-    cycleT -= cyclePeriod;
-    stepAccum[activeMotor] = 0;
-    activeMotor = (activeMotor + 1) % kNumMotors;
+  uint32_t now = millis();
+  if (now - lastStatusMs >= STATUS_INTERVAL_MS) {
+    lastStatusMs = now;
+
+    int32_t pos[4];
+    float vel[4];
+    cdpr.getMotorState(pos, vel);
+
+    float tx, ty;
+    cdpr.getTarget(tx, ty);
+
+    Serial.printf("target=(%.1f, %.1f) motors=[%ld, %ld, %ld, %ld] vel=[%.0f, %.0f, %.0f, %.0f]\n",
+                  tx, ty,
+                  (long)pos[0], (long)pos[1], (long)pos[2], (long)pos[3],
+                  vel[0], vel[1], vel[2], vel[3]);
+
+    digitalToggle(LED_BUILTIN);
   }
-
-  float velocity = kMaxStepsPerSec * sinf(2.0f * M_PI * kOscFreqHz * cycleT);
-  float stepsDelta = velocity * dt;
-
-  // Set direction for active motor
-  digitalWriteFast(kDirPins[activeMotor], stepsDelta >= 0 ? HIGH : LOW);
-
-  // Accumulate fractional steps
-  bool needPulse = false;
-  stepAccum[activeMotor] += fabsf(stepsDelta);
-  if (stepAccum[activeMotor] >= 1.0f) {
-    stepAccum[activeMotor] -= 1.0f;
-    needPulse = true;
-  }
-
-  // Emit step pulse
-  if (needPulse) {
-    digitalWriteFast(kStepPins[activeMotor], HIGH);
-    delayMicroseconds(kPulseWidthUs);
-    digitalWriteFast(kStepPins[activeMotor], LOW);
-  }
-
-  // LED heartbeat
-  if (now - lastBlinkUs >= kBlinkIntervalUs) {
-    ledState = !ledState;
-    digitalWriteFast(LED_BUILTIN, ledState ? HIGH : LOW);
-    lastBlinkUs = now;
-  }
-
-  // Wait for next loop iteration
-  while (micros() - now < kLoopUs) {}
 }
