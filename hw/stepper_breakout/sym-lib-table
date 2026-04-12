@@ -1,0 +1,25 @@
+(sym_lib_table
+  (version 7)
+  (lib
+    (name "teensy")
+    (type "KiCad")
+    (uri "${KIPRJMOD}/teensy.kicad_sym")
+    (options "")
+    (descr "Teensy symbols from github.com/XenGi/teensy_library")
+  )
+  (lib
+    (name "jlcpcb")
+    (type "KiCad")
+    (uri "${KIPRJMOD}/jlcpcb_lib/symbol/SN74AHCT125DR.kicad_sym")
+    (options "")
+    (descr "JLCPCB SN74AHCT125DR")
+  )
+  (lib
+    (name "jlcpcb_conn")
+    (type "KiCad")
+    (uri "${KIPRJMOD}/jlcpcb_lib/symbol/39302040.kicad_sym")
+    (options "")
+    (descr "JLCPCB Mini-Fit Jr connector")
+  )
+  (lib (name "EasyEDA_Lib")(type "EasyEDA (JLCEDA) Pro")(uri "${KIPRJMOD}/EasyEDA_Lib/EasyEDA_Lib.elibz")(options "")(descr ""))
+)

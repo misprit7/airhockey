@@ -1,0 +1,18 @@
+(fp_lib_table
+  (version 7)
+  (lib
+    (name "teensy")
+    (type "KiCad")
+    (uri "${KIPRJMOD}/teensy.pretty")
+    (options "")
+    (descr "Teensy footprints from github.com/XenGi/teensy.pretty")
+  )
+  (lib
+    (name "jlcpcb_fp")
+    (type "KiCad")
+    (uri "${KIPRJMOD}/jlcpcb_lib/footprint")
+    (options "")
+    (descr "JLCPCB footprints")
+  )
+  (lib (name "EasyEDA_Lib")(type "EasyEDA / JLCEDA Pro")(uri "${KIPRJMOD}/EasyEDA_Lib/EasyEDA_Lib.elibz")(options "")(descr ""))
+)
