@@ -3,67 +3,79 @@
 #include <Arduino.h>
 #include "cdpr_config.h"
 
-// A single CDPR unit: 4 motors driving cables to a paddle.
-// Multiple instances can coexist, each with its own pins and timer.
-
-struct MotorState {
-  volatile int32_t  position;       // Current position (stepper counts)
-  volatile float    velocity;       // Velocity estimate (counts/s), signed
-  volatile uint32_t ticksSinceStep; // Ticks since last step pulse
-};
+// ============================================================================
+// CDPR — Cable-Driven Parallel Robot motion controller
+//
+// Plans a smooth trajectory in cartesian (x, y) space using trapezoidal
+// velocity profiles, then converts to per-motor step counts via inverse
+// kinematics. A high-frequency ISR (default 50 kHz) advances the
+// theoretical cart position each tick and emits step pulses when the
+// physical motor counts diverge from the IK solution.
+//
+// Usage:
+//   CDPR cdpr(stepPins, dirPins);
+//   cdpr.begin(startX, startY);
+//   cdpr.startTimer();
+//   cdpr.setTarget(newX, newY);  // from main loop / serial
+// ============================================================================
 
 class CDPR {
 public:
-  // Construct with pin arrays and tick rate.
-  CDPR(const int stepPins[4], const int dirPins[4], uint32_t tickRateHz = DEFAULT_TICK_RATE_HZ);
+  CDPR(const int stepPins[NUM_MOTORS], const int dirPins[NUM_MOTORS],
+       uint32_t tickRateHz = DEFAULT_TICK_RATE_HZ);
 
-  // Initialize pins and calibrate at a given paddle position (mm).
+  // Initialize pins and set the calibration position (mm).
+  // Motors are assumed to be at rest with cables tensioned to this point.
   void begin(float calX, float calY);
 
-  // Set the target paddle position (mm). Called from main loop.
+  // Set a new target cart position (mm). Thread-safe (called from main loop).
   void setTarget(float x, float y);
 
-  // Read back the current target.
+  // Read current state. All thread-safe (briefly disables interrupts).
   void getTarget(float &x, float &y) const;
+  void getCartPosition(float &x, float &y) const;   // theoretical position
+  void getCartVelocity(float &vx, float &vy) const;
+  void getMotorCounts(int32_t counts[NUM_MOTORS]) const;
 
-  // Snapshot motor state (safe to call from main loop; briefly disables interrupts).
-  void getMotorState(int32_t pos[4], float vel[4]) const;
-
-  // Start the 50 kHz control timer. Only call once after begin().
   void startTimer();
-
-  // Stop the control timer.
   void stopTimer();
 
-private:
-  // Pin assignments (copied in constructor)
-  int stepPins_[4];
-  int dirPins_[4];
+  // ISR entry point — public for trampoline. Do not call from user code.
+  void tick();
 
-  // Motor state
-  MotorState motors_[4];
-
-  // Target position (written by main loop, read by ISR)
-  volatile float targetX_;
-  volatile float targetY_;
-
-  // Reference calibration
-  float   refLengths_[4];
-  int32_t refCounts_[4];
-
-  // Timer
-  IntervalTimer timer_;
-  uint32_t tickRateHz_;
-  float tickDt_;  // 1.0 / tickRateHz_
-
-  // Compute motor count target from cart position
-  int32_t cartToMotorTarget(int motor, float x, float y) const;
-
-public:
-  // ISR internals — public for trampoline access. Do not call from user code.
+  // ISR dispatch table
   static constexpr int MAX_INSTANCES = 4;
   static CDPR* instances_[MAX_INSTANCES];
   static int   instanceCount_;
-  int          instanceIdx_;
-  void tick();
+
+private:
+  // ── Pin config ──
+  int stepPins_[NUM_MOTORS];
+  int dirPins_[NUM_MOTORS];
+
+  // ── Timing ──
+  IntervalTimer timer_;
+  uint32_t tickRateHz_;
+  float dt_;                // seconds per tick
+  int instanceIdx_ = -1;
+
+  // ── Calibration ──
+  // At calibration we record the cable lengths for the known cart position.
+  // All subsequent motor counts are relative deltas from this reference.
+  float refLengths_[NUM_MOTORS];
+
+  // ── Cart trajectory (updated every tick in ISR) ──
+  volatile float cartX_, cartY_;     // theoretical position (mm)
+  volatile float velX_,  velY_;      // current velocity (mm/s)
+  float speed_;                      // |vel| (mm/s), scalar for trapezoidal profile
+
+  // ── Target (set from main loop, read by ISR) ──
+  volatile float targetX_, targetY_;
+
+  // ── Motor physical state ──
+  volatile int32_t motorCounts_[NUM_MOTORS];  // actual step count (ground truth)
+
+  // ── Helpers ──
+  int32_t cableLengthToCounts(int motor, float x, float y) const;
+  static float clampf(float v, float lo, float hi);
 };
