@@ -37,6 +37,9 @@ public:
   void getCartVelocity(float &vx, float &vy) const;
   void getMotorCounts(int32_t counts[NUM_MOTORS]) const;
 
+  // True if cart is within `tol` mm of target and nearly stopped.
+  bool atTarget(float tol = 0.5f) const;
+
   void startTimer();
   void stopTimer();
 
@@ -67,13 +70,22 @@ private:
   // ── Cart trajectory (updated every tick in ISR) ──
   volatile float cartX_, cartY_;     // theoretical position (mm)
   volatile float velX_,  velY_;      // current velocity (mm/s)
-  float speed_;                      // |vel| (mm/s), scalar for trapezoidal profile
 
   // ── Target (set from main loop, read by ISR) ──
   volatile float targetX_, targetY_;
 
   // ── Motor physical state ──
   volatile int32_t motorCounts_[NUM_MOTORS];  // actual step count (ground truth)
+
+  // ── Precomputed GPIO bitmasks for atomic register writes ──
+  // Step pins (GPIO7) and dir pins (GPIO8) are written via DR_SET/DR_CLEAR
+  // registers so all motors transition in the same bus cycle.
+  uint32_t stepBitmask_[NUM_MOTORS];  // per-motor step pin bitmask
+  uint32_t dirBitmask_[NUM_MOTORS];   // per-motor dir pin bitmask
+  volatile uint32_t *stepSetReg_;     // GPIO DR_SET register for step pins
+  volatile uint32_t *stepClrReg_;     // GPIO DR_CLEAR register for step pins
+  volatile uint32_t *dirSetReg_;      // GPIO DR_SET register for dir pins
+  volatile uint32_t *dirClrReg_;      // GPIO DR_CLEAR register for dir pins
 
   // ── Helpers ──
   int32_t cableLengthToCounts(int motor, float x, float y) const;
