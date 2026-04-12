@@ -1,112 +1,85 @@
 #include <Arduino.h>
+#include <math.h>
 
-// Step 4 motors one at a time, 800 steps each at 100 steps/s cruise,
-// with a trapezoidal accel/decel ramp. Pins 2-5, one motor per pin.
-
-constexpr int kMotorPins[] = {2, 3, 4, 5};
+// Pin assignments
+constexpr int kStepPins[] = {6, 7, 8, 9};
+constexpr int kDirPins[]  = {34, 35, 36, 37};
 constexpr int kNumMotors = 4;
-constexpr uint32_t kTotalSteps = 800;
-constexpr float kCruiseRate = 100.0f;   // steps/sec
-constexpr float kAccel = 200.0f;        // steps/sec^2
+
+// Sine oscillation parameters
+constexpr float kMaxStepsPerSec = 100.0f;  // peak step rate
+constexpr float kOscFreqHz = 0.25f;        // full cycle period = 4s
+constexpr uint32_t kLoopUs = 100;          // 10 kHz control loop
 constexpr uint32_t kPulseWidthUs = 2;
 
-// Trapezoidal velocity profile: accelerate at kAccel up to kCruiseRate,
-// cruise, then decelerate symmetrically to stop at exactly kTotalSteps.
-// Returns cumulative target step count at time t (seconds).
-static float trapezoidal_target(float t, float *out_duration) {
-  // Time to accelerate to cruise speed.
-  const float t_accel = kCruiseRate / kAccel;
-  // Steps consumed during accel (and decel, symmetric).
-  const float steps_accel = 0.5f * kAccel * t_accel * t_accel;
+// LED heartbeat
+constexpr uint32_t kBlinkIntervalUs = 500000;
+static uint32_t lastBlinkUs = 0;
+static bool ledState = false;
 
-  float t_cruise, total_duration;
-  float steps_cruise_phase;
-
-  if (2.0f * steps_accel >= kTotalSteps) {
-    // Triangle profile — can't reach cruise speed.
-    // Peak rate = sqrt(kAccel * kTotalSteps)
-    // Each half: 0.5 * a * t_half^2 = kTotalSteps/2
-    //   t_half = sqrt(kTotalSteps / kAccel)
-    const float t_half = sqrtf((float)kTotalSteps / kAccel);
-    total_duration = 2.0f * t_half;
-    if (out_duration) *out_duration = total_duration;
-
-    if (t <= 0) return 0;
-    if (t >= total_duration) return kTotalSteps;
-    if (t <= t_half) {
-      return 0.5f * kAccel * t * t;
-    }
-    const float rem = total_duration - t;
-    return kTotalSteps - 0.5f * kAccel * rem * rem;
-  }
-
-  // Full trapezoidal profile.
-  steps_cruise_phase = kTotalSteps - 2.0f * steps_accel;
-  t_cruise = steps_cruise_phase / kCruiseRate;
-  total_duration = 2.0f * t_accel + t_cruise;
-  if (out_duration) *out_duration = total_duration;
-
-  if (t <= 0) return 0;
-  if (t >= total_duration) return kTotalSteps;
-
-  if (t <= t_accel) {
-    // Accelerating.
-    return 0.5f * kAccel * t * t;
-  }
-  if (t <= t_accel + t_cruise) {
-    // Cruising.
-    return steps_accel + kCruiseRate * (t - t_accel);
-  }
-  // Decelerating.
-  const float rem = total_duration - t;
-  return kTotalSteps - 0.5f * kAccel * rem * rem;
-}
-
-static void run_motor(int pin) {
-  pinMode(pin, OUTPUT);
-  digitalWriteFast(pin, LOW);
-
-  float duration;
-  trapezoidal_target(0, &duration);
-  const uint32_t duration_us = (uint32_t)(duration * 1e6f);
-
-  uint32_t steps_emitted = 0;
-  const uint32_t t0 = micros();
-  for (;;) {
-    const uint32_t elapsed = micros() - t0;
-    const float t = elapsed * 1e-6f;
-    const uint32_t target = (uint32_t)trapezoidal_target(t, nullptr);
-
-    if (elapsed >= duration_us && steps_emitted >= kTotalSteps) {
-      break;
-    }
-    if (target > steps_emitted) {
-      digitalWriteFast(pin, HIGH);
-      delayMicroseconds(kPulseWidthUs);
-      digitalWriteFast(pin, LOW);
-      steps_emitted++;
-      delayMicroseconds(kPulseWidthUs);
-    }
-  }
-}
+// Per-motor step accumulator (fractional step tracking)
+static float stepAccum[kNumMotors] = {};
+static uint32_t loopStartUs = 0;
+static int activeMotor = 0;
+static float cycleStartTime = 0;
 
 void setup() {
-  Serial.begin(115200);
-  delay(500);
-  Serial.println("=== Motor step test ===");
-  Serial.printf("  %d steps/motor, %d steps/s cruise, %d steps/s^2 accel\n",
-                (int)kTotalSteps, (int)kCruiseRate, (int)kAccel);
-
   for (int i = 0; i < kNumMotors; i++) {
-    Serial.printf("Motor %d (pin %d)... ", i, kMotorPins[i]);
-    run_motor(kMotorPins[i]);
-    Serial.println("done");
-    delay(500);  // pause between motors
+    pinMode(kStepPins[i], OUTPUT);
+    pinMode(kDirPins[i], OUTPUT);
+    digitalWriteFast(kStepPins[i], LOW);
+    digitalWriteFast(kDirPins[i], LOW);
   }
+  pinMode(LED_BUILTIN, OUTPUT);
+  digitalWriteFast(LED_BUILTIN, LOW);
 
-  Serial.println("All done.");
+  loopStartUs = micros();
+  lastBlinkUs = loopStartUs;
 }
 
 void loop() {
-  // Hang.
+  uint32_t now = micros();
+  float t = (now - loopStartUs) * 1e-6f;
+  float dt = kLoopUs * 1e-6f;
+
+  // One motor at a time, full sine cycle then switch
+  float cycleT = t - cycleStartTime;
+  float cyclePeriod = 1.0f / kOscFreqHz;
+  if (cycleT >= cyclePeriod) {
+    cycleStartTime += cyclePeriod;
+    cycleT -= cyclePeriod;
+    stepAccum[activeMotor] = 0;
+    activeMotor = (activeMotor + 1) % kNumMotors;
+  }
+
+  float velocity = kMaxStepsPerSec * sinf(2.0f * M_PI * kOscFreqHz * cycleT);
+  float stepsDelta = velocity * dt;
+
+  // Set direction for active motor
+  digitalWriteFast(kDirPins[activeMotor], stepsDelta >= 0 ? HIGH : LOW);
+
+  // Accumulate fractional steps
+  bool needPulse = false;
+  stepAccum[activeMotor] += fabsf(stepsDelta);
+  if (stepAccum[activeMotor] >= 1.0f) {
+    stepAccum[activeMotor] -= 1.0f;
+    needPulse = true;
+  }
+
+  // Emit step pulse
+  if (needPulse) {
+    digitalWriteFast(kStepPins[activeMotor], HIGH);
+    delayMicroseconds(kPulseWidthUs);
+    digitalWriteFast(kStepPins[activeMotor], LOW);
+  }
+
+  // LED heartbeat
+  if (now - lastBlinkUs >= kBlinkIntervalUs) {
+    ledState = !ledState;
+    digitalWriteFast(LED_BUILTIN, ledState ? HIGH : LOW);
+    lastBlinkUs = now;
+  }
+
+  // Wait for next loop iteration
+  while (micros() - now < kLoopUs) {}
 }
