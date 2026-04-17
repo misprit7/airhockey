@@ -5,10 +5,11 @@
 // Instance
 // ============================================================================
 
-static const int stepPins[NUM_MOTORS] = {6, 7, 8, 9};
-static const int dirPins[NUM_MOTORS]  = {34, 35, 36, 37};
+static const int  stepPins[NUM_MOTORS] = {6, 7, 8, 9};
+static const int  dirPins[NUM_MOTORS]  = {34, 35, 36, 37};
+static const bool dirInvert[NUM_MOTORS] = {false, false, false, false};
 
-static CDPR cdpr(stepPins, dirPins);
+static CDPR cdpr(stepPins, dirPins, dirInvert);
 
 // ============================================================================
 // Square test pattern
@@ -17,9 +18,7 @@ static CDPR cdpr(stepPins, dirPins);
 static constexpr float SQUARE_SIZE = 50.0f;  // 5cm square
 static float centerX, centerY;
 
-// Corners: center ± 25mm
 static float squareX[4], squareY[4];
-
 static int  squareIdx = 0;
 static bool squareDone = false;
 
@@ -48,7 +47,6 @@ void setup() {
   Serial.printf("Table: %.0f x %.0f mm\n", TABLE_WIDTH, TABLE_HEIGHT);
   Serial.printf("Tracing 50mm square at center (%.0f, %.0f)\n", centerX, centerY);
 
-  // Send first corner
   cdpr.setTarget(squareX[0], squareY[0]);
 }
 
@@ -64,10 +62,10 @@ void loop() {
   if (!squareDone && cdpr.atTarget()) {
     squareIdx++;
     if (squareIdx < 4) {
-      Serial.printf("Corner %d: (%.1f, %.1f)\n", squareIdx, squareX[squareIdx], squareY[squareIdx]);
+      Serial.printf("Corner %d: (%.1f, %.1f)\n", squareIdx,
+                    squareX[squareIdx], squareY[squareIdx]);
       cdpr.setTarget(squareX[squareIdx], squareY[squareIdx]);
     } else {
-      // Return to center
       Serial.println("Returning to center");
       cdpr.setTarget(centerX, centerY);
       squareDone = true;

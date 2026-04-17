@@ -45,8 +45,8 @@ inline float countsToMm(float counts) { return counts * MM_PER_COUNT; }
 
 // ── Motion limits ───────────────────────────────────────────────────
 
-constexpr float MAX_VELOCITY_MM_S = 2000.0f;
-constexpr float MAX_ACCEL_MM_S2   = 5000.0f;   // conservative start
+constexpr float MAX_VELOCITY_MM_S = 50.0f;     // 5 cm/s
+constexpr float MAX_ACCEL_MM_S2   = 200.0f;    // gentle ramp
 constexpr float EDGE_MARGIN_MM    = 30.0f;
 
 // ── Workspace bounds (mm) ───────────────────────────────────────────

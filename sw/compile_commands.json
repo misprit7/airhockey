@@ -1,0 +1,107 @@
+[
+  {
+    "directory": "/home/xander/dev/p-airhockey/airhockey/sw",
+    "file": "lib/cdpr.cpp",
+    "arguments": [
+      "g++",
+      "-std=c++11",
+      "-Wall",
+      "-Ithird_party/sFoundation/inc/inc-pub",
+      "-Ilib",
+      "-c",
+      "-o",
+      "/dev/null",
+      "lib/cdpr.cpp"
+    ]
+  },
+  {
+    "directory": "/home/xander/dev/p-airhockey/airhockey/sw",
+    "file": "bin/activate.cpp",
+    "arguments": [
+      "g++",
+      "-std=c++11",
+      "-Wall",
+      "-Ithird_party/sFoundation/inc/inc-pub",
+      "-Ilib",
+      "-c",
+      "-o",
+      "/dev/null",
+      "bin/activate.cpp"
+    ]
+  },
+  {
+    "directory": "/home/xander/dev/p-airhockey/airhockey/sw",
+    "file": "bin/cdpr_server.cpp",
+    "arguments": [
+      "g++",
+      "-std=c++11",
+      "-Wall",
+      "-Ithird_party/sFoundation/inc/inc-pub",
+      "-Ilib",
+      "-c",
+      "-o",
+      "/dev/null",
+      "bin/cdpr_server.cpp"
+    ]
+  },
+  {
+    "directory": "/home/xander/dev/p-airhockey/airhockey/sw",
+    "file": "bin/cdpr_test.cpp",
+    "arguments": [
+      "g++",
+      "-std=c++11",
+      "-Wall",
+      "-Ithird_party/sFoundation/inc/inc-pub",
+      "-Ilib",
+      "-c",
+      "-o",
+      "/dev/null",
+      "bin/cdpr_test.cpp"
+    ]
+  },
+  {
+    "directory": "/home/xander/dev/p-airhockey/airhockey/sw",
+    "file": "bin/retract_test.cpp",
+    "arguments": [
+      "g++",
+      "-std=c++11",
+      "-Wall",
+      "-Ithird_party/sFoundation/inc/inc-pub",
+      "-Ilib",
+      "-c",
+      "-o",
+      "/dev/null",
+      "bin/retract_test.cpp"
+    ]
+  },
+  {
+    "directory": "/home/xander/dev/p-airhockey/airhockey/sw",
+    "file": "bin/scan_motors.cpp",
+    "arguments": [
+      "g++",
+      "-std=c++11",
+      "-Wall",
+      "-Ithird_party/sFoundation/inc/inc-pub",
+      "-Ilib",
+      "-c",
+      "-o",
+      "/dev/null",
+      "bin/scan_motors.cpp"
+    ]
+  },
+  {
+    "directory": "/home/xander/dev/p-airhockey/airhockey/sw",
+    "file": "bin/test_motor.cpp",
+    "arguments": [
+      "g++",
+      "-std=c++11",
+      "-Wall",
+      "-Ithird_party/sFoundation/inc/inc-pub",
+      "-Ilib",
+      "-c",
+      "-o",
+      "/dev/null",
+      "bin/test_motor.cpp"
+    ]
+  }
+]

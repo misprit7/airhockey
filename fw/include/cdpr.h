@@ -55,6 +55,7 @@ private:
   // ── Pin config ──
   int stepPins_[NUM_MOTORS];
   int dirPins_[NUM_MOTORS];
+  bool dirInvert_[NUM_MOTORS];
 
   // ── Timing ──
   IntervalTimer timer_;

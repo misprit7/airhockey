@@ -22,7 +22,7 @@ LIB_OBJS := $(patsubst $(LIB_DIR)/%.cpp,$(BUILD_DIR)/%.o,$(LIB_SRCS))
 PROGRAMS := $(BUILD_DIR)/cdpr_test $(BUILD_DIR)/cdpr_server
 
 # Standalone programs (no library dependency)
-STANDALONE := $(BUILD_DIR)/test_motor $(BUILD_DIR)/scan_motors $(BUILD_DIR)/retract_test
+STANDALONE := $(BUILD_DIR)/test_motor $(BUILD_DIR)/scan_motors $(BUILD_DIR)/retract_test $(BUILD_DIR)/activate
 
 .PHONY: all clean sfoundation
 

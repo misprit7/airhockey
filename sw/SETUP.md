@@ -81,6 +81,7 @@ sudo apt install linux-headers-$(uname -r)
 ### Step 3: Install the kernel driver
 
 ```bash
+# The 'extra' directory may not exist yet
 sudo mkdir -p /lib/modules/$(uname -r)/extra
 sudo cp sw/third_party/ExarKernelDriver/xr_usb_serial_common.ko /lib/modules/$(uname -r)/extra/
 sudo depmod

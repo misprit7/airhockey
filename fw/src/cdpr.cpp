@@ -64,7 +64,7 @@ static GpioInfo resolvePin(int pin) {
 // ============================================================================
 
 CDPR::CDPR(const int stepPins[NUM_MOTORS], const int dirPins[NUM_MOTORS],
-           uint32_t tickRateHz)
+           const bool dirInvert[NUM_MOTORS], uint32_t tickRateHz)
     : tickRateHz_(tickRateHz), dt_(1.0f / tickRateHz),
       cartX_(0), cartY_(0), velX_(0), velY_(0),
       targetX_(0), targetY_(0),
@@ -73,6 +73,7 @@ CDPR::CDPR(const int stepPins[NUM_MOTORS], const int dirPins[NUM_MOTORS],
   for (int i = 0; i < NUM_MOTORS; i++) {
     stepPins_[i]    = stepPins[i];
     dirPins_[i]     = dirPins[i];
+    dirInvert_[i]   = dirInvert ? dirInvert[i] : false;
     motorCounts_[i] = 0;
     refLengths_[i]  = 0;
     stepBitmask_[i] = 0;
@@ -162,7 +163,7 @@ bool CDPR::atTarget(float tol) const {
   interrupts();
   float dist = sqrtf(dx * dx + dy * dy);
   float speed = sqrtf(vx * vx + vy * vy);
-  return dist < tol && speed < 1.0f;  // within tol mm and < 1 mm/s
+  return dist < tol && speed < 0.5f;  // within tol mm and < 0.5 mm/s
 }
 
 // ============================================================================
@@ -185,94 +186,78 @@ void CDPR::stopTimer() {
 }
 
 // ============================================================================
+// 1D trapezoidal profile helper
+//
+// Given current position, velocity, and target position along one axis,
+// compute the new velocity after one tick. Accelerates toward target,
+// decelerates to stop exactly at target.
+// ============================================================================
+
+static float trapezoidalStep(float pos, float vel, float target,
+                             float maxVel, float maxAccel, float dt) {
+  float err = target - pos;
+  float absErr = fabsf(err);
+
+  if (absErr < 0.001f && fabsf(vel) < 0.1f) {
+    // Close enough and nearly stopped — just zero out.
+    return 0.0f;
+  }
+
+  // Direction we need to go.
+  float sign = (err > 0) ? 1.0f : -1.0f;
+
+  // Braking distance from current velocity: d = v² / (2a)
+  // Only relevant if we're moving toward the target.
+  float brakeDist = (vel * vel) / (2.0f * maxAccel);
+  bool movingToward = (vel * sign > 0);
+
+  float desiredVel;
+  if (movingToward && brakeDist >= absErr) {
+    // Must decelerate to stop at target: v = sqrt(2 * a * dist)
+    desiredVel = sign * sqrtf(2.0f * maxAccel * absErr);
+  } else {
+    // Accelerate or cruise toward target.
+    desiredVel = sign * maxVel;
+  }
+
+  // Clamp velocity change by acceleration limit.
+  float dv = desiredVel - vel;
+  float maxDv = maxAccel * dt;
+  if (dv > maxDv) dv = maxDv;
+  if (dv < -maxDv) dv = -maxDv;
+
+  return vel + dv;
+}
+
+// ============================================================================
 // ISR tick
 //
 // Runs at tickRateHz_ (default 50 kHz). Each tick:
-//   1. Compute error vector from cart to target
-//   2. Plan speed using trapezoidal profile (accel/decel/cruise)
-//   3. Advance theoretical cart position
-//   4. Convert to motor counts via IK, emit steps atomically
+//   1. Run independent trapezoidal profiles for X and Y
+//   2. Advance theoretical cart position
+//   3. Convert to motor counts via IK, emit steps atomically
 // ============================================================================
 
 void CDPR::tick() {
   float tx = targetX_;
   float ty = targetY_;
 
-  // ── Error vector: theoretical cart → target ──
-  float ex = tx - cartX_;
-  float ey = ty - cartY_;
-  float dist = sqrtf(ex * ex + ey * ey);
-
-  // ── Compute desired velocity vector ──
-  //
-  // 1. Pick a desired speed (scalar) using trapezoidal logic:
-  //    - If far from target: accelerate up to max velocity
-  //    - If close enough that we need to brake: decelerate
-  //    - If at target: stop
-  //
-  // 2. Multiply by the unit direction toward target to get desired velocity.
-  //
-  // 3. Clamp the *change* from current velocity to desired velocity by the
-  //    acceleration limit. This ensures smooth transitions in ALL directions,
-  //    including perpendicular target changes.
-
-  float desVx, desVy;
-
-  if (dist < 0.001f) {
-    // At target — desired velocity is zero.
-    desVx = 0;
-    desVy = 0;
-  } else {
-    // Unit vector toward target.
-    float ux = ex / dist;
-    float uy = ey / dist;
-
-    // Current speed along the target direction (can be negative if
-    // moving away). Used for braking distance calculation.
-    float speedAlongTarget = velX_ * ux + velY_ * uy;
-
-    float desiredSpeed;
-    if (speedAlongTarget > 0) {
-      // Moving toward target. Check braking distance.
-      float decelDist = (speedAlongTarget * speedAlongTarget) / (2.0f * MAX_ACCEL_MM_S2);
-      if (dist <= decelDist) {
-        // Must brake: target speed to stop in exactly 'dist'.
-        desiredSpeed = sqrtf(2.0f * MAX_ACCEL_MM_S2 * dist);
-      } else {
-        desiredSpeed = MAX_VELOCITY_MM_S;
-      }
-    } else {
-      // Stopped or moving away — accelerate toward target.
-      desiredSpeed = MAX_VELOCITY_MM_S;
-    }
-
-    desVx = desiredSpeed * ux;
-    desVy = desiredSpeed * uy;
-  }
-
-  // ── Clamp velocity change by acceleration limit ──
-  //
-  // delta = desired_vel - current_vel
-  // if |delta| > max_accel * dt, scale it down.
-  // This is the key: velocity changes smoothly in 2D, never jumps.
-
-  float dvx = desVx - velX_;
-  float dvy = desVy - velY_;
-  float dvMag = sqrtf(dvx * dvx + dvy * dvy);
-  float maxDv = MAX_ACCEL_MM_S2 * dt_;
-
-  if (dvMag > maxDv) {
-    float scale = maxDv / dvMag;
-    dvx *= scale;
-    dvy *= scale;
-  }
-
-  velX_ += dvx;
-  velY_ += dvy;
+  // ── Independent trapezoidal profiles for each axis ──
+  velX_ = trapezoidalStep(cartX_, velX_, tx, MAX_VELOCITY_MM_S, MAX_ACCEL_MM_S2, dt_);
+  velY_ = trapezoidalStep(cartY_, velY_, ty, MAX_VELOCITY_MM_S, MAX_ACCEL_MM_S2, dt_);
 
   // ── Advance theoretical cart position ──
-  cartX_ += velX_ * dt_;
-  cartY_ += velY_ * dt_;
+  if (fabsf(tx - cartX_) < 0.001f && fabsf(velX_) == 0) {
+    cartX_ = tx;  // snap to avoid float drift
+  } else {
+    cartX_ += velX_ * dt_;
+  }
+
+  if (fabsf(ty - cartY_) < 0.001f && fabsf(velY_) == 0) {
+    cartY_ = ty;
+  } else {
+    cartY_ += velY_ * dt_;
+  }
 
   // ── Convert to motor counts and step atomically ──
   //
@@ -288,11 +273,13 @@ void CDPR::tick() {
     int32_t error  = target - motorCounts_[i];
 
     if (error > 0) {
-      dirSet  |= dirBitmask_[i];
+      bool pinHigh = !dirInvert_[i];  // extend = HIGH unless inverted
+      (pinHigh ? dirSet : dirClr) |= dirBitmask_[i];
       stepSet |= stepBitmask_[i];
       motorCounts_[i]++;
     } else if (error < 0) {
-      dirClr  |= dirBitmask_[i];
+      bool pinHigh = dirInvert_[i];   // retract = LOW unless inverted
+      (pinHigh ? dirSet : dirClr) |= dirBitmask_[i];
       stepSet |= stepBitmask_[i];
       motorCounts_[i]--;
     }
