@@ -34,11 +34,10 @@ _OPP_POLICY_MAP = {
 class BatchAirHockeyEnv:
     """Batch air hockey environment — N envs stepped simultaneously.
 
-    Observation per env (14 dims):
+    Observation per env (12 dims):
         puck_x, puck_y, puck_vx, puck_vy,
         paddle_x, paddle_y, paddle_vx, paddle_vy,
-        opp_x, opp_y, opp_vx, opp_vy,
-        score_diff, time_remaining
+        opp_x, opp_y, opp_vx, opp_vy
 
     Action per env: (2,) — normalized [-1, 1] target position.
 
@@ -46,7 +45,7 @@ class BatchAirHockeyEnv:
     calling convention (no Gymnasium wrappers, returns batched arrays).
     """
 
-    OBS_DIM = 14
+    OBS_DIM = 12
 
     def __init__(
         self,
@@ -121,7 +120,6 @@ class BatchAirHockeyEnv:
             cfg.width, cfg.height, vel_max, vel_max,      # puck
             cfg.width, cfg.height, vel_max, vel_max,      # paddle
             cfg.width, cfg.height, vel_max, vel_max,      # opponent
-            1.0, 1.0,                                     # context
         ], dtype=np.float32)
 
         # Camera delay ring buffer.
@@ -454,17 +452,15 @@ class BatchAirHockeyEnv:
         return self._opp_policy_id == OPP_EXTERNAL
 
     def mirror_obs(self, obs: np.ndarray) -> np.ndarray:
-        """Mirror observations [N, 14] for opponent perspective.
+        """Mirror observations [N, 12] for opponent perspective.
 
         Flip y positions, negate y velocities, swap agent/opponent.
-        Negate score_diff, time_remaining unchanged.
         """
         cfg = self.table_config
         m = obs.copy()
         # Obs: [puck_x, puck_y, puck_vx, puck_vy,
         #        pad_x, pad_y, pad_vx, pad_vy,
-        #        opp_x, opp_y, opp_vx, opp_vy,
-        #        score_diff, time_remaining]
+        #        opp_x, opp_y, opp_vx, opp_vy]
 
         # Puck: flip y, negate vy
         m[:, 1] = cfg.height - obs[:, 1]    # puck_y
@@ -479,10 +475,6 @@ class BatchAirHockeyEnv:
         m[:, 9] = cfg.height - obs[:, 5]    # pad_y → opp_y (flipped)
         m[:, 10] = obs[:, 6]                # pad_vx → opp_vx
         m[:, 11] = -obs[:, 7]               # pad_vy → opp_vy (negated)
-
-        # Context
-        m[:, 12] = -obs[:, 12]  # negate score_diff
-        # time_remaining unchanged
         return m
 
     def mirror_action_to_opponent(self, actions: np.ndarray) -> tuple[np.ndarray, np.ndarray]:
@@ -599,7 +591,7 @@ class BatchAirHockeyEnv:
         return x, y
 
     def _make_obs_direct(self) -> np.ndarray:
-        """Build [N, 14] observation with positions + velocities + context."""
+        """Build [N, 12] observation with positions + velocities."""
         e = self.engine
         dt = self.action_dt
 
@@ -615,18 +607,10 @@ class BatchAirHockeyEnv:
         self._prev_opp_x[:] = e.paddle_opp_x
         self._prev_opp_y[:] = e.paddle_opp_y
 
-        # Context
-        score_diff = (e.score_agent - e.score_opponent) / max(self.max_score, 1)
-        if self.max_episode_steps is not None:
-            time_remaining = np.clip(self.max_episode_steps - self._step_count, 0, None) / self.max_episode_steps
-        else:
-            time_remaining = np.clip(self.max_episode_time - e.time, 0.0, None) / self.max_episode_time
-
         return np.column_stack([
             e.puck_x, e.puck_y, e.puck_vx, e.puck_vy,
             e.paddle_agent_x, e.paddle_agent_y, agent_vx, agent_vy,
             e.paddle_opp_x, e.paddle_opp_y, opp_vx, opp_vy,
-            score_diff, time_remaining,
         ]).astype(np.float32)
 
     def _get_delayed_obs(self, current_obs: np.ndarray) -> np.ndarray:

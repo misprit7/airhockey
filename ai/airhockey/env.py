@@ -15,13 +15,12 @@ from airhockey.recorder import FrameData, Recorder
 
 
 class AirHockeyEnv(gym.Env):
-    """Air hockey environment with 14-dim observation.
+    """Air hockey environment with 12-dim observation.
 
-    Observation layout (14 dims):
+    Observation layout (12 dims):
         puck_x, puck_y, puck_vx, puck_vy,
         paddle_x, paddle_y, paddle_vx, paddle_vy,
-        opp_x, opp_y, opp_vx, opp_vy,
-        score_diff, time_remaining
+        opp_x, opp_y, opp_vx, opp_vy
 
     Action (2,):
         Target (x, y) position for the agent's paddle.
@@ -30,7 +29,7 @@ class AirHockeyEnv(gym.Env):
     a delayed version.
     """
 
-    OBS_DIM = 14
+    OBS_DIM = 12
 
     metadata = {"render_modes": ["human"]}
 
@@ -68,13 +67,12 @@ class AirHockeyEnv(gym.Env):
 
         # Observation and action spaces
         cfg = self.table_config
-        # Bounds: positions [0, width/height], velocities large, context [-1, 1]
+        # Bounds: positions [0, width/height], velocities large
         vel_max = 10.0  # generous velocity bound
         high_obs = np.array([
             cfg.width, cfg.height, vel_max, vel_max,      # puck
             cfg.width, cfg.height, vel_max, vel_max,      # paddle
             cfg.width, cfg.height, vel_max, vel_max,      # opponent
-            1.0, 1.0,                                     # context
         ], dtype=np.float32)
         self.observation_space = spaces.Box(-high_obs, high_obs, dtype=np.float32)
 
@@ -162,7 +160,10 @@ class AirHockeyEnv(gym.Env):
     def step(
         self, action: np.ndarray
     ) -> tuple[np.ndarray, float, bool, bool, dict[str, Any]]:
-        # Clip to [-1, 1] then rescale to real position bounds
+        # Sanitize NaN/Inf (early TD-MPC2 planning can emit NaN actions, which
+        # would survive np.clip and corrupt physics state into NaN), then
+        # clip to [-1, 1] and rescale to real position bounds.
+        action = np.nan_to_num(action, nan=0.0, posinf=1.0, neginf=-1.0)
         action = np.clip(action, -1.0, 1.0)
         real_action = self._action_low + (action + 1.0) * 0.5 * (self._action_high - self._action_low)
         target_x, target_y = float(real_action[0]), float(real_action[1])
@@ -249,14 +250,12 @@ class AirHockeyEnv(gym.Env):
         """Mirror observation so opponent sees the game from its perspective.
 
         Flip y positions, negate y velocities, swap agent/opponent.
-        Negate score_diff; time_remaining unchanged.
         """
         cfg = self.table_config
         mirrored = obs.copy()
         # Obs: [puck_x, puck_y, puck_vx, puck_vy,
         #        pad_x, pad_y, pad_vx, pad_vy,
-        #        opp_x, opp_y, opp_vx, opp_vy,
-        #        score_diff, time_remaining]
+        #        opp_x, opp_y, opp_vx, opp_vy]
 
         # Puck: flip y, negate vy
         mirrored[1] = cfg.height - obs[1]    # puck_y
@@ -271,10 +270,6 @@ class AirHockeyEnv(gym.Env):
         mirrored[9] = cfg.height - obs[5]    # pad_y → opp_y (flipped)
         mirrored[10] = obs[6]                # pad_vx → opp_vx
         mirrored[11] = -obs[7]               # pad_vy → opp_vy (negated)
-
-        # Context
-        mirrored[12] = -obs[12]  # negate score_diff
-        # time_remaining unchanged
         return mirrored
 
     def mirror_action_to_opponent(self, action: np.ndarray) -> tuple[float, float]:
@@ -326,7 +321,7 @@ class AirHockeyEnv(gym.Env):
         return opp.x, opp.y
 
     def _make_obs(self, state: PhysicsState) -> np.ndarray:
-        """Build 14-dim observation with positions + velocities + context."""
+        """Build 12-dim observation: puck + agent_paddle + opp_paddle (pos+vel each)."""
         dt = self.action_dt
         # Paddle velocities from finite differences
         agent_vx = (state.paddle_agent.x - self._prev_agent_x) / dt
@@ -340,18 +335,10 @@ class AirHockeyEnv(gym.Env):
         self._prev_opp_x = state.paddle_opponent.x
         self._prev_opp_y = state.paddle_opponent.y
 
-        # Context
-        score_diff = (state.score_agent - state.score_opponent) / max(self.max_score, 1)
-        if self.max_episode_steps is not None:
-            time_remaining = max(0, self.max_episode_steps - self._step_count) / self.max_episode_steps
-        else:
-            time_remaining = max(0.0, self.max_episode_time - state.time) / self.max_episode_time
-
         return np.array([
             state.puck.x, state.puck.y, state.puck.vx, state.puck.vy,
             state.paddle_agent.x, state.paddle_agent.y, agent_vx, agent_vy,
             state.paddle_opponent.x, state.paddle_opponent.y, opp_vx, opp_vy,
-            score_diff, time_remaining,
         ], dtype=np.float32)
 
     def _get_delayed_obs(self, current_obs: np.ndarray) -> np.ndarray:

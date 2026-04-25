@@ -36,9 +36,9 @@ class TestEnvParity:
         single_obs, _ = single.reset(seed=42)
         batch_obs = batch.reset(seed=42)
 
-        # 14-dim obs: puck(4) + paddle(4) + opp(4) + context(2)
-        assert single_obs.shape == (14,)
-        assert batch_obs.shape == (1, 14)
+        # 12-dim obs: puck(4) + paddle(4) + opp(4) + context(2)
+        assert single_obs.shape == (12,)
+        assert batch_obs.shape == (1, 12)
 
         # Both should produce valid observations in the right ranges
         cfg = TableConfig()

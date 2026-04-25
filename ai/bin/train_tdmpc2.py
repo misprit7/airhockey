@@ -232,6 +232,24 @@ def main():
                         help="Curriculum stage (1-4, default 2 for backwards compat)")
     parser.add_argument("--frame-stack", type=int, default=1,
                         help="Number of frames to stack in observations (default: 1)")
+    parser.add_argument("--compile", action="store_true",
+                        help="torch.compile the update function (uses 'default' mode on MPS/CPU)")
+    parser.add_argument("--replan-every", type=int, default=1,
+                        help="Action chunking: reuse the MPPI plan for K steps before "
+                             "replanning. Must be <= horizon. Default 1 (replan every step).")
+    parser.add_argument("--batched-mppi", action="store_true",
+                        help="Use batched MPPI planning across all n_envs in a single GPU "
+                             "call (requires act_batched method on agent).")
+    parser.add_argument("--lr", type=float, default=None,
+                        help="Override learning rate (config default 3e-4)")
+    parser.add_argument("--weight-decay", type=float, default=0.0,
+                        help="Adam weight_decay (default 0; try 1e-4 for stability on MPS)")
+    parser.add_argument("--grad-clip-norm", type=float, default=None,
+                        help="Override grad_clip_norm (config default 20; try 1.0 for safety)")
+    parser.add_argument("--consistency-coef", type=float, default=None,
+                        help="Override consistency_coef (default 20)")
+    parser.add_argument("--resume", type=str, default=None,
+                        help="Path to agent.pt to load weights from (resumes training)")
     args = parser.parse_args()
 
     run_dir = Path("runs") / args.run_name
@@ -257,7 +275,7 @@ def main():
         "enable_wandb": False,
         "save_csv": False,
         "work_dir": str(run_dir),
-        "compile": False,
+        "compile": args.compile,
         "data_dir": str(run_dir / "data"),
         "exp_name": args.run_name,
         "discount_max": 0.99,
@@ -286,6 +304,17 @@ def main():
 
     cfg.bin_size = (cfg.vmax - cfg.vmin) / (cfg.num_bins - 1)
 
+    # Hyperparameter overrides (CLI > config defaults).
+    if args.lr is not None:
+        cfg.lr = args.lr
+    if args.grad_clip_norm is not None:
+        cfg.grad_clip_norm = args.grad_clip_norm
+    if args.consistency_coef is not None:
+        cfg.consistency_coef = args.consistency_coef
+    cfg.weight_decay = float(args.weight_decay)  # always set; default 0.0
+    print(f"[hyperparams] lr={cfg.lr}, weight_decay={cfg.weight_decay}, "
+          f"grad_clip_norm={cfg.grad_clip_norm}, consistency_coef={cfg.consistency_coef}")
+
     # Create vectorized batch env
     stage = args.stage
     dyn_type = "delayed" if args.dynamics else "ideal"
@@ -305,7 +334,7 @@ def main():
     )
     reward_shaper = BatchRewardShaper(n_envs, stage=stage, frame_stack=frame_stack)
 
-    obs_dim = 14  # positions(4*3) + velocities + context(2)
+    obs_dim = 12  # puck(4) + paddle(4) + opp(4)
     cfg.obs_shape = {"state": (obs_dim,)}
     cfg.action_dim = 2
     cfg.episode_length = 1800  # 30s at 60Hz
@@ -327,6 +356,9 @@ def main():
     print()
 
     agent = TDMPC2(cfg)
+    if args.resume is not None:
+        print(f"[resume] loading weights from {args.resume}")
+        agent.load(args.resume)
     buffer = Buffer(cfg)
     logger = SimpleLogger(cfg)
 
@@ -349,6 +381,22 @@ def main():
             reward=nan_scalar,
             terminated=nan_scalar,
         batch_size=(1,))])
+
+    # --- Action chunking state ---
+    # Each env keeps its own MPPI warm-start and a cached plan to consume.
+    # On replan steps we run agent.act() (single-env) with the env's saved warm-start;
+    # afterwards we save the new warm-start and the cached plan.
+    replan_k = max(1, int(args.replan_every))
+    if replan_k > cfg.horizon:
+        print(f"WARNING: --replan-every {replan_k} > horizon {cfg.horizon}; clamping.")
+        replan_k = cfg.horizon
+    chunk_pos = [0] * n_envs               # next chunk index, 0 means "must replan"
+    cached_plans = [None] * n_envs         # per-env [horizon, action_dim] tensor
+    saved_prev_means = [None] * n_envs     # per-env warm-start (clone of agent._prev_mean)
+    use_batched_mppi = bool(args.batched_mppi) and hasattr(agent, "act_batched")
+    if args.batched_mppi and not use_batched_mppi:
+        print("WARNING: --batched-mppi requested but agent has no act_batched method; "
+              "falling back to per-env act().")
 
     # --- Training loop ---
     step = 0
@@ -387,15 +435,39 @@ def main():
         # Collect actions for all envs
         actions_np = np.empty((n_envs, 2), dtype=np.float32)
         actions_t = []
-        for i in range(n_envs):
-            if step > cfg.seed_steps:
-                action = agent.act(obs_t[i], t0=t0_list[i])
-            else:
-                action = torch.from_numpy(
-                    np.random.uniform(-1, 1, size=2).astype(np.float32)
-                )
-            actions_t.append(action)
-            actions_np[i] = action.numpy()
+        if step > cfg.seed_steps and use_batched_mppi:
+            # Path A: one batched MPPI call across all envs.
+            t0_mask = torch.tensor(t0_list, dtype=torch.bool)
+            batched_actions = agent.act_batched(obs_t, t0_mask)  # [N, A]
+            for i in range(n_envs):
+                a = batched_actions[i].cpu()
+                actions_t.append(a)
+                actions_np[i] = a.numpy()
+        else:
+            for i in range(n_envs):
+                if step <= cfg.seed_steps:
+                    action = torch.from_numpy(
+                        np.random.uniform(-1, 1, size=2).astype(np.float32)
+                    )
+                elif replan_k > 1:
+                    # Per-env action chunking with restored warm-start.
+                    if t0_list[i] or chunk_pos[i] == 0 or cached_plans[i] is None:
+                        # Replan: restore this env's warm-start, run MPPI, save plan.
+                        if saved_prev_means[i] is not None and not t0_list[i]:
+                            agent._prev_mean.copy_(saved_prev_means[i])
+                        action = agent.act(obs_t[i], t0=t0_list[i])
+                        # Save the new warm-start mean (post-MPPI) for this env.
+                        saved_prev_means[i] = agent._prev_mean.detach().clone()
+                        cached_plans[i] = saved_prev_means[i].clone()
+                        chunk_pos[i] = 1 % replan_k
+                    else:
+                        # Reuse cached plan: use mean[chunk_pos] as the next action.
+                        action = cached_plans[i][chunk_pos[i]].cpu().clamp(-1, 1)
+                        chunk_pos[i] = (chunk_pos[i] + 1) % replan_k
+                else:
+                    action = agent.act(obs_t[i], t0=t0_list[i])
+                actions_t.append(action)
+                actions_np[i] = action.numpy()
 
         # Step all envs at once (vectorized physics)
         obs_np, raw_rewards, terminated, truncated, info = batch_env.step(actions_np)
@@ -439,6 +511,10 @@ def main():
                     terminated=nan_scalar,
                 batch_size=(1,))]
                 t0_list[i] = True
+                # Reset action-chunking state on episode end.
+                chunk_pos[i] = 0
+                cached_plans[i] = None
+                saved_prev_means[i] = None
 
         # Update t0 flags for non-done envs
         for i in range(n_envs):
@@ -462,8 +538,8 @@ def main():
 
         step += n_envs
 
-        # Checkpoint every 100k steps
-        if step > 0 and step % 100_000 < n_envs:
+        # Checkpoint every 50k steps
+        if step > 0 and step % 50_000 < n_envs:
             _cleanup_futures()
             agent_copy = copy.deepcopy(agent)
             ckpt_path = run_dir / f"agent_step_{step}.pt"

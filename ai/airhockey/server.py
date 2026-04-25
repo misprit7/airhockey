@@ -87,7 +87,9 @@ async def get_recording(filename: str):
     path = RECORDINGS_DIR / filename
     if not path.exists():
         return {"error": "not found"}
-    data = json.loads(path.read_text())
+    # Replace literal NaN/Infinity/-Infinity tokens with null during parse so
+    # the response is JSON-spec compliant (Starlette uses allow_nan=False).
+    data = json.loads(path.read_text(), parse_constant=lambda _c: None)
     # Convert columnar format to row format for frontend
     if isinstance(data, dict) and "columns" in data:
         fields = data["fields"]

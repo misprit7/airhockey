@@ -201,10 +201,9 @@ class BatchRewardShaper:
     """Vectorized reward shaping on [N, obs_dim] arrays.
 
     Mirrors ShapedRewardWrapper logic for batch environments.
-    Obs layout (14 dims): [puck_x, puck_y, puck_vx, puck_vy,
+    Obs layout (12 dims): [puck_x, puck_y, puck_vx, puck_vy,
                            pad_x, pad_y, pad_vx, pad_vy,
-                           opp_x, opp_y, opp_vx, opp_vy,
-                           score_diff, time_remaining].
+                           opp_x, opp_y, opp_vx, opp_vy].
     Puck velocities read from obs (indices 2-3); info dict also accepted as fallback.
     """
 

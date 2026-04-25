@@ -3,8 +3,16 @@
 from __future__ import annotations
 
 import json
+import math
 from dataclasses import asdict, dataclass
 from pathlib import Path
+
+
+def _clean_float(v: float) -> float:
+    """Replace NaN/Inf with 0.0 so output is JSON-spec compliant."""
+    if not math.isfinite(v):
+        return 0.0
+    return v
 
 
 @dataclass
@@ -60,11 +68,19 @@ class Recorder:
             d = asdict(frame)
             for f in fields:
                 v = d[f]
-                columns[f].append(round(float(v), 4) if isinstance(v, float) else v)
+                if isinstance(v, float):
+                    columns[f].append(round(_clean_float(v), 4))
+                else:
+                    columns[f].append(v)
         data = {"fields": fields, "columns": columns}
         if metadata:
             data["metadata"] = metadata
-        Path(path).write_text(json.dumps(data, separators=(",", ":"), default=lambda x: round(float(x), 4)))
+        Path(path).write_text(json.dumps(
+            data,
+            separators=(",", ":"),
+            allow_nan=False,
+            default=lambda x: round(_clean_float(float(x)), 4),
+        ))
 
     @staticmethod
     def load(path: str | Path) -> list[FrameData]:
