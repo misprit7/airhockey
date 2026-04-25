@@ -55,7 +55,6 @@ private:
   // ── Pin config ──
   int stepPins_[NUM_MOTORS];
   int dirPins_[NUM_MOTORS];
-  bool dirInvert_[NUM_MOTORS];
 
   // ── Timing ──
   IntervalTimer timer_;
@@ -88,6 +87,7 @@ private:
   volatile uint32_t *dirSetReg_;      // GPIO DR_SET register for dir pins
   volatile uint32_t *dirClrReg_;      // GPIO DR_CLEAR register for dir pins
 
+private:
   // ── Helpers ──
   int32_t cableLengthToCounts(int motor, float x, float y) const;
   static float clampf(float v, float lo, float hi);

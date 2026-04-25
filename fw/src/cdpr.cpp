@@ -5,16 +5,20 @@
 // ISR trampoline dispatch
 // ============================================================================
 
-CDPR* CDPR::instances_[MAX_INSTANCES] = {};
-int   CDPR::instanceCount_ = 0;
+CDPR *CDPR::instances_[MAX_INSTANCES] = {};
+int CDPR::instanceCount_ = 0;
 
 template <int N> static void trampoline() {
-  if (CDPR::instances_[N]) CDPR::instances_[N]->tick();
+  if (CDPR::instances_[N])
+    CDPR::instances_[N]->tick();
 }
 
 using Fn = void (*)();
 static constexpr Fn trampolines[CDPR::MAX_INSTANCES] = {
-  trampoline<0>, trampoline<1>, trampoline<2>, trampoline<3>,
+    trampoline<0>,
+    trampoline<1>,
+    trampoline<2>,
+    trampoline<3>,
 };
 
 // ============================================================================
@@ -22,8 +26,10 @@ static constexpr Fn trampolines[CDPR::MAX_INSTANCES] = {
 // ============================================================================
 
 float CDPR::clampf(float v, float lo, float hi) {
-  if (v < lo) return lo;
-  if (v > hi) return hi;
+  if (v < lo)
+    return lo;
+  if (v > hi)
+    return hi;
   return v;
 }
 
@@ -39,7 +45,8 @@ int32_t CDPR::cableLengthToCounts(int motor, float x, float y) const {
 
 // On Teensy 4.1, digitalWriteFast uses the "fast" GPIO ports (GPIO6-9).
 // We need the set/clear registers for atomic multi-pin writes.
-// The core provides macros but they're per-pin. We resolve at runtime in begin().
+// The core provides macros but they're per-pin. We resolve at runtime in
+// begin().
 
 struct GpioInfo {
   volatile uint32_t *setReg;
@@ -64,20 +71,17 @@ static GpioInfo resolvePin(int pin) {
 // ============================================================================
 
 CDPR::CDPR(const int stepPins[NUM_MOTORS], const int dirPins[NUM_MOTORS],
-           const bool dirInvert[NUM_MOTORS], uint32_t tickRateHz)
-    : tickRateHz_(tickRateHz), dt_(1.0f / tickRateHz),
-      cartX_(0), cartY_(0), velX_(0), velY_(0),
-      targetX_(0), targetY_(0),
-      stepSetReg_(nullptr), stepClrReg_(nullptr),
-      dirSetReg_(nullptr), dirClrReg_(nullptr) {
+           uint32_t tickRateHz)
+    : tickRateHz_(tickRateHz), dt_(1.0f / tickRateHz), cartX_(0), cartY_(0),
+      velX_(0), velY_(0), targetX_(0), targetY_(0), stepSetReg_(nullptr),
+      stepClrReg_(nullptr), dirSetReg_(nullptr), dirClrReg_(nullptr) {
   for (int i = 0; i < NUM_MOTORS; i++) {
-    stepPins_[i]    = stepPins[i];
-    dirPins_[i]     = dirPins[i];
-    dirInvert_[i]   = dirInvert ? dirInvert[i] : false;
+    stepPins_[i] = stepPins[i];
+    dirPins_[i] = dirPins[i];
     motorCounts_[i] = 0;
-    refLengths_[i]  = 0;
+    refLengths_[i] = 0;
     stepBitmask_[i] = 0;
-    dirBitmask_[i]  = 0;
+    dirBitmask_[i] = 0;
   }
 }
 
@@ -88,7 +92,10 @@ void CDPR::begin(float calX, float calY) {
     Serial.printf("ERROR: MAX_VELOCITY_MM_S (%.0f) >= safe limit (%.0f) "
                   "for %lu Hz tick rate. Would need >1 step/tick.\n",
                   MAX_VELOCITY_MM_S, maxSafeVel, (unsigned long)tickRateHz_);
-    while (1) { digitalToggle(LED_BUILTIN); delay(100); }
+    while (1) {
+      digitalToggle(LED_BUILTIN);
+      delay(100);
+    }
   }
 
   // ── Resolve GPIO registers and bitmasks ──
@@ -99,29 +106,36 @@ void CDPR::begin(float calX, float calY) {
     digitalWriteFast(dirPins_[i], LOW);
 
     GpioInfo step = resolvePin(stepPins_[i]);
-    GpioInfo dir  = resolvePin(dirPins_[i]);
+    GpioInfo dir = resolvePin(dirPins_[i]);
 
     stepBitmask_[i] = step.bitmask;
-    dirBitmask_[i]  = dir.bitmask;
+    dirBitmask_[i] = dir.bitmask;
 
     // All step pins must share a GPIO port, same for dir pins.
     if (i == 0) {
-      stepSetReg_ = step.setReg;  stepClrReg_ = step.clrReg;
-      dirSetReg_  = dir.setReg;   dirClrReg_  = dir.clrReg;
+      stepSetReg_ = step.setReg;
+      stepClrReg_ = step.clrReg;
+      dirSetReg_ = dir.setReg;
+      dirClrReg_ = dir.clrReg;
     } else {
       if (step.setReg != stepSetReg_ || dir.setReg != dirSetReg_) {
         Serial.printf("ERROR: All step pins must be on the same GPIO port, "
                       "and all dir pins on the same GPIO port.\n");
-        while (1) { digitalToggle(LED_BUILTIN); delay(100); }
+        while (1) {
+          digitalToggle(LED_BUILTIN);
+          delay(100);
+        }
       }
     }
 
-    refLengths_[i]  = cableLength(i, calX, calY);
+    refLengths_[i] = cableLength(i, calX, calY);
     motorCounts_[i] = 0;
   }
 
-  cartX_ = calX;  cartY_ = calY;
-  velX_  = 0;     velY_  = 0;
+  cartX_ = calX;
+  cartY_ = calY;
+  velX_ = 0;
+  velY_ = 0;
   targetX_ = calX;
   targetY_ = calY;
 }
@@ -138,20 +152,30 @@ void CDPR::setTarget(float x, float y) {
 }
 
 void CDPR::getTarget(float &x, float &y) const {
-  noInterrupts(); x = targetX_; y = targetY_; interrupts();
+  noInterrupts();
+  x = targetX_;
+  y = targetY_;
+  interrupts();
 }
 
 void CDPR::getCartPosition(float &x, float &y) const {
-  noInterrupts(); x = cartX_; y = cartY_; interrupts();
+  noInterrupts();
+  x = cartX_;
+  y = cartY_;
+  interrupts();
 }
 
 void CDPR::getCartVelocity(float &vx, float &vy) const {
-  noInterrupts(); vx = velX_; vy = velY_; interrupts();
+  noInterrupts();
+  vx = velX_;
+  vy = velY_;
+  interrupts();
 }
 
 void CDPR::getMotorCounts(int32_t counts[NUM_MOTORS]) const {
   noInterrupts();
-  for (int i = 0; i < NUM_MOTORS; i++) counts[i] = motorCounts_[i];
+  for (int i = 0; i < NUM_MOTORS; i++)
+    counts[i] = motorCounts_[i];
   interrupts();
 }
 
@@ -159,11 +183,8 @@ bool CDPR::atTarget(float tol) const {
   noInterrupts();
   float dx = cartX_ - targetX_;
   float dy = cartY_ - targetY_;
-  float vx = velX_, vy = velY_;
   interrupts();
-  float dist = sqrtf(dx * dx + dy * dy);
-  float speed = sqrtf(vx * vx + vy * vy);
-  return dist < tol && speed < 0.5f;  // within tol mm and < 0.5 mm/s
+  return (dx * dx + dy * dy) < (tol * tol);
 }
 
 // ============================================================================
@@ -171,7 +192,8 @@ bool CDPR::atTarget(float tol) const {
 // ============================================================================
 
 void CDPR::startTimer() {
-  if (instanceIdx_ >= 0) return;
+  if (instanceIdx_ >= 0)
+    return;
   instanceIdx_ = instanceCount_++;
   instances_[instanceIdx_] = this;
   timer_.begin(trampolines[instanceIdx_], 1000000.0f / tickRateHz_);
@@ -193,38 +215,32 @@ void CDPR::stopTimer() {
 // decelerates to stop exactly at target.
 // ============================================================================
 
-static float trapezoidalStep(float pos, float vel, float target,
-                             float maxVel, float maxAccel, float dt) {
+static float trapezoidalStep(float pos, float vel, float target, float maxVel,
+                             float maxAccel, float dt) {
   float err = target - pos;
   float absErr = fabsf(err);
 
   if (absErr < 0.001f && fabsf(vel) < 0.1f) {
-    // Close enough and nearly stopped — just zero out.
     return 0.0f;
   }
 
-  // Direction we need to go.
   float sign = (err > 0) ? 1.0f : -1.0f;
-
-  // Braking distance from current velocity: d = v² / (2a)
-  // Only relevant if we're moving toward the target.
-  float brakeDist = (vel * vel) / (2.0f * maxAccel);
   bool movingToward = (vel * sign > 0);
+  float brakeDist = (vel * vel) / (2.0f * maxAccel);
 
   float desiredVel;
   if (movingToward && brakeDist >= absErr) {
-    // Must decelerate to stop at target: v = sqrt(2 * a * dist)
-    desiredVel = sign * sqrtf(2.0f * maxAccel * absErr);
+    desiredVel = 0.0f;
   } else {
-    // Accelerate or cruise toward target.
     desiredVel = sign * maxVel;
   }
 
-  // Clamp velocity change by acceleration limit.
   float dv = desiredVel - vel;
   float maxDv = maxAccel * dt;
-  if (dv > maxDv) dv = maxDv;
-  if (dv < -maxDv) dv = -maxDv;
+  if (dv > maxDv)
+    dv = maxDv;
+  if (dv < -maxDv)
+    dv = -maxDv;
 
   return vel + dv;
 }
@@ -243,18 +259,22 @@ void CDPR::tick() {
   float ty = targetY_;
 
   // ── Independent trapezoidal profiles for each axis ──
-  velX_ = trapezoidalStep(cartX_, velX_, tx, MAX_VELOCITY_MM_S, MAX_ACCEL_MM_S2, dt_);
-  velY_ = trapezoidalStep(cartY_, velY_, ty, MAX_VELOCITY_MM_S, MAX_ACCEL_MM_S2, dt_);
+  velX_ = trapezoidalStep(cartX_, velX_, tx, MAX_VELOCITY_MM_S, MAX_ACCEL_MM_S2,
+                          dt_);
+  velY_ = trapezoidalStep(cartY_, velY_, ty, MAX_VELOCITY_MM_S, MAX_ACCEL_MM_S2,
+                          dt_);
 
   // ── Advance theoretical cart position ──
-  if (fabsf(tx - cartX_) < 0.001f && fabsf(velX_) == 0) {
-    cartX_ = tx;  // snap to avoid float drift
+  if (fabsf(tx - cartX_) < 0.01f) {
+    cartX_ = tx;
+    velX_ = 0;
   } else {
     cartX_ += velX_ * dt_;
   }
 
-  if (fabsf(ty - cartY_) < 0.001f && fabsf(velY_) == 0) {
+  if (fabsf(ty - cartY_) < 0.01f) {
     cartY_ = ty;
+    velY_ = 0;
   } else {
     cartY_ += velY_ * dt_;
   }
@@ -265,37 +285,32 @@ void CDPR::tick() {
   // and which dir pins need to be set/cleared. Then write each GPIO
   // port once for simultaneous transitions.
 
-  uint32_t stepSet = 0;
-  uint32_t dirSet = 0, dirClr = 0;
-
   for (int i = 0; i < NUM_MOTORS; i++) {
     int32_t target = cableLengthToCounts(i, cartX_, cartY_);
-    int32_t error  = target - motorCounts_[i];
+    int32_t error = target - motorCounts_[i];
 
     if (error > 0) {
-      bool pinHigh = !dirInvert_[i];  // extend = HIGH unless inverted
-      (pinHigh ? dirSet : dirClr) |= dirBitmask_[i];
-      stepSet |= stepBitmask_[i];
-      motorCounts_[i]++;
+      digitalWriteFast(dirPins_[i], HIGH);
     } else if (error < 0) {
-      bool pinHigh = dirInvert_[i];   // retract = LOW unless inverted
-      (pinHigh ? dirSet : dirClr) |= dirBitmask_[i];
-      stepSet |= stepBitmask_[i];
-      motorCounts_[i]--;
+      digitalWriteFast(dirPins_[i], LOW);
     }
   }
 
-  // Write direction first (must settle before step rising edge).
-  if (dirSet) *dirSetReg_ = dirSet;
-  if (dirClr) *dirClrReg_ = dirClr;
+  delayMicroseconds(2);  // direction setup time
 
-  // Emit step pulse: HIGH → 2µs → LOW, all motors simultaneously.
-  // NOTE: The 2µs busy-wait blocks all other interrupts. Fine for now since
-  // nothing else is latency-sensitive on the MCU. If that changes, replace
-  // with a one-shot hardware timer to clear the pins asynchronously.
-  if (stepSet) {
-    *stepSetReg_ = stepSet;
-    delayMicroseconds(2);
-    *stepClrReg_ = stepSet;
+  for (int i = 0; i < NUM_MOTORS; i++) {
+    int32_t target = cableLengthToCounts(i, cartX_, cartY_);
+    int32_t error = target - motorCounts_[i];
+
+    if (error != 0) {
+      digitalWriteFast(stepPins_[i], HIGH);
+      motorCounts_[i] += (error > 0) ? 1 : -1;
+    }
+  }
+
+  delayMicroseconds(2);  // step pulse width
+
+  for (int i = 0; i < NUM_MOTORS; i++) {
+    digitalWriteFast(stepPins_[i], LOW);
   }
 }
