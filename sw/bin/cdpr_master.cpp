@@ -178,22 +178,16 @@ static int handleCommand(const char *line, CDPR &robot, int client_fd, int teens
     if (strncmp(line, "ENABLE", 6) == 0) {
         logf("  ENABLE\n");
 
-        // 1. Enable sFoundation motors
+        // 1. Enable sFoundation motors (torque on, no motion commands)
         if (!robot.enable()) {
             snprintf(resp, sizeof(resp), "ERR motor enable failed\n");
             write(client_fd, resp, strlen(resp));
             return 1;
         }
 
-        // 2. Apply tensioning
-        robot.tension();
-
-        // 3. Set position at center
+        // 2. Send CAL, TENSION, START to Teensy (all motion via step/dir)
         double cx = robot.config().width / 2.0;
         double cy = robot.config().height / 2.0;
-        robot.setPosition(cx, cy);
-
-        // 4. Send CAL, TENSION, START to Teensy
         char cmd[64];
         snprintf(cmd, sizeof(cmd), "CAL %.1f %.1f\n", cx, cy);
         sendTeensy(teensy_fd, cmd);
@@ -251,6 +245,11 @@ static int handleCommand(const char *line, CDPR &robot, int client_fd, int teens
         char cmd[64];
         snprintf(cmd, sizeof(cmd), "CMD %.2f %.2f\n", x, y);
         sendTeensy(teensy_fd, cmd);
+        if (!waitTeensyOK(teensy_fd)) {
+            snprintf(resp, sizeof(resp), "ERR teensy CMD failed\n");
+            write(client_fd, resp, strlen(resp));
+            return 1;
+        }
 
         snprintf(resp, sizeof(resp), "OK\n");
 
