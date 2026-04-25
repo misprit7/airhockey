@@ -26,14 +26,14 @@ static void checkReset() {
 }
 
 // ============================================================================
-// Line test: back and forth along motor0–motor2 diagonal
+// Square test pattern (once, then return to center)
 // ============================================================================
 
-static constexpr float LINE_LENGTH = 100.0f;  // 10cm each side of center
+static constexpr float SQUARE_SIZE = 100.0f;
 static float centerX, centerY;
-static float endAX, endAY, endBX, endBY;
-static bool goingToB = true;
-static int tripsRemaining = 10;  // each trip = one direction
+static float squareX[4], squareY[4];
+static int squareIdx = 0;
+static bool testDone = false;
 
 // ============================================================================
 // Setup
@@ -47,25 +47,20 @@ void setup() {
 
   centerX = TABLE_WIDTH  / 2.0f;
   centerY = TABLE_HEIGHT / 2.0f;
+  float half = SQUARE_SIZE / 2.0f;
 
-  float dx = MOTOR_X[2] - MOTOR_X[0];
-  float dy = MOTOR_Y[2] - MOTOR_Y[0];
-  float len = sqrtf(dx * dx + dy * dy);
-  float ux = dx / len;
-  float uy = dy / len;
-
-  endAX = centerX - LINE_LENGTH * ux;
-  endAY = centerY - LINE_LENGTH * uy;
-  endBX = centerX + LINE_LENGTH * ux;
-  endBY = centerY + LINE_LENGTH * uy;
+  squareX[0] = centerX - half;  squareY[0] = centerY - half;
+  squareX[1] = centerX + half;  squareY[1] = centerY - half;
+  squareX[2] = centerX + half;  squareY[2] = centerY + half;
+  squareX[3] = centerX - half;  squareY[3] = centerY + half;
 
   cdpr.begin(centerX, centerY);
   cdpr.startTimer();
 
   Serial.println("CDPR motion controller ready");
-  Serial.printf("Line: (%.1f,%.1f) <-> (%.1f,%.1f)\n", endAX, endAY, endBX, endBY);
+  Serial.printf("Square %.0fmm at center (%.0f, %.0f)\n", SQUARE_SIZE, centerX, centerY);
 
-  cdpr.setTarget(endBX, endBY);
+  cdpr.setTarget(squareX[0], squareY[0]);
 }
 
 // ============================================================================
@@ -73,22 +68,24 @@ void setup() {
 // ============================================================================
 
 static uint32_t lastStatusMs = 0;
-constexpr uint32_t STATUS_INTERVAL_MS = 10;
+constexpr uint32_t STATUS_INTERVAL_MS = 100;
 
 void loop() {
   checkReset();
 
-  if (tripsRemaining > 0 && cdpr.atTarget()) {
-    if (goingToB) {
-      cdpr.setTarget(endAX, endAY);
+  if (!testDone && cdpr.atTarget()) {
+    squareIdx++;
+    if (squareIdx < 4) {
+      Serial.printf("Corner %d: (%.1f, %.1f)\n", squareIdx,
+                    squareX[squareIdx], squareY[squareIdx]);
+      cdpr.setTarget(squareX[squareIdx], squareY[squareIdx]);
+    } else if (squareIdx == 4) {
+      Serial.println("Returning to center");
+      cdpr.setTarget(centerX, centerY);
     } else {
-      cdpr.setTarget(endBX, endBY);
+      Serial.println("Done");
+      testDone = true;
     }
-    goingToB = !goingToB;
-    tripsRemaining--;
-  } else if (tripsRemaining == 0 && cdpr.atTarget()) {
-    cdpr.setTarget(centerX, centerY);
-    tripsRemaining = -1;  // done
   }
 
   uint32_t now = millis();
@@ -101,7 +98,10 @@ void loop() {
     cdpr.getTarget(tx, ty);
     cdpr.getCartVelocity(vx, vy);
     float speed = sqrtf(vx * vx + vy * vy);
-    Serial.printf("c2=%ld pos=(%.1f,%.1f) tgt=(%.1f,%.1f) spd=%.0f\n",
-                  (long)counts[2], cx, cy, tx, ty, speed);
+    Serial.printf("pos=(%.1f,%.1f) tgt=(%.1f,%.1f) spd=%.0f c=[%ld,%ld,%ld,%ld]%s\n",
+                  cx, cy, tx, ty, speed,
+                  (long)counts[0], (long)counts[1],
+                  (long)counts[2], (long)counts[3],
+                  testDone ? " IDLE" : "");
   }
 }

@@ -290,9 +290,9 @@ void CDPR::tick() {
     int32_t error = target - motorCounts_[i];
 
     if (error > 0) {
-      digitalWriteFast(dirPins_[i], HIGH);
-    } else if (error < 0) {
       digitalWriteFast(dirPins_[i], LOW);
+    } else if (error < 0) {
+      digitalWriteFast(dirPins_[i], HIGH);
     }
   }
 
