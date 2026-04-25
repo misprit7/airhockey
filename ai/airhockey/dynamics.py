@@ -129,7 +129,7 @@ class LearnedDynamics(MotorDynamics):
 
 
 class HardwareDynamics(MotorDynamics):
-    """Drives real CDPR hardware via the cdpr_server.
+    """Drives real CDPR hardware via the cdpr_master.
 
     Maps between the sim coordinate system (meters, 1.0 x 2.0 table) and
     the CDPR coordinate system (mm, physical table dimensions).
@@ -160,17 +160,22 @@ class HardwareDynamics(MotorDynamics):
         self.y = 0.0
         self.client = CDPRClient(host, port)
         self.client.connect()
+        self.client.enable()
         self._time = _time
         self._hw_rate = 10.0  # Hz — how often to send commands to hardware
         self._last_hw_send = 0.0
+        # Last known hardware position in mm (updated from POS responses)
+        self._hw_x_mm = cdpr_width_mm / 2.0
+        self._hw_y_mm = cdpr_height_mm / 2.0
 
     def reset(self, x: float, y: float) -> None:
-        # Don't send SETPOS — the C++ server calibrates at center on startup.
-        # Just sync our internal tracking with the server's current position.
+        # Master calibrates at center on ENABLE. Read current position.
         try:
-            mm_x, mm_y = self.client.get_position()
+            mm_x, mm_y, _, _ = self.client.get_position()
+            self._hw_x_mm = mm_x
+            self._hw_y_mm = mm_y
             self.x, self.y = self._mm_to_sim(mm_x, mm_y)
-            print(f"  HW reset: server at ({mm_x:.1f}, {mm_y:.1f}) mm = sim ({self.x:.3f}, {self.y:.3f})")
+            print(f"  HW reset: at ({mm_x:.1f}, {mm_y:.1f}) mm = sim ({self.x:.3f}, {self.y:.3f})")
         except Exception as e:
             print(f"  HW reset: failed to read position: {e}, using sim coords")
             self.x = x
@@ -181,13 +186,20 @@ class HardwareDynamics(MotorDynamics):
         now = self._time.monotonic()
         if now - self._last_hw_send >= 1.0 / self._hw_rate:
             self._last_hw_send = now
-            print(f"  HW: sim=({target_x:.3f}, {target_y:.3f}) -> mm=({mm_x:.1f}, {mm_y:.1f})")
             try:
-                actual_mm_x, actual_mm_y = self.client.command_position(mm_x, mm_y, self.speed)
-                self.x, self.y = self._mm_to_sim(actual_mm_x, actual_mm_y)
+                self.client.command_position(mm_x, mm_y, self.speed)
+                # Read back actual position from Teensy status
+                act_x, act_y, _, _ = self.client.get_position()
+                self._hw_x_mm = act_x
+                self._hw_y_mm = act_y
+                self.x, self.y = self._mm_to_sim(act_x, act_y)
             except Exception as e:
-                print(f"HardwareDynamics: move failed: {e}")
+                print(f"HardwareDynamics: command failed: {e}")
         return self.x, self.y
+
+    def get_hw_position_mm(self) -> tuple[float, float]:
+        """Return the last known hardware position in mm."""
+        return self._hw_x_mm, self._hw_y_mm
 
     def _sim_to_mm(self, sx: float, sy: float) -> tuple[float, float]:
         """Convert sim coords (meters) to CDPR coords (mm).
@@ -195,7 +207,6 @@ class HardwareDynamics(MotorDynamics):
         Maps the full sim area to the inner 2/3 of the CDPR workspace,
         keeping the cart away from the edges.
         """
-        # Inner 2/3: offset by 1/6 on each side
         x_margin = self.cdpr_width / 6.0
         y_margin = self.cdpr_height / 6.0
         inner_w = self.cdpr_width - 2 * x_margin
@@ -204,7 +215,6 @@ class HardwareDynamics(MotorDynamics):
         mm_x = x_margin + (sx / self.sim_width) * inner_w
         mm_y = y_margin + (sy / self.sim_half_height) * inner_h
 
-        # Safety clamp
         mm_x = max(x_margin, min(self.cdpr_width - x_margin, mm_x))
         mm_y = max(y_margin, min(self.cdpr_height - y_margin, mm_y))
         return mm_x, mm_y

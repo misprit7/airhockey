@@ -35,6 +35,10 @@ const COLORS = {
     opponentRing: "rgba(255, 90, 106, 0.15)",
 };
 
+// Hardware overlay state
+let hwPosition = null; // {x, y} in physics coords, or null if not active
+let showHwOverlay = true;
+
 // Trail buffer
 const TRAIL_LENGTH = 12;
 let puckTrail = [];
@@ -226,6 +230,46 @@ function drawPaddle(x, y, color, glowColor, ringColor) {
     ctx.fill();
 }
 
+function drawHwPaddle(x, y) {
+    const px = tx(x);
+    const py = ty(y);
+    const r = ts(config.paddle_radius);
+
+    ctx.save();
+    ctx.globalAlpha = 0.4;
+
+    // Outer glow
+    const glow = ctx.createRadialGradient(px, py, r * 0.5, px, py, r * 2.5);
+    glow.addColorStop(0, "rgba(50, 220, 120, 0.35)");
+    glow.addColorStop(1, "transparent");
+    ctx.fillStyle = glow;
+    ctx.beginPath();
+    ctx.arc(px, py, r * 2.5, 0, Math.PI * 2);
+    ctx.fill();
+
+    // Ring
+    ctx.strokeStyle = "rgba(50, 220, 120, 0.25)";
+    ctx.lineWidth = ts(0.006);
+    ctx.beginPath();
+    ctx.arc(px, py, r * 1.6, 0, Math.PI * 2);
+    ctx.stroke();
+
+    // Body
+    ctx.fillStyle = "#32dc78";
+    ctx.beginPath();
+    ctx.arc(px, py, r, 0, Math.PI * 2);
+    ctx.fill();
+
+    // Border
+    ctx.strokeStyle = "rgba(255,255,255,0.2)";
+    ctx.lineWidth = ts(0.003);
+    ctx.beginPath();
+    ctx.arc(px, py, r, 0, Math.PI * 2);
+    ctx.stroke();
+
+    ctx.restore();
+}
+
 function lighten(hex, amt) {
     const num = parseInt(hex.replace("#", ""), 16);
     const r = Math.min(255, (num >> 16) + amt);
@@ -250,6 +294,9 @@ function render() {
         drawPuck(frame.puck_x, frame.puck_y);
         drawPaddle(frame.agent_x, frame.agent_y, COLORS.agent, COLORS.agentGlow, COLORS.agentRing);
         drawPaddle(frame.opponent_x, frame.opponent_y, COLORS.opponent, COLORS.opponentGlow, COLORS.opponentRing);
+        if (hwPosition && showHwOverlay) {
+            drawHwPaddle(hwPosition.x, hwPosition.y);
+        }
     }
 
     requestAnimationFrame(render);
@@ -272,6 +319,11 @@ function connect() {
             resize();
         } else if (msg.type === "frame" && mode === "live") {
             frame = msg;
+            if (msg.hw_x !== undefined && msg.hw_y !== undefined) {
+                hwPosition = { x: msg.hw_x, y: msg.hw_y };
+            } else {
+                hwPosition = null;
+            }
             updateScoreboard(msg);
         } else if (msg.type === "game_over") {
             document.getElementById("status").textContent = `Game Over! ${msg.score_agent}-${msg.score_opponent}`;
@@ -287,6 +339,13 @@ function connect() {
                 msg.enabled ? "Hardware: ON" : "Hardware: Off";
             document.getElementById("btn-hardware").style.backgroundColor =
                 msg.enabled ? "#2a7a3a" : "";
+            const toggle = document.getElementById("hw-overlay-toggle");
+            if (msg.enabled) {
+                toggle.classList.remove("hidden");
+            } else {
+                toggle.classList.add("hidden");
+                hwPosition = null;
+            }
         }
     };
 
@@ -361,6 +420,10 @@ document.getElementById("btn-physics").addEventListener("click", () => {
 
 document.getElementById("btn-hardware").addEventListener("click", () => {
     if (ws) ws.send(JSON.stringify({ type: "toggle_hardware" }));
+});
+
+document.getElementById("chk-hw-overlay").addEventListener("change", (e) => {
+    showHwOverlay = e.target.checked;
 });
 
 // Mode switching

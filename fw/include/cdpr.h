@@ -37,8 +37,17 @@ public:
   void getCartVelocity(float &vx, float &vy) const;
   void getMotorCounts(int32_t counts[NUM_MOTORS]) const;
 
-  // True if cart is within `tol` mm of target and nearly stopped.
+  // True if cart is within `tol` mm of target.
   bool atTarget(float tol = 0.5f) const;
+
+  // Retract all cables by `mm` to add tension. Call before motion.
+  // Blocking — steps all motors slowly at the given speed (mm/s).
+  // Must be called BEFORE startTimer().
+  void tension(float mm, float speed_mm_s = 5.0f);
+
+  // Release tension (extend cables by the previously tensioned amount).
+  // Blocking — call AFTER stopTimer().
+  void releaseTension(float speed_mm_s = 5.0f);
 
   void startTimer();
   void stopTimer();
@@ -76,6 +85,9 @@ private:
 
   // ── Motor physical state ──
   volatile int32_t motorCounts_[NUM_MOTORS];  // actual step count (ground truth)
+
+  // ── Tension ──
+  float tensionMm_ = 0;  // how much tension was applied (for release)
 
   // ── Precomputed GPIO bitmasks for atomic register writes ──
   // Step pins (GPIO7) and dir pins (GPIO8) are written via DR_SET/DR_CLEAR

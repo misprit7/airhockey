@@ -188,6 +188,72 @@ bool CDPR::atTarget(float tol) const {
 }
 
 // ============================================================================
+// Tension — blocking, call before/after timer
+// ============================================================================
+
+void CDPR::tension(float mm, float speed_mm_s) {
+  tensionMm_ = mm;
+  int32_t counts = (int32_t)roundf(mmToCounts(mm));
+  if (counts <= 0) return;
+
+  // Interval between steps to achieve desired speed.
+  // speed_mm_s → counts/s = speed_mm_s * COUNTS_PER_MM
+  // interval_us = 1e6 / counts_per_sec
+  float countsPerSec = speed_mm_s * COUNTS_PER_MM;
+  uint32_t intervalUs = (uint32_t)(1e6f / countsPerSec);
+
+  Serial.printf("Tensioning: retract %.1fmm (%ld counts) at %.1f mm/s\n",
+                mm, (long)counts, speed_mm_s);
+
+  for (int32_t step = 0; step < counts; step++) {
+    // Retract = negative direction (cable shorter)
+    for (int i = 0; i < NUM_MOTORS; i++) {
+      digitalWriteFast(dirPins_[i], HIGH);  // HIGH = retract (inverted convention)
+    }
+    delayMicroseconds(2);
+    for (int i = 0; i < NUM_MOTORS; i++) {
+      digitalWriteFast(stepPins_[i], HIGH);
+    }
+    delayMicroseconds(2);
+    for (int i = 0; i < NUM_MOTORS; i++) {
+      digitalWriteFast(stepPins_[i], LOW);
+    }
+    delayMicroseconds(intervalUs);
+  }
+
+  Serial.println("Tension applied");
+}
+
+void CDPR::releaseTension(float speed_mm_s) {
+  if (tensionMm_ <= 0) return;
+
+  int32_t counts = (int32_t)roundf(mmToCounts(tensionMm_));
+  float countsPerSec = speed_mm_s * COUNTS_PER_MM;
+  uint32_t intervalUs = (uint32_t)(1e6f / countsPerSec);
+
+  Serial.printf("Releasing tension: extend %.1fmm (%ld counts)\n",
+                tensionMm_, (long)counts);
+
+  for (int32_t step = 0; step < counts; step++) {
+    for (int i = 0; i < NUM_MOTORS; i++) {
+      digitalWriteFast(dirPins_[i], LOW);  // LOW = extend
+    }
+    delayMicroseconds(2);
+    for (int i = 0; i < NUM_MOTORS; i++) {
+      digitalWriteFast(stepPins_[i], HIGH);
+    }
+    delayMicroseconds(2);
+    for (int i = 0; i < NUM_MOTORS; i++) {
+      digitalWriteFast(stepPins_[i], LOW);
+    }
+    delayMicroseconds(intervalUs);
+  }
+
+  tensionMm_ = 0;
+  Serial.println("Tension released");
+}
+
+// ============================================================================
 // Timer
 // ============================================================================
 

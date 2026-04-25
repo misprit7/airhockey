@@ -1,5 +1,6 @@
 #include <Arduino.h>
 #include "cdpr.h"
+#include "serial_protocol.h"
 
 // ============================================================================
 // Instance
@@ -26,14 +27,123 @@ static void checkReset() {
 }
 
 // ============================================================================
-// Square test pattern (once, then return to center)
+// State
 // ============================================================================
 
-static constexpr float SQUARE_SIZE = 100.0f;
-static float centerX, centerY;
-static float squareX[4], squareY[4];
-static int squareIdx = 0;
-static bool testDone = false;
+static bool timerRunning = false;
+static bool calibrated   = false;
+
+// ============================================================================
+// Serial command parsing
+// ============================================================================
+
+static char cmdBuf[128];
+static int  cmdLen = 0;
+
+static void sendStatus() {
+  float x, y, vx, vy;
+  int32_t counts[NUM_MOTORS];
+  cdpr.getCartPosition(x, y);
+  cdpr.getCartVelocity(vx, vy);
+  cdpr.getMotorCounts(counts);
+  Serial.printf("S %.2f %.2f %.2f %.2f %ld %ld %ld %ld\n",
+                x, y, vx, vy,
+                (long)counts[0], (long)counts[1],
+                (long)counts[2], (long)counts[3]);
+}
+
+static void processCommand(char *line) {
+  // Skip leading whitespace
+  while (*line == ' ' || *line == '\t') line++;
+  if (*line == '\0') return;
+
+  // Parse first token
+  char *cmd = line;
+  char *args = line;
+  while (*args && *args != ' ' && *args != '\t') args++;
+  if (*args) {
+    *args = '\0';
+    args++;
+    while (*args == ' ' || *args == '\t') args++;
+  }
+
+  if (strcasecmp(cmd, "CMD") == 0) {
+    if (!timerRunning) {
+      Serial.println("ERR timer not running");
+      return;
+    }
+    float x, y;
+    if (sscanf(args, "%f %f", &x, &y) != 2) {
+      Serial.println("ERR CMD requires x y");
+      return;
+    }
+    cdpr.setTarget(x, y);
+    Serial.println("OK CMD");
+
+  } else if (strcasecmp(cmd, "TENSION") == 0) {
+    if (timerRunning) {
+      Serial.println("ERR stop timer before tensioning");
+      return;
+    }
+    float mm;
+    if (sscanf(args, "%f", &mm) != 1) {
+      Serial.println("ERR TENSION requires mm");
+      return;
+    }
+    cdpr.tension(mm);
+    Serial.println("OK TENSION");
+
+  } else if (strcasecmp(cmd, "RELEASE") == 0) {
+    if (timerRunning) {
+      Serial.println("ERR stop timer before releasing");
+      return;
+    }
+    cdpr.releaseTension();
+    Serial.println("OK RELEASE");
+
+  } else if (strcasecmp(cmd, "START") == 0) {
+    if (timerRunning) {
+      Serial.println("ERR already running");
+      return;
+    }
+    if (!calibrated) {
+      Serial.println("ERR not calibrated");
+      return;
+    }
+    cdpr.startTimer();
+    timerRunning = true;
+    Serial.println("OK START");
+
+  } else if (strcasecmp(cmd, "STOP") == 0) {
+    if (!timerRunning) {
+      Serial.println("ERR not running");
+      return;
+    }
+    cdpr.stopTimer();
+    timerRunning = false;
+    Serial.println("OK STOP");
+
+  } else if (strcasecmp(cmd, "CAL") == 0) {
+    if (timerRunning) {
+      Serial.println("ERR stop timer before calibrating");
+      return;
+    }
+    float x = TABLE_WIDTH / 2.0f;
+    float y = TABLE_HEIGHT / 2.0f;
+    // Optional x y arguments; default to table center
+    sscanf(args, "%f %f", &x, &y);
+    cdpr.begin(x, y);
+    calibrated = true;
+    Serial.println("OK CAL");
+
+  } else if (strcasecmp(cmd, "STATUS") == 0) {
+    sendStatus();
+
+  } else {
+    Serial.print("ERR unknown command: ");
+    Serial.println(cmd);
+  }
+}
 
 // ============================================================================
 // Setup
@@ -45,22 +155,7 @@ void setup() {
   pinMode(LED_BUILTIN, OUTPUT);
   pinMode(RESET_PIN, INPUT_PULLUP);
 
-  centerX = TABLE_WIDTH  / 2.0f;
-  centerY = TABLE_HEIGHT / 2.0f;
-  float half = SQUARE_SIZE / 2.0f;
-
-  squareX[0] = centerX - half;  squareY[0] = centerY - half;
-  squareX[1] = centerX + half;  squareY[1] = centerY - half;
-  squareX[2] = centerX + half;  squareY[2] = centerY + half;
-  squareX[3] = centerX - half;  squareY[3] = centerY + half;
-
-  cdpr.begin(centerX, centerY);
-  cdpr.startTimer();
-
-  Serial.println("CDPR motion controller ready");
-  Serial.printf("Square %.0fmm at center (%.0f, %.0f)\n", SQUARE_SIZE, centerX, centerY);
-
-  cdpr.setTarget(squareX[0], squareY[0]);
+  Serial.println("CDPR ready");
 }
 
 // ============================================================================
@@ -68,40 +163,31 @@ void setup() {
 // ============================================================================
 
 static uint32_t lastStatusMs = 0;
-constexpr uint32_t STATUS_INTERVAL_MS = 100;
+constexpr uint32_t STATUS_INTERVAL_MS = 20;  // ~50Hz
 
 void loop() {
   checkReset();
 
-  if (!testDone && cdpr.atTarget()) {
-    squareIdx++;
-    if (squareIdx < 4) {
-      Serial.printf("Corner %d: (%.1f, %.1f)\n", squareIdx,
-                    squareX[squareIdx], squareY[squareIdx]);
-      cdpr.setTarget(squareX[squareIdx], squareY[squareIdx]);
-    } else if (squareIdx == 4) {
-      Serial.println("Returning to center");
-      cdpr.setTarget(centerX, centerY);
-    } else {
-      Serial.println("Done");
-      testDone = true;
+  // Read serial commands
+  while (Serial.available()) {
+    char c = Serial.read();
+    if (c == '\n' || c == '\r') {
+      if (cmdLen > 0) {
+        cmdBuf[cmdLen] = '\0';
+        processCommand(cmdBuf);
+        cmdLen = 0;
+      }
+    } else if (cmdLen < (int)sizeof(cmdBuf) - 1) {
+      cmdBuf[cmdLen++] = c;
     }
   }
 
-  uint32_t now = millis();
-  if (now - lastStatusMs >= STATUS_INTERVAL_MS) {
-    lastStatusMs = now;
-    int32_t counts[NUM_MOTORS];
-    float cx, cy, tx, ty, vx, vy;
-    cdpr.getMotorCounts(counts);
-    cdpr.getCartPosition(cx, cy);
-    cdpr.getTarget(tx, ty);
-    cdpr.getCartVelocity(vx, vy);
-    float speed = sqrtf(vx * vx + vy * vy);
-    Serial.printf("pos=(%.1f,%.1f) tgt=(%.1f,%.1f) spd=%.0f c=[%ld,%ld,%ld,%ld]%s\n",
-                  cx, cy, tx, ty, speed,
-                  (long)counts[0], (long)counts[1],
-                  (long)counts[2], (long)counts[3],
-                  testDone ? " IDLE" : "");
+  // Periodic status at ~50Hz when timer is running
+  if (timerRunning) {
+    uint32_t now = millis();
+    if (now - lastStatusMs >= STATUS_INTERVAL_MS) {
+      lastStatusMs = now;
+      sendStatus();
+    }
   }
 }

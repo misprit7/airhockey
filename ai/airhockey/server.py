@@ -180,6 +180,7 @@ async def live_game(ws: WebSocket):
                         else:
                             if hardware_dynamics:
                                 try:
+                                    hardware_dynamics.client.disable()
                                     hardware_dynamics.client.close()
                                 except Exception:
                                     pass
@@ -205,7 +206,7 @@ async def live_game(ws: WebSocket):
             obs, reward, terminated, truncated, info = env.step(action)
 
             state = env.engine.state
-            await ws.send_json({
+            frame_msg = {
                 "type": "frame",
                 "puck_x": state.puck.x,
                 "puck_y": state.puck.y,
@@ -216,7 +217,14 @@ async def live_game(ws: WebSocket):
                 "score_agent": state.score_agent,
                 "score_opponent": state.score_opponent,
                 "time": round(state.time, 2),
-            })
+            }
+            if use_hardware and hardware_dynamics:
+                frame_msg["hw_x"] = hardware_dynamics.x
+                frame_msg["hw_y"] = hardware_dynamics.y
+                hw_x_mm, hw_y_mm = hardware_dynamics.get_hw_position_mm()
+                frame_msg["hw_x_mm"] = round(hw_x_mm, 1)
+                frame_msg["hw_y_mm"] = round(hw_y_mm, 1)
+            await ws.send_json(frame_msg)
 
             if terminated or truncated:
                 await ws.send_json({"type": "game_over", **info})
@@ -231,6 +239,7 @@ async def live_game(ws: WebSocket):
     finally:
         if hardware_dynamics:
             try:
+                hardware_dynamics.client.disable()
                 hardware_dynamics.client.close()
             except Exception:
                 pass
