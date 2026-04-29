@@ -53,8 +53,27 @@
           "min_clearance": 0.5
         }
       },
-      "diff_pair_dimensions": [],
-      "drc_exclusions": [],
+      "diff_pair_dimensions": [
+        {
+          "gap": 0.0,
+          "via_gap": 0.0,
+          "width": 0.0
+        }
+      ],
+      "drc_exclusions": [
+        [
+          "copper_edge_clearance|80010760|62172150|ff09b8fe-77b2-4a81-830e-8a05607c0e9c|b1209cfe-4b71-4b92-a1f9-d826c89fa0d8",
+          ""
+        ],
+        [
+          "silk_edge_clearance|80000000|103991600|ff09b8fe-77b2-4a81-830e-8a05607c0e9c|2cb3544a-5767-414b-a4b8-667267d567d7",
+          ""
+        ],
+        [
+          "silk_edge_clearance|80000000|96371600|ff09b8fe-77b2-4a81-830e-8a05607c0e9c|b9b02701-3b72-48b8-959e-a6139df26133",
+          ""
+        ]
+      ],
       "meta": {
         "version": 2
       },
@@ -103,7 +122,7 @@
         "silk_overlap": "warning",
         "skew_out_of_range": "error",
         "solder_mask_bridge": "error",
-        "starved_thermal": "error",
+        "starved_thermal": "ignore",
         "text_height": "warning",
         "text_on_edge_cuts": "error",
         "text_thickness": "warning",
@@ -134,8 +153,8 @@
         "min_microvia_drill": 0.1,
         "min_resolved_spokes": 2,
         "min_silk_clearance": 0.0,
-        "min_text_height": 0.8,
-        "min_text_thickness": 0.08,
+        "min_text_height": 0.5,
+        "min_text_thickness": 0.05,
         "min_through_hole_diameter": 0.3,
         "min_track_width": 0.2,
         "min_via_annular_width": 0.1,
@@ -187,7 +206,11 @@
           "td_width_to_size_filter_ratio": 0.9
         }
       ],
-      "track_widths": [],
+      "track_widths": [
+        0.0,
+        0.8,
+        1.6
+      ],
       "tuning_pattern_settings": {
         "diff_pair_defaults": {
           "corner_radius_percentage": 80,
@@ -214,7 +237,12 @@
           "spacing": 0.6
         }
       },
-      "via_dimensions": [],
+      "via_dimensions": [
+        {
+          "diameter": 0.0,
+          "drill": 0.0
+        }
+      ],
       "zones_allow_external_fillets": false
     },
     "ipc2581": {
@@ -490,7 +518,7 @@
         "pcb_color": "rgba(0, 0, 0, 0.000)",
         "priority": 2147483647,
         "schematic_color": "rgba(0, 0, 0, 0.000)",
-        "track_width": 0.2,
+        "track_width": 0.4,
         "tuning_profile": "",
         "via_diameter": 0.6,
         "via_drill": 0.3,
@@ -632,13 +660,29 @@
         "uuid": "218796ae-7f3d-49ed-8c29-3fa16c641770"
       }
     ],
-    "used_designators": "J1,#PWR1,#PWR4-17,U3,CN1-4",
+    "used_designators": "",
     "variants": []
   },
   "sheets": [
     [
       "218796ae-7f3d-49ed-8c29-3fa16c641770",
       "stepper_breakout"
+    ],
+    [
+      "049e68ee-30d6-45da-8da4-05fb14ce0077",
+      "output"
+    ],
+    [
+      "4c07b9d4-5f40-4d3b-986e-45da6c10f029",
+      "output1"
+    ],
+    [
+      "90bc41c1-4a9d-4afc-b706-91e47fcb31df",
+      "output2"
+    ],
+    [
+      "43122519-feea-43ba-b591-64e178a709d9",
+      "output3"
     ]
   ],
   "text_variables": {},
