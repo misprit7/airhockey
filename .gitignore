@@ -7,3 +7,16 @@ build/
 **/recordings/
 **/runs/
 **/.venv/
+
+# KiCad
+**/.history/
+**/*.lck
+**/*-backups/
+**/fp-info-cache
+**/*.kicad_prl
+**/_autosave-*
+**/*-bak
+**/*.bak
+**/*.bck
+**/*.kicad_sch-bak
+**/*.kicad_pcb-bak
