@@ -1496,7 +1496,7 @@
 		(dnp no)
 		(fields_autoplaced yes)
 		(uuid "1cdfc470-33f9-4ad7-9711-f9636855e1b7")
-		(property "Reference" "#PWR08"
+		(property "Reference" "#PWR018"
 			(at 144.78 39.37 0)
 			(hide yes)
 			(show_name no)
@@ -1556,19 +1556,19 @@
 		(instances
 			(project "stepper_breakout"
 				(path "/218796ae-7f3d-49ed-8c29-3fa16c641770/049e68ee-30d6-45da-8da4-05fb14ce0077"
-					(reference "#PWR08")
+					(reference "#PWR018")
 					(unit 1)
 				)
 				(path "/218796ae-7f3d-49ed-8c29-3fa16c641770/43122519-feea-43ba-b591-64e178a709d9"
-					(reference "#PWR021")
+					(reference "#PWR060")
 					(unit 1)
 				)
 				(path "/218796ae-7f3d-49ed-8c29-3fa16c641770/4c07b9d4-5f40-4d3b-986e-45da6c10f029"
-					(reference "#PWR010")
+					(reference "#PWR032")
 					(unit 1)
 				)
 				(path "/218796ae-7f3d-49ed-8c29-3fa16c641770/90bc41c1-4a9d-4afc-b706-91e47fcb31df"
-					(reference "#PWR012")
+					(reference "#PWR046")
 					(unit 1)
 				)
 			)
@@ -1586,7 +1586,7 @@
 		(dnp no)
 		(fields_autoplaced yes)
 		(uuid "2bfd45b5-be33-4e18-b1e7-38d3f32cb194")
-		(property "Reference" "#PWR028"
+		(property "Reference" "#PWR025"
 			(at 151.13 36.83 0)
 			(hide yes)
 			(show_name no)
@@ -1646,19 +1646,19 @@
 		(instances
 			(project "stepper_breakout"
 				(path "/218796ae-7f3d-49ed-8c29-3fa16c641770/049e68ee-30d6-45da-8da4-05fb14ce0077"
-					(reference "#PWR028")
+					(reference "#PWR025")
 					(unit 1)
 				)
 				(path "/218796ae-7f3d-49ed-8c29-3fa16c641770/43122519-feea-43ba-b591-64e178a709d9"
-					(reference "#PWR058")
+					(reference "#PWR067")
 					(unit 1)
 				)
 				(path "/218796ae-7f3d-49ed-8c29-3fa16c641770/4c07b9d4-5f40-4d3b-986e-45da6c10f029"
-					(reference "#PWR038")
+					(reference "#PWR039")
 					(unit 1)
 				)
 				(path "/218796ae-7f3d-49ed-8c29-3fa16c641770/90bc41c1-4a9d-4afc-b706-91e47fcb31df"
-					(reference "#PWR048")
+					(reference "#PWR053")
 					(unit 1)
 				)
 			)
@@ -1676,7 +1676,7 @@
 		(dnp no)
 		(fields_autoplaced yes)
 		(uuid "339065e2-bf89-4590-a972-af139ac9ff73")
-		(property "Reference" "#PWR030"
+		(property "Reference" "#PWR022"
 			(at 149.86 53.34 0)
 			(hide yes)
 			(show_name no)
@@ -1736,15 +1736,15 @@
 		(instances
 			(project "stepper_breakout"
 				(path "/218796ae-7f3d-49ed-8c29-3fa16c641770/049e68ee-30d6-45da-8da4-05fb14ce0077"
-					(reference "#PWR030")
+					(reference "#PWR022")
 					(unit 1)
 				)
 				(path "/218796ae-7f3d-49ed-8c29-3fa16c641770/43122519-feea-43ba-b591-64e178a709d9"
-					(reference "#PWR060")
+					(reference "#PWR064")
 					(unit 1)
 				)
 				(path "/218796ae-7f3d-49ed-8c29-3fa16c641770/4c07b9d4-5f40-4d3b-986e-45da6c10f029"
-					(reference "#PWR040")
+					(reference "#PWR036")
 					(unit 1)
 				)
 				(path "/218796ae-7f3d-49ed-8c29-3fa16c641770/90bc41c1-4a9d-4afc-b706-91e47fcb31df"
@@ -1766,7 +1766,7 @@
 		(dnp no)
 		(fields_autoplaced yes)
 		(uuid "3e328243-f075-4230-98e1-8eea87b83b52")
-		(property "Reference" "#PWR033"
+		(property "Reference" "#PWR017"
 			(at 124.46 88.9 0)
 			(hide yes)
 			(show_name no)
@@ -1826,19 +1826,19 @@
 		(instances
 			(project "stepper_breakout"
 				(path "/218796ae-7f3d-49ed-8c29-3fa16c641770/049e68ee-30d6-45da-8da4-05fb14ce0077"
-					(reference "#PWR033")
+					(reference "#PWR017")
 					(unit 1)
 				)
 				(path "/218796ae-7f3d-49ed-8c29-3fa16c641770/43122519-feea-43ba-b591-64e178a709d9"
-					(reference "#PWR063")
+					(reference "#PWR059")
 					(unit 1)
 				)
 				(path "/218796ae-7f3d-49ed-8c29-3fa16c641770/4c07b9d4-5f40-4d3b-986e-45da6c10f029"
-					(reference "#PWR043")
+					(reference "#PWR031")
 					(unit 1)
 				)
 				(path "/218796ae-7f3d-49ed-8c29-3fa16c641770/90bc41c1-4a9d-4afc-b706-91e47fcb31df"
-					(reference "#PWR053")
+					(reference "#PWR045")
 					(unit 1)
 				)
 			)
@@ -1856,7 +1856,7 @@
 		(dnp no)
 		(fields_autoplaced yes)
 		(uuid "418e82b6-f5cc-4980-b4cf-7890b0cb5e16")
-		(property "Reference" "#PWR09"
+		(property "Reference" "#PWR019"
 			(at 144.78 55.88 0)
 			(hide yes)
 			(show_name no)
@@ -1916,19 +1916,19 @@
 		(instances
 			(project "stepper_breakout"
 				(path "/218796ae-7f3d-49ed-8c29-3fa16c641770/049e68ee-30d6-45da-8da4-05fb14ce0077"
-					(reference "#PWR09")
+					(reference "#PWR019")
 					(unit 1)
 				)
 				(path "/218796ae-7f3d-49ed-8c29-3fa16c641770/43122519-feea-43ba-b591-64e178a709d9"
-					(reference "#PWR022")
+					(reference "#PWR061")
 					(unit 1)
 				)
 				(path "/218796ae-7f3d-49ed-8c29-3fa16c641770/4c07b9d4-5f40-4d3b-986e-45da6c10f029"
-					(reference "#PWR011")
+					(reference "#PWR033")
 					(unit 1)
 				)
 				(path "/218796ae-7f3d-49ed-8c29-3fa16c641770/90bc41c1-4a9d-4afc-b706-91e47fcb31df"
-					(reference "#PWR019")
+					(reference "#PWR047")
 					(unit 1)
 				)
 			)
@@ -1945,7 +1945,7 @@
 		(in_pos_files yes)
 		(dnp no)
 		(uuid "45cb7470-7ea8-4803-9332-adbbabf88613")
-		(property "Reference" "#PWR024"
+		(property "Reference" "#PWR013"
 			(at 91.9 43.18 0)
 			(hide yes)
 			(show_name no)
@@ -2006,19 +2006,19 @@
 		(instances
 			(project "stepper_breakout"
 				(path "/218796ae-7f3d-49ed-8c29-3fa16c641770/049e68ee-30d6-45da-8da4-05fb14ce0077"
-					(reference "#PWR024")
+					(reference "#PWR013")
 					(unit 1)
 				)
 				(path "/218796ae-7f3d-49ed-8c29-3fa16c641770/43122519-feea-43ba-b591-64e178a709d9"
-					(reference "#PWR067")
+					(reference "#PWR055")
 					(unit 1)
 				)
 				(path "/218796ae-7f3d-49ed-8c29-3fa16c641770/4c07b9d4-5f40-4d3b-986e-45da6c10f029"
-					(reference "#PWR065")
+					(reference "#PWR027")
 					(unit 1)
 				)
 				(path "/218796ae-7f3d-49ed-8c29-3fa16c641770/90bc41c1-4a9d-4afc-b706-91e47fcb31df"
-					(reference "#PWR066")
+					(reference "#PWR041")
 					(unit 1)
 				)
 			)
@@ -2036,7 +2036,7 @@
 		(dnp no)
 		(fields_autoplaced yes)
 		(uuid "4815ebb2-92f2-470c-83fd-617b016f5fef")
-		(property "Reference" "CN7"
+		(property "Reference" "CN3"
 			(at 134.62 60.96 0)
 			(show_name no)
 			(do_not_autoplace no)
@@ -2159,19 +2159,19 @@
 		(instances
 			(project "stepper_breakout"
 				(path "/218796ae-7f3d-49ed-8c29-3fa16c641770/049e68ee-30d6-45da-8da4-05fb14ce0077"
-					(reference "CN7")
+					(reference "CN3")
 					(unit 1)
 				)
 				(path "/218796ae-7f3d-49ed-8c29-3fa16c641770/43122519-feea-43ba-b591-64e178a709d9"
-					(reference "CN19")
+					(reference "CN15")
 					(unit 1)
 				)
 				(path "/218796ae-7f3d-49ed-8c29-3fa16c641770/4c07b9d4-5f40-4d3b-986e-45da6c10f029"
-					(reference "CN11")
+					(reference "CN7")
 					(unit 1)
 				)
 				(path "/218796ae-7f3d-49ed-8c29-3fa16c641770/90bc41c1-4a9d-4afc-b706-91e47fcb31df"
-					(reference "CN15")
+					(reference "CN11")
 					(unit 1)
 				)
 			)
@@ -2189,7 +2189,7 @@
 		(dnp no)
 		(fields_autoplaced yes)
 		(uuid "6a9487c9-2e5e-404f-9309-e6aa546ee2cd")
-		(property "Reference" "U4"
+		(property "Reference" "U2"
 			(at 73.66 38.1 0)
 			(show_name no)
 			(do_not_autoplace no)
@@ -2297,6 +2297,17 @@
 				)
 			)
 		)
+		(property "LCSC" "C155176"
+			(at 73.66 50.8 0)
+			(hide yes)
+			(show_name no)
+			(do_not_autoplace no)
+			(effects
+				(font
+					(size 1.27 1.27)
+				)
+			)
+		)
 		(pin "4"
 			(uuid "cb1e7363-7f27-4af3-be94-8fd7b47b02d7")
 		)
@@ -2342,19 +2353,19 @@
 		(instances
 			(project "stepper_breakout"
 				(path "/218796ae-7f3d-49ed-8c29-3fa16c641770/049e68ee-30d6-45da-8da4-05fb14ce0077"
-					(reference "U4")
+					(reference "U2")
 					(unit 1)
 				)
 				(path "/218796ae-7f3d-49ed-8c29-3fa16c641770/43122519-feea-43ba-b591-64e178a709d9"
-					(reference "U7")
-					(unit 1)
-				)
-				(path "/218796ae-7f3d-49ed-8c29-3fa16c641770/4c07b9d4-5f40-4d3b-986e-45da6c10f029"
 					(reference "U5")
 					(unit 1)
 				)
+				(path "/218796ae-7f3d-49ed-8c29-3fa16c641770/4c07b9d4-5f40-4d3b-986e-45da6c10f029"
+					(reference "U3")
+					(unit 1)
+				)
 				(path "/218796ae-7f3d-49ed-8c29-3fa16c641770/90bc41c1-4a9d-4afc-b706-91e47fcb31df"
-					(reference "U6")
+					(reference "U4")
 					(unit 1)
 				)
 			)
@@ -2372,7 +2383,7 @@
 		(dnp no)
 		(fields_autoplaced yes)
 		(uuid "a692c38c-03e3-4aee-96f9-25c6a48aa38c")
-		(property "Reference" "CN6"
+		(property "Reference" "CN2"
 			(at 134.62 41.91 0)
 			(show_name no)
 			(do_not_autoplace no)
@@ -2495,19 +2506,19 @@
 		(instances
 			(project "stepper_breakout"
 				(path "/218796ae-7f3d-49ed-8c29-3fa16c641770/049e68ee-30d6-45da-8da4-05fb14ce0077"
-					(reference "CN6")
+					(reference "CN2")
 					(unit 1)
 				)
 				(path "/218796ae-7f3d-49ed-8c29-3fa16c641770/43122519-feea-43ba-b591-64e178a709d9"
-					(reference "CN18")
+					(reference "CN14")
 					(unit 1)
 				)
 				(path "/218796ae-7f3d-49ed-8c29-3fa16c641770/4c07b9d4-5f40-4d3b-986e-45da6c10f029"
-					(reference "CN10")
+					(reference "CN6")
 					(unit 1)
 				)
 				(path "/218796ae-7f3d-49ed-8c29-3fa16c641770/90bc41c1-4a9d-4afc-b706-91e47fcb31df"
-					(reference "CN14")
+					(reference "CN10")
 					(unit 1)
 				)
 			)
@@ -2525,7 +2536,7 @@
 		(dnp no)
 		(fields_autoplaced yes)
 		(uuid "a882d874-8db0-491a-8132-69170c140dc5")
-		(property "Reference" "#PWR027"
+		(property "Reference" "#PWR014"
 			(at 116.84 34.29 0)
 			(hide yes)
 			(show_name no)
@@ -2585,19 +2596,19 @@
 		(instances
 			(project "stepper_breakout"
 				(path "/218796ae-7f3d-49ed-8c29-3fa16c641770/049e68ee-30d6-45da-8da4-05fb14ce0077"
-					(reference "#PWR027")
+					(reference "#PWR014")
 					(unit 1)
 				)
 				(path "/218796ae-7f3d-49ed-8c29-3fa16c641770/43122519-feea-43ba-b591-64e178a709d9"
-					(reference "#PWR057")
+					(reference "#PWR056")
 					(unit 1)
 				)
 				(path "/218796ae-7f3d-49ed-8c29-3fa16c641770/4c07b9d4-5f40-4d3b-986e-45da6c10f029"
-					(reference "#PWR037")
+					(reference "#PWR028")
 					(unit 1)
 				)
 				(path "/218796ae-7f3d-49ed-8c29-3fa16c641770/90bc41c1-4a9d-4afc-b706-91e47fcb31df"
-					(reference "#PWR047")
+					(reference "#PWR042")
 					(unit 1)
 				)
 			)
@@ -2615,7 +2626,7 @@
 		(dnp no)
 		(fields_autoplaced yes)
 		(uuid "a996e58f-9e8e-4194-8917-b7cdf3dfd5e1")
-		(property "Reference" "#PWR026"
+		(property "Reference" "#PWR021"
 			(at 144.78 93.98 0)
 			(hide yes)
 			(show_name no)
@@ -2675,19 +2686,19 @@
 		(instances
 			(project "stepper_breakout"
 				(path "/218796ae-7f3d-49ed-8c29-3fa16c641770/049e68ee-30d6-45da-8da4-05fb14ce0077"
-					(reference "#PWR026")
+					(reference "#PWR021")
 					(unit 1)
 				)
 				(path "/218796ae-7f3d-49ed-8c29-3fa16c641770/43122519-feea-43ba-b591-64e178a709d9"
-					(reference "#PWR056")
+					(reference "#PWR063")
 					(unit 1)
 				)
 				(path "/218796ae-7f3d-49ed-8c29-3fa16c641770/4c07b9d4-5f40-4d3b-986e-45da6c10f029"
-					(reference "#PWR036")
+					(reference "#PWR035")
 					(unit 1)
 				)
 				(path "/218796ae-7f3d-49ed-8c29-3fa16c641770/90bc41c1-4a9d-4afc-b706-91e47fcb31df"
-					(reference "#PWR046")
+					(reference "#PWR049")
 					(unit 1)
 				)
 			)
@@ -2705,7 +2716,7 @@
 		(dnp no)
 		(fields_autoplaced yes)
 		(uuid "b5000f8c-b60f-4b4e-a9d2-6ff50af84563")
-		(property "Reference" "#PWR031"
+		(property "Reference" "#PWR016"
 			(at 124.46 69.85 0)
 			(hide yes)
 			(show_name no)
@@ -2765,19 +2776,19 @@
 		(instances
 			(project "stepper_breakout"
 				(path "/218796ae-7f3d-49ed-8c29-3fa16c641770/049e68ee-30d6-45da-8da4-05fb14ce0077"
-					(reference "#PWR031")
+					(reference "#PWR016")
 					(unit 1)
 				)
 				(path "/218796ae-7f3d-49ed-8c29-3fa16c641770/43122519-feea-43ba-b591-64e178a709d9"
-					(reference "#PWR061")
+					(reference "#PWR058")
 					(unit 1)
 				)
 				(path "/218796ae-7f3d-49ed-8c29-3fa16c641770/4c07b9d4-5f40-4d3b-986e-45da6c10f029"
-					(reference "#PWR041")
+					(reference "#PWR030")
 					(unit 1)
 				)
 				(path "/218796ae-7f3d-49ed-8c29-3fa16c641770/90bc41c1-4a9d-4afc-b706-91e47fcb31df"
-					(reference "#PWR051")
+					(reference "#PWR044")
 					(unit 1)
 				)
 			)
@@ -2795,7 +2806,7 @@
 		(dnp no)
 		(fields_autoplaced yes)
 		(uuid "c444063e-b333-4724-bc98-36a54f745ebd")
-		(property "Reference" "CN5"
+		(property "Reference" "CN1"
 			(at 134.62 25.4 0)
 			(show_name no)
 			(do_not_autoplace no)
@@ -2918,19 +2929,19 @@
 		(instances
 			(project "stepper_breakout"
 				(path "/218796ae-7f3d-49ed-8c29-3fa16c641770/049e68ee-30d6-45da-8da4-05fb14ce0077"
-					(reference "CN5")
+					(reference "CN1")
 					(unit 1)
 				)
 				(path "/218796ae-7f3d-49ed-8c29-3fa16c641770/43122519-feea-43ba-b591-64e178a709d9"
-					(reference "CN17")
+					(reference "CN13")
 					(unit 1)
 				)
 				(path "/218796ae-7f3d-49ed-8c29-3fa16c641770/4c07b9d4-5f40-4d3b-986e-45da6c10f029"
-					(reference "CN9")
+					(reference "CN5")
 					(unit 1)
 				)
 				(path "/218796ae-7f3d-49ed-8c29-3fa16c641770/90bc41c1-4a9d-4afc-b706-91e47fcb31df"
-					(reference "CN13")
+					(reference "CN9")
 					(unit 1)
 				)
 			)
@@ -2948,7 +2959,7 @@
 		(dnp no)
 		(fields_autoplaced yes)
 		(uuid "d33b22b2-c93b-4775-a418-bab5dca8720f")
-		(property "Reference" "#PWR025"
+		(property "Reference" "#PWR020"
 			(at 144.78 74.93 0)
 			(hide yes)
 			(show_name no)
@@ -3008,19 +3019,19 @@
 		(instances
 			(project "stepper_breakout"
 				(path "/218796ae-7f3d-49ed-8c29-3fa16c641770/049e68ee-30d6-45da-8da4-05fb14ce0077"
-					(reference "#PWR025")
+					(reference "#PWR020")
 					(unit 1)
 				)
 				(path "/218796ae-7f3d-49ed-8c29-3fa16c641770/43122519-feea-43ba-b591-64e178a709d9"
-					(reference "#PWR055")
+					(reference "#PWR062")
 					(unit 1)
 				)
 				(path "/218796ae-7f3d-49ed-8c29-3fa16c641770/4c07b9d4-5f40-4d3b-986e-45da6c10f029"
-					(reference "#PWR035")
+					(reference "#PWR034")
 					(unit 1)
 				)
 				(path "/218796ae-7f3d-49ed-8c29-3fa16c641770/90bc41c1-4a9d-4afc-b706-91e47fcb31df"
-					(reference "#PWR045")
+					(reference "#PWR048")
 					(unit 1)
 				)
 			)
@@ -3038,7 +3049,7 @@
 		(dnp no)
 		(fields_autoplaced yes)
 		(uuid "da982283-0c66-47ee-a6dc-801793acab85")
-		(property "Reference" "CN8"
+		(property "Reference" "CN4"
 			(at 134.62 80.01 0)
 			(show_name no)
 			(do_not_autoplace no)
@@ -3161,19 +3172,19 @@
 		(instances
 			(project "stepper_breakout"
 				(path "/218796ae-7f3d-49ed-8c29-3fa16c641770/049e68ee-30d6-45da-8da4-05fb14ce0077"
-					(reference "CN8")
+					(reference "CN4")
 					(unit 1)
 				)
 				(path "/218796ae-7f3d-49ed-8c29-3fa16c641770/43122519-feea-43ba-b591-64e178a709d9"
-					(reference "CN20")
+					(reference "CN16")
 					(unit 1)
 				)
 				(path "/218796ae-7f3d-49ed-8c29-3fa16c641770/4c07b9d4-5f40-4d3b-986e-45da6c10f029"
-					(reference "CN12")
+					(reference "CN8")
 					(unit 1)
 				)
 				(path "/218796ae-7f3d-49ed-8c29-3fa16c641770/90bc41c1-4a9d-4afc-b706-91e47fcb31df"
-					(reference "CN16")
+					(reference "CN12")
 					(unit 1)
 				)
 			)
@@ -3191,7 +3202,7 @@
 		(dnp no)
 		(fields_autoplaced yes)
 		(uuid "e03bd38d-0682-49fb-9cdb-1ea2da7b9eb2")
-		(property "Reference" "#PWR034"
+		(property "Reference" "#PWR024"
 			(at 149.86 91.44 0)
 			(hide yes)
 			(show_name no)
@@ -3251,19 +3262,19 @@
 		(instances
 			(project "stepper_breakout"
 				(path "/218796ae-7f3d-49ed-8c29-3fa16c641770/049e68ee-30d6-45da-8da4-05fb14ce0077"
-					(reference "#PWR034")
+					(reference "#PWR024")
 					(unit 1)
 				)
 				(path "/218796ae-7f3d-49ed-8c29-3fa16c641770/43122519-feea-43ba-b591-64e178a709d9"
-					(reference "#PWR064")
+					(reference "#PWR066")
 					(unit 1)
 				)
 				(path "/218796ae-7f3d-49ed-8c29-3fa16c641770/4c07b9d4-5f40-4d3b-986e-45da6c10f029"
-					(reference "#PWR044")
+					(reference "#PWR038")
 					(unit 1)
 				)
 				(path "/218796ae-7f3d-49ed-8c29-3fa16c641770/90bc41c1-4a9d-4afc-b706-91e47fcb31df"
-					(reference "#PWR054")
+					(reference "#PWR052")
 					(unit 1)
 				)
 			)
@@ -3281,7 +3292,7 @@
 		(dnp no)
 		(fields_autoplaced yes)
 		(uuid "ef75782d-3835-4f88-b509-2334c1931860")
-		(property "Reference" "#PWR029"
+		(property "Reference" "#PWR015"
 			(at 124.46 50.8 0)
 			(hide yes)
 			(show_name no)
@@ -3341,19 +3352,19 @@
 		(instances
 			(project "stepper_breakout"
 				(path "/218796ae-7f3d-49ed-8c29-3fa16c641770/049e68ee-30d6-45da-8da4-05fb14ce0077"
-					(reference "#PWR029")
+					(reference "#PWR015")
 					(unit 1)
 				)
 				(path "/218796ae-7f3d-49ed-8c29-3fa16c641770/43122519-feea-43ba-b591-64e178a709d9"
-					(reference "#PWR059")
+					(reference "#PWR057")
 					(unit 1)
 				)
 				(path "/218796ae-7f3d-49ed-8c29-3fa16c641770/4c07b9d4-5f40-4d3b-986e-45da6c10f029"
-					(reference "#PWR039")
+					(reference "#PWR029")
 					(unit 1)
 				)
 				(path "/218796ae-7f3d-49ed-8c29-3fa16c641770/90bc41c1-4a9d-4afc-b706-91e47fcb31df"
-					(reference "#PWR049")
+					(reference "#PWR043")
 					(unit 1)
 				)
 			)
@@ -3371,7 +3382,7 @@
 		(dnp no)
 		(fields_autoplaced yes)
 		(uuid "f9466283-f7b7-483c-9186-d08b0ee98e6a")
-		(property "Reference" "#PWR032"
+		(property "Reference" "#PWR023"
 			(at 149.86 72.39 0)
 			(hide yes)
 			(show_name no)
@@ -3431,19 +3442,19 @@
 		(instances
 			(project "stepper_breakout"
 				(path "/218796ae-7f3d-49ed-8c29-3fa16c641770/049e68ee-30d6-45da-8da4-05fb14ce0077"
-					(reference "#PWR032")
+					(reference "#PWR023")
 					(unit 1)
 				)
 				(path "/218796ae-7f3d-49ed-8c29-3fa16c641770/43122519-feea-43ba-b591-64e178a709d9"
-					(reference "#PWR062")
+					(reference "#PWR065")
 					(unit 1)
 				)
 				(path "/218796ae-7f3d-49ed-8c29-3fa16c641770/4c07b9d4-5f40-4d3b-986e-45da6c10f029"
-					(reference "#PWR042")
+					(reference "#PWR037")
 					(unit 1)
 				)
 				(path "/218796ae-7f3d-49ed-8c29-3fa16c641770/90bc41c1-4a9d-4afc-b706-91e47fcb31df"
-					(reference "#PWR052")
+					(reference "#PWR051")
 					(unit 1)
 				)
 			)
@@ -3461,7 +3472,7 @@
 		(dnp no)
 		(fields_autoplaced yes)
 		(uuid "fadadbf5-3df3-4b09-9bf5-19419374735d")
-		(property "Reference" "#PWR013"
+		(property "Reference" "#PWR012"
 			(at 57.15 76.2 0)
 			(hide yes)
 			(show_name no)
@@ -3521,19 +3532,19 @@
 		(instances
 			(project "stepper_breakout"
 				(path "/218796ae-7f3d-49ed-8c29-3fa16c641770/049e68ee-30d6-45da-8da4-05fb14ce0077"
-					(reference "#PWR013")
+					(reference "#PWR012")
 					(unit 1)
 				)
 				(path "/218796ae-7f3d-49ed-8c29-3fa16c641770/43122519-feea-43ba-b591-64e178a709d9"
-					(reference "#PWR020")
+					(reference "#PWR054")
 					(unit 1)
 				)
 				(path "/218796ae-7f3d-49ed-8c29-3fa16c641770/4c07b9d4-5f40-4d3b-986e-45da6c10f029"
-					(reference "#PWR014")
+					(reference "#PWR026")
 					(unit 1)
 				)
 				(path "/218796ae-7f3d-49ed-8c29-3fa16c641770/90bc41c1-4a9d-4afc-b706-91e47fcb31df"
-					(reference "#PWR015")
+					(reference "#PWR040")
 					(unit 1)
 				)
 			)

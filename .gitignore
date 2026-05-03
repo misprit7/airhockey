@@ -20,3 +20,17 @@ build/
 **/*.bck
 **/*.kicad_sch-bak
 **/*.kicad_pcb-bak
+
+# KiCad project-specific
+hw/**/gen_schematic.py
+
+# JLCPCB/LCSC Library Loader (plugin-managed)
+hw/**/EasyEDA_Lib/
+hw/**/EASYEDA_MODELS/
+hw/**/jlc-kicad-lib-loader.ini
+hw/**/jlcpcb_lib/
+
+# Fabrication Toolkit output
+hw/**/fabrication-toolkit-options.json
+hw/**/jlcpcb/
+hw/**/production/
