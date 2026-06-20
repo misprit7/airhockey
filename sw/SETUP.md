@@ -87,25 +87,49 @@ sudo cp sw/third_party/ExarKernelDriver/xr_usb_serial_common.ko /lib/modules/$(u
 sudo depmod
 ```
 
-### Step 4: Blacklist `cdc_acm` and install udev rules
+### Step 3b (recommended): Install via DKMS instead
+
+DKMS rebuilds the module automatically on every kernel update, so you never
+have to repeat Step 2/3 by hand. A `dkms.conf` lives in
+`third_party/ExarKernelDriver/`.
 
 ```bash
-echo "blacklist cdc_acm" | sudo tee /etc/modprobe.d/sc4hub-blacklist.conf
+VER=1F
+sudo rm -rf /usr/src/xr_usb_serial_common-$VER
+sudo cp -r sw/third_party/ExarKernelDriver /usr/src/xr_usb_serial_common-$VER
+sudo dkms add     -m xr_usb_serial_common -v $VER
+sudo dkms build   -m xr_usb_serial_common -v $VER
+sudo dkms install -m xr_usb_serial_common -v $VER
+dkms status   # should show: xr_usb_serial_common/1F, <kernel>: installed
+```
+
+The driver compiles unchanged on kernels 6.19 through 7.0 (the patches in
+"Issues Encountered" cover both).
+
+### Step 4: Install udev rules
+
+```bash
 sudo cp sw/99-sc4hub.rules /etc/udev/rules.d/
 sudo udevadm control --reload-rules
 ```
 
+**Do NOT globally blacklist `cdc_acm`.** Other devices need it — e.g. the
+Teensy enumerates as CDC ACM on `/dev/ttyACM0`. The udev rule above moves only
+the hub (VID 2890) onto the Exar driver and leaves `cdc_acm` running for
+everything else. (Earlier revisions of this guide blacklisted `cdc_acm`; that
+breaks the Teensy and is no longer used.)
+
 ### Step 5: Load the driver
 
 ```bash
-# Unload cdc_acm if currently loaded
-sudo modprobe -r cdc_acm
-
-# Load Exar driver
+# Just load the Exar driver — do not unload cdc_acm (other devices use it).
 sudo modprobe xr_usb_serial_common
 ```
 
 ### Step 6: Plug in the SC4-Hub
+
+Re-plug the hub's USB cable so the udev rule fires (it unbinds the hub from
+cdc_acm and binds it to the Exar driver).
 
 The device should appear as `/dev/ttyXRUSB0`. Verify:
 ```bash
@@ -135,7 +159,11 @@ bin/scan_motors  # should list all connected motors
 
 ## After Kernel Updates
 
-The `.ko` module must be rebuilt for each new kernel version:
+**If installed via DKMS (Step 3b): nothing to do** — DKMS rebuilds the module
+for the new kernel automatically (`AUTOINSTALL="yes"`). Confirm with
+`dkms status` after the update.
+
+If you instead did the manual install (Step 2/3), rebuild for each new kernel:
 
 ```bash
 cd sw/third_party/ExarKernelDriver

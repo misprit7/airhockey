@@ -86,7 +86,7 @@
 					)
 				)
 			)
-			(property "Supplier Part" "C49257"
+			(property "LCSC" "C49257"
 				(at 0 0 0)
 				(show_name no)
 				(do_not_autoplace no)
@@ -269,7 +269,7 @@
 					)
 				)
 			)
-			(property "Supplier Part" "C2905487"
+			(property "LCSC" "C2905487"
 				(at 0 0 0)
 				(show_name no)
 				(do_not_autoplace no)
@@ -3852,7 +3852,7 @@
 				)
 			)
 		)
-		(property "Supplier Part" "C49257"
+		(property "LCSC" "C49257"
 			(at 180.34 43.18 0)
 			(hide yes)
 			(show_name no)
@@ -4068,7 +4068,7 @@
 				)
 			)
 		)
-		(property "Supplier Part" "C49257"
+		(property "LCSC" "C49257"
 			(at 179.07 68.58 0)
 			(hide yes)
 			(show_name no)
@@ -4285,7 +4285,7 @@
 				)
 			)
 		)
-		(property "Supplier Part" "C2905487"
+		(property "LCSC" "C2905487"
 			(at 213.36 50.8 0)
 			(hide yes)
 			(show_name no)

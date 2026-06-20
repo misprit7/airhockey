@@ -20,6 +20,7 @@ build/
 **/*.bck
 **/*.kicad_sch-bak
 **/*.kicad_pcb-bak
+**/*.kicad_sch.bak
 
 # KiCad project-specific
 hw/**/gen_schematic.py

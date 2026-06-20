@@ -3,13 +3,33 @@
 #include "serial_protocol.h"
 
 // ============================================================================
-// Instance
+// Motor control pins
 // ============================================================================
+//
+// Each pin array is a contiguous block of 4 pins (one per motor). Side A
+// drives the active CDPR controller on this half of the table. Side B is
+// reserved for the other half of the table and is not wired into a
+// controller yet — kept here so the second side can reuse this firmware.
+//
+//   STEPA  6..9     DIRA  34..37   (active)
+//   STEPB  14..17   DIRB  18..21   (reserved for the other side)
 
-static const int stepPins[NUM_MOTORS] = {6, 7, 8, 9};
-static const int dirPins[NUM_MOTORS]  = {34, 35, 36, 37};
+static const int stepPinsA[NUM_MOTORS] = {6, 7, 8, 9};
+static const int dirPinsA[NUM_MOTORS]  = {34, 35, 36, 37};
 
-static CDPR cdpr(stepPins, dirPins);
+[[maybe_unused]] static const int stepPinsB[NUM_MOTORS] = {14, 15, 16, 17};
+[[maybe_unused]] static const int dirPinsB[NUM_MOTORS]  = {18, 19, 20, 21};
+
+static CDPR cdpr(stepPinsA, dirPinsA);
+
+// ============================================================================
+// Mode select
+// ============================================================================
+//
+// TEST_MODE true  → autonomous 3 cm square test on boot (no host needed).
+// TEST_MODE false → normal serial-command controller (see serial_protocol.h).
+
+constexpr bool TEST_MODE = true;
 
 // ============================================================================
 // Reset pin — short pin 33 to GND to reboot
@@ -146,6 +166,59 @@ static void processCommand(char *line) {
 }
 
 // ============================================================================
+// 3 cm square test
+//
+// Autonomous test: calibrate at table center, then trace a 30 mm square
+// indefinitely, pausing briefly at each corner. No host commands needed.
+// ============================================================================
+
+constexpr float SQUARE_SIZE_MM = 30.0f; // 3 cm side length
+constexpr float TENSION_MM     = 0.0f;  // pretension before motion (0 = none)
+constexpr uint32_t DWELL_MS    = 500;   // pause at each corner
+constexpr float TARGET_TOL_MM  = 0.5f;  // "arrived" tolerance
+
+static float cornerX[4];
+static float cornerY[4];
+static int   cornerIdx = 0;
+static uint32_t dwellUntil = 0; // 0 = not currently dwelling
+
+static void startSquareTest() {
+  const float cx = TABLE_WIDTH / 2.0f;
+  const float cy = TABLE_HEIGHT / 2.0f;
+  const float h  = SQUARE_SIZE_MM / 2.0f;
+
+  // Square corners centered on the calibration point, traversed CCW.
+  cornerX[0] = cx - h; cornerY[0] = cy - h;
+  cornerX[1] = cx + h; cornerY[1] = cy - h;
+  cornerX[2] = cx + h; cornerY[2] = cy + h;
+  cornerX[3] = cx - h; cornerY[3] = cy + h;
+
+  // Paddle is assumed to physically start at table center.
+  cdpr.begin(cx, cy);
+  if (TENSION_MM > 0.0f) cdpr.tension(TENSION_MM);
+  cdpr.startTimer();
+  timerRunning = true;
+  calibrated   = true;
+
+  cdpr.setTarget(cornerX[cornerIdx], cornerY[cornerIdx]);
+  Serial.printf("Square test: %.0fmm square centered at (%.1f, %.1f)\n",
+                SQUARE_SIZE_MM, cx, cy);
+}
+
+static void squareTestLoop() {
+  if (cdpr.atTarget(TARGET_TOL_MM)) {
+    if (dwellUntil == 0) {
+      dwellUntil = millis() + DWELL_MS;
+    } else if (millis() >= dwellUntil) {
+      dwellUntil = 0;
+      cornerIdx = (cornerIdx + 1) % 4;
+      cdpr.setTarget(cornerX[cornerIdx], cornerY[cornerIdx]);
+      digitalToggle(LED_BUILTIN);
+    }
+  }
+}
+
+// ============================================================================
 // Setup
 // ============================================================================
 
@@ -155,7 +228,11 @@ void setup() {
   pinMode(LED_BUILTIN, OUTPUT);
   pinMode(RESET_PIN, INPUT_PULLUP);
 
-  Serial.println("CDPR ready");
+  if (TEST_MODE) {
+    startSquareTest();
+  } else {
+    Serial.println("CDPR ready");
+  }
 }
 
 // ============================================================================
@@ -167,6 +244,11 @@ constexpr uint32_t STATUS_INTERVAL_MS = 20;  // ~50Hz
 
 void loop() {
   checkReset();
+
+  if (TEST_MODE) {
+    squareTestLoop();
+    return;
+  }
 
   // Read serial commands
   while (Serial.available()) {

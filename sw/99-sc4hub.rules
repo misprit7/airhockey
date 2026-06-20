@@ -1,17 +1,22 @@
-# Teknic SC4-Hub: use Exar xr_usb_serial driver instead of cdc_acm
+# Teknic SC4-Hub: use the Exar xr_usb_serial driver instead of cdc_acm.
+#
+# Only the hub (VID 2890) is moved off cdc_acm onto the Exar driver. cdc_acm is
+# left loaded and untouched for every other device, so a Teensy or any other
+# CDC-ACM device on /dev/ttyACM* keeps working. (Do NOT globally blacklist
+# cdc_acm — that would break those devices.)
 #
 # Install:
-#   sudo mkdir -p /lib/modules/$(uname -r)/extra
-#   sudo cp third_party/ExarKernelDriver/xr_usb_serial_common.ko /lib/modules/$(uname -r)/extra/
-#   sudo depmod
-#   sudo cp 99-sc4hub.rules /etc/udev/rules.d/
+#   # build/install the module (see SETUP.md — DKMS recommended), then:
+#   sudo cp sw/99-sc4hub.rules /etc/udev/rules.d/
 #   sudo udevadm control --reload-rules
 #   # Then re-plug the SC4-Hub USB cable.
 
-# When SC4-Hub appears, unbind cdc_acm and bind the Exar driver
+# When the SC4-Hub appears: load the Exar driver, unbind ONLY this hub's two
+# interfaces from cdc_acm (%k = this device, e.g. 1-5.1), then bind the data
+# interface to the Exar driver. Other cdc_acm devices are left alone.
 ACTION=="add", SUBSYSTEM=="usb", ATTR{idVendor}=="2890", ATTR{idProduct}=="0213", \
     RUN+="/sbin/modprobe xr_usb_serial_common", \
-    RUN+="/bin/sh -c 'sleep 0.5; for iface in /sys/bus/usb/drivers/cdc_acm/1-*; do echo $$(basename $$iface) > /sys/bus/usb/drivers/cdc_acm/unbind 2>/dev/null; done; echo %k:1.0 > /sys/bus/usb/drivers/cdc_xr_usb_serial/bind 2>/dev/null'"
+    RUN+="/bin/sh -c 'sleep 0.5; echo %k:1.0 > /sys/bus/usb/drivers/cdc_acm/unbind 2>/dev/null; echo %k:1.1 > /sys/bus/usb/drivers/cdc_acm/unbind 2>/dev/null; echo %k:1.0 > /sys/bus/usb/drivers/cdc_xr_usb_serial/bind 2>/dev/null'"
 
-# Give uucp group access and create symlink
+# Give uucp group access and create a stable /dev/sc4hub symlink
 SUBSYSTEM=="tty", ATTRS{idVendor}=="2890", ATTRS{idProduct}=="0213", MODE="0660", GROUP="uucp", SYMLINK+="sc4hub"

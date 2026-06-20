@@ -1,0 +1,17 @@
+# KiCad lock files
+~*.lck
+
+# KiCad local history
+.history/
+
+# KiCad backups
+*-backups/
+
+# KiCad local settings (user-specific)
+*.kicad_prl
+
+# Generator script (not needed to build the project)
+gen_schematic.py
+
+# Old JLCPCB CLI-generated library (replaced by jlc-kicad-lib-loader plugin)
+jlcpcb_lib/

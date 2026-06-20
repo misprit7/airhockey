@@ -86,7 +86,7 @@
 					)
 				)
 			)
-			(property "Supplier Part" "C155176"
+			(property "LCSC" "C155176"
 				(at 0 0 0)
 				(show_name no)
 				(do_not_autoplace no)
@@ -489,7 +489,7 @@
 					)
 				)
 			)
-			(property "Supplier Part" "C24697"
+			(property "LCSC" "C24697"
 				(at 0 0 0)
 				(show_name no)
 				(do_not_autoplace no)
@@ -2111,7 +2111,7 @@
 				)
 			)
 		)
-		(property "Supplier Part" "C24697"
+		(property "LCSC" "C24697"
 			(at 134.62 67.31 0)
 			(hide yes)
 			(show_name no)
@@ -2264,7 +2264,7 @@
 				)
 			)
 		)
-		(property "Supplier Part" "C155176"
+		(property "LCSC" "C155176"
 			(at 73.66 50.8 0)
 			(hide yes)
 			(show_name no)
@@ -2287,17 +2287,6 @@
 			)
 		)
 		(property "LCSC Part Name" "三态输出，四路总线缓冲门"
-			(at 73.66 50.8 0)
-			(hide yes)
-			(show_name no)
-			(do_not_autoplace no)
-			(effects
-				(font
-					(size 1.27 1.27)
-				)
-			)
-		)
-		(property "LCSC" "C155176"
 			(at 73.66 50.8 0)
 			(hide yes)
 			(show_name no)
@@ -2458,7 +2447,7 @@
 				)
 			)
 		)
-		(property "Supplier Part" "C24697"
+		(property "LCSC" "C24697"
 			(at 134.62 48.26 0)
 			(hide yes)
 			(show_name no)
@@ -2881,7 +2870,7 @@
 				)
 			)
 		)
-		(property "Supplier Part" "C24697"
+		(property "LCSC" "C24697"
 			(at 134.62 31.75 0)
 			(hide yes)
 			(show_name no)
@@ -3124,7 +3113,7 @@
 				)
 			)
 		)
-		(property "Supplier Part" "C24697"
+		(property "LCSC" "C24697"
 			(at 134.62 86.36 0)
 			(hide yes)
 			(show_name no)
