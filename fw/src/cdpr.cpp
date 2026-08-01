@@ -6,7 +6,6 @@
 // ============================================================================
 
 CDPR *CDPR::instances_[MAX_INSTANCES] = {};
-int CDPR::instanceCount_ = 0;
 
 template <int N> static void trampoline() {
   if (CDPR::instances_[N])
@@ -267,7 +266,19 @@ void CDPR::releaseTension(float speed_mm_s) {
 void CDPR::startTimer() {
   if (instanceIdx_ >= 0)
     return;
-  instanceIdx_ = instanceCount_++;
+  // Claim a FREE slot, not the next one ever handed out: start/stop cycles
+  // are normal (every test lap is one), and a monotonic counter walks off
+  // the end of the array after MAX_INSTANCES laps.
+  for (int i = 0; i < MAX_INSTANCES; i++) {
+    if (instances_[i] == nullptr) {
+      instanceIdx_ = i;
+      break;
+    }
+  }
+  if (instanceIdx_ < 0) {
+    Serial.println("ERROR: no free timer slot");
+    return;
+  }
   instances_[instanceIdx_] = this;
   timer_.begin(trampolines[instanceIdx_], 1000000.0f / tickRateHz_);
 }

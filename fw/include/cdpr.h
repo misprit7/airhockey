@@ -64,7 +64,6 @@ public:
   // ISR dispatch table
   static constexpr int MAX_INSTANCES = 4;
   static CDPR* instances_[MAX_INSTANCES];
-  static int   instanceCount_;
 
 private:
   // ── Pin config ──

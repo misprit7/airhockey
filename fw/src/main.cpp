@@ -181,82 +181,158 @@ static void processCommand(char *line) {
 // indefinitely, pausing briefly at each corner. No host commands needed.
 // ============================================================================
 
-constexpr float SQUARE_SIZE_MM = 50.0f;  // 5 cm side length
-constexpr float SQUARE_SPEED_MM_S = 25.0f; // slow: first closed-loop motion
-constexpr float TENSION_MM     = 0.0f;  // pretension before motion (0 = none)
-constexpr uint32_t DWELL_MS    = 700;   // pause at each corner
-constexpr float TARGET_TOL_MM  = 0.5f;  // "arrived" tolerance
+constexpr float SQUARE_DEFAULT_MM = 50.0f;  // 5 cm side length
+constexpr float SQUARE_MAX_MM     = 800.0f; // sanity cap, workspace is ~945
+constexpr float SQUARE_SPEED_MM_S = 25.0f;  // slow: first closed-loop motion
+constexpr float TENSION_MM        = 0.0f;   // pretension before motion
+constexpr uint32_t DWELL_MS       = 700;    // pause at each corner
+constexpr float TARGET_TOL_MM     = 0.5f;   // "arrived" tolerance
 
 // One lap: centre -> SW -> SE -> NE -> NW -> SW (closes the square) -> centre.
-// Deliberately NOT a repeating loop. This is the first motion the machine
-// makes with the new cable model, and an unattended repeat is how you turn a
-// modelling error into damage.
+// Deliberately not a repeating loop — each lap is started by hand.
 constexpr int SQUARE_WAYPOINTS = 6;
 static float wpX[SQUARE_WAYPOINTS];
 static float wpY[SQUARE_WAYPOINTS];
 static int   wpIdx = 0;
-static uint32_t dwellUntil = 0; // 0 = not currently dwelling
-static bool squareRunning = false;
-static bool squareDone = false;
+static uint32_t dwellUntil = 0;
+static bool  squareRunning = false;
+static bool  squareInited = false;   // begin() called at least once
+static float squareSize = SQUARE_DEFAULT_MM;
+static int   lapCount = 0;
 
-static void armSquareTest() {
+static void printSquareHelp() {
   Serial.println();
-  Serial.printf("SQUARE TEST armed: %.0f mm square at (%.1f, %.1f), %.0f mm/s\n",
-                SQUARE_SIZE_MM, HOME_X, HOME_Y, SQUARE_SPEED_MM_S);
-  Serial.println("Place the paddle near that point, take up cable slack by hand,");
-  Serial.println("then type GO to run ONE lap. Nothing moves until you do.");
-  Serial.println("Placement need not be exact - a placement error offsets the");
-  Serial.println("square but barely changes its SHAPE, which is what you measure.");
+  Serial.printf("SQUARE TEST  |  size %.0f mm  |  %.0f mm/s  |  centre (%.1f, %.1f)\n",
+                squareSize, SQUARE_SPEED_MM_S, HOME_X, HOME_Y);
+  Serial.println("  GO        run one lap");
+  Serial.println("  SIZE <mm> change the square size");
+  Serial.println("  CAL       re-zero here (use after repositioning by hand)");
+  Serial.println("  STOP      abort a lap in progress");
+  Serial.println("Nothing moves until you type GO.");
 }
 
-static void startSquareTest() {
-  const float cx = HOME_X;
-  const float cy = HOME_Y;
-  const float h  = SQUARE_SIZE_MM / 2.0f;
+static void armSquareTest() {
+  printSquareHelp();
+  Serial.println("Place the paddle near the centre and take up cable slack.");
+  Serial.println("Placement need not be exact: it offsets the square but");
+  Serial.println("barely changes its SHAPE, which is what you measure.");
+}
 
+// Zero the controller's reference at the nominal centre. Only do this when
+// the paddle has actually been put there — every call throws away whatever
+// drift previous laps accumulated, which is usually the thing you wanted to
+// see.
+static void calibrateHere() {
+  cdpr.begin(HOME_X, HOME_Y);
+  squareInited = true;
+  calibrated = true;
+  Serial.printf("Reference zeroed at (%.1f, %.1f)\n", HOME_X, HOME_Y);
+}
+
+static void startSquareLap() {
+  const float cx = HOME_X, cy = HOME_Y, h = squareSize / 2.0f;
   wpX[0] = cx - h; wpY[0] = cy - h;   // SW
   wpX[1] = cx + h; wpY[1] = cy - h;   // SE
   wpX[2] = cx + h; wpY[2] = cy + h;   // NE
   wpX[3] = cx - h; wpY[3] = cy + h;   // NW
   wpX[4] = cx - h; wpY[4] = cy - h;   // SW again, closing the square
-  wpX[5] = cx;     wpY[5] = cy;       // home to the start point
+  wpX[5] = cx;     wpY[5] = cy;       // back to the start point
 
-  // The paddle is assumed to physically start at (cx, cy).
-  cdpr.begin(cx, cy);
+  if (!squareInited) calibrateHere();
   cdpr.setVelocityLimit(SQUARE_SPEED_MM_S);
   if (TENSION_MM > 0.0f) cdpr.tension(TENSION_MM);
   cdpr.startTimer();
   timerRunning = true;
-  calibrated   = true;
   squareRunning = true;
   wpIdx = 0;
-
+  dwellUntil = 0;
   cdpr.setTarget(wpX[0], wpY[0]);
-  Serial.printf("RUNNING -> waypoint 1/%d (%.1f, %.1f)\n",
-                SQUARE_WAYPOINTS, wpX[0], wpY[0]);
+  Serial.printf("LAP %d RUNNING (%.0f mm) -> 1/%d (%.1f, %.1f)\n",
+                lapCount + 1, squareSize, SQUARE_WAYPOINTS, wpX[0], wpY[0]);
+}
+
+static void endLap(const char *why) {
+  cdpr.stopTimer();
+  timerRunning = false;
+  squareRunning = false;
+  float x, y;
+  cdpr.getCartPosition(x, y);
+  int32_t counts[NUM_MOTORS];
+  cdpr.getMotorCounts(counts);
+  Serial.printf("%s - controller position (%.1f, %.1f), counts [%ld %ld %ld %ld]\n",
+                why, x, y, (long)counts[0], (long)counts[1], (long)counts[2],
+                (long)counts[3]);
+  // After a full lap those counts are zero by construction, so a nonzero
+  // reading means the lap was cut short, not that the machine drifted.
+  // Physical drift shows up only by measuring where the paddle really is.
+  Serial.println("Measure where the paddle ACTUALLY is, then GO again.");
+}
+
+// Reads one line; returns true when a complete line is ready in buf.
+static bool readSquareLine(char *buf, uint8_t cap, uint8_t &n) {
+  while (Serial.available()) {
+    char c = Serial.read();
+    if (c == '\n' || c == '\r') {
+      if (n == 0) continue;  // swallow the second half of CRLF / blank lines
+      buf[n] = 0;
+      n = 0;
+      return true;
+    }
+    if (n < cap - 1) buf[n++] = c;
+  }
+  return false;
+}
+
+static void handleSquareCommand(char *line) {
+  if (strcasecmp(line, "GO") == 0) {
+    if (squareRunning) {
+      Serial.println("already running - STOP first");
+      return;
+    }
+    startSquareLap();
+  } else if (strcasecmp(line, "STOP") == 0) {
+    if (!squareRunning) {
+      Serial.println("not running");
+      return;
+    }
+    endLap("ABORTED");
+  } else if (strcasecmp(line, "CAL") == 0) {
+    if (squareRunning) {
+      Serial.println("cannot re-zero mid-lap - STOP first");
+      return;
+    }
+    calibrateHere();
+  } else if (strncasecmp(line, "SIZE", 4) == 0) {
+    if (squareRunning) {
+      Serial.println("cannot resize mid-lap - STOP first");
+      return;
+    }
+    float v = atof(line + 4);
+    if (v < 5.0f || v > SQUARE_MAX_MM) {
+      Serial.printf("SIZE must be 5..%.0f mm\n", SQUARE_MAX_MM);
+      return;
+    }
+    // Corners must sit inside the workspace or setTarget silently clamps
+    // them and the "square" comes out a rectangle.
+    const float h = v / 2.0f;
+    if (!inWorkspace(HOME_X - h, HOME_Y - h) ||
+        !inWorkspace(HOME_X + h, HOME_Y + h)) {
+      Serial.printf("%.0f mm square does not fit in the workspace\n", v);
+      return;
+    }
+    squareSize = v;
+    Serial.printf("size now %.0f mm\n", squareSize);
+  } else {
+    printSquareHelp();
+  }
 }
 
 static void squareTestLoop() {
-  if (squareDone) return;
+  static char buf[24];
+  static uint8_t n = 0;
+  if (readSquareLine(buf, sizeof(buf), n)) handleSquareCommand(buf);
 
-  if (!squareRunning) {
-    // Armed: wait for GO. Anything else is ignored.
-    static char buf[16];
-    static uint8_t n = 0;
-    while (Serial.available()) {
-      char c = Serial.read();
-      if (c == '\n' || c == '\r') {
-        buf[n] = 0;
-        n = 0;
-        if (strcasecmp(buf, "GO") == 0) startSquareTest();
-        else if (buf[0]) Serial.println("type GO to start");
-      } else if (n < sizeof(buf) - 1) {
-        buf[n++] = c;
-      }
-    }
-    return;
-  }
-
+  if (!squareRunning) return;
   if (!cdpr.atTarget(TARGET_TOL_MM)) return;
 
   if (dwellUntil == 0) {
@@ -269,21 +345,13 @@ static void squareTestLoop() {
 
   wpIdx++;
   if (wpIdx >= SQUARE_WAYPOINTS) {
-    squareRunning = false;
-    squareDone = true;
-    cdpr.stopTimer();
-    timerRunning = false;
-    float x, y;
-    cdpr.getCartPosition(x, y);
-    Serial.printf("LAP COMPLETE - controller thinks it is at (%.1f, %.1f)\n",
-                  x, y);
-    Serial.println("Measure where the paddle ACTUALLY is and compare.");
-    Serial.println("Reset the Teensy to run another lap.");
+    lapCount++;
+    endLap("LAP COMPLETE");
     return;
   }
   cdpr.setTarget(wpX[wpIdx], wpY[wpIdx]);
-  Serial.printf("-> waypoint %d/%d (%.1f, %.1f)\n", wpIdx + 1,
-                SQUARE_WAYPOINTS, wpX[wpIdx], wpY[wpIdx]);
+  Serial.printf("-> %d/%d (%.1f, %.1f)\n", wpIdx + 1, SQUARE_WAYPOINTS,
+                wpX[wpIdx], wpY[wpIdx]);
 }
 
 // ============================================================================
