@@ -175,13 +175,16 @@ async def live_game(ws: WebSocket):
                                     / "vision" / "bin"))
                                 import track_mallet as _tm
 
-                                cal_xy = _tm.measure()
-                                print(f"  HW: mallet measured at "
-                                      f"({cal_xy[0]:.1f}, {cal_xy[1]:.1f}) mm")
+                                import math as _math
+                                mx, my, mth = _tm.measure()
+                                cal_pose = (mx, my, _math.degrees(mth))
+                                print(f"  HW: paddle measured at "
+                                      f"({mx:.1f}, {my:.1f}) mm, "
+                                      f"{cal_pose[2]:.2f} deg")
                                 hardware_dynamics = HardwareDynamics(
                                     sim_width=cfg.width,
                                     sim_height=cfg.height,
-                                    cal_xy_mm=cal_xy,
+                                    cal_pose_mm=cal_pose,
                                 )
                                 hw_center_x = cfg.width / 2
                                 hw_center_y = cfg.height / 4

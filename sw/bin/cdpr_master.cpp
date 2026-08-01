@@ -199,16 +199,19 @@ static int handleCommand(const char *line, ClearPath &robot, int client_fd, int 
         // command is offset by however far off it was.
         double cx = HOME_X;
         double cy = HOME_Y;
-        if (sscanf(line + 6, "%lf %lf", &cx, &cy) != 2) {
+        double cth = MALLET_THETA_RAD * 180.0 / M_PI;
+        int ngot = sscanf(line + 6, "%lf %lf %lf", &cx, &cy, &cth);
+        if (ngot < 2) {
             cx = HOME_X;
             cy = HOME_Y;
             logf("  WARNING: no calibration point given, assuming the mallet "
                  "is at HOME (%.1f, %.1f)\n", cx, cy);
         } else {
-            logf("  calibrating at measured (%.1f, %.1f)\n", cx, cy);
+            logf("  calibrating at measured (%.1f, %.1f) theta %.2f deg%s\n",
+                 cx, cy, cth, ngot < 3 ? "  (nominal)" : "");
         }
         char cmd[64];
-        snprintf(cmd, sizeof(cmd), "CAL %.1f %.1f\n", cx, cy);
+        snprintf(cmd, sizeof(cmd), "CAL %.1f %.1f %.2f\n", cx, cy, cth);
         sendTeensy(teensy_fd, cmd);
         if (!waitTeensyOK(teensy_fd)) {
             snprintf(resp, sizeof(resp), "ERR teensy CAL failed\n");

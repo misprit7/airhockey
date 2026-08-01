@@ -147,6 +147,28 @@ constexpr bool RETRACT_CW[NUM_MOTORS] = {true, false, true, false};
 constexpr float ATTACH_R_MM = 31.1f;
 constexpr float ATTACH_CHIRALITY = -1.0f; // arms 0-3 clockwise from above
 
+// The orientation the paddle actually sits at, and therefore the one every
+// cable length is computed for.
+//
+// This is NOT a free choice of zero. At 135 deg each arm points at its own
+// motor: bearings from the workspace centre to M0..M3 are 125/46/-45/-125
+// deg, and arm m points at theta - 90*m, so all four agree on theta ~= 135.
+// Across the whole workspace the best-aligned value only moves between 124
+// and 146 deg, so a constant is fine — and a constant is self-consistent,
+// because four cables cut to a given (x, y, theta) admit exactly that pose,
+// so the paddle holds the orientation rather than fighting it.
+//
+// Computing lengths at theta = 0 instead — as this did until 2026-08-01 —
+// asks for a paddle rotated 135 deg from where it physically is. The
+// resulting per-motor length offsets (about +50, +53, +54, +56 mm) are
+// unequal, so calibration absorbs only their average: what survives is a
+// commanded motion that disagrees with the required one by roughly 1 mm
+// over a 30 mm move and 5 mm over 200 mm, with OPPOSITE SIGNS across
+// motors. That is slack on two cables and tension on the other two, and on
+// an over-constrained rig it also lets the slack cable swap mid-move, which
+// is a mechanism for the paddle to chatter between constraint sets.
+constexpr float MALLET_THETA_RAD = 2.3561945f; // 135 deg
+
 // ── Motion limits shared by both paths ──────────────────────────────
 
 constexpr float EDGE_MARGIN_MM = 30.0f;
@@ -211,7 +233,8 @@ inline float wrapPi(float a) {
 //
 // Returns a length that is correct up to a constant per-motor offset (the
 // encoder zero and the wrap reference choice), which homing absorbs.
-inline float cableLength(int motor, float x, float y, float theta = 0.0f) {
+inline float cableLength(int motor, float x, float y,
+                         float theta = MALLET_THETA_RAD) {
   float ax, ay;
   attachPoint(motor, x, y, theta, ax, ay);
   const float dx = ax - MOTOR_X[motor];

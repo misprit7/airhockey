@@ -160,7 +160,7 @@ class HardwareDynamics(MotorDynamics):
         max_speed_mm_s: float = 120.0,
         host: str = "127.0.0.1",
         port: int = 8421,
-        cal_xy_mm: tuple[float, float] | None = None,
+        cal_pose_mm: tuple[float, float, float] | None = None,
     ):
         import time as _time
         import sys as _sys
@@ -184,7 +184,8 @@ class HardwareDynamics(MotorDynamics):
         self.client = CDPRClient(host, port)
         self.client.connect()
         # Measured calibration point if the caller has one (track_mallet.py).
-        self.client.enable(*(cal_xy_mm or (None, None)))
+        # Measured (x, y, theta_deg) from track_mallet.py if available.
+        self.client.enable(*(cal_pose_mm or (None, None, None)))
         self._time = _time
         self._hw_rate = 10.0  # Hz — command rate to hardware
         self._last_hw_send = 0.0

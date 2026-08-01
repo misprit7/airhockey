@@ -26,7 +26,8 @@ public:
 
   // Initialize pins and set the calibration position (mm).
   // Motors are assumed to be at rest with cables tensioned to this point.
-  void begin(float calX, float calY);
+  void begin(float calX, float calY,
+             float theta = MALLET_THETA_RAD);
 
   // Set a new target cart position (mm). Thread-safe (called from main loop).
   void setTarget(float x, float y);
@@ -85,6 +86,7 @@ private:
   volatile float cartX_, cartY_;     // theoretical position (mm)
   volatile float velX_,  velY_;      // current velocity (mm/s)
   volatile float velLimit_;          // trajectory speed cap (mm/s)
+  float theta_;                      // paddle orientation (rad)
 
   // ── Target (set from main loop, read by ISR) ──
   volatile float targetX_, targetY_;

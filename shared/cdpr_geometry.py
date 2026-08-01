@@ -39,6 +39,7 @@ RETRACT_CW = [True, False, True, False]
 # ── Paddle cable attachment ──
 ATTACH_R_MM = 31.1
 ATTACH_CHIRALITY = -1.0
+MALLET_THETA_RAD = 2.3561945   # 135 deg — see the header for why not 0
 
 # ── Workspace (robot half only) ──
 EDGE_MARGIN_MM = 30.0

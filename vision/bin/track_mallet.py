@@ -29,6 +29,7 @@ Usage:
 
 import argparse
 import json
+import math
 import sys
 import time
 from pathlib import Path
@@ -44,7 +45,13 @@ from camera import Stream, backproject_pixels  # noqa: E402
 
 CALIB_DIR = Path(__file__).resolve().parent.parent / "calib"
 
-MALLET_Z_MM = 67.0     # marker top above the playing surface
+# Three retroreflectors on the paddle, on TWO different planes — each is
+# back-projected onto its own, because an 18 mm height error skews the
+# result rather than merely displacing it.
+MALLET_Z_MM = 67.0      # centre marker, on top of the paddle
+ARM_Z_MM = 49.0         # the two arm markers, lower down on the cross
+ARM_SPAN_DEG = 90.0     # arms 0 and 3 are adjacent, so 90 deg apart
+CLUSTER_PX = 60.0       # paddle markers sit within this of each other
 FIELD_REJECT_PX = 14.0  # a blob this close to a known marker is that marker
 MIN_AREA = 6
 MAX_AREA = 600
@@ -99,42 +106,106 @@ def find_candidates(img, known_px):
     return sorted(out, key=lambda b: -b[0])
 
 
-def locate(img, K, dist, rvec, tvec, field):
-    """Mallet marker position in grid-frame mm, or None if not found.
+def solve_pose(cands, K, dist, rvec, tvec):
+    """Centre, orientation and quality from the three paddle markers.
 
-    Returns (xy, note) where note flags anything the caller should worry
-    about (nothing found, or more than one plausible blob)."""
+    Which blob is the centre is not assumed — every assignment is scored on
+    two things the cross guarantees: the two arm markers sit at equal radius
+    from the centre, and 90 deg apart. The wrong centre gets the angle badly
+    wrong (about 50 deg), so this is unambiguous rather than a close call.
+    """
+    px = np.array([c[1] for c in cands])
+    best = None
+    for ci in range(3):
+        ai, bi = [k for k in range(3) if k != ci]
+        c = backproject_pixels(px[ci:ci + 1], K, dist, rvec, tvec,
+                               MALLET_Z_MM)[0]
+        arms = backproject_pixels(px[[ai, bi]], K, dist, rvec, tvec, ARM_Z_MM)
+        r = [float(np.linalg.norm(a - c)) for a in arms]
+        bear = [math.degrees(math.atan2(a[1] - c[1], a[0] - c[0])) for a in arms]
+        inc = (bear[1] - bear[0] + 540) % 360 - 180
+        score = abs(abs(inc) - ARM_SPAN_DEG) + 2 * abs(r[0] - r[1])
+        if best is None or score < best["score"]:
+            best = {"score": score, "centre": c, "arms": arms, "r": r,
+                    "bear": bear, "inc": inc}
+
+    # Arm 0 lies along theta, arm 3 along theta+90 (chirality -1). Try both
+    # labellings; the right one has the two estimates agreeing.
+    out = None
+    for a0, a3 in ((0, 1), (1, 0)):
+        t0 = best["bear"][a0]
+        t3 = best["bear"][a3] - ARM_SPAN_DEG
+        dis = (t0 - t3 + 540) % 360 - 180
+        if out is None or abs(dis) < abs(out["disagree"]):
+            out = {"theta": math.radians((t0 - dis / 2 + 360) % 360),
+                   "disagree": dis, "arm0": a0}
+    best.update(out)
+    best["arm_r"] = float(np.mean(best["r"]))
+    return best
+
+
+def locate(img, K, dist, rvec, tvec, field):
+    """Paddle pose in the grid frame, or None if it cannot be resolved.
+
+    Returns (pose, note); pose is a dict with centre/theta, note flags
+    anything the caller should not trust."""
     known = field_marker_pixels(K, dist, rvec, tvec, field)
     cands = find_candidates(img, known)
     if not cands:
-        return None, "no mallet marker found — is it in frame and lit?"
+        return None, "no paddle markers found — is it in frame and lit?"
+
+    # Keep only the tight cluster: paddle markers are close together, stray
+    # reflections are not.
+    pts = np.array([c[1] for c in cands])
+    if len(cands) > 3:
+        centre = np.median(pts, axis=0)
+        keep = np.argsort(np.linalg.norm(pts - centre, axis=1))[:3]
+        cands = [cands[i] for i in sorted(keep)]
+        pts = np.array([c[1] for c in cands])
+
+    if len(cands) < 3:
+        if len(cands) == 1:
+            xy = backproject_pixels(pts, K, dist, rvec, tvec, MALLET_Z_MM)[0]
+            return ({"centre": xy, "theta": None, "disagree": None,
+                     "arm_r": None},
+                    "only one paddle marker visible — position only, no "
+                    "orientation")
+        return None, f"found {len(cands)} paddle markers, need 3"
+
+    spread = float(np.max(np.linalg.norm(pts - pts.mean(axis=0), axis=1)))
+    if spread > CLUSTER_PX:
+        return None, (f"paddle markers span {spread:.0f}px, wider than "
+                      f"{CLUSTER_PX:.0f} — a stray reflector is probably "
+                      "being counted")
+
+    pose = solve_pose(cands, K, dist, rvec, tvec)
     note = None
-    if len(cands) > 1:
-        extra = ", ".join(f"({c[0]:.0f},{c[1]:.0f}) area {a}"
-                          for a, c in cands[1:])
-        note = (f"{len(cands)} candidates; taking the largest. "
-                f"Others: {extra}")
-    xy = backproject_pixels(np.array([cands[0][1]]), K, dist, rvec, tvec,
-                              MALLET_Z_MM)[0]
-    return xy, note
+    if abs(pose["disagree"]) > 5.0:
+        note = (f"the two arms disagree on orientation by "
+                f"{pose['disagree']:.1f} deg — check the marker heights "
+                f"({MALLET_Z_MM:.0f}/{ARM_Z_MM:.0f} mm)")
+    return pose, note
 
 
-def report(xy, note, K, dist, rvec, tvec):
+def report(pose, note, K, dist, rvec, tvec):
+    xy = pose["centre"]
     if note:
         print(f"  NOTE: {note}")
-    print(f"\nmallet marker at ({xy[0]:.1f}, {xy[1]:.1f}) mm, grid frame "
-          f"(z = {MALLET_Z_MM:.0f} mm plane)")
-    # How much the height assumption is worth here, so a wrong number is
-    # obvious rather than silent.
+    print(f"\npaddle centre ({xy[0]:.1f}, {xy[1]:.1f}) mm, grid frame")
+    if pose["theta"] is not None:
+        print(f"orientation   {math.degrees(pose['theta']):.2f} deg"
+              f"   (arms agree to {abs(pose['disagree']):.2f} deg, "
+              f"marker radius {pose['arm_r']:.2f} mm)")
     R, _ = cv2.Rodrigues(rvec)
     C = (-R.T @ tvec.reshape(3, 1)).ravel()
     r = float(np.hypot(xy[0] - C[0], xy[1] - C[1]))
-    sens = r / (C[2] - MALLET_Z_MM)
-    print(f"  height sensitivity here: {sens:.2f} mm of position per mm of "
-          f"height error\n  (so the 67 mm figure wants to be right to a "
-          f"millimetre or two)")
-    print(f"\nPaste into the Teensy monitor to zero the controller here:\n"
-          f"  CAL {xy[0]:.1f} {xy[1]:.1f}")
+    print(f"  height sensitivity here: {r / (C[2] - MALLET_Z_MM):.2f} mm of "
+          f"position per mm of height error")
+    print("\nPaste into the Teensy monitor to zero the controller here:")
+    if pose["theta"] is None:
+        print(f"  CAL {xy[0]:.1f} {xy[1]:.1f}")
+    else:
+        print(f"  CAL {xy[0]:.1f} {xy[1]:.1f} {math.degrees(pose['theta']):.2f}")
 
 
 def measure(image=None, n_frames=5):
@@ -164,13 +235,14 @@ def measure(image=None, n_frames=5):
         if not frames:
             raise RuntimeError("no frames from the camera")
         img = np.clip(np.mean(frames, axis=0), 0, 255).astype(np.uint8)
-    xy, note = locate(img, K, dist, rvec, tvec, field)
-    if xy is None:
+    pose, note = locate(img, K, dist, rvec, tvec, field)
+    if pose is None:
         raise RuntimeError(note)
     if note:
         raise RuntimeError(
-            "ambiguous mallet detection, refusing to guess: " + note)
-    return float(xy[0]), float(xy[1])
+            "ambiguous paddle detection, refusing to guess: " + note)
+    return (float(pose["centre"][0]), float(pose["centre"][1]),
+            float(pose["theta"]))
 
 
 def run_once(image, K, dist, rvec, tvec, field):
@@ -193,10 +265,10 @@ def run_once(image, K, dist, rvec, tvec, field):
             img = np.clip(np.mean(frames, axis=0), 0, 255).astype(np.uint8)
         finally:
             s.close()
-    xy, note = locate(img, K, dist, rvec, tvec, field)
-    if xy is None:
+    pose, note = locate(img, K, dist, rvec, tvec, field)
+    if pose is None:
         sys.exit(f"  {note}")
-    report(xy, note, K, dist, rvec, tvec)
+    report(pose, note, K, dist, rvec, tvec)
 
 
 def run_watch(K, dist, rvec, tvec, field):
@@ -212,13 +284,16 @@ def run_watch(K, dist, rvec, tvec, field):
             now = time.time()
             fps = 0.9 * fps + 0.1 / max(1e-6, now - last)
             last = now
-            xy, note = locate(img, K, dist, rvec, tvec, field)
-            if xy is None:
-                sys.stdout.write(f"\r  {note:<70}")
+            pose, note = locate(img, K, dist, rvec, tvec, field)
+            if pose is None:
+                sys.stdout.write(f"\r  {note:<78}")
             else:
+                xy = pose["centre"]
+                th = ("     ---" if pose["theta"] is None
+                      else f"{math.degrees(pose['theta']):7.2f}")
                 sys.stdout.write(
-                    f"\r  x {xy[0]:8.1f}  y {xy[1]:8.1f} mm   {fps:5.1f} fps"
-                    + ("   (ambiguous)" if note else "            "))
+                    f"\r  x {xy[0]:8.1f}  y {xy[1]:8.1f} mm   theta {th} deg"
+                    f"   {fps:5.1f} fps" + ("  (!)" if note else "     "))
             sys.stdout.flush()
     except KeyboardInterrupt:
         print()
@@ -227,33 +302,55 @@ def run_watch(K, dist, rvec, tvec, field):
 
 
 def selftest():
-    """Synthesise a frame with the six field markers plus a mallet marker at
-    a known spot, and check it is recovered at the right height."""
+    """Render the three paddle markers at a known pose and recover it."""
+    global ARM_Z_MM
     K, dist, rvec, tvec, field = load_pose()
-    truth = np.array([1400.0, 380.0])
+    truth_xy = np.array([1400.0, 380.0])
+    truth_th = math.radians(122.0)
+    arm_r = 25.0
 
     img = np.zeros((1080, 1440), np.uint8)
-    known = field_marker_pixels(K, dist, rvec, tvec, field)
-    for p in known:
+    for p in field_marker_pixels(K, dist, rvec, tvec, field):
         cv2.circle(img, tuple(np.round(p).astype(int)), 4, 200, -1)
-    obj = np.array([[truth[0], truth[1], MALLET_Z_MM]])
-    mp, _ = cv2.projectPoints(obj, rvec, tvec, K, dist)
-    cv2.circle(img, tuple(np.round(mp.reshape(2)).astype(int)), 3, 220, -1)
 
-    xy, note = locate(img, K, dist, rvec, tvec, field)
-    assert xy is not None, f"mallet not found: {note}"
-    err = float(np.linalg.norm(xy - truth))
-    print(f"selftest: recovered ({xy[0]:.1f}, {xy[1]:.1f}) vs truth "
-          f"({truth[0]:.1f}, {truth[1]:.1f}), error {err:.2f} mm")
-    assert err < 2.0, f"recovery error {err:.2f} mm"
-    assert note is None, f"unexpected ambiguity: {note}"
+    def stamp(xy, z):
+        pr, _ = cv2.projectPoints(np.array([[xy[0], xy[1], z]]), rvec, tvec,
+                                  K, dist)
+        cv2.circle(img, tuple(np.round(pr.reshape(2)).astype(int)), 3, 220, -1)
 
-    # Ignoring the height must be clearly WORSE — proves the plane matters.
-    flat = backproject_pixels(mp.reshape(1, 2), K, dist, rvec, tvec, 0.0)[0]
-    flat_err = float(np.linalg.norm(flat - truth))
-    print(f"selftest: same blob back-projected to the TABLE plane would read "
-          f"{flat_err:.1f} mm off")
-    assert flat_err > 10 * max(err, 0.1), "height correction not doing work"
+    stamp(truth_xy, MALLET_Z_MM)
+    for lbl, ang in ((0, truth_th), (3, truth_th + math.pi / 2)):
+        stamp(truth_xy + arm_r * np.array([math.cos(ang), math.sin(ang)]),
+              ARM_Z_MM)
+
+    pose, note = locate(img, K, dist, rvec, tvec, field)
+    assert pose is not None, f"paddle not found: {note}"
+    e_xy = float(np.linalg.norm(pose["centre"] - truth_xy))
+    e_th = abs(math.degrees(pose["theta"] - truth_th))
+    e_th = min(e_th, 360 - e_th)
+    print(f"selftest: centre error {e_xy:.2f} mm, orientation error "
+          f"{e_th:.2f} deg, arm radius {pose['arm_r']:.2f} (truth {arm_r})")
+    assert e_xy < 2.0, f"centre error {e_xy:.2f} mm"
+    assert e_th < 3.0, f"orientation error {e_th:.2f} deg"
+    assert note is None, f"unexpected note: {note}"
+
+    # Orientation turns out to be ROBUST to the arm height — both arms
+    # shift together, so the bearing barely rotates. What the height does
+    # move is the apparent arm radius, which makes that radius the useful
+    # cross-check: caliper the real thing and compare.
+    r_at = {}
+    keep = ARM_Z_MM
+    try:
+        for z in (ARM_Z_MM, MALLET_Z_MM):
+            ARM_Z_MM = z
+            r_at[z] = locate(img, K, dist, rvec, tvec, field)[0]["arm_r"]
+    finally:
+        ARM_Z_MM = keep
+    drift = abs(r_at[MALLET_Z_MM] - r_at[keep])
+    print(f"selftest: assuming the arms sit on the centre plane instead "
+          f"shifts the measured radius {r_at[keep]:.2f} -> "
+          f"{r_at[MALLET_Z_MM]:.2f} mm ({drift:.2f})")
+    assert drift > 1.0, "arm height is not affecting the radius — suspect"
     print("selftest PASSED")
 
 

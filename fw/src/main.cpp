@@ -233,7 +233,7 @@ static void printSquareHelp() {
                 squareSize, SQUARE_SPEED_MM_S, HOME_X, HOME_Y);
   Serial.println("  GO        run one lap");
   Serial.println("  SIZE <mm> change the square size");
-  Serial.println("  CAL x y   re-zero at a measured paddle position");
+  Serial.println("  CAL x y [th]  re-zero at a measured paddle pose");
   Serial.println("            (vision/bin/track_mallet.py prints this line)");
   Serial.println("  STOP      abort a lap in progress");
   Serial.println("  SERIAL    leave square mode (host/web control)");
@@ -252,11 +252,12 @@ static void armSquareTest() {
 //
 // Get the position from vision rather than guessing:
 //   python vision/bin/track_mallet.py     -> prints the CAL line to paste
-static void calibrateAt(float x, float y) {
-  cdpr.begin(x, y);
+static void calibrateAt(float x, float y, float theta) {
+  cdpr.begin(x, y, theta);
   squareInited = true;
   calibrated = true;
-  Serial.printf("Reference zeroed at (%.1f, %.1f)\n", x, y);
+  Serial.printf("Reference zeroed at (%.1f, %.1f) theta %.2f deg\n", x, y,
+                theta * 180.0f / (float)M_PI);
   if (!inWorkspace(x, y))
     Serial.println("WARNING: that point is outside the workspace");
 }
@@ -346,13 +347,17 @@ static void handleSquareCommand(char *line) {
       Serial.println("cannot re-zero mid-lap - STOP first");
       return;
     }
-    float x = HOME_X, y = HOME_Y;
-    if (sscanf(line + 3, "%f %f", &x, &y) != 2) {
+    float x = HOME_X, y = HOME_Y, thdeg = MALLET_THETA_RAD * 180.0f / (float)M_PI;
+    int got = sscanf(line + 3, "%f %f %f", &x, &y, &thdeg);
+    if (got < 2) {
       x = HOME_X;
       y = HOME_Y;
       Serial.println("no coords given - assuming the paddle is at centre");
     }
-    calibrateAt(x, y);
+    if (got < 3)
+      Serial.println("no orientation given - assuming the nominal 135 deg "
+                     "(vision/bin/track_mallet.py measures it)");
+    calibrateAt(x, y, thdeg * (float)M_PI / 180.0f);
   } else if (strncasecmp(line, "SIZE", 4) == 0) {
     if (squareRunning) {
       Serial.println("cannot resize mid-lap - STOP first");

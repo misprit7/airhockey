@@ -33,7 +33,7 @@ float CDPR::clampf(float v, float lo, float hi) {
 }
 
 int32_t CDPR::cableLengthToCounts(int motor, float x, float y) const {
-  float len = cableLength(motor, x, y);
+  float len = cableLength(motor, x, y, theta_);
   float delta = len - refLengths_[motor];
   return (int32_t)roundf(mmToCounts(delta));
 }
@@ -72,7 +72,7 @@ static GpioInfo resolvePin(int pin) {
 CDPR::CDPR(const int stepPins[NUM_MOTORS], const int dirPins[NUM_MOTORS],
            uint32_t tickRateHz)
     : tickRateHz_(tickRateHz), dt_(1.0f / tickRateHz), cartX_(0), cartY_(0),
-      velX_(0), velY_(0), velLimit_(MAX_VELOCITY_MM_S),
+      velX_(0), velY_(0), velLimit_(MAX_VELOCITY_MM_S), theta_(MALLET_THETA_RAD),
       targetX_(0), targetY_(0), stepSetReg_(nullptr),
       stepClrReg_(nullptr), dirSetReg_(nullptr), dirClrReg_(nullptr) {
   for (int i = 0; i < NUM_MOTORS; i++) {
@@ -85,7 +85,8 @@ CDPR::CDPR(const int stepPins[NUM_MOTORS], const int dirPins[NUM_MOTORS],
   }
 }
 
-void CDPR::begin(float calX, float calY) {
+void CDPR::begin(float calX, float calY, float theta) {
+  theta_ = theta;
   // ── Safety check: max velocity must not require >1 step per tick ──
   float maxSafeVel = (float)tickRateHz_ / COUNTS_PER_MM;
   if (MAX_VELOCITY_MM_S >= maxSafeVel) {
@@ -128,7 +129,7 @@ void CDPR::begin(float calX, float calY) {
       }
     }
 
-    refLengths_[i] = cableLength(i, calX, calY);
+    refLengths_[i] = cableLength(i, calX, calY, theta_);
     motorCounts_[i] = 0;
   }
 

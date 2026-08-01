@@ -48,7 +48,8 @@ class CDPRClient:
         return data.decode().strip()
 
     def enable(self, cal_x_mm: float | None = None,
-               cal_y_mm: float | None = None) -> None:
+               cal_y_mm: float | None = None,
+               cal_theta_deg: float | None = None) -> None:
         """Energize the motors and calibrate the Teensy.
 
         NOT passive: the master follows this with TENSION and START, so the
@@ -61,8 +62,11 @@ class CDPRClient:
         """
         if cal_x_mm is None or cal_y_mm is None:
             resp = self._send("ENABLE")
-        else:
+        elif cal_theta_deg is None:
             resp = self._send(f"ENABLE {cal_x_mm:.2f} {cal_y_mm:.2f}")
+        else:
+            resp = self._send(f"ENABLE {cal_x_mm:.2f} {cal_y_mm:.2f} "
+                              f"{cal_theta_deg:.2f}")
         if not resp.startswith("OK"):
             raise RuntimeError(f"enable failed: {resp}")
 
