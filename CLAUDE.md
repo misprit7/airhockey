@@ -68,45 +68,48 @@ Robotic air hockey table that uses reinforcement learning trained in simulation,
 - **Recording**: Save game trajectories at intervals during training for later visual replay. Columnar JSON format for ~78% size reduction. Includes per-frame reward and cumulative reward.
 
 ## Commands
+
+All commands run from the REPO ROOT — do not `cd`. Keeping one working
+directory means unrelated commands can be pasted back to back.
 ```bash
 # Install
-cd ai && pip install -e ".[dev]"
+pip install -e "./ai[dev]"
 
 # Run visualization server
-cd ai && python -m airhockey.server
+PYTHONPATH=ai python -m airhockey.server
 
 # Run tests
-cd ai && pytest
+pytest ai
 
 # Run full training pipeline (pretrain + self-play)
-cd ai && bash bin/run_full_pipeline.sh
+bash ai/bin/run_full_pipeline.sh
 
 # Run SAC curriculum training
-cd ai && python bin/train.py --curriculum
+python ai/bin/train.py --curriculum
 
 # Run TD-MPC2 training (original)
-cd ai && python bin/train_tdmpc2.py --steps 500000
+python ai/bin/train_tdmpc2.py --steps 500000
 
 # Run TD-MPC2 fast training (batched MPPI, all speedups)
-cd ai && python bin/train_tdmpc2_fast.py --steps 2000000
+python ai/bin/train_tdmpc2_fast.py --steps 2000000
 
 # Fast training with full MPPI quality (no speed reduction)
-cd ai && python bin/train_tdmpc2_fast.py --no-fast --steps 2000000
+python ai/bin/train_tdmpc2_fast.py --no-fast --steps 2000000
 
 # Auto-curriculum (stages 1-4, auto-advancing on plateau)
-cd ai && python bin/train_tdmpc2_fast.py --curriculum --steps 5000000
+python ai/bin/train_tdmpc2_fast.py --curriculum --steps 5000000
 
 # Run a specific curriculum stage only
-cd ai && python bin/train_tdmpc2_fast.py --stage 4 --steps 1000000
+python ai/bin/train_tdmpc2_fast.py --stage 4 --steps 1000000
 
 # Fast training self-play (resumes from pretrained agent)
-cd ai && python bin/train_tdmpc2_fast.py --resume runs/tdmpc2_pretrain/agent.pt --steps 5000000
+python ai/bin/train_tdmpc2_fast.py --resume runs/tdmpc2_pretrain/agent.pt --steps 5000000
 
 # Run self-play (original)
-cd ai && python bin/train_selfplay.py --resume runs/tdmpc2_pretrain/agent.pt
+python ai/bin/train_selfplay.py --resume runs/tdmpc2_pretrain/agent.pt
 
 # Profile training loop components
-cd ai && python bin/profile_loop.py
+python ai/bin/profile_loop.py
 ```
 
 ## Hardware
@@ -114,16 +117,33 @@ cd ai && python bin/profile_loop.py
 - **Communication**: SC4-Hub (USB) -> sFoundation C++ API -> motors via proprietary serial
 - **Power**: 24-75V DC supply
 
-## Commands (sw/)
+## Commands (hardware)
 ```bash
-# Build (fetches/builds sFoundation SDK first time)
-cd sw && make
+# Build everything
+make -C sw                       # sFoundation SDK first time, then binaries
+make -C vision                   # snap (Spinnaker capture)
+pio run -d fw                    # Teensy firmware
+pio run -d fw -t upload          # flash it
 
-# Test motor communication
-cd sw && bin/test_motor
+# Motors: activate must STAY RUNNING (it de-energizes on exit, and q is
+# the emergency stop). Nothing moves until commanded.
+sw/build/activate                # ENTER toggles all four
+sw/build/cdpr_master             # TCP 8421 -> Teensy bridge
+sw/build/test_motor              # or: sw/build/test_motor /dev/ttyACM0
 
-# Or specify port manually
-cd sw && bin/test_motor /dev/ttyACM0
+# Camera / calibration
+vision/build/snap shots 8 1 --exposure 1000 --gain 0
+python vision/bin/capture_intrinsics.py
+python vision/bin/calibrate_intrinsics.py --images 'vision/calib_shots/*.png'
+python vision/bin/check_intrinsics.py
+python vision/bin/calibrate_extrinsics.py vision/extr_shots/*.png
+python vision/bin/measure_motors.py --height 36 --seeds "..." vision/ambient/*.png
+python vision/bin/calib_report.py vision/extr_shots/shot_000.png --ambient vision/ambient/shot_002.png
+python vision/bin/track_mallet.py            # mallet position + CAL line
+python vision/bin/track_mallet.py --watch
+
+# Geometry drift guard (C++ header vs both Python mirrors)
+python shared/check_geometry.py
 ```
 
 ## World Model Architecture (TD-MPC2 + GRU)
