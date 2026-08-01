@@ -8,42 +8,78 @@
 
 using namespace sFnd;
 
+// ============================================================================
+// Per-motor direction sanity check (software API, no Teensy involved).
+//
+// For each motor in turn: EXTEND the cable (pays out slack — safe in either
+// polarity), then RETRACT it back, pause 1 s, move to the next. One pass
+// only, and nothing moves until you confirm at the prompt.
+//
+// IMPORTANT: put a few cm of slack in every string first (motors disabled,
+// pull the strings out by hand). With all strings taut the mallet is
+// force-closed by the four motors, and any lone retraction just spikes
+// tension and rattles the mallet.
+//
+// Rotation convention (viewed facing the motor):
+//   motors 0 and 2 retract CLOCKWISE, motors 1 and 3 COUNTER-CLOCKWISE.
+// CW_API_SIGN maps API move sign to shaft direction (from old-rig testing:
+// negative counts = clockwise). Verify while watching the spools:
+//   ALL motors backwards -> flip CW_API_SIGN.
+//   Only some backwards  -> fix RETRACT_CW.
+// ============================================================================
+
 static volatile sig_atomic_t g_stop = 0;
 void sigHandler(int) { g_stop = 1; }
 
-// Motor layout (CDPR rectangle):
-//   Motor 0 (top-left)  ---- Motor 1 (top-right)
-//        |                        |
-//        |       [cart]           |
-//        |                        |
-//   Motor 3 (bot-left)  ---- Motor 2 (bot-right)
-//
-// Coordinate system: origin at bottom-left, x-right, y-up.
+static const double SPOOL_RADIUS_MM = 35.0;
+static const double SPOOL_CIRCUMFERENCE_MM = 2.0 * M_PI * SPOOL_RADIUS_MM;  // ~219.9mm
 
-static const double SPOOL_DIAMETER_MM = 41.0;
-static const double SPOOL_CIRCUMFERENCE_MM = M_PI * SPOOL_DIAMETER_MM;  // ~64.4mm
+static const bool RETRACT_CW[4] = {true, false, true, false};
+static const int CW_API_SIGN = -1;  // negative counts = clockwise
+
+static const double TEST_SPEED_MM_S = 5.0;   // slow: ~2 s per 10mm phase
+static const double ACCEL_RPM_PER_S = 300;   // gentle ramp
 
 // Encoder counts per revolution by motor type.
 // RLNA = Regular (800), ELNA = Enhanced (6400).
-static const int COUNTS_PER_REV_REGULAR = 800;
-static const int COUNTS_PER_REV_ENHANCED = 6400;
-
-// Clockwise (positive encoder direction) = retract cable.
-// IMPORTANT: This assumption must be verified before first run.
-// If a motor extends instead of retracting, flip its sign below.
-static const int RETRACT_SIGN = -1;  // negative counts = clockwise = retract
-
 static int countsPerRev(INode &node) {
     std::string model = node.Info.Model.Value();
-    // Check for Enhanced (E) vs Regular (R) encoder in part number.
-    // Format: CPM-SCSK-2331x-xLNA where first char after dash is E or R.
     if (model.find("-EL") != std::string::npos)
-        return COUNTS_PER_REV_ENHANCED;
-    return COUNTS_PER_REV_REGULAR;
+        return 6400;
+    return 800;
 }
 
 static int mmToCounts(double mm, int cpr) {
     return (int)round(mm / SPOOL_CIRCUMFERENCE_MM * cpr);
+}
+
+// Move sign that retracts (shortens) motor m's cable.
+static int retractSign(int m) {
+    return RETRACT_CW[m] ? CW_API_SIGN : -CW_API_SIGN;
+}
+
+// Wait for Enter; returns false on EOF/Ctrl+C.
+static bool waitEnter() {
+    int c;
+    do {
+        c = getchar();
+        if (c == EOF || g_stop) return false;
+    } while (c != '\n');
+    return true;
+}
+
+// Blocking relative move; returns false on timeout/abort.
+static bool moveBlocking(SysManager *mgr, INode &node, int counts) {
+    node.Motion.MoveWentDone();
+    node.Motion.MovePosnStart(counts);
+    double timeout = mgr->TimeStampMsec() + 15000;
+    while (!node.Motion.MoveIsDone() && !g_stop) {
+        if (mgr->TimeStampMsec() > timeout) {
+            printf("TIMEOUT!\n");
+            return false;
+        }
+    }
+    return !g_stop;
 }
 
 int main(int argc, char *argv[]) {
@@ -52,13 +88,16 @@ int main(int argc, char *argv[]) {
     sa.sa_handler = sigHandler;
     sigaction(SIGINT, &sa, NULL);
 
-    double retract_mm = 10.0;  // 1cm default
+    double test_mm = 10.0;  // per-phase cable travel (~28 deg of spool)
     if (argc > 1)
-        retract_mm = atof(argv[1]);
+        test_mm = atof(argv[1]);
 
-    printf("=== CDPR Retraction Test ===\n");
-    printf("Retracting each cable by %.1fmm (%.1fcm)\n", retract_mm, retract_mm / 10.0);
-    printf("Spool circumference: %.2fmm\n\n", SPOOL_CIRCUMFERENCE_MM);
+    printf("=== CDPR Direction Test ===\n");
+    printf("Each motor: extend %.1fmm (pay out), retract %.1fmm (wind in), 1s pause.\n",
+           test_mm, test_mm);
+    printf("Spool circumference: %.1fmm -> %.1fmm is %.0f deg of rotation.\n\n",
+           SPOOL_CIRCUMFERENCE_MM, test_mm, 360.0 * test_mm / SPOOL_CIRCUMFERENCE_MM);
+    printf("*** Make sure every string has a few cm of SLACK before starting. ***\n\n");
 
     SysManager *mgr = SysManager::Instance();
 
@@ -85,18 +124,21 @@ int main(int argc, char *argv[]) {
         for (size_t i = 0; i < port.NodeCount(); i++) {
             INode &node = port.Nodes(i);
             int cpr = countsPerRev(node);
-            int counts = mmToCounts(retract_mm, cpr) * RETRACT_SIGN;
-            printf("  Motor %zu (%s): %d counts/rev, retract %+d counts\n",
-                   i, node.Info.UserID.Value(), cpr, counts);
+            int counts = mmToCounts(test_mm, cpr) * retractSign(i);
+            printf("  Motor %zu (%s): %d counts/rev, extend %+d then retract %+d counts"
+                   " (retract = %s)\n",
+                   i, node.Info.UserID.Value(), cpr, -counts, counts,
+                   RETRACT_CW[i] ? "CW" : "CCW");
         }
-        printf("\nPress Enter to proceed, Ctrl+C to abort...\n");
-        if (getchar() == EOF || g_stop) {
+        printf("\nEach move waits for Enter. Press Enter to enable motors, "
+               "Ctrl+C aborts at any prompt...\n");
+        if (!waitEnter()) {
             mgr->PortsClose();
             return 0;
         }
 
         // Enable all motors
-        printf("\nEnabling motors...\n");
+        printf("Enabling motors...\n");
         for (size_t i = 0; i < port.NodeCount() && !g_stop; i++) {
             INode &node = port.Nodes(i);
             node.EnableReq(false);
@@ -116,44 +158,33 @@ int main(int argc, char *argv[]) {
             printf("  Motor %zu enabled\n", i);
         }
 
-        // Retract each motor one at a time, confirming each
+        // One pass: extend then retract, each motor in turn
         for (size_t i = 0; i < port.NodeCount() && !g_stop; i++) {
             INode &node = port.Nodes(i);
             int cpr = countsPerRev(node);
-            int counts = mmToCounts(retract_mm, cpr) * RETRACT_SIGN;
+            int counts = mmToCounts(test_mm, cpr) * retractSign(i);
 
-            printf("\nMotor %zu (%s): retract %+d counts (%.1fmm). Enter to go, 's' to skip, Ctrl+C to abort: ",
-                   i, node.Info.UserID.Value(), counts, retract_mm);
-            fflush(stdout);
-            int c = getchar();
-            if (c == EOF || g_stop) break;
-            if (c == 's' || c == 'S') {
-                if (c != '\n') while (getchar() != '\n') {}  // consume rest of line
-                printf("  Skipped\n");
-                continue;
-            }
-            if (c != '\n') while (getchar() != '\n') {}  // consume rest of line
-
-            // Conservative motion parameters
             node.AccUnit(INode::RPM_PER_SEC);
             node.VelUnit(INode::RPM);
-            node.Motion.AccLimit = 1000;   // RPM/sec - gentle ramp
-            node.Motion.VelLimit = 4.7;    // RPM - ~0.5 cm/s on 20.5mm spool
+            node.Motion.AccLimit = ACCEL_RPM_PER_S;
+            node.Motion.VelLimit = TEST_SPEED_MM_S * 60.0 / SPOOL_CIRCUMFERENCE_MM;
 
-            printf("  Moving... ");
+            printf("\nMotor %zu: extend %.1fmm - spool should PAY OUT (%s). Enter to go...",
+                   i, test_mm, RETRACT_CW[i] ? "CCW" : "CW");
             fflush(stdout);
+            if (!waitEnter()) break;
+            printf("  moving... ");
+            fflush(stdout);
+            if (!moveBlocking(mgr, node, -counts)) break;
+            printf("done\n");
 
-            node.Motion.MoveWentDone();
-            node.Motion.MovePosnStart(counts);
-
-            double timeout = mgr->TimeStampMsec() + 10000;
-            while (!node.Motion.MoveIsDone() && !g_stop) {
-                if (mgr->TimeStampMsec() > timeout) {
-                    printf("TIMEOUT!\n");
-                    break;
-                }
-            }
-
+            printf("Motor %zu: retract %.1fmm - spool should WIND IN (%s). Enter to go...",
+                   i, test_mm, RETRACT_CW[i] ? "CW" : "CCW");
+            fflush(stdout);
+            if (!waitEnter()) break;
+            printf("  moving... ");
+            fflush(stdout);
+            if (!moveBlocking(mgr, node, counts)) break;
             node.Motion.PosnMeasured.Refresh();
             printf("done (pos=%.0f)\n", node.Motion.PosnMeasured.Value());
         }
@@ -164,7 +195,8 @@ int main(int argc, char *argv[]) {
             port.Nodes(i).EnableReq(false);
         }
         mgr->PortsClose();
-        printf("Done!\n");
+        printf("Done. Any motor whose spool WOUND IN on the extend phase has\n"
+               "its polarity flipped: all four -> flip CW_API_SIGN; some -> fix RETRACT_CW.\n");
 
     } catch (mnErr &err) {
         printf("ERROR: addr=%d, code=0x%08x\n  %s\n",

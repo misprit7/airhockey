@@ -15,7 +15,8 @@
 #include <termios.h>
 #include <sys/stat.h>
 #include <dirent.h>
-#include "cdpr.h"
+#include "cdpr_geometry.h"
+#include "clearpath.h"
 
 static volatile sig_atomic_t g_stop = 0;
 void sigHandler(int) { g_stop = 1; }
@@ -171,7 +172,7 @@ static bool waitTeensyOK(int teensy_fd, int timeout_ms = 5000) {
 }
 
 // Return: 1 = continue, 0 = quit, -1 = error
-static int handleCommand(const char *line, CDPR &robot, int client_fd, int teensy_fd) {
+static int handleCommand(const char *line, ClearPath &robot, int client_fd, int teensy_fd) {
     char resp[256];
     double x, y, speed;
 
@@ -186,8 +187,8 @@ static int handleCommand(const char *line, CDPR &robot, int client_fd, int teens
         }
 
         // 2. Send CAL, TENSION, START to Teensy (all motion via step/dir)
-        double cx = robot.config().width / 2.0;
-        double cy = robot.config().height / 2.0;
+        double cx = HOME_X;
+        double cy = HOME_Y;
         char cmd[64];
         snprintf(cmd, sizeof(cmd), "CAL %.1f %.1f\n", cx, cy);
         sendTeensy(teensy_fd, cmd);
@@ -340,8 +341,7 @@ int main(int argc, char *argv[]) {
 
     // ── Connect to sFoundation motors ──
 
-    CDPRConfig config;
-    CDPR robot(config);
+    ClearPath robot;
 
     if (!robot.connect()) {
         logf("ERROR: Failed to connect to CDPR motors\n");

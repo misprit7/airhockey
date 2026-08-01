@@ -3,3 +3,6 @@ build/
 third_party/
 logs/
 *.log
+
+# Calibration capture data
+calib_poses*.json

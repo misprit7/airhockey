@@ -1,21 +1,6 @@
 [
   {
     "directory": "/home/xander/dev/p-airhockey/airhockey/sw",
-    "file": "lib/cdpr.cpp",
-    "arguments": [
-      "g++",
-      "-std=c++11",
-      "-Wall",
-      "-Ithird_party/sFoundation/inc/inc-pub",
-      "-Ilib",
-      "-c",
-      "-o",
-      "/dev/null",
-      "lib/cdpr.cpp"
-    ]
-  },
-  {
-    "directory": "/home/xander/dev/p-airhockey/airhockey/sw",
     "file": "bin/activate.cpp",
     "arguments": [
       "g++",
@@ -23,40 +8,11 @@
       "-Wall",
       "-Ithird_party/sFoundation/inc/inc-pub",
       "-Ilib",
+      "-I../shared",
       "-c",
       "-o",
       "/dev/null",
       "bin/activate.cpp"
-    ]
-  },
-  {
-    "directory": "/home/xander/dev/p-airhockey/airhockey/sw",
-    "file": "bin/cdpr_server.cpp",
-    "arguments": [
-      "g++",
-      "-std=c++11",
-      "-Wall",
-      "-Ithird_party/sFoundation/inc/inc-pub",
-      "-Ilib",
-      "-c",
-      "-o",
-      "/dev/null",
-      "bin/cdpr_server.cpp"
-    ]
-  },
-  {
-    "directory": "/home/xander/dev/p-airhockey/airhockey/sw",
-    "file": "bin/cdpr_test.cpp",
-    "arguments": [
-      "g++",
-      "-std=c++11",
-      "-Wall",
-      "-Ithird_party/sFoundation/inc/inc-pub",
-      "-Ilib",
-      "-c",
-      "-o",
-      "/dev/null",
-      "bin/cdpr_test.cpp"
     ]
   },
   {
@@ -68,6 +24,7 @@
       "-Wall",
       "-Ithird_party/sFoundation/inc/inc-pub",
       "-Ilib",
+      "-I../shared",
       "-c",
       "-o",
       "/dev/null",
@@ -83,6 +40,7 @@
       "-Wall",
       "-Ithird_party/sFoundation/inc/inc-pub",
       "-Ilib",
+      "-I../shared",
       "-c",
       "-o",
       "/dev/null",
@@ -98,10 +56,59 @@
       "-Wall",
       "-Ithird_party/sFoundation/inc/inc-pub",
       "-Ilib",
+      "-I../shared",
       "-c",
       "-o",
       "/dev/null",
       "bin/test_motor.cpp"
+    ]
+  },
+  {
+    "directory": "/home/xander/dev/p-airhockey/airhockey/sw",
+    "file": "lib/clearpath.cpp",
+    "arguments": [
+      "g++",
+      "-std=c++11",
+      "-Wall",
+      "-Ithird_party/sFoundation/inc/inc-pub",
+      "-Ilib",
+      "-I../shared",
+      "-c",
+      "-o",
+      "/dev/null",
+      "lib/clearpath.cpp"
+    ]
+  },
+  {
+    "directory": "/home/xander/dev/p-airhockey/airhockey/sw",
+    "file": "bin/cdpr_master.cpp",
+    "arguments": [
+      "g++",
+      "-std=c++11",
+      "-Wall",
+      "-Ithird_party/sFoundation/inc/inc-pub",
+      "-Ilib",
+      "-I../shared",
+      "-c",
+      "-o",
+      "/dev/null",
+      "bin/cdpr_master.cpp"
+    ]
+  },
+  {
+    "directory": "/home/xander/dev/p-airhockey/airhockey/sw",
+    "file": "bin/calibrate.cpp",
+    "arguments": [
+      "g++",
+      "-std=c++11",
+      "-Wall",
+      "-Ithird_party/sFoundation/inc/inc-pub",
+      "-Ilib",
+      "-I../shared",
+      "-c",
+      "-o",
+      "/dev/null",
+      "bin/calibrate.cpp"
     ]
   }
 ]

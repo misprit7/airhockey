@@ -7,7 +7,7 @@ SF_INC := $(SF_ROOT)/inc/inc-pub
 SF_SO := $(SF_LIB_DIR)/libsFoundation20.so
 
 CXX := g++
-CXXFLAGS := -std=c++11 -O2 -Wall -I$(SF_INC) -Ilib
+CXXFLAGS := -std=c++11 -O2 -Wall -I$(SF_INC) -Ilib -I../shared
 LDFLAGS := -L$(SF_LIB_DIR) -Wl,-rpath=$(CURDIR)/$(SF_LIB_DIR) -lsFoundation20 -lpthread
 
 SRC_DIR := bin
@@ -19,10 +19,10 @@ LIB_SRCS := $(wildcard $(LIB_DIR)/*.cpp)
 LIB_OBJS := $(patsubst $(LIB_DIR)/%.cpp,$(BUILD_DIR)/%.o,$(LIB_SRCS))
 
 # Programs that link against the library
-PROGRAMS := $(BUILD_DIR)/cdpr_test $(BUILD_DIR)/cdpr_server $(BUILD_DIR)/cdpr_master
+PROGRAMS := $(BUILD_DIR)/cdpr_master
 
 # Standalone programs (no library dependency)
-STANDALONE := $(BUILD_DIR)/test_motor $(BUILD_DIR)/scan_motors $(BUILD_DIR)/retract_test $(BUILD_DIR)/activate
+STANDALONE := $(BUILD_DIR)/test_motor $(BUILD_DIR)/scan_motors $(BUILD_DIR)/retract_test $(BUILD_DIR)/activate $(BUILD_DIR)/calibrate
 
 .PHONY: all clean sfoundation
 
@@ -43,7 +43,8 @@ $(BUILD_DIR):
 $(STANDALONE): $(BUILD_DIR)/%: $(SRC_DIR)/%.cpp $(SF_SO) | $(BUILD_DIR)
 	$(CXX) $(CXXFLAGS) -o $@ $< $(LDFLAGS)
 
-# Programs that link against the CDPR library
+# Programs that link against the lib (ClearPath enable/disable only —
+# all motion goes through the Teensy over step/dir)
 $(PROGRAMS): $(BUILD_DIR)/%: $(SRC_DIR)/%.cpp $(LIB_OBJS) $(SF_SO) | $(BUILD_DIR)
 	$(CXX) $(CXXFLAGS) -o $@ $< $(LIB_OBJS) $(LDFLAGS)
 
