@@ -339,28 +339,37 @@ int main(int argc, char *argv[]) {
     sigaction(SIGINT, &sa, NULL);
     sigaction(SIGTERM, &sa, NULL);
 
-    for (int i = 1; i < argc; i++) {
-        if (!strcmp(argv[i], "--tension") && i + 1 < argc) {
-            g_tension_mm = atof(argv[++i]);
-        }
-    }
-    logf("Startup pretension: %.2f mm%s\n", g_tension_mm,
-         g_tension_mm > 0.0 ? "" : "  (cables left slack)");
-
     int port = DEFAULT_PORT;
     const char *teensy_path = nullptr;
 
-    // Parse args: [--port N] [--teensy /dev/ttyACMx]
+    // One parser for everything. Note the bare-argument case: anything not
+    // recognised used to become the Teensy path silently, so a flag handled
+    // elsewhere (or a typo) turned into a device name and the failure showed
+    // up as "Failed to open 1". Unknown flags are now an error.
     for (int i = 1; i < argc; i++) {
-        if (strcmp(argv[i], "--port") == 0 && i + 1 < argc) {
+        const char *a = argv[i];
+        if (!strcmp(a, "--port") && i + 1 < argc) {
             port = atoi(argv[++i]);
-        } else if (strcmp(argv[i], "--teensy") == 0 && i + 1 < argc) {
+        } else if (!strcmp(a, "--teensy") && i + 1 < argc) {
             teensy_path = argv[++i];
+        } else if (!strcmp(a, "--tension") && i + 1 < argc) {
+            g_tension_mm = atof(argv[++i]);
+        } else if (!strcmp(a, "-h") || !strcmp(a, "--help")) {
+            printf("usage: cdpr_master [--teensy /dev/ttyACMx] [--port N]\n"
+                   "                   [--tension MM]\n\n"
+                   "  --tension MM  retract every cable by MM on ENABLE to\n"
+                   "                take up slack (default 0, cables loose)\n");
+            return 0;
+        } else if (a[0] == '-') {
+            fprintf(stderr, "unknown option '%s' (try --help)\n", a);
+            return 1;
         } else {
-            // Bare argument: try as teensy path
-            teensy_path = argv[i];
+            teensy_path = a;   // bare argument: the Teensy device path
         }
     }
+
+    logf("Startup pretension: %.2f mm%s\n", g_tension_mm,
+         g_tension_mm > 0.0 ? "" : "  (cables left slack)");
 
     mkdir("logs", 0755);
     g_log = fopen("logs/cdpr_master.log", "w");
