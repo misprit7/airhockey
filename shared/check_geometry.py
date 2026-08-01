@@ -22,7 +22,9 @@ import numpy as np
 
 ROOT = Path(__file__).resolve().parent.parent
 sys.path.insert(0, str(ROOT / "ai" / "bin"))
+sys.path.insert(0, str(ROOT / "shared"))
 import calibrate_fit as cf  # noqa: E402
+import cdpr_geometry as pg  # noqa: E402
 
 HARNESS = r"""
 #include <cstdint>
@@ -39,7 +41,59 @@ int main(int argc, char **argv) {
 """
 
 
+CONST_HARNESS = r"""
+#include <cstdint>
+#include <cstdio>
+#include "cdpr_geometry.h"
+int main() {
+  for (int m = 0; m < NUM_MOTORS; m++)
+    printf("MOTOR_X%d %.6f\nMOTOR_Y%d %.6f\nWINDING_SIDE%d %.6f\n"
+           "WRAP_REF_ANGLE%d %.6f\n", m, MOTOR_X[m], m, MOTOR_Y[m],
+           m, WINDING_SIDE[m], m, WRAP_REF_ANGLE[m]);
+  printf("SPOOL_RADIUS_MM %.6f\nATTACH_R_MM %.6f\nATTACH_CHIRALITY %.6f\n"
+         "WS_MIN_X %.6f\nWS_MAX_X %.6f\nWS_MIN_Y %.6f\nWS_MAX_Y %.6f\n"
+         "HOME_X %.6f\nHOME_Y %.6f\nEDGE_MARGIN_MM %.6f\n"
+         "GRID_X_MM %.6f\nGRID_Y_MM %.6f\nCENTERLINE_X %.6f\n",
+         SPOOL_RADIUS_MM, ATTACH_R_MM, ATTACH_CHIRALITY, WS_MIN_X, WS_MAX_X,
+         WS_MIN_Y, WS_MAX_Y, HOME_X, HOME_Y, EDGE_MARGIN_MM, GRID_X_MM,
+         GRID_Y_MM, CENTERLINE_X);
+  return 0;
+}
+"""
+
+
+def check_constants():
+    """The Python mirror must match the header value for value."""
+    with tempfile.TemporaryDirectory() as td:
+        src, exe = Path(td) / "c.cpp", Path(td) / "c"
+        src.write_text(CONST_HARNESS)
+        r = subprocess.run(["g++", "-std=c++17", f"-I{ROOT / 'shared'}",
+                            "-o", str(exe), str(src)],
+                           capture_output=True, text=True)
+        if r.returncode:
+            sys.exit("constant harness failed to compile:\n" + r.stderr)
+        out = subprocess.run([str(exe)], capture_output=True, text=True,
+                             check=True).stdout
+    bad = []
+    for line in out.strip().splitlines():
+        name, val = line.split()
+        val = float(val)
+        if name[-1].isdigit() and not name.startswith("GRID"):
+            base, idx = name[:-1], int(name[-1])
+            got = getattr(pg, base)[idx]
+        else:
+            got = getattr(pg, name)
+        if abs(float(got) - val) > 1e-4:
+            bad.append(f"  {name}: header {val} vs python {got}")
+    print(f"constants checked: {len(out.strip().splitlines())}")
+    if bad:
+        sys.exit("FAIL - shared/cdpr_geometry.py has drifted from the "
+                 "header:\n" + "\n".join(bad))
+    print("OK - Python mirror matches the header\n")
+
+
 def main():
+    check_constants()
     rng = np.random.default_rng(0)
     n = 24
     xs = rng.uniform(cf.ANCHOR_GUESS[:, 0].min() + 60, 1900, n)

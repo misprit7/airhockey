@@ -6,7 +6,7 @@ actual paddle position, simulating real-world actuator behavior.
 
 from __future__ import annotations
 
-from dataclasses import dataclass, field
+from dataclasses import dataclass
 
 import numpy as np
 
@@ -129,66 +129,89 @@ class LearnedDynamics(MotorDynamics):
 
 
 class HardwareDynamics(MotorDynamics):
-    """Drives real CDPR hardware via the cdpr_master.
+    """Drives the real CDPR through cdpr_master (TCP) -> Teensy (step/dir).
 
-    Maps between the sim coordinate system (meters, 1.0 x 2.0 table) and
-    the CDPR coordinate system (mm, physical table dimensions).
+    Coordinate mapping, which is NOT a scale factor:
 
-    The agent controls the bottom half of the sim table (y in [0, height/2]).
-    The CDPR workspace maps to this region.
+      sim is 1.0 wide x 2.0 long with the agent owning y in [0, 1.0]; the
+      long axis is sim Y. The real table's long axis is grid X. So the axes
+      SWAP, and sim y also runs opposite to grid x — sim y=0 is the agent's
+      own goal line, which is the robot end of the table (high grid x).
+
+        sim y 0 .. 1   ->  grid x WS_MAX_X .. WS_MIN_X   (robot end -> centre)
+        sim x 0 .. 1   ->  grid y WS_MIN_Y .. WS_MAX_Y
+
+    The previous version mapped sim x -> mm x with no swap into a 606x730
+    box, which was the prototype's own local frame and is meaningless on
+    this table.
+
+    CONFIRM THE SIM-X SIGN ON FIRST USE at low speed: pushing right in the
+    UI should move the mallet consistently one way. If it is mirrored, flip
+    SIM_X_FLIP below. Getting it wrong is confusing, not dangerous.
     """
+
+    SIM_X_FLIP = False
 
     def __init__(
         self,
-        cdpr_width_mm: float = 606.0,
-        cdpr_height_mm: float = 730.0,
         sim_width: float = 1.0,
         sim_height: float = 2.0,
-        speed_mm_s: float = 200.0,
+        speed_mm_s: float = 40.0,
+        max_speed_mm_s: float = 120.0,
         host: str = "127.0.0.1",
         port: int = 8421,
     ):
         import time as _time
+        import sys as _sys
+        from pathlib import Path as _Path
+
+        _sys.path.insert(
+            0, str(_Path(__file__).resolve().parents[2] / "shared"))
+        import cdpr_geometry as geom
+
         from airhockey.hardware import CDPRClient
 
-        self.cdpr_width = cdpr_width_mm
-        self.cdpr_height = cdpr_height_mm
+        self.geom = geom
         self.sim_width = sim_width
-        self.sim_half_height = sim_height / 2.0  # agent's half
-        self.speed = speed_mm_s
+        self.sim_half_height = sim_height / 2.0
+        # Deliberately conservative: the cable model's winding-side sign is
+        # still unverified, so keep commanded motion slow enough to watch.
+        self.speed = min(speed_mm_s, max_speed_mm_s)
+        self.max_speed = max_speed_mm_s
         self.x = 0.0
         self.y = 0.0
         self.client = CDPRClient(host, port)
         self.client.connect()
         self.client.enable()
         self._time = _time
-        self._hw_rate = 10.0  # Hz — how often to send commands to hardware
+        self._hw_rate = 10.0  # Hz — command rate to hardware
         self._last_hw_send = 0.0
-        # Last known hardware position in mm (updated from POS responses)
-        self._hw_x_mm = cdpr_width_mm / 2.0
-        self._hw_y_mm = cdpr_height_mm / 2.0
+        self._hw_x_mm = geom.HOME_X
+        self._hw_y_mm = geom.HOME_Y
+
+    def set_speed(self, mm_s: float) -> None:
+        self.speed = max(1.0, min(float(mm_s), self.max_speed))
 
     def reset(self, x: float, y: float) -> None:
-        # Master calibrates at center on ENABLE. Read current position.
         try:
             mm_x, mm_y, _, _ = self.client.get_position()
             self._hw_x_mm = mm_x
             self._hw_y_mm = mm_y
             self.x, self.y = self._mm_to_sim(mm_x, mm_y)
-            print(f"  HW reset: at ({mm_x:.1f}, {mm_y:.1f}) mm = sim ({self.x:.3f}, {self.y:.3f})")
+            print(f"  HW reset: at ({mm_x:.1f}, {mm_y:.1f}) mm = sim "
+                  f"({self.x:.3f}, {self.y:.3f})")
         except Exception as e:
             print(f"  HW reset: failed to read position: {e}, using sim coords")
             self.x = x
             self.y = y
 
-    def update(self, target_x: float, target_y: float, dt: float) -> tuple[float, float]:
+    def update(self, target_x: float, target_y: float, dt: float):
         mm_x, mm_y = self._sim_to_mm(target_x, target_y)
         now = self._time.monotonic()
         if now - self._last_hw_send >= 1.0 / self._hw_rate:
             self._last_hw_send = now
             try:
                 self.client.command_position(mm_x, mm_y, self.speed)
-                # Read back actual position from Teensy status
                 act_x, act_y, _, _ = self.client.get_position()
                 self._hw_x_mm = act_x
                 self._hw_y_mm = act_y
@@ -197,35 +220,27 @@ class HardwareDynamics(MotorDynamics):
                 print(f"HardwareDynamics: command failed: {e}")
         return self.x, self.y
 
-    def get_hw_position_mm(self) -> tuple[float, float]:
-        """Return the last known hardware position in mm."""
+    def get_hw_position_mm(self):
+        """Last known hardware position in mm (grid frame)."""
         return self._hw_x_mm, self._hw_y_mm
 
-    def _sim_to_mm(self, sx: float, sy: float) -> tuple[float, float]:
-        """Convert sim coords (meters) to CDPR coords (mm).
+    def _sim_to_mm(self, sx: float, sy: float):
+        """Sim metres -> grid-frame mm, clamped into the workspace."""
+        g = self.geom
+        fx = min(max(sx / self.sim_width, 0.0), 1.0)
+        fy = min(max(sy / self.sim_half_height, 0.0), 1.0)
+        if self.SIM_X_FLIP:
+            fx = 1.0 - fx
+        mm_x = g.WS_MAX_X - fy * (g.WS_MAX_X - g.WS_MIN_X)
+        mm_y = g.WS_MIN_Y + fx * (g.WS_MAX_Y - g.WS_MIN_Y)
+        # Clamp here rather than letting the firmware do it silently.
+        return g.clamp_to_workspace(mm_x, mm_y)
 
-        Maps the full sim area to the inner 2/3 of the CDPR workspace,
-        keeping the cart away from the edges.
-        """
-        x_margin = self.cdpr_width / 6.0
-        y_margin = self.cdpr_height / 6.0
-        inner_w = self.cdpr_width - 2 * x_margin
-        inner_h = self.cdpr_height - 2 * y_margin
+    def _mm_to_sim(self, mm_x: float, mm_y: float):
+        g = self.geom
+        fy = (g.WS_MAX_X - mm_x) / (g.WS_MAX_X - g.WS_MIN_X)
+        fx = (mm_y - g.WS_MIN_Y) / (g.WS_MAX_Y - g.WS_MIN_Y)
+        if self.SIM_X_FLIP:
+            fx = 1.0 - fx
+        return fx * self.sim_width, fy * self.sim_half_height
 
-        mm_x = x_margin + (sx / self.sim_width) * inner_w
-        mm_y = y_margin + (sy / self.sim_half_height) * inner_h
-
-        mm_x = max(x_margin, min(self.cdpr_width - x_margin, mm_x))
-        mm_y = max(y_margin, min(self.cdpr_height - y_margin, mm_y))
-        return mm_x, mm_y
-
-    def _mm_to_sim(self, mm_x: float, mm_y: float) -> tuple[float, float]:
-        """Convert CDPR coords (mm) to sim coords (meters)."""
-        x_margin = self.cdpr_width / 6.0
-        y_margin = self.cdpr_height / 6.0
-        inner_w = self.cdpr_width - 2 * x_margin
-        inner_h = self.cdpr_height - 2 * y_margin
-
-        sx = ((mm_x - x_margin) / inner_w) * self.sim_width
-        sy = ((mm_y - y_margin) / inner_h) * self.sim_half_height
-        return sx, sy

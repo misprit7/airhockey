@@ -38,7 +38,17 @@ static CDPR cdpr(stepPinsA, dirPinsA);
 //                LOW — cannot cause motion.
 
 enum Mode { MODE_SERIAL, MODE_SQUARE, MODE_RETRACT, MODE_DIRTOGGLE };
-constexpr Mode ACTIVE_MODE = MODE_SQUARE;
+// Mode at boot. SERIAL and SQUARE can also be switched at runtime (SQUARE
+// command from serial mode, SERIAL command from square mode) so testing
+// does not mean reflashing. RETRACT/DIRTOGGLE are compile-time only —
+// they drive the step/dir pins directly and need setup() to have claimed
+// them.
+constexpr Mode START_MODE = MODE_SERIAL;
+static Mode g_mode = START_MODE;
+
+// Defined further down with the square test; needed by the serial
+// handler above it so SQUARE can be entered at runtime.
+static void armSquareTest();
 
 // ============================================================================
 // Reset pin — short pin 33 to GND to reboot
@@ -96,7 +106,12 @@ static void processCommand(char *line) {
     while (*args == ' ' || *args == '\t') args++;
   }
 
-  if (strcasecmp(cmd, "CMD") == 0) {
+  if (strcasecmp(cmd, "SQUARE") == 0) {
+    g_mode = MODE_SQUARE;
+    Serial.println("OK SQUARE");
+    armSquareTest();
+    return;
+  } else if (strcasecmp(cmd, "CMD") == 0) {
     if (!timerRunning) {
       Serial.println("ERR timer not running");
       return;
@@ -206,27 +221,32 @@ static void printSquareHelp() {
                 squareSize, SQUARE_SPEED_MM_S, HOME_X, HOME_Y);
   Serial.println("  GO        run one lap");
   Serial.println("  SIZE <mm> change the square size");
-  Serial.println("  CAL       re-zero here (use after repositioning by hand)");
+  Serial.println("  CAL x y   re-zero at a measured paddle position");
+  Serial.println("            (vision/bin/track_mallet.py prints this line)");
   Serial.println("  STOP      abort a lap in progress");
+  Serial.println("  SERIAL    leave square mode (host/web control)");
   Serial.println("Nothing moves until you type GO.");
 }
 
 static void armSquareTest() {
   printSquareHelp();
-  Serial.println("Place the paddle near the centre and take up cable slack.");
-  Serial.println("Placement need not be exact: it offsets the square but");
-  Serial.println("barely changes its SHAPE, which is what you measure.");
+  Serial.println("Take up cable slack, then measure the paddle and CAL to it:");
+  Serial.println("  python vision/bin/track_mallet.py");
 }
 
-// Zero the controller's reference at the nominal centre. Only do this when
-// the paddle has actually been put there — every call throws away whatever
-// drift previous laps accumulated, which is usually the thing you wanted to
-// see.
-static void calibrateHere() {
-  cdpr.begin(HOME_X, HOME_Y);
+// Zero the controller's reference at a known paddle position. Every call
+// throws away whatever drift previous laps accumulated, which is usually
+// the thing you wanted to see — so do it deliberately, not per lap.
+//
+// Get the position from vision rather than guessing:
+//   python vision/bin/track_mallet.py     -> prints the CAL line to paste
+static void calibrateAt(float x, float y) {
+  cdpr.begin(x, y);
   squareInited = true;
   calibrated = true;
-  Serial.printf("Reference zeroed at (%.1f, %.1f)\n", HOME_X, HOME_Y);
+  Serial.printf("Reference zeroed at (%.1f, %.1f)\n", x, y);
+  if (!inWorkspace(x, y))
+    Serial.println("WARNING: that point is outside the workspace");
 }
 
 static void startSquareLap() {
@@ -238,7 +258,11 @@ static void startSquareLap() {
   wpX[4] = cx - h; wpY[4] = cy - h;   // SW again, closing the square
   wpX[5] = cx;     wpY[5] = cy;       // back to the start point
 
-  if (!squareInited) calibrateHere();
+  if (!squareInited) {
+    Serial.println("not calibrated - measure the paddle and CAL x y first");
+    Serial.println("  python vision/bin/track_mallet.py");
+    return;
+  }
   cdpr.setVelocityLimit(SQUARE_SPEED_MM_S);
   if (TENSION_MM > 0.0f) cdpr.tension(TENSION_MM);
   cdpr.startTimer();
@@ -262,10 +286,12 @@ static void endLap(const char *why) {
   Serial.printf("%s - controller position (%.1f, %.1f), counts [%ld %ld %ld %ld]\n",
                 why, x, y, (long)counts[0], (long)counts[1], (long)counts[2],
                 (long)counts[3]);
-  // After a full lap those counts are zero by construction, so a nonzero
-  // reading means the lap was cut short, not that the machine drifted.
-  // Physical drift shows up only by measuring where the paddle really is.
-  Serial.println("Measure where the paddle ACTUALLY is, then GO again.");
+  // A completed lap ends at the square's centre, so these counts encode
+  // (centre - calibration point) and are only zero if you calibrated there.
+  // They say nothing about physical drift either way.
+  Serial.printf("Paddle should now be at (%.1f, %.1f). Check it:\n",
+                HOME_X, HOME_Y);
+  Serial.println("  python vision/bin/track_mallet.py");
 }
 
 // Reads one line; returns true when a complete line is ready in buf.
@@ -296,12 +322,25 @@ static void handleSquareCommand(char *line) {
       return;
     }
     endLap("ABORTED");
-  } else if (strcasecmp(line, "CAL") == 0) {
+  } else if (strcasecmp(line, "SERIAL") == 0) {
+    if (squareRunning) {
+      Serial.println("cannot leave mid-lap - STOP first");
+      return;
+    }
+    g_mode = MODE_SERIAL;
+    Serial.println("OK SERIAL - back to host command mode");
+  } else if (strncasecmp(line, "CAL", 3) == 0) {
     if (squareRunning) {
       Serial.println("cannot re-zero mid-lap - STOP first");
       return;
     }
-    calibrateHere();
+    float x = HOME_X, y = HOME_Y;
+    if (sscanf(line + 3, "%f %f", &x, &y) != 2) {
+      x = HOME_X;
+      y = HOME_Y;
+      Serial.println("no coords given - assuming the paddle is at centre");
+    }
+    calibrateAt(x, y);
   } else if (strncasecmp(line, "SIZE", 4) == 0) {
     if (squareRunning) {
       Serial.println("cannot resize mid-lap - STOP first");
@@ -476,9 +515,9 @@ void setup() {
   pinMode(LED_BUILTIN, OUTPUT);
   pinMode(RESET_PIN, INPUT_PULLUP);
 
-  if (ACTIVE_MODE == MODE_SQUARE) {
+  if (START_MODE == MODE_SQUARE) {
     armSquareTest();
-  } else if (ACTIVE_MODE == MODE_RETRACT) {
+  } else if (START_MODE == MODE_RETRACT) {
     // Init step/dir pins directly — the CDPR controller is not used here.
     for (int i = 0; i < NUM_MOTORS; i++) {
       pinMode(stepPinsA[i], OUTPUT);
@@ -488,7 +527,7 @@ void setup() {
     }
     Serial.println("RETRACT TEST armed - one move per GO");
     printNextMove();
-  } else if (ACTIVE_MODE == MODE_DIRTOGGLE) {
+  } else if (START_MODE == MODE_DIRTOGGLE) {
     for (int i = 0; i < NUM_MOTORS; i++) {
       pinMode(stepPinsA[i], OUTPUT);
       pinMode(dirPinsA[i], OUTPUT);
@@ -511,15 +550,15 @@ constexpr uint32_t STATUS_INTERVAL_MS = 20;  // ~50Hz
 void loop() {
   checkReset();
 
-  if (ACTIVE_MODE == MODE_SQUARE) {
+  if (g_mode == MODE_SQUARE) {
     squareTestLoop();
     return;
   }
-  if (ACTIVE_MODE == MODE_RETRACT) {
+  if (g_mode == MODE_RETRACT) {
     retractTestLoop();
     return;
   }
-  if (ACTIVE_MODE == MODE_DIRTOGGLE) {
+  if (g_mode == MODE_DIRTOGGLE) {
     dirToggleLoop();
     return;
   }

@@ -40,6 +40,9 @@ from pathlib import Path
 import cv2
 import numpy as np
 
+sys.path.insert(0, str(Path(__file__).resolve().parent))
+from camera import backproject_pixels  # noqa: E402
+
 CALIB_DIR = Path(__file__).resolve().parent.parent / "calib"
 
 
@@ -121,21 +124,6 @@ def click_seeds(img):
     return pts
 
 
-def backproject_to_plane(pts_px, K, dist, rvec, tvec, z):
-    """Undistort pixels, then intersect their rays with plane z=const."""
-    u = cv2.undistortPoints(np.array(pts_px, dtype=np.float64).reshape(-1, 1, 2),
-                            K, dist, P=K).reshape(-1, 2)
-    R, _ = cv2.Rodrigues(rvec)
-    C = (-R.T @ tvec.reshape(3, 1)).ravel()
-    Kinv = np.linalg.inv(K)
-    out = []
-    for px, py in u:
-        d = R.T @ (Kinv @ np.array([px, py, 1.0]))
-        t = (z - C[2]) / d[2]
-        out.append((C + t * d)[:2])
-    return np.array(out)
-
-
 def top_face_diameter(det, K, dist, rvec, tvec, z):
     """Spool top-face diameter in mm, from the ellipse major axis.
 
@@ -149,7 +137,7 @@ def top_face_diameter(det, K, dist, rvec, tvec, z):
     maj = max(a0, a1)
     th = np.radians(ang + (90.0 if a1 > a0 else 0.0))
     v = np.array([np.cos(th), np.sin(th)]) * maj / 2.0
-    p = backproject_to_plane([(ex - v[0], ey - v[1]), (ex + v[0], ey + v[1])],
+    p = backproject_pixels([(ex - v[0], ey - v[1]), (ex + v[0], ey + v[1])],
                              K, dist, rvec, tvec, z)
     return float(np.linalg.norm(p[1] - p[0]))
 
@@ -212,7 +200,7 @@ def main():
             cv2.circle(canvas, tuple(map(int, det["center"])), 2, (0, 0, 255), -1)
         dbg = str(Path(path).with_suffix("")) + "_spools.png"
         cv2.imwrite(dbg, canvas)
-        field = backproject_to_plane(centers, K, dist, rvec, tvec, args.height)
+        field = backproject_pixels(centers, K, dist, rvec, tvec, args.height)
         dias = [top_face_diameter(d, K, dist, rvec, tvec, args.height)
                 for d in dets]
         for m, p in name_motors(field).items():

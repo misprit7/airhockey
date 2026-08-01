@@ -44,8 +44,6 @@ Then:
 
 import argparse
 import select
-import struct
-import subprocess
 import sys
 import time
 from pathlib import Path
@@ -55,10 +53,10 @@ import numpy as np
 
 sys.path.insert(0, str(Path(__file__).resolve().parent))
 from calibrate_intrinsics import make_detector  # noqa: E402
+from camera import Stream  # noqa: E402
 from gen_targets import CHARUCO_COLS, CHARUCO_ROWS, SQUARE_MM  # noqa: E402
 
 VISION = Path(__file__).resolve().parent.parent
-SNAP = VISION / "build" / "snap"
 
 CELL = 60               # px per occupancy cell
 MIN_CORNERS = 20        # to KEEP a frame (detection itself allows fewer)
@@ -69,47 +67,6 @@ TILT_EDGES = [0, 12, 25, 40, 90]   # degrees, board normal vs optical axis
 TILT_TARGET = 6         # kept views wanted per tilt bin
 COVERAGE_TARGET = 0.55  # fraction of reachable cells
 MAX_VIEWS = 60          # calibration gains nothing past this
-
-
-class Stream:
-    """Frames from `snap --stream`, one per request so we never lag."""
-
-    def __init__(self, exposure, gain):
-        if not SNAP.exists():
-            sys.exit(f"{SNAP} not built — run `make` in vision/")
-        self.p = subprocess.Popen(
-            [str(SNAP), "--stream", "--exposure", str(exposure),
-             "--gain", str(gain)],
-            stdin=subprocess.PIPE, stdout=subprocess.PIPE)
-        hdr = self._read(16)
-        if hdr[:8] != b"SNAPSTRM":
-            sys.exit(f"unexpected stream header {hdr[:8]!r}")
-        self.w, self.h = struct.unpack("<II", hdr[8:16])
-
-    def _read(self, n):
-        buf = b""
-        while len(buf) < n:
-            c = self.p.stdout.read(n - len(buf))
-            if not c:
-                sys.exit("camera stream closed unexpectedly")
-            buf += c
-        return buf
-
-    def grab(self):
-        self.p.stdin.write(b"g")
-        self.p.stdin.flush()
-        if self._read(1)[0] != 1:
-            return None
-        return np.frombuffer(self._read(self.w * self.h),
-                             np.uint8).reshape(self.h, self.w)
-
-    def close(self):
-        try:
-            self.p.stdin.write(b"q")
-            self.p.stdin.flush()
-            self.p.wait(timeout=5)
-        except Exception:
-            self.p.kill()
 
 
 def detect_full(board, det, gray):

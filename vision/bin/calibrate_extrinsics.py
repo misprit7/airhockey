@@ -56,6 +56,7 @@ import numpy as np
 from scipy.optimize import linear_sum_assignment
 
 sys.path.insert(0, str(Path(__file__).resolve().parent))
+from camera import backproject_undistorted  # noqa: E402
 from table_grid import (CENTERLINE_X, GRID_X_MM, GRID_Y_MM,  # noqa: E402
                         MARKERS_XY)
 
@@ -258,23 +259,10 @@ def solve(img_pts_frames, field, K, dist, subset=False):
     return best
 
 
-def backproject_to_plane(pts_px_undist, K, rvec, tvec, z):
-    """Intersect undistorted pixel rays with plane z=const (grid frame)."""
-    R, _ = cv2.Rodrigues(rvec)
-    C = (-R.T @ tvec.reshape(3, 1)).ravel()
-    Kinv = np.linalg.inv(K)
-    out = []
-    for u, v in pts_px_undist:
-        d = R.T @ (Kinv @ np.array([u, v, 1.0]))
-        t = (z - C[2]) / d[2]
-        out.append((C + t * d)[:2])
-    return np.array(out)
-
-
 def mm_per_px(K, rvec, tvec, px):
     """Local plane scale at a pixel — for quoting residuals in mm."""
     p = np.array([px, px + np.array([1.0, 0.0])])
-    w = backproject_to_plane(p, K, rvec, tvec, MARKER_Z_MM)
+    w = backproject_undistorted(p, K, rvec, tvec, MARKER_Z_MM)
     return float(np.linalg.norm(w[1] - w[0]))
 
 
@@ -309,7 +297,7 @@ def validate_heldout(best, K):
     for e in best["extras"]:
         if len(e) != N_HELDOUT:
             sys.exit(f"expected {N_HELDOUT} non-corner markers, got {len(e)}")
-        m = backproject_to_plane(e, K, best["rvec"], best["tvec"],
+        m = backproject_undistorted(e, K, best["rvec"], best["tvec"],
                                  MARKER_Z_MM)
         meas.append(m[np.argsort(m[:, 1])])
     meas = np.mean(meas, axis=0)
@@ -441,7 +429,7 @@ def selftest():
 
     # The real path: corners-only subset solve, stripe pair held out.
     best = solve(frames, CORNERS_XY, K, np.zeros(5), subset=True)
-    meas = backproject_to_plane(best["extras"][0], K, best["rvec"],
+    meas = backproject_undistorted(best["extras"][0], K, best["rvec"],
                                 best["tvec"], MARKER_Z_MM)
     meas = meas[np.argsort(meas[:, 1])]
     merr = np.abs(meas - field[4:]).max()
