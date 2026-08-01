@@ -685,3 +685,48 @@ async function initReplayMode() {
     recordingsRefreshTimer = setInterval(loadRecordingsList, 5000);
 }
 initReplayMode();
+
+
+// ── live tracker view ──────────────────────────────────────────────
+// The camera is NOT started automatically: only one process can hold the
+// Spinnaker device, so taking it unasked would break track_mallet and the
+// calibration tools.
+(() => {
+    const btn = document.getElementById('btn-camera');
+    const panel = document.getElementById('camera-panel');
+    const img = document.getElementById('camera-img');
+    const status = document.getElementById('camera-status');
+    if (!btn) return;
+    let on = false, poll = null;
+
+    const paint = (s) => {
+        if (s.error) {
+            status.textContent = 'error: ' + s.error;
+            status.classList.add('bad');
+            return;
+        }
+        status.classList.remove('bad');
+        const p = s.pose;
+        status.textContent = p
+            ? `x ${p.x.toFixed(1)}  y ${p.y.toFixed(1)} mm   θ ${p.theta_deg.toFixed(1)}°   ${s.fps} fps`
+            : (s.note ? s.note : 'searching for the paddle…') + `   ${s.fps} fps`;
+    };
+
+    btn.addEventListener('click', async () => {
+        on = !on;
+        btn.textContent = on ? 'Camera: On' : 'Camera: Off';
+        panel.classList.toggle('hidden', !on);
+        if (on) {
+            const s = await (await fetch('/camera/start', {method: 'POST'})).json();
+            paint(s);
+            if (!s.error) img.src = '/camera/stream?t=' + Date.now();
+            poll = setInterval(async () => {
+                paint(await (await fetch('/camera/status')).json());
+            }, 500);
+        } else {
+            clearInterval(poll); poll = null;
+            img.removeAttribute('src');
+            await fetch('/camera/stop', {method: 'POST'});
+        }
+    });
+})();

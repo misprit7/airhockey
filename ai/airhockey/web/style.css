@@ -412,3 +412,18 @@ canvas {
 #sidebar-overlay.visible {
     display: block;
 }
+
+
+/* ── live tracker view ─────────────────────────────────────────── */
+#camera-panel { margin-top: 12px; }
+#camera-panel h3 { margin: 0 0 6px; font-size: 13px; opacity: .75; }
+#camera-img {
+    width: 100%; display: block; border-radius: 4px; background: #000;
+    aspect-ratio: 4 / 3; object-fit: contain;
+}
+#camera-status {
+    font: 11px ui-monospace, Menlo, monospace; opacity: .85;
+    margin-top: 6px; font-variant-numeric: tabular-nums;
+}
+#camera-status.bad { color: #ff8080; }
+#camera-hint { font-size: 11px; opacity: .55; margin-top: 4px; line-height: 1.4; }

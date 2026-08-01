@@ -8,12 +8,14 @@ import time
 from pathlib import Path
 
 import numpy as np
+from fastapi.responses import StreamingResponse
 from fastapi import FastAPI, WebSocket, WebSocketDisconnect
 from fastapi.responses import HTMLResponse
 
 from airhockey.dynamics import DelayedDynamics, HardwareDynamics, IdealDynamics
 from airhockey.env import AirHockeyEnv
 from airhockey.recorder import Recorder
+from airhockey.vision_service import SERVICE as VISION
 
 app = FastAPI()
 
@@ -100,6 +102,49 @@ async def get_recording(filename: str):
     return {"frames": data, "metadata": None}
 
 
+@app.get("/camera/status")
+async def camera_status():
+    return VISION.status()
+
+
+@app.post("/camera/{action}")
+async def camera_control(action: str):
+    """start/stop the camera. It is not started automatically: only one
+    process can hold the Spinnaker device, so grabbing it unasked would
+    break every other vision tool."""
+    if action == "start":
+        VISION.start()
+        for _ in range(40):                      # let it produce a frame
+            if VISION.frame_jpeg() or VISION.error:
+                break
+            await asyncio.sleep(0.05)
+    elif action == "stop":
+        VISION.stop()
+    else:
+        return {"ok": False, "error": f"unknown action {action}"}
+    return VISION.status()
+
+
+@app.get("/camera/stream")
+async def camera_stream():
+    """MJPEG. An <img> consumes this natively — no polling in the UI."""
+    async def frames():
+        blank = 0
+        while VISION.running and blank < 100:
+            jpg = VISION.frame_jpeg()
+            if jpg is None:
+                blank += 1
+                await asyncio.sleep(0.05)
+                continue
+            blank = 0
+            yield (b"--f\r\nContent-Type: image/jpeg\r\n"
+                   b"Content-Length: " + str(len(jpg)).encode()
+                   + b"\r\n\r\n" + jpg + b"\r\n")
+            await asyncio.sleep(1.0 / 15)
+    return StreamingResponse(frames(),
+                             media_type="multipart/x-mixed-replace; boundary=f")
+
+
 @app.websocket("/ws/live")
 async def live_game(ws: WebSocket):
     """Run a live game and stream frames to the client."""
@@ -176,7 +221,11 @@ async def live_game(ws: WebSocket):
                                 import track_mallet as _tm
 
                                 import math as _math
-                                mx, my, mth = _tm.measure()
+                                live = VISION.latest_pose()
+                                if live is not None:
+                                    mx, my, mth = live
+                                else:
+                                    mx, my, mth = _tm.measure()
                                 cal_pose = (mx, my, _math.degrees(mth))
                                 print(f"  HW: paddle measured at "
                                       f"({mx:.1f}, {my:.1f}) mm, "
