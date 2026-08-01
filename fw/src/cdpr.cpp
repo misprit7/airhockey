@@ -73,7 +73,8 @@ static GpioInfo resolvePin(int pin) {
 CDPR::CDPR(const int stepPins[NUM_MOTORS], const int dirPins[NUM_MOTORS],
            uint32_t tickRateHz)
     : tickRateHz_(tickRateHz), dt_(1.0f / tickRateHz), cartX_(0), cartY_(0),
-      velX_(0), velY_(0), targetX_(0), targetY_(0), stepSetReg_(nullptr),
+      velX_(0), velY_(0), velLimit_(MAX_VELOCITY_MM_S),
+      targetX_(0), targetY_(0), stepSetReg_(nullptr),
       stepClrReg_(nullptr), dirSetReg_(nullptr), dirClrReg_(nullptr) {
   for (int i = 0; i < NUM_MOTORS; i++) {
     stepPins_[i] = stepPins[i];
@@ -151,6 +152,13 @@ void CDPR::setTarget(float x, float y) {
   interrupts();
 }
 
+void CDPR::setVelocityLimit(float mm_s) {
+  if (mm_s <= 0.0f) return;
+  noInterrupts();
+  velLimit_ = (mm_s > MAX_VELOCITY_MM_S) ? MAX_VELOCITY_MM_S : mm_s;
+  interrupts();
+}
+
 void CDPR::getTarget(float &x, float &y) const {
   noInterrupts();
   x = targetX_;
@@ -206,9 +214,8 @@ void CDPR::tension(float mm, float speed_mm_s) {
                 mm, (long)counts, speed_mm_s);
 
   for (int32_t step = 0; step < counts; step++) {
-    // Retract = negative direction (cable shorter)
     for (int i = 0; i < NUM_MOTORS; i++) {
-      digitalWriteFast(dirPins_[i], HIGH);  // HIGH = retract (inverted convention)
+      digitalWriteFast(dirPins_[i], dirLevelRetract(i));
     }
     delayMicroseconds(2);
     for (int i = 0; i < NUM_MOTORS; i++) {
@@ -236,7 +243,7 @@ void CDPR::releaseTension(float speed_mm_s) {
 
   for (int32_t step = 0; step < counts; step++) {
     for (int i = 0; i < NUM_MOTORS; i++) {
-      digitalWriteFast(dirPins_[i], LOW);  // LOW = extend
+      digitalWriteFast(dirPins_[i], dirLevelExtend(i));
     }
     delayMicroseconds(2);
     for (int i = 0; i < NUM_MOTORS; i++) {
@@ -325,9 +332,9 @@ void CDPR::tick() {
   float ty = targetY_;
 
   // ── Independent trapezoidal profiles for each axis ──
-  velX_ = trapezoidalStep(cartX_, velX_, tx, MAX_VELOCITY_MM_S, MAX_ACCEL_MM_S2,
+  velX_ = trapezoidalStep(cartX_, velX_, tx, velLimit_, MAX_ACCEL_MM_S2,
                           dt_);
-  velY_ = trapezoidalStep(cartY_, velY_, ty, MAX_VELOCITY_MM_S, MAX_ACCEL_MM_S2,
+  velY_ = trapezoidalStep(cartY_, velY_, ty, velLimit_, MAX_ACCEL_MM_S2,
                           dt_);
 
   // ── Advance theoretical cart position ──
@@ -356,9 +363,9 @@ void CDPR::tick() {
     int32_t error = target - motorCounts_[i];
 
     if (error > 0) {
-      digitalWriteFast(dirPins_[i], LOW);
+      digitalWriteFast(dirPins_[i], dirLevelExtend(i));   // cable lengthens
     } else if (error < 0) {
-      digitalWriteFast(dirPins_[i], HIGH);
+      digitalWriteFast(dirPins_[i], dirLevelRetract(i));  // cable shortens
     }
   }
 

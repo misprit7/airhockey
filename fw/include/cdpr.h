@@ -31,6 +31,12 @@ public:
   // Set a new target cart position (mm). Thread-safe (called from main loop).
   void setTarget(float x, float y);
 
+  // Cap the trajectory speed (mm/s). Defaults to MAX_VELOCITY_MM_S. Lower it
+  // for bring-up: the rig is force-closed, so a modelling error shows up as
+  // cables fighting each other, and slow means you can hear it before it
+  // does harm.
+  void setVelocityLimit(float mm_s);
+
   // Read current state. All thread-safe (briefly disables interrupts).
   void getTarget(float &x, float &y) const;
   void getCartPosition(float &x, float &y) const;   // theoretical position
@@ -79,6 +85,7 @@ private:
   // ── Cart trajectory (updated every tick in ISR) ──
   volatile float cartX_, cartY_;     // theoretical position (mm)
   volatile float velX_,  velY_;      // current velocity (mm/s)
+  volatile float velLimit_;          // trajectory speed cap (mm/s)
 
   // ── Target (set from main loop, read by ISR) ──
   volatile float targetX_, targetY_;

@@ -31,10 +31,33 @@ Robotic air hockey table that uses reinforcement learning trained in simulation,
   - `tests/` - Test suite
     - `test_batch_physics.py` - Vectorized physics correctness tests
     - `test_validation.py` - Reward shaping equivalence and env consistency tests
-- `sw/` - Physical robot control software
-  - `bin/` - Control programs
-    - `test_motor.cpp` - Basic motor communication and movement test
+- `shared/` - Geometry shared by every control path. **Canonical.**
+  - `cdpr_geometry.h` - Table frame, motor anchors, spool, paddle attachment,
+    and the cable-length model (tangency + wrap). Included by `fw/` and
+    `sw/bin/cdpr_master.cpp`. Physical facts go here; how a given controller
+    drives a motor does not.
+  - `check_geometry.py` - Verifies `cdpr_geometry.h` and the NumPy model in
+    `ai/bin/calibrate_fit.py` agree numerically (they are two implementations
+    of one model and would otherwise drift)
+- `fw/` - Teensy 4.1 step/dir firmware. **All motion runs here.**
+  - `include/cdpr_config.h` - Stepper specifics only (DIR levels, counts/rev,
+    limits); geometry comes from `shared/`
+- `sw/` - Host-side support for the physical robot
+  - `bin/cdpr_master.cpp` - Bridge: energizes the ClearPath servos, forwards
+    commands to the Teensy over serial, serves TCP
+  - `bin/` - Standalone diagnostics: `test_motor`, `scan_motors`, `activate`,
+    `retract_test`, `calibrate` (passive encoder capture)
+  - `lib/clearpath.{h,cpp}` - Minimal ClearPath connect/enable/disable
   - `third_party/sFoundation/` - Teknic sFoundation SDK (patched for Linux, .gitignored)
+  - NOTE: the host-side CDPR *motion* controller (`lib/cdpr.*`, `cdpr_server`,
+    `cdpr_test`) was removed 2026-08-01. Motion is step/dir via the Teensy;
+    that code duplicated it and had drifted out of sync.
+- `vision/` - Camera calibration and tracking (FLIR Blackfly S via Spinnaker)
+  - `bin/` - `capture_intrinsics.py` (continuous, self-selecting ChArUco
+    capture), `calibrate_intrinsics.py`, `check_intrinsics.py` (coverage +
+    distortion-extrapolation audit), `calibrate_extrinsics.py`,
+    `measure_motors.py`, `calib_report.py`, `snap.cpp`
+  - `calib/` - Solved intrinsics, extrinsics, marker and motor-anchor JSON
   - `Makefile` - Builds sFoundation library and control programs
 
 ## Key Design Decisions
