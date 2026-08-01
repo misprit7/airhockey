@@ -97,3 +97,20 @@ void ClearPath::disconnect() {
   connected_ = false;
   port_ = nullptr;
 }
+
+
+void ClearPath::reportTorqueLimits() {
+  if (!connected_ || !port_) return;
+  for (unsigned i = 0; i < port_->NodeCount(); i++) {
+    try {
+      INode &n = port_->Nodes(i);
+      n.TrqUnit(INode::PCT_MAX);
+      n.Limits.TrqGlobal.Refresh();
+      double t = n.Limits.TrqGlobal.Value();
+      printf("  motor %u torque limit %.1f %%%s\n", i, t,
+             t < 95.0 ? "   <<< LIMITED - see sw/build/check_limits" : "");
+    } catch (mnErr &e) {
+      printf("  motor %u torque limit unreadable (0x%08x)\n", i, e.ErrorCode);
+    }
+  }
+}

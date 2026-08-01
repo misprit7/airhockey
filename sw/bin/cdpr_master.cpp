@@ -403,6 +403,8 @@ int main(int argc, char *argv[]) {
     }
     logf("Motors connected (not yet enabled).\n");
 
+    robot.reportTorqueLimits();
+
     // ── TCP server ──
 
     int server_fd = socket(AF_INET, SOCK_STREAM, 0);

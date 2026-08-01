@@ -27,6 +27,13 @@ public:
   // Close the port. Safe to call when not connected.
   void disconnect();
 
+  // Print each drive's global torque limit. A limit left over from an
+  // earlier experiment lives in the DRIVE, not in this source tree, and
+  // starves the motors in a way that reads as cable slack and as servo
+  // hunting — both easy to misattribute to the kinematic model. Reporting
+  // it on every launch means it can never be invisible again.
+  void reportTorqueLimits();
+
   bool connected() const { return connected_; }
   bool enabled() const { return enabled_; }
 
