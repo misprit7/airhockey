@@ -4,6 +4,7 @@
 #include <csignal>
 #include <cstring>
 #include <cmath>
+#include <ctime>
 #include <string>
 #include <mutex>
 #include <unistd.h>
@@ -246,6 +247,7 @@ static int handleCommand(const char *line, ClearPath &robot, int client_fd, int 
         g_motors_enabled = true;
         snprintf(resp, sizeof(resp), "OK\n");
         logf("  -> enabled\n");
+        robot.pollHealth();   // state right after energizing
 
     } else if (strncmp(line, "DISABLE", 7) == 0) {
         logf("  DISABLE\n");
@@ -447,7 +449,18 @@ int main(int argc, char *argv[]) {
     char ser_buf[4096];
     int ser_len = 0;
 
+    double lastHealth = 0;
     while (!g_stop) {
+        // Watch the servos a few times a second while they run. Cheap, and
+        // it is the only feedback path that exists — the Teensy has none.
+        if (g_motors_enabled) {
+            double now = (double)time(NULL);
+            if (now - lastHealth >= 1.0) {
+                lastHealth = now;
+                robot.pollHealth();
+            }
+        }
+
         // ── Accept TCP connections ──
         if (client_fd < 0) {
             client_fd = accept(server_fd, NULL, NULL);

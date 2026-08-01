@@ -34,6 +34,17 @@ public:
   // it on every launch means it can never be invisible again.
   void reportTorqueLimits();
 
+  // Poll the drives while they are running. The Teensy drives step/dir
+  // open-loop and never reads the servos back, so without this a drive
+  // that faults or saturates mid-move is completely silent — and both look
+  // like a kinematics problem from the outside.
+  //
+  // Returns true if anything was worth reporting. `torque_warn_pct` is the
+  // level above which sustained torque is called out: on a force-closed rig
+  // two motors pulling hard against each other is the signature of cables
+  // fighting, which no position readout will show you.
+  bool pollHealth(double torque_warn_pct = 35.0);
+
   bool connected() const { return connected_; }
   bool enabled() const { return enabled_; }
 

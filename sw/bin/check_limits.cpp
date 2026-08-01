@@ -23,7 +23,12 @@ using namespace sFnd;
 // ============================================================================
 
 int main(int argc, char *argv[]) {
-    bool restore = argc > 1 && std::string(argv[1]) == "--restore";
+    bool restore = false, clear = false;
+    for (int i = 1; i < argc; i++) {
+        std::string a = argv[i];
+        if (a == "--restore") restore = true;
+        else if (a == "--clear") clear = true;
+    }
     SysManager *mgr = SysManager::Instance();
     std::vector<std::string> ports;
     SysManager::FindComHubPorts(ports);
@@ -81,9 +86,39 @@ int main(int argc, char *argv[]) {
         } else {
             printf("All drives at full torque — limiting is NOT the problem.\n");
         }
-        if (anyAlert)
-            printf("!! A drive is in alert. Clear it before drawing any other\n"
-                   "   conclusion: an alerting node ignores step/dir input.\n");
+        if (anyAlert) {
+            printf("!! Drives are in alert. An alerting node can ignore\n"
+                   "   step/dir input entirely, so decode before blaming the\n"
+                   "   kinematics:\n\n");
+            for (unsigned i = 0; i < port.NodeCount(); i++) {
+                INode &n = port.Nodes(i);
+                n.Status.Alerts.Refresh();
+                alertReg a = n.Status.Alerts.Value();
+                if (!a.isInAlert()) continue;
+                char buf[512];
+                a.StateStr(buf, sizeof(buf));
+                printf("  node %u: %s\n", i, buf);
+            }
+            printf("\n   Clear with:  sw/build/check_limits --clear\n"
+                   "   (clears latched alerts; it does not move anything.\n"
+                   "    An alert that returns immediately is a live fault,\n"
+                   "    not a leftover.)\n");
+        }
+
+        if (clear) {
+            printf("\n--clear: clearing latched alerts and node stops\n");
+            for (unsigned i = 0; i < port.NodeCount(); i++) {
+                INode &n = port.Nodes(i);
+                n.Status.AlertsClear();
+                n.Motion.NodeStopClear();
+                n.Status.Alerts.Refresh();
+                alertReg a = n.Status.Alerts.Value();
+                char buf[512];
+                a.StateStr(buf, sizeof(buf));
+                printf("  node %u -> %s\n", i,
+                       a.isInAlert() ? buf : "clear");
+            }
+        }
 
         if (restore) {
             // Deliberate, explicit, and separate from reporting: this removes

@@ -1,4 +1,5 @@
 #include "clearpath.h"
+#include <cmath>
 #include <cstdio>
 #include <string>
 #include <vector>
@@ -113,4 +114,38 @@ void ClearPath::reportTorqueLimits() {
       printf("  motor %u torque limit unreadable (0x%08x)\n", i, e.ErrorCode);
     }
   }
+}
+
+
+bool ClearPath::pollHealth(double torque_warn_pct) {
+  if (!connected_ || !port_ || !enabled_) return false;
+  bool reported = false;
+  double trq[4] = {0, 0, 0, 0};
+  for (unsigned i = 0; i < port_->NodeCount() && i < 4; i++) {
+    try {
+      INode &n = port_->Nodes(i);
+      n.Status.Alerts.Refresh();
+      alertReg a = n.Status.Alerts.Value();
+      if (a.isInAlert()) {
+        char buf[512];
+        a.StateStr(buf, sizeof(buf));
+        printf("!! motor %u ALERT: %s\n", i, buf);
+        reported = true;
+      }
+      n.TrqUnit(INode::PCT_MAX);
+      n.Motion.TrqMeasured.Refresh();
+      trq[i] = n.Motion.TrqMeasured.Value();
+    } catch (mnErr &) {
+      // A read failure here is not worth aborting motion over.
+    }
+  }
+  double worst = 0;
+  for (int i = 0; i < 4; i++)
+    if (fabs(trq[i]) > fabs(worst)) worst = trq[i];
+  if (fabs(worst) > torque_warn_pct) {
+    printf("!! high torque: [%.1f %.1f %.1f %.1f] %% — opposing signs here "
+           "mean cables are fighting\n", trq[0], trq[1], trq[2], trq[3]);
+    reported = true;
+  }
+  return reported;
 }
