@@ -46,6 +46,9 @@ enum Mode { MODE_SERIAL, MODE_SQUARE, MODE_RETRACT, MODE_DIRTOGGLE };
 constexpr Mode START_MODE = MODE_SERIAL;
 static Mode g_mode = START_MODE;
 
+// Speed cap applied on boot in host-control mode.
+constexpr float SERIAL_DEFAULT_SPEED_MM_S = 40.0f;
+
 // Defined further down with the square test; needed by the serial
 // handler above it so SQUARE can be entered at runtime.
 static void armSquareTest();
@@ -106,7 +109,16 @@ static void processCommand(char *line) {
     while (*args == ' ' || *args == '\t') args++;
   }
 
-  if (strcasecmp(cmd, "SQUARE") == 0) {
+  if (strcasecmp(cmd, "SPEED") == 0) {
+    float v;
+    if (sscanf(args, "%f", &v) != 1) {
+      Serial.println("ERR SPEED requires mm/s");
+      return;
+    }
+    cdpr.setVelocityLimit(v);
+    Serial.printf("OK SPEED %.1f\n", v);
+    return;
+  } else if (strcasecmp(cmd, "SQUARE") == 0) {
     g_mode = MODE_SQUARE;
     Serial.println("OK SQUARE");
     armSquareTest();
@@ -536,7 +548,12 @@ void setup() {
     }
     Serial.println("DIR TOGGLE probe: DIR pins toggle at 0.5 Hz, LED in sync");
   } else {
-    Serial.println("CDPR ready");
+    // Host control starts SLOW. MAX_VELOCITY_MM_S is what the steppers can
+    // do, not what is sensible before the cable model is trusted; the host
+    // raises this with SPEED when it wants more.
+    cdpr.setVelocityLimit(SERIAL_DEFAULT_SPEED_MM_S);
+    Serial.printf("CDPR ready (speed limit %.0f mm/s)\n",
+                  SERIAL_DEFAULT_SPEED_MM_S);
   }
 }
 

@@ -1,13 +1,20 @@
-# Captured frames — regenerable, and large. The solved results in calib/
-# are what matters and those ARE tracked.
-targets/
-build/
+# Raw camera captures: regenerable, large, and they have leaked into
+# commits twice by being named something not on this list. New capture
+# output should go under captures/ so it is covered by default.
+captures/
 shots/
 calib_shots*/
 extr_shots/
 ambient/
+malletshot*/
 holetest/
 holeburst*/
+
+# Build + solved-report artifacts. The solved calibration in calib/
+# (intrinsics, extrinsics, markers, motor anchors) IS tracked — firmware
+# constants derive from it.
+targets/
+build/
 calib/report*
 __pycache__/
 .ruff_cache/

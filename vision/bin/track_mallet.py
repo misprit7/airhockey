@@ -137,6 +137,42 @@ def report(xy, note, K, dist, rvec, tvec):
           f"  CAL {xy[0]:.1f} {xy[1]:.1f}")
 
 
+def measure(image=None, n_frames=5):
+    """Measure the mallet once. Returns (x_mm, y_mm).
+
+    Importable entry point for callers that need the startup position —
+    notably the web server, which must not assume the mallet is parked at
+    the centre of the robot half. Raises RuntimeError if it cannot get a
+    confident reading, because a wrong starting position offsets every
+    subsequent command by that error.
+
+    NOTE: this opens the camera, and only one process can hold the
+    Spinnaker device. Call it while nothing else is streaming.
+    """
+    K, dist, rvec, tvec, field = load_pose()
+    if image is not None:
+        img = cv2.imread(str(image), cv2.IMREAD_GRAYSCALE)
+        if img is None:
+            raise RuntimeError(f"cannot read {image}")
+    else:
+        s = Stream(1000, 0)
+        try:
+            frames = [f.astype(np.float32) for f in
+                      (s.grab() for _ in range(n_frames)) if f is not None]
+        finally:
+            s.close()
+        if not frames:
+            raise RuntimeError("no frames from the camera")
+        img = np.clip(np.mean(frames, axis=0), 0, 255).astype(np.uint8)
+    xy, note = locate(img, K, dist, rvec, tvec, field)
+    if xy is None:
+        raise RuntimeError(note)
+    if note:
+        raise RuntimeError(
+            "ambiguous mallet detection, refusing to guess: " + note)
+    return float(xy[0]), float(xy[1])
+
+
 def run_once(image, K, dist, rvec, tvec, field):
     if image:
         img = cv2.imread(str(image), cv2.IMREAD_GRAYSCALE)

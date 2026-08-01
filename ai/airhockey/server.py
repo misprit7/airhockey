@@ -165,9 +165,25 @@ async def live_game(ws: WebSocket):
                         use_hardware = not use_hardware
                         if use_hardware:
                             try:
+                                # Measure where the mallet ACTUALLY is before
+                                # energizing. Assuming it sits at the centre
+                                # of the robot half offsets every subsequent
+                                # command by however wrong that guess was, so
+                                # this fails closed rather than guessing.
+                                import sys as _sys
+                                from pathlib import Path as _P
+                                _sys.path.insert(0, str(
+                                    _P(__file__).resolve().parents[2]
+                                    / "vision" / "bin"))
+                                import track_mallet as _tm
+
+                                cal_xy = _tm.measure()
+                                print(f"  HW: mallet measured at "
+                                      f"({cal_xy[0]:.1f}, {cal_xy[1]:.1f}) mm")
                                 hardware_dynamics = HardwareDynamics(
                                     sim_width=cfg.width,
                                     sim_height=cfg.height,
+                                    cal_xy_mm=cal_xy,
                                 )
                                 hw_center_x = cfg.width / 2
                                 hw_center_y = cfg.height / 4

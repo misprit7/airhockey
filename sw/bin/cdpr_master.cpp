@@ -127,6 +127,10 @@ static bool parseStatus(const char *line, TeensyStatus &st) {
 
 static bool g_motors_enabled = false;
 
+// Startup pretension in mm. 0 = leave the cables slack.
+// Override with --tension <mm>.
+static double g_tension_mm = 0.0;
+
 // Wait for "OK" from Teensy (with timeout). Returns true if OK received.
 static bool waitTeensyOK(int teensy_fd, int timeout_ms = 5000) {
     char buf[256];
@@ -212,11 +216,21 @@ static int handleCommand(const char *line, ClearPath &robot, int client_fd, int 
             return 1;
         }
 
-        sendTeensy(teensy_fd, "TENSION 2\n");
-        if (!waitTeensyOK(teensy_fd, 10000)) {
-            snprintf(resp, sizeof(resp), "ERR teensy TENSION failed\n");
-            write(client_fd, resp, strlen(resp));
-            return 1;
+        // Pretension: retract every cable by this much to take up slack.
+        // ZERO for bring-up — the rig is force-closed, so pretension turns a
+        // modelling error into cables fighting each other. Start loose and
+        // raise it only once the cable model is trusted.
+        if (g_tension_mm > 0.0) {
+            char tcmd[64];
+            snprintf(tcmd, sizeof(tcmd), "TENSION %.2f\n", g_tension_mm);
+            sendTeensy(teensy_fd, tcmd);
+            if (!waitTeensyOK(teensy_fd, 10000)) {
+                snprintf(resp, sizeof(resp), "ERR teensy TENSION failed\n");
+                write(client_fd, resp, strlen(resp));
+                return 1;
+            }
+        } else {
+            logf("  pretension disabled (cables left slack)\n");
         }
 
         sendTeensy(teensy_fd, "START\n");
@@ -249,11 +263,25 @@ static int handleCommand(const char *line, ClearPath &robot, int client_fd, int 
         logf("  -> disabled\n");
 
     } else if (sscanf(line, "CMD %lf %lf %lf", &x, &y, &speed) >= 2) {
-        // Accept "CMD x y speed" or "CMD x y" (speed ignored, Teensy handles trajectory)
+        // "CMD x y speed" or "CMD x y". The speed is NOT ignored: the Teensy
+        // owns the trajectory, so we push the cap down to it whenever it
+        // changes. Dropping it here silently left the machine running at the
+        // firmware's stepper-limited maximum instead of what the caller asked
+        // for.
         if (!g_motors_enabled) {
             snprintf(resp, sizeof(resp), "ERR motors not enabled\n");
             write(client_fd, resp, strlen(resp));
             return 1;
+        }
+
+        static double last_speed = -1.0;
+        if (speed > 0.0 && speed != last_speed) {
+            char scmd[64];
+            snprintf(scmd, sizeof(scmd), "SPEED %.2f\n", speed);
+            sendTeensy(teensy_fd, scmd);
+            waitTeensyOK(teensy_fd, 1000);
+            last_speed = speed;
+            logf("  speed limit -> %.1f mm/s\n", speed);
         }
 
         // Forward to Teensy as "CMD x y\n"
@@ -305,6 +333,14 @@ int main(int argc, char *argv[]) {
     sa.sa_handler = sigHandler;
     sigaction(SIGINT, &sa, NULL);
     sigaction(SIGTERM, &sa, NULL);
+
+    for (int i = 1; i < argc; i++) {
+        if (!strcmp(argv[i], "--tension") && i + 1 < argc) {
+            g_tension_mm = atof(argv[++i]);
+        }
+    }
+    logf("Startup pretension: %.2f mm%s\n", g_tension_mm,
+         g_tension_mm > 0.0 ? "" : "  (cables left slack)");
 
     int port = DEFAULT_PORT;
     const char *teensy_path = nullptr;
