@@ -712,6 +712,17 @@ initReplayMode();
             : (s.note ? s.note : 'searching for the paddle…') + `   ${s.fps} fps`;
     };
 
+    const collapse = document.getElementById('btn-camera-collapse');
+    if (collapse) {
+        collapse.addEventListener('click', () => {
+            const shut = panel.classList.toggle('collapsed');
+            collapse.textContent = shut ? '\u25BC' : '\u25B2';
+            collapse.setAttribute('aria-expanded', String(!shut));
+            collapse.setAttribute('aria-label',
+                shut ? 'Expand tracker view' : 'Collapse tracker view');
+        });
+    }
+
     btn.addEventListener('click', async () => {
         on = !on;
         btn.textContent = on ? 'Camera: On' : 'Camera: Off';

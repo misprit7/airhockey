@@ -32,7 +32,11 @@ for _p in (_ROOT / "vision" / "bin", _ROOT / "shared"):
 
 import cdpr_geometry as geom  # noqa: E402
 
-DISPLAY_W = 720          # downscale for the browser; detection uses full res
+# Output is PORTRAIT to match the sim field beside it: the table's long
+# axis (grid x) runs vertically with the robot end at the bottom, and grid y
+# increases to the right — the same convention the sim canvas uses. That is
+# the sensor frame rotated 180 (origin bottom-left) and then 90 clockwise.
+DISPLAY_W = 560          # encoded width; detection always uses full res
 JPEG_QUALITY = 72
 TARGET_FPS = 12.0
 
@@ -172,10 +176,13 @@ class VisionService:
         vis = cv2.cvtColor(cv2.convertScaleAbs(img, alpha=3.0),
                            cv2.COLOR_GRAY2BGR)
         vis = cv2.rotate(vis, cv2.ROTATE_180)
-        H, W = vis.shape[:2]
+        vis = cv2.rotate(vis, cv2.ROTATE_90_CLOCKWISE)
+        H, W = img.shape[:2]          # SENSOR dims; display is (H wide, W tall)
 
         def flip(p):
-            return (int(round(W - 1 - p[0])), int(round(H - 1 - p[1])))
+            # sensor (x, y) -> 180 -> 90cw. Composing the two gives
+            # (y, W-1-x) in an image that is H wide and W tall.
+            return (int(round(p[1])), int(round(W - 1 - p[0])))
 
         def project(xy, z):
             px, _ = cv2.projectPoints(np.array([[xy[0], xy[1], z]]),
@@ -226,8 +233,9 @@ class VisionService:
 
         mask = tm.find_glare(img)
         if mask.any():
-            cnts, _ = cv2.findContours(cv2.rotate(mask, cv2.ROTATE_180),
-                                       cv2.RETR_EXTERNAL,
+            rot = cv2.rotate(cv2.rotate(mask, cv2.ROTATE_180),
+                             cv2.ROTATE_90_CLOCKWISE)
+            cnts, _ = cv2.findContours(rot, cv2.RETR_EXTERNAL,
                                        cv2.CHAIN_APPROX_SIMPLE)
             cv2.drawContours(vis, cnts, -1, C_GLARE, 2)
 
@@ -259,11 +267,12 @@ class VisionService:
 
         msg = note or ("paddle not found" if pose is None else None)
         if msg:
-            cv2.putText(vis, msg[:78], (12, H - 14),
+            cv2.putText(vis, msg[:52], (12, vis.shape[0] - 14),
                         cv2.FONT_HERSHEY_SIMPLEX, 0.5, C_GLARE, 1, cv2.LINE_AA)
 
-        h = int(H * DISPLAY_W / W)
-        vis = cv2.resize(vis, (DISPLAY_W, h), interpolation=cv2.INTER_AREA)
+        vh, vw = vis.shape[:2]
+        vis = cv2.resize(vis, (DISPLAY_W, int(vh * DISPLAY_W / vw)),
+                         interpolation=cv2.INTER_AREA)
         ok, buf = cv2.imencode(".jpg", vis,
                                [cv2.IMWRITE_JPEG_QUALITY, JPEG_QUALITY])
         return buf.tobytes() if ok else None

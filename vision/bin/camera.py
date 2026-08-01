@@ -7,6 +7,9 @@ serves one frame per request over a pipe, so the consumer never falls
 behind and never sees a stale frame.
 """
 
+import ctypes
+import select
+import signal
 import struct
 import subprocess
 import sys
@@ -25,10 +28,28 @@ class Stream:
     def __init__(self, exposure, gain):
         if not SNAP.exists():
             sys.exit(f"{SNAP} not built — run `make` in vision/")
+        # Die with the parent. Without this, killing the owning process
+        # orphans snap still holding the Spinnaker device, and every later
+        # attempt to open the camera blocks forever behind it — which
+        # presents as "camera running, 0 fps" rather than as an error.
+        def _pdeathsig():
+            try:
+                ctypes.CDLL("libc.so.6").prctl(1, signal.SIGTERM)  # PR_SET_PDEATHSIG
+            except Exception:
+                pass
+
         self.p = subprocess.Popen(
             [str(SNAP), "--stream", "--exposure", str(exposure),
              "--gain", str(gain)],
-            stdin=subprocess.PIPE, stdout=subprocess.PIPE)
+            stdin=subprocess.PIPE, stdout=subprocess.PIPE,
+            preexec_fn=_pdeathsig)
+
+        # Bounded wait for the header: a busy camera makes snap hang rather
+        # than exit, and blocking here forever hides the real cause.
+        if not select.select([self.p.stdout], [], [], 12.0)[0]:
+            self.p.kill()
+            sys.exit("camera did not respond within 12s — another process is "
+                     "probably holding it (check: pgrep -a snap)")
         hdr = self._read(16)
         if hdr[:8] != b"SNAPSTRM":
             sys.exit(f"unexpected stream header {hdr[:8]!r}")
