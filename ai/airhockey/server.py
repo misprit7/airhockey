@@ -5,7 +5,6 @@ from __future__ import annotations
 import asyncio
 import json
 import time
-from dataclasses import asdict
 from pathlib import Path
 
 import numpy as np
@@ -14,7 +13,6 @@ from fastapi.responses import HTMLResponse
 
 from airhockey.dynamics import DelayedDynamics, HardwareDynamics, IdealDynamics
 from airhockey.env import AirHockeyEnv
-from airhockey.physics import TableConfig
 from airhockey.recorder import Recorder
 
 app = FastAPI()

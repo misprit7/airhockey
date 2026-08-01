@@ -29,15 +29,19 @@ Usage:
 
 import json
 import sys
+from pathlib import Path
 
 import numpy as np
 from scipy.optimize import least_squares
 
-SPOOL_R_MM = 35.0
+sys.path.insert(0, str(Path(__file__).resolve().parents[2] / "shared"))
+import cdpr_geometry as geom  # noqa: E402
+
+SPOOL_R_MM = geom.SPOOL_RADIUS_MM
 SPOOL_CIRC_MM = 2.0 * np.pi * SPOOL_R_MM
-ATTACH_R_MM = 31.1
+ATTACH_R_MM = geom.ATTACH_R_MM
 RETRACT_SIGN = np.array([-1.0, 1.0, -1.0, 1.0])  # API count sign that retracts
-SIDES = np.array([-1.0, 1.0, -1.0, 1.0])         # winding side guess — verify!
+SIDES = np.array(geom.WINDING_SIDE)              # winding side — still unverified
 CHIRALITY_CONFIRMED = -1  # arms 0-3 run CLOCKWISE around the mallet (hardware)
 
 # Initial anchor guess — MEASURED optically 2026-08-01 (spool tops on the
@@ -49,16 +53,11 @@ CHIRALITY_CONFIRMED = -1  # arms 0-3 run CLOCKWISE around the mallet (hardware)
 # These are real measurements now, not placeholders, so this fit starts near
 # the answer: treat a solution that lands far from here as suspect rather
 # than as new information.
-ANCHOR_GUESS = np.array([
-    [1067.1, 1073.3],   # 0: mid-table, far side
-    [2030.6, 1035.6],   # 1: robot corner, far side
-    [2031.6, -87.7],    # 2: robot corner, near side
-    [1064.1, -129.8],   # 3: mid-table, near side
-])
+ANCHOR_GUESS = np.array(list(zip(geom.MOTOR_X, geom.MOTOR_Y)))
 
 # Fixed per-motor reference directions for the wrap angle psi (avoids atan2
 # branch cuts; the constant offset this introduces is absorbed by offset_m).
-WS_CENTER = np.array([1482.9, 469.9])  # robot-half center, grid frame
+WS_CENTER = np.array([geom.HOME_X, geom.HOME_Y])  # robot-half centre
 REF = WS_CENTER[None, :] - ANCHOR_GUESS
 REF = REF / np.linalg.norm(REF, axis=1, keepdims=True)
 

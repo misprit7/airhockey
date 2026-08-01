@@ -36,9 +36,11 @@ Robotic air hockey table that uses reinforcement learning trained in simulation,
     and the cable-length model (tangency + wrap). Included by `fw/` and
     `sw/bin/cdpr_master.cpp`. Physical facts go here; how a given controller
     drives a motor does not.
-  - `check_geometry.py` - Verifies `cdpr_geometry.h` and the NumPy model in
-    `ai/bin/calibrate_fit.py` agree numerically (they are two implementations
-    of one model and would otherwise drift)
+  - `cdpr_geometry.py` - Python mirror of the header (Python can't include
+    a C header). Every Python consumer imports from here — never hardcode
+    a geometry constant elsewhere.
+  - `check_geometry.py` - Verifies the mirror matches the header constant
+    for constant, AND that the C++ and NumPy cable models agree numerically
 - `fw/` - Teensy 4.1 step/dir firmware. **All motion runs here.**
   - `include/cdpr_config.h` - Stepper specifics only (DIR levels, counts/rev,
     limits); geometry comes from `shared/`
@@ -53,10 +55,12 @@ Robotic air hockey table that uses reinforcement learning trained in simulation,
     `cdpr_test`) was removed 2026-08-01. Motion is step/dir via the Teensy;
     that code duplicated it and had drifted out of sync.
 - `vision/` - Camera calibration and tracking (FLIR Blackfly S via Spinnaker)
-  - `bin/` - `capture_intrinsics.py` (continuous, self-selecting ChArUco
-    capture), `calibrate_intrinsics.py`, `check_intrinsics.py` (coverage +
+  - `bin/` - `camera.py` (frame stream + back-projection helpers),
+    `capture_intrinsics.py` (continuous, self-selecting ChArUco capture),
+    `calibrate_intrinsics.py`, `check_intrinsics.py` (coverage +
     distortion-extrapolation audit), `calibrate_extrinsics.py`,
-    `measure_motors.py`, `calib_report.py`, `snap.cpp`
+    `measure_motors.py`, `track_mallet.py` (mallet position at z=67mm),
+    `calib_report.py`, `table_grid.py`, `gen_targets.py`, `snap.cpp`
   - `calib/` - Solved intrinsics, extrinsics, marker and motor-anchor JSON
   - `Makefile` - Builds sFoundation library and control programs
 
