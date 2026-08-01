@@ -1,0 +1,13 @@
+# Captured frames — regenerable, and large. The solved results in calib/
+# are what matters and those ARE tracked.
+targets/
+build/
+shots/
+calib_shots*/
+extr_shots/
+ambient/
+holetest/
+holeburst*/
+calib/report*
+__pycache__/
+.ruff_cache/
