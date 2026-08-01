@@ -187,8 +187,22 @@ static int handleCommand(const char *line, ClearPath &robot, int client_fd, int 
         }
 
         // 2. Send CAL, TENSION, START to Teensy (all motion via step/dir)
+        //
+        // The calibration point may be supplied as "ENABLE x y". Measure it
+        // rather than assuming — vision/bin/track_mallet.py reports where the
+        // mallet actually is. Falling back to HOME asserts the mallet is at
+        // the centre of the robot half, and if it is not, every subsequent
+        // command is offset by however far off it was.
         double cx = HOME_X;
         double cy = HOME_Y;
+        if (sscanf(line + 6, "%lf %lf", &cx, &cy) != 2) {
+            cx = HOME_X;
+            cy = HOME_Y;
+            logf("  WARNING: no calibration point given, assuming the mallet "
+                 "is at HOME (%.1f, %.1f)\n", cx, cy);
+        } else {
+            logf("  calibrating at measured (%.1f, %.1f)\n", cx, cy);
+        }
         char cmd[64];
         snprintf(cmd, sizeof(cmd), "CAL %.1f %.1f\n", cx, cy);
         sendTeensy(teensy_fd, cmd);

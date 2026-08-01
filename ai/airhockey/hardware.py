@@ -47,15 +47,24 @@ class CDPRClient:
             data += chunk
         return data.decode().strip()
 
-    def enable(self) -> None:
-        """Enable motors and start Teensy motion controller.
+    def enable(self, cal_x_mm: float | None = None,
+               cal_y_mm: float | None = None) -> None:
+        """Energize the motors and calibrate the Teensy.
 
-        This enables sFoundation motors, applies tensioning, calibrates
-        position at center, and sends CAL/TENSION/START to Teensy.
+        NOT passive: the master follows this with TENSION and START, so the
+        cables take up 2mm of slack and the control loop begins running.
+
+        Pass the MEASURED mallet position if you have it — otherwise the
+        master assumes the mallet sits at the centre of the robot half, and
+        any error there offsets every later command:
+            python vision/bin/track_mallet.py
         """
-        resp = self._send("ENABLE")
+        if cal_x_mm is None or cal_y_mm is None:
+            resp = self._send("ENABLE")
+        else:
+            resp = self._send(f"ENABLE {cal_x_mm:.2f} {cal_y_mm:.2f}")
         if not resp.startswith("OK"):
-            raise RuntimeError(f"CDPR enable failed: {resp}")
+            raise RuntimeError(f"enable failed: {resp}")
 
     def disable(self) -> None:
         """Stop Teensy motion controller and disable motors."""
