@@ -415,10 +415,12 @@ canvas {
 
 
 
+
 /* ── live tracker view ─────────────────────────────────────────── */
-/* Beside the playing field on desktop, below it on mobile. The field keeps
-   the flexible space; the camera panel is a fixed column so the game does
-   not resize as the view appears. */
+/* Alongside the field as a peer, not a sidebar. The field canvas is
+   height-limited by its 1:2 aspect and can never use the width it is given,
+   which is where the dead space came from; the tracker view is 3:4 so at the
+   same height it is genuinely wider. Both fill the vertical extent. */
 #stage {
     flex: 1;
     display: flex;
@@ -426,16 +428,18 @@ canvas {
     min-height: 0;
 }
 
+#canvas-container { flex: 4 1 0; }
+
 #camera-panel {
-    width: 440px;
-    flex-shrink: 0;
+    flex: 6 1 0;
+    min-width: 0;
+    min-height: 0;
     display: flex;
     flex-direction: column;
-    gap: 8px;
-    padding: 16px;
-    background: #12121a;
-    border-left: 1px solid #1e1e2e;
-    overflow-y: auto;
+    gap: 6px;
+    padding: 24px 24px 16px;
+    background: transparent;     /* not a panel — part of the main view */
+    border: none;
 }
 
 #camera-panel.hidden { display: none; }
@@ -445,55 +449,65 @@ canvas {
     align-items: center;
     justify-content: space-between;
     gap: 8px;
+    flex-shrink: 0;
 }
 
-#camera-head h3 { margin: 0; font-size: 13px; opacity: .75; }
+#camera-head h3 { margin: 0; font-size: 13px; opacity: .7; }
 
 #btn-camera-collapse {
-    display: none;              /* desktop: the panel is always expanded */
-    background: none;
-    border: none;
-    color: #888;
-    font-size: 13px;
-    cursor: pointer;
-    padding: 4px 8px;
+    display: none;
+    background: none; border: none; color: #888;
+    font-size: 13px; cursor: pointer; padding: 4px 8px;
 }
 
-#camera-body { display: flex; flex-direction: column; gap: 8px; }
-#camera-panel.collapsed #camera-body { display: none; }
+#camera-body {
+    flex: 1;
+    min-height: 0;
+    display: flex;
+    flex-direction: column;
+    gap: 6px;
+}
 
 #camera-img {
+    flex: 1;
+    min-height: 0;
     width: 100%;
     display: block;
-    border-radius: 6px;
+    border-radius: 10px;
     background: #000;
-    aspect-ratio: 3 / 4;      /* portrait, matching the field */
-    object-fit: contain;
+    object-fit: contain;         /* fills the height; 3:4 sets the width */
 }
 
 #camera-status {
-    font: 11px ui-monospace, Menlo, monospace;
+    font: 12px ui-monospace, Menlo, monospace;
     opacity: .85;
     font-variant-numeric: tabular-nums;
+    flex-shrink: 0;
+    text-align: center;
 }
 #camera-status.bad { color: #ff8080; }
 
-#camera-hint { font-size: 11px; opacity: .55; line-height: 1.45; }
+/* The explanation is reference material, not something to read every time:
+   it lives on the heading's tooltip on desktop. */
+#camera-hint { display: none; }
 
 @media (max-width: 700px) {
     #stage { flex-direction: column; }
 
+    #canvas-container { flex: 1 1 auto; }
+
     #camera-panel {
-        width: auto;
-        max-height: 55vh;
-        border-left: none;
+        flex: 0 0 auto;
+        max-height: 58vh;
+        padding: 8px 12px 10px;
         border-top: 1px solid #1e1e2e;
-        padding: 10px 12px;
+        background: #12121a;
     }
 
+    #camera-img { min-height: 200px; }
+
     /* Collapse hides the view but leaves the camera running — stopping it
-       would release the Spinnaker device, which other tools need. */
+       releases the Spinnaker device, which other tools need. */
     #btn-camera-collapse { display: block; }
     #camera-panel.collapsed { max-height: none; }
-    #camera-hint { display: none; }
 }
