@@ -194,6 +194,9 @@ class HardwareDynamics(MotorDynamics):
         self._hw_counts = [0, 0, 0, 0]
         self._cmd_x_mm = geom.HOME_X
         self._cmd_y_mm = geom.HOME_Y
+        self._enc = None
+        self._enc_zero = None
+        self._last_enc_read = 0.0
 
     def set_speed(self, mm_s: float) -> None:
         self.speed = max(1.0, min(float(mm_s), self.max_speed))
@@ -231,6 +234,39 @@ class HardwareDynamics(MotorDynamics):
         s = self.client.get_status()
         self._hw_x_mm, self._hw_y_mm = s["x"], s["y"]
         self._hw_counts = [s["c0"], s["c1"], s["c2"], s["c3"]]
+        # The drives' own encoders, at a slower cadence — this is a separate
+        # serial round trip to four nodes and does not need to keep up with
+        # the command rate.
+        now = self._time.monotonic()
+        if now - self._last_enc_read >= 0.5:
+            self._last_enc_read = now
+            try:
+                e = self.client.get_encoders()
+                if self._enc_zero is None:
+                    self._enc_zero = list(e["posn"])
+                self._enc = e
+            except Exception:
+                self._enc = None
+
+    def _enc_cable_mm(self):
+        """Drive-measured cable travel since ENABLE, in mm, per motor.
+
+        Relative to enable rather than absolute because the drives are not
+        homed — only the change since the reference is meaningful. The SIGN
+        is raw drive-positive: which way that is on each spool is not yet
+        established, and asserting one here would hide the very disagreement
+        this exists to expose."""
+        if not self._enc or self._enc_zero is None:
+            return None
+        out = []
+        for m in range(4):
+            res = self._enc["res"][m]
+            if not res:
+                out.append(None)
+                continue
+            revs = (self._enc["posn"][m] - self._enc_zero[m]) / res
+            out.append(round(revs * self.geom.SPOOL_CIRCUMFERENCE_MM, 2))
+        return out
 
     def get_hw_position_mm(self):
         """Last known hardware position in mm (grid frame)."""
@@ -239,12 +275,21 @@ class HardwareDynamics(MotorDynamics):
     def hw_state(self) -> dict:
         """Everything the controller believes, in grid mm — for the live
         state view, which exists to be compared against the camera."""
+        from airhockey.hardware import counts_to_cable_mm
+
+        # What the Teensy asked each cable to do, in the same units as the
+        # drive measurement below, so the two columns are comparable.
+        step_mm = [round(counts_to_cable_mm(c), 2) for c in self._hw_counts]
         return {
             "x_mm": round(self._hw_x_mm, 1),
             "y_mm": round(self._hw_y_mm, 1),
             "cmd_x_mm": round(self._cmd_x_mm, 1),
             "cmd_y_mm": round(self._cmd_y_mm, 1),
             "counts": list(self._hw_counts),
+            "step_mm": step_mm,
+            "enc_mm": self._enc_cable_mm(),
+            "trq_pct": None if not self._enc else [round(v, 1)
+                                                  for v in self._enc["trq"]],
             "speed_mm_s": round(self.speed, 1),
         }
 

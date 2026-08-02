@@ -320,6 +320,26 @@ static int handleCommand(const char *line, ClearPath &robot, int client_fd, int 
             snprintf(resp, sizeof(resp), "ERR no status available\n");
         }
 
+    } else if (strncmp(line, "ENC", 3) == 0) {
+        // The drives' own encoders — the only measurement of where the
+        // motors actually are, as opposed to where the Teensy believes it
+        // stepped them. Reported raw (counts, counts/rev, % torque) so the
+        // consumer can decide what to do with the sign; the mapping from
+        // drive-positive to cable-retract is not yet established, and
+        // baking a guess in here would hide exactly the thing this is for.
+        double posn[4], trq[4];
+        unsigned res[4];
+        if (!robot.readEncoders(posn, res, trq)) {
+            snprintf(resp, sizeof(resp), "ERR drives unreadable\n");
+        } else {
+            snprintf(resp, sizeof(resp),
+                     "OK %.1f %.1f %.1f %.1f %u %u %u %u "
+                     "%.1f %.1f %.1f %.1f\n",
+                     posn[0], posn[1], posn[2], posn[3],
+                     res[0], res[1], res[2], res[3],
+                     trq[0], trq[1], trq[2], trq[3]);
+        }
+
     } else if (strncmp(line, "QUIT", 4) == 0) {
         return 0;
 

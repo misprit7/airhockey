@@ -117,6 +117,28 @@ void ClearPath::reportTorqueLimits() {
 }
 
 
+bool ClearPath::readEncoders(double posn[4], unsigned res[4], double trq[4]) {
+  for (int i = 0; i < 4; i++) { posn[i] = 0; res[i] = 0; trq[i] = 0; }
+  if (!connected_ || !port_) return false;
+  bool any = false;
+  for (unsigned i = 0; i < port_->NodeCount() && i < 4; i++) {
+    try {
+      INode &n = port_->Nodes(i);
+      n.Motion.PosnMeasured.Refresh();
+      posn[i] = n.Motion.PosnMeasured.Value();
+      res[i] = n.Info.PositioningResolution.Value();
+      n.TrqUnit(INode::PCT_MAX);
+      n.Motion.TrqMeasured.Refresh();
+      trq[i] = n.Motion.TrqMeasured.Value();
+      any = true;
+    } catch (mnErr &) {
+      // Leave this node zeroed; a stale read is worse than an obvious gap.
+    }
+  }
+  return any;
+}
+
+
 bool ClearPath::pollHealth(double torque_warn_pct) {
   if (!connected_ || !port_ || !enabled_) return false;
   bool reported = false;

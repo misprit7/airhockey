@@ -45,6 +45,19 @@ public:
   // fighting, which no position readout will show you.
   bool pollHealth(double torque_warn_pct = 35.0);
 
+  // Read each drive's own encoder.
+  //
+  // This is the only measurement of where the motors ACTUALLY are. The
+  // Teensy counts the steps it emitted, which is what it intended, not what
+  // happened: a drive that stalls, saturates, or is fought by another cable
+  // still receives every pulse. Comparing the two separates "the model
+  // asked for the wrong thing" from "the motor did not do what it was
+  // asked", and nothing else in the system can tell those apart.
+  //
+  // `posn` is in encoder counts, `res` the counts per revolution needed to
+  // turn it into cable millimetres. Returns false if nothing could be read.
+  bool readEncoders(double posn[4], unsigned res[4], double trq[4]);
+
   bool connected() const { return connected_; }
   bool enabled() const { return enabled_; }
 

@@ -939,7 +939,7 @@ initReplayMode();
             c.moveTo(cx - 6, cy); c.lineTo(cx + 6, cy);
             c.moveTo(cx, cy - 6); c.lineTo(cx, cy + 6);
             c.stroke(); c.restore();
-            paddle(hw.x_mm, hw.y_mm, nomTh, C.enc, 'encoder', true);
+            paddle(hw.x_mm, hw.y_mm, nomTh, C.enc, 'controller', true);
         }
         if (camPose) {
             paddle(camPose.x, camPose.y, camPose.theta_deg * Math.PI / 180,
@@ -950,16 +950,29 @@ initReplayMode();
         L.push(camPose
             ? `camera   x ${camPose.x.toFixed(1).padStart(7)}  y ${camPose.y.toFixed(1).padStart(6)}   θ ${camPose.theta_deg.toFixed(1)}°`
             : `camera   ${camNote || 'not running'}`);
+        // "controller", not "encoder": this x/y is the Teensy's integrated
+        // trajectory, i.e. where it BELIEVES it stepped the paddle to. The
+        // drives' actual encoders are the per-cable row below.
         L.push(hw
-            ? `encoder  x ${hw.x_mm.toFixed(1).padStart(7)}  y ${hw.y_mm.toFixed(1).padStart(6)}   θ ${g.nominal_theta_deg.toFixed(1)}° assumed`
-            : 'encoder  hardware off');
+            ? `control  x ${hw.x_mm.toFixed(1).padStart(7)}  y ${hw.y_mm.toFixed(1).padStart(6)}   θ ${g.nominal_theta_deg.toFixed(1)}° assumed`
+            : 'control  hardware off');
         if (hw && camPose) {
             const dx = camPose.x - hw.x_mm, dy = camPose.y - hw.y_mm;
             L.push(`Δ        x ${dx.toFixed(1).padStart(7)}  y ${dy.toFixed(1).padStart(6)}   |Δ| ${Math.hypot(dx, dy).toFixed(1)} mm`);
         }
         if (hw) {
-            L.push(`counts   ${hw.counts.map((v) => String(v).padStart(7)).join(' ')}`);
             L.push(`target   x ${hw.cmd_x_mm.toFixed(1).padStart(7)}  y ${hw.cmd_y_mm.toFixed(1).padStart(6)}   ${hw.speed_mm_s} mm/s`);
+            L.push('');
+            L.push('cable            M0      M1      M2      M3');
+            const row = (name, vals, dp) => L.push(
+                name.padEnd(9) + vals.map((v) => (v === null || v === undefined
+                    ? '     --' : v.toFixed(dp).padStart(7))).join(' '));
+            // Commanded vs measured, per cable. The Teensy's steps are what
+            // it asked for; the drive encoders are what happened. A row that
+            // disagrees points at that motor, not at the kinematics.
+            if (hw.step_mm) row('stepped', hw.step_mm, 1);
+            if (hw.enc_mm) row('measured', hw.enc_mm, 1);
+            if (hw.trq_pct) row('torque %', hw.trq_pct, 0);
         }
         readout.textContent = L.join('\n');
     }

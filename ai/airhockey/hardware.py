@@ -6,7 +6,27 @@ exposing a TCP interface for position commands and live status.
 
 from __future__ import annotations
 
+import math
 import socket
+import sys
+from pathlib import Path
+
+sys.path.insert(0, str(Path(__file__).resolve().parents[2] / "shared"))
+import cdpr_geometry as _geom  # noqa: E402
+
+# Step counts arrive over the wire from the Teensy, so anything decoding
+# them needs its step resolution. This mirrors COUNTS_PER_REV in
+# fw/include/cdpr_config.h and must be changed with it — it lives here
+# rather than in shared/cdpr_geometry.h because it is a property of how the
+# Teensy is configured to drive the steppers, not of the machine, and here
+# is where the counts are parsed.
+TEENSY_COUNTS_PER_REV = 800
+
+
+def counts_to_cable_mm(counts: float) -> float:
+    """Teensy step counts -> millimetres of cable paid out."""
+    return counts * (2.0 * math.pi * _geom.SPOOL_RADIUS_MM) \
+        / TEENSY_COUNTS_PER_REV
 
 
 class CDPRClient:
@@ -96,6 +116,24 @@ class CDPRClient:
             parts = resp.split()
             return float(parts[1]), float(parts[2]), float(parts[3]), float(parts[4])
         raise RuntimeError(f"CDPR pos failed: {resp}")
+
+    def get_encoders(self) -> dict:
+        """Read the DRIVES' encoders, not the Teensy's step counts.
+
+        Returns {'posn': [4 counts], 'res': [4 counts/rev], 'trq': [4 pct]}.
+        The Teensy's counts say what it asked for; these say what happened.
+        Only their difference distinguishes a wrong model from a motor that
+        did not follow, so they are kept separate rather than merged.
+        """
+        resp = self._send("ENC")
+        if resp.startswith("OK"):
+            p = resp.split()
+            return {
+                "posn": [float(v) for v in p[1:5]],
+                "res": [int(v) for v in p[5:9]],
+                "trq": [float(v) for v in p[9:13]],
+            }
+        raise RuntimeError(f"CDPR enc failed: {resp}")
 
     def get_status(self) -> dict:
         """Get full status including motor step counts.
