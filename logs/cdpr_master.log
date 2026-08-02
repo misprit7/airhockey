@@ -1,0 +1,7 @@
+=== CDPR Master ===
+Opening Teensy on /dev/ttyACM0
+Teensy connected.
+Motors connected (not yet enabled).
+Listening on localhost:8421
+Ctrl+C to stop.
+

@@ -209,7 +209,10 @@ static void processCommand(char *line) {
 // ============================================================================
 
 constexpr float SQUARE_DEFAULT_MM = 50.0f;  // 5 cm side length
-constexpr float SQUARE_MAX_MM     = 800.0f; // sanity cap, workspace is ~945
+// Sanity cap only — SIZE also rejects anything whose corners fall outside
+// the workspace, which is the binding limit (the box is 500 x 500 mm and
+// the square is centred on HOME, so 500 is the true ceiling).
+constexpr float SQUARE_MAX_MM     = 500.0f;
 constexpr float SQUARE_SPEED_MM_S = 25.0f;  // slow: first closed-loop motion
 constexpr float TENSION_MM        = 0.0f;   // pretension before motion
 constexpr uint32_t DWELL_MS       = 700;    // pause at each corner

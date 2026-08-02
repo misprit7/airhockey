@@ -41,17 +41,20 @@ ATTACH_R_MM = 31.1
 ATTACH_CHIRALITY = -1.0
 MALLET_THETA_RAD = 2.3561945   # 135 deg — see the header for why not 0
 
-# ── Workspace (robot half only) ──
-EDGE_MARGIN_MM = 30.0
-WS_MIN_X = CENTERLINE_X + EDGE_MARGIN_MM   # 1007.9
-WS_MAX_X = RAIL_MAX_X - EDGE_MARGIN_MM     # 1957.9
-WS_MIN_Y = RAIL_MIN_Y + EDGE_MARGIN_MM     # -2.6
-WS_MAX_Y = RAIL_MAX_Y - EDGE_MARGIN_MM     # 942.4
+# ── Workspace ──
+# The middle half of the robot half — same centre, half the span per axis.
+# Not the rails: cables pull only, so the paddle is holdable only inside the
+# anchor hull, and tension grows without bound near its boundary. See the
+# header for why the centreline itself is unreachable.
+WS_MIN_X = 1230.0
+WS_MAX_X = 1730.0
+WS_MIN_Y = 220.0
+WS_MAX_Y = 720.0
 
-HOME_X = (CENTERLINE_X + RAIL_MAX_X) / 2.0  # 1482.9
-HOME_Y = (RAIL_MIN_Y + RAIL_MAX_Y) / 2.0    # 469.9
+HOME_X = (WS_MIN_X + WS_MAX_X) / 2.0   # 1480.0
+HOME_Y = (WS_MIN_Y + WS_MAX_Y) / 2.0   # 470.0
 
-WRAP_REF_ANGLE = [-0.967427, -2.340029, 2.348150, 0.961179]
+WRAP_REF_ANGLE = [-0.970615, -2.342757, 2.350696, 0.964515]
 
 # ── Heights above the playing surface ──
 MARKER_Z_MM = 3.3    # field markers, on 3D-printed mounts

@@ -45,7 +45,8 @@ inline float countsToMm(float counts) { return counts * MM_PER_COUNT; }
 // ── Motion limits ───────────────────────────────────────────────────
 //
 // Actuator-specific: these are what the steppers can do, not what the
-// table is. EDGE_MARGIN_MM and the workspace bounds it derives are shared.
+// table is. The workspace bounds are a property of the anchor geometry, so
+// they live in the shared header.
 
 constexpr float MAX_VELOCITY_MM_S = 7200.0f;
 constexpr float MAX_ACCEL_MM_S2 = 400.0f;

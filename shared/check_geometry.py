@@ -52,10 +52,10 @@ int main() {
            m, WINDING_SIDE[m], m, WRAP_REF_ANGLE[m]);
   printf("SPOOL_RADIUS_MM %.6f\nATTACH_R_MM %.6f\nATTACH_CHIRALITY %.6f\n"
          "WS_MIN_X %.6f\nWS_MAX_X %.6f\nWS_MIN_Y %.6f\nWS_MAX_Y %.6f\n"
-         "HOME_X %.6f\nHOME_Y %.6f\nEDGE_MARGIN_MM %.6f\n"
+         "HOME_X %.6f\nHOME_Y %.6f\n"
          "GRID_X_MM %.6f\nGRID_Y_MM %.6f\nCENTERLINE_X %.6f\n",
          SPOOL_RADIUS_MM, ATTACH_R_MM, ATTACH_CHIRALITY, WS_MIN_X, WS_MAX_X,
-         WS_MIN_Y, WS_MAX_Y, HOME_X, HOME_Y, EDGE_MARGIN_MM, GRID_X_MM,
+         WS_MIN_Y, WS_MAX_Y, HOME_X, HOME_Y, GRID_X_MM,
          GRID_Y_MM, CENTERLINE_X);
   return 0;
 }

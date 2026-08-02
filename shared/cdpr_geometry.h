@@ -169,23 +169,32 @@ constexpr float ATTACH_CHIRALITY = -1.0f; // arms 0-3 clockwise from above
 // is a mechanism for the paddle to chatter between constraint sets.
 constexpr float MALLET_THETA_RAD = 2.3561945f; // 135 deg
 
-// ── Motion limits shared by both paths ──────────────────────────────
-
-constexpr float EDGE_MARGIN_MM = 30.0f;
-
 // ── Workspace bounds ────────────────────────────────────────────────
 //
-// The paddle operates in the robot half only. Rail-derived, hence
-// approximate — the margin absorbs the rail uncertainty.
+// The middle half of the robot half: same centre, half the span in each
+// axis. Deliberately conservative, and deliberately NOT the rails.
+//
+// A cable pulls and cannot push, so the paddle is only holdable while every
+// cable stays in tension — which is only true strictly inside the convex
+// hull of the four anchors, and the tension needed to resist a given
+// disturbance grows without bound as you approach that hull. The anchors
+// span x = 1064..2031, so the region the CABLES control is much smaller
+// than the robot half of the TABLE; the centreline at x = 977.9 is 86 mm
+// outside the hull and is not reachable at any torque. Staying near the
+// middle keeps the cables well spread and the tensions modest.
+//
+// These are hardcoded on purpose: they are a bring-up choice, not a derived
+// quantity. Widen them when the winding sign and the command-then-measure
+// residual are settled.
 
-constexpr float WS_MIN_X = CENTERLINE_X + EDGE_MARGIN_MM;
-constexpr float WS_MAX_X = RAIL_MAX_X - EDGE_MARGIN_MM;
-constexpr float WS_MIN_Y = RAIL_MIN_Y + EDGE_MARGIN_MM;
-constexpr float WS_MAX_Y = RAIL_MAX_Y - EDGE_MARGIN_MM;
+constexpr float WS_MIN_X = 1230.0f;
+constexpr float WS_MAX_X = 1730.0f;
+constexpr float WS_MIN_Y = 220.0f;
+constexpr float WS_MAX_Y = 720.0f;
 
-// Default calibration/home position: centre of the robot half.
-constexpr float HOME_X = (CENTERLINE_X + RAIL_MAX_X) / 2.0f;
-constexpr float HOME_Y = (RAIL_MIN_Y + RAIL_MAX_Y) / 2.0f;
+// Default calibration/home position: centre of the workspace.
+constexpr float HOME_X = (WS_MIN_X + WS_MAX_X) / 2.0f;  // 1480
+constexpr float HOME_Y = (WS_MIN_Y + WS_MAX_Y) / 2.0f;  // 470
 
 // Bearing from each anchor toward HOME. This is the zero reference for the
 // wrap angle: measuring psi relative to a fixed per-motor direction avoids
@@ -194,10 +203,10 @@ constexpr float HOME_Y = (RAIL_MIN_Y + RAIL_MAX_Y) / 2.0f;
 // absorbed when the controller is homed, so it is free.
 // Values are atan2(HOME_Y - MOTOR_Y[m], HOME_X - MOTOR_X[m]).
 constexpr float WRAP_REF_ANGLE[NUM_MOTORS] = {
-    -0.967427f, // 0
-    -2.340029f, // 1
-    2.348150f,  // 2
-    0.961179f,  // 3
+    -0.970615f, // 0
+    -2.342757f, // 1
+    2.350696f,  // 2
+    0.964515f,  // 3
 };
 
 // ── Kinematics ──────────────────────────────────────────────────────
