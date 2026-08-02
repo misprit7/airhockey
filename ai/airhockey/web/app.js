@@ -804,6 +804,7 @@ initReplayMode();
         ws: '#6a8a6a',
         motor: '#e6e64a',
         cable: 'rgba(255,176,64,0.55)',
+        cableText: 'rgba(255,196,120,0.85)',
         enc: '#ffb040',       // controller / step counts
         cam: '#40d8ff',       // camera
         cmd: '#8a8a9a',
@@ -871,15 +872,45 @@ initReplayMode();
                 gy + geom.attach_r * Math.sin(phi)];
     }
 
+    // Free span: the wire actually hanging between the spool and the paddle.
+    //
+    // Not the same as the length the controller commands. The wire leaves
+    // the spool at a TANGENT, so the visible run is sqrt(d^2 - r^2) rather
+    // than the centre-to-centre distance; and the controller's number also
+    // carries a wrap term for wire wound onto the spool, which is real cable
+    // but is not hanging in the air. This is the one you can go and measure
+    // with a tape, so it is the one drawn.
+    function freeSpan(m, gx, gy, thetaRad) {
+        const [ax, ay] = attach(m, gx, gy, thetaRad);
+        const dx = ax - geom.motors[m].x, dy = ay - geom.motors[m].y;
+        const d = Math.hypot(dx, dy);
+        const r = geom.spool_radius;
+        return d <= r ? 0 : Math.sqrt(d * d - r * r);
+    }
+
+    const spans = (gx, gy, th) =>
+        [0, 1, 2, 3].map((m) => freeSpan(m, gx, gy, th));
+
     // A paddle plus the four cables the model has running to it. Drawing the
     // cables is what makes a wrong pose obvious: they visibly stop pointing
     // at the spools.
     function paddle(gx, gy, thetaRad, colour, label, withCables) {
         if (withCables) {
+            c.save();
+            c.font = '10px ui-monospace, Menlo, monospace';
+            c.fillStyle = C.cableText;
+            c.textAlign = 'center';
             for (let m = 0; m < 4; m++) {
                 const [ax, ay] = attach(m, gx, gy, thetaRad);
-                line(ax, ay, geom.motors[m].x, geom.motors[m].y, C.cable, 1);
+                const mo = geom.motors[m];
+                line(ax, ay, mo.x, mo.y, C.cable, 1);
+                // Label at 55% toward the spool: far enough from the paddle
+                // that the four numbers do not pile up on each other.
+                const [lx, ly] = P(ax + (mo.x - ax) * 0.55,
+                                   ay + (mo.y - ay) * 0.55);
+                c.fillText(freeSpan(m, gx, gy, thetaRad).toFixed(0), lx, ly - 3);
             }
+            c.restore();
         }
         const [px, py] = P(gx, gy);
         const r = Math.max(4, geom.attach_r * T.s);
@@ -923,8 +954,13 @@ initReplayMode();
             c.moveTo(mx - 7, my); c.lineTo(mx + 7, my);
             c.moveTo(mx, my - 7); c.lineTo(mx, my + 7);
             c.stroke();
+            // Label toward the table, not outward — the anchors sit at the
+            // very edge of the drawing and an outward label gets clipped.
+            const inward = m.y > (g.rails.min_y + g.rails.max_y) / 2;
             c.fillStyle = C.motor;
-            c.fillText('M' + i, mx + 9, my + 3);
+            c.textAlign = inward ? 'right' : 'left';
+            c.fillText('M' + i, mx + (inward ? -9 : 9), my + 3);
+            c.textAlign = 'left';
         });
         c.restore();
 
@@ -942,8 +978,12 @@ initReplayMode();
             paddle(hw.x_mm, hw.y_mm, nomTh, C.enc, 'controller', true);
         }
         if (camPose) {
+            // With no hardware there is no controller pose to hang the
+            // cables off, so draw them from the measured one instead —
+            // otherwise the wire lengths are invisible until the drives are
+            // up, which is exactly when you want to check them.
             paddle(camPose.x, camPose.y, camPose.theta_deg * Math.PI / 180,
-                   C.cam, 'camera', false);
+                   C.cam, 'camera', !hw);
         }
 
         const L = [];
@@ -962,17 +1002,35 @@ initReplayMode();
         }
         if (hw) {
             L.push(`target   x ${hw.cmd_x_mm.toFixed(1).padStart(7)}  y ${hw.cmd_y_mm.toFixed(1).padStart(6)}   ${hw.speed_mm_s} mm/s`);
+        }
+
+        const row = (name, vals, dp) => L.push(
+            name.padEnd(9) + vals.map((v) => (v === null || v === undefined
+                ? '     --' : v.toFixed(dp).padStart(7))).join(' '));
+
+        if (hw || camPose) {
             L.push('');
             L.push('cable            M0      M1      M2      M3');
-            const row = (name, vals, dp) => L.push(
-                name.padEnd(9) + vals.map((v) => (v === null || v === undefined
-                    ? '     --' : v.toFixed(dp).padStart(7))).join(' '));
+            // Wire hanging between each spool and the paddle. Two poses give
+            // two answers; if they disagree the cables in the drawing are
+            // not the cables on the table.
+            if (camPose) {
+                row('wire cam', spans(camPose.x, camPose.y,
+                                      camPose.theta_deg * Math.PI / 180), 1);
+            }
+            if (hw) row('wire ctl', spans(hw.x_mm, hw.y_mm, nomTh), 1);
+            if (hw && camPose) {
+                const a = spans(camPose.x, camPose.y,
+                                camPose.theta_deg * Math.PI / 180);
+                const b = spans(hw.x_mm, hw.y_mm, nomTh);
+                row('wire Δ', a.map((v, i) => v - b[i]), 1);
+            }
             // Commanded vs measured, per cable. The Teensy's steps are what
             // it asked for; the drive encoders are what happened. A row that
             // disagrees points at that motor, not at the kinematics.
-            if (hw.step_mm) row('stepped', hw.step_mm, 1);
-            if (hw.enc_mm) row('measured', hw.enc_mm, 1);
-            if (hw.trq_pct) row('torque %', hw.trq_pct, 0);
+            if (hw && hw.step_mm) row('stepped', hw.step_mm, 1);
+            if (hw && hw.enc_mm) row('measured', hw.enc_mm, 1);
+            if (hw && hw.trq_pct) row('torque %', hw.trq_pct, 0);
         }
         readout.textContent = L.join('\n');
     }

@@ -1,7 +1,8 @@
 === CDPR Master ===
-Opening Teensy on /dev/ttyACM0
+Opening Teensy on /dev/ttyACM1
 Teensy connected.
 Motors connected (not yet enabled).
 Listening on localhost:8421
 Ctrl+C to stop.
 
+  Teensy: CDPR ready (speed limit 40 mm/s)

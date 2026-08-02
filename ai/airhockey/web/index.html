@@ -51,7 +51,7 @@
             </aside>
             <aside id="state-panel" class="hidden">
                 <div id="state-head">
-                    <h3 title="Everything the software believes, drawn to scale in the table's own frame. Cyan = where the CAMERA says the paddle is. Amber = where the CONTROLLER thinks it is, from the steps it emitted, with the four cables it believes it is pulling. They should sit on top of each other; the gap between them is the model error. The cable table below compares steps commanded against what the drives' own encoders measured — a row that disagrees is a motor problem, not a kinematics one. Grey = table and rails, magenta = centreline, dashed = the workspace.">State view &#9432;</h3>
+                    <h3 title="Everything the software believes, drawn to scale in the table's own frame. Cyan = where the CAMERA says the paddle is. Amber = where the CONTROLLER thinks it is, from the steps it emitted, with the four cables it believes it is pulling. They should sit on top of each other; the gap between them is the model error. Each cable is labelled with its free span in mm — the wire actually hanging between spool and paddle, tangent to the spool, which is the length you can check with a tape. The table below gives those spans for both poses and compares steps commanded against what the drives' own encoders measured; a row that disagrees is a motor problem, not a kinematics one. Grey = table and rails, magenta = centreline, dashed = the workspace.">State view &#9432;</h3>
                     <button id="btn-state-collapse" class="icon-btn"
                             aria-expanded="true"
                             aria-label="Collapse state view">&#9650;</button>
