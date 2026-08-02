@@ -416,11 +416,12 @@ canvas {
 
 
 
-/* ── live tracker view ─────────────────────────────────────────── */
-/* Alongside the field as a peer, not a sidebar. The field canvas is
+/* ── tracker view and state view ───────────────────────────────── */
+/* All three are peers in the stage, not sidebars. The field canvas is
    height-limited by its 1:2 aspect and can never use the width it is given,
-   which is where the dead space came from; the tracker view is 3:4 so at the
-   same height it is genuinely wider. Both fill the vertical extent. */
+   which is where the dead space came from; the tracker view is 3:4 and the
+   state view roughly 1:2, so at the same height they are genuinely wider.
+   All fill the vertical extent. */
 #stage {
     flex: 1;
     display: flex;
@@ -430,7 +431,7 @@ canvas {
 
 #canvas-container { flex: 4 1 0; }
 
-#camera-panel {
+#camera-panel, #state-panel {
     flex: 6 1 0;
     min-width: 0;
     min-height: 0;
@@ -442,9 +443,14 @@ canvas {
     border: none;
 }
 
-#camera-panel.hidden { display: none; }
+/* The state view is a narrow portrait diagram (the table is roughly 4:7
+   once the anchors are included), so it reaches full height on less width
+   than the 3:4 camera frame. Giving it more would only be dead space. */
+#state-panel { flex: 3 1 0; padding-left: 12px; padding-right: 12px; }
 
-#camera-head {
+#camera-panel.hidden, #state-panel.hidden { display: none; }
+
+#camera-head, #state-head {
     display: flex;
     align-items: center;
     justify-content: space-between;
@@ -452,15 +458,15 @@ canvas {
     flex-shrink: 0;
 }
 
-#camera-head h3 { margin: 0; font-size: 13px; opacity: .7; }
+#camera-head h3, #state-head h3 { margin: 0; font-size: 13px; opacity: .7; }
 
-#btn-camera-collapse {
+#btn-camera-collapse, #btn-state-collapse {
     display: none;
     background: none; border: none; color: #888;
     font-size: 13px; cursor: pointer; padding: 4px 8px;
 }
 
-#camera-body {
+#camera-body, #state-body {
     flex: 1;
     min-height: 0;
     display: flex;
@@ -478,14 +484,25 @@ canvas {
     object-fit: contain;         /* fills the height; 3:4 sets the width */
 }
 
-#camera-status {
+#state-canvas {
+    flex: 1;
+    min-height: 0;
+    width: 100%;
+    display: block;
+    border-radius: 10px;
+    background: #0a0a12;
+    cursor: default;
+}
+
+#camera-status, #state-readout {
     font: 12px ui-monospace, Menlo, monospace;
     opacity: .85;
     font-variant-numeric: tabular-nums;
     flex-shrink: 0;
     text-align: center;
 }
-#camera-status.bad { color: #ff8080; }
+#camera-status.bad, #state-readout.bad { color: #ff8080; }
+#state-readout { white-space: pre; line-height: 1.5; font-size: 11px; }
 
 /* The explanation is reference material, not something to read every time:
    it lives on the heading's tooltip on desktop. */
@@ -496,7 +513,7 @@ canvas {
 
     #canvas-container { flex: 1 1 auto; }
 
-    #camera-panel {
+    #camera-panel, #state-panel {
         flex: 0 0 auto;
         max-height: 58vh;
         padding: 8px 12px 10px;
@@ -504,10 +521,12 @@ canvas {
         background: #12121a;
     }
 
-    #camera-img { min-height: 200px; }
+    #camera-img, #state-canvas { min-height: 200px; }
 
     /* Collapse hides the view but leaves the camera running — stopping it
        releases the Spinnaker device, which other tools need. */
-    #btn-camera-collapse { display: block; }
-    #camera-panel.collapsed { max-height: none; }
+    #btn-camera-collapse, #btn-state-collapse { display: block; }
+    #camera-panel.collapsed, #state-panel.collapsed { max-height: none; }
+    #camera-panel.collapsed #camera-body,
+    #state-panel.collapsed #state-body { display: none; }
 }

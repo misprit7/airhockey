@@ -49,6 +49,18 @@
                         orange = paddle with orientation.</div>
                 </div>
             </aside>
+            <aside id="state-panel" class="hidden">
+                <div id="state-head">
+                    <h3 title="Everything the software believes, drawn to scale in the table's own frame. Cyan = where the CAMERA says the paddle is. Amber = where the CONTROLLER thinks it is, from step counts, with the four cables it believes it is pulling. They should sit on top of each other; the gap between them is the model error. Grey = table and rails, magenta = centreline, dashed = the workspace the paddle is allowed into.">State view &#9432;</h3>
+                    <button id="btn-state-collapse" class="icon-btn"
+                            aria-expanded="true"
+                            aria-label="Collapse state view">&#9650;</button>
+                </div>
+                <div id="state-body">
+                    <canvas id="state-canvas"></canvas>
+                    <div id="state-readout">no data</div>
+                </div>
+            </aside>
         </div>
         <div id="sidebar" class="hidden-mobile">
             <h1>Air Hockey</h1>
@@ -59,6 +71,8 @@
                 <button id="btn-physics">Physics: Realistic</button>
                 <button id="btn-hardware">Hardware: Off</button>
                 <button id="btn-camera">Camera: Off</button>
+                <button id="btn-state">State view: Off</button>
+                <button id="btn-control" title="Follow: the paddle chases the pointer continuously. Click: it only moves when you click, and holds position otherwise.">Control: Follow</button>
                 <label id="hw-overlay-toggle" class="hidden">
                     <input type="checkbox" id="chk-hw-overlay" checked>
                     Show hardware position

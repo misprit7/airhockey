@@ -4,6 +4,7 @@ from __future__ import annotations
 
 import asyncio
 import json
+import math
 import time
 from pathlib import Path
 
@@ -100,6 +101,35 @@ async def get_recording(filename: str):
         return {"frames": frames, "metadata": metadata}
     # Old row-based format (no metadata)
     return {"frames": data, "metadata": None}
+
+
+@app.get("/api/geometry")
+async def geometry():
+    """The canonical geometry, for the browser to draw the state view with.
+
+    Served rather than duplicated in JS on purpose: shared/cdpr_geometry.py
+    is the one Python copy of the header, and a fourth transcription in the
+    front end is exactly the drift the shared header exists to prevent.
+    """
+    import sys as _sys
+    from pathlib import Path as _P
+    _sys.path.insert(0, str(_P(__file__).resolve().parents[2] / "shared"))
+    import cdpr_geometry as g
+
+    return {
+        "grid": {"x": g.GRID_X_MM, "y": g.GRID_Y_MM},
+        "rails": {"min_x": g.RAIL_MIN_X, "max_x": g.RAIL_MAX_X,
+                  "min_y": g.RAIL_MIN_Y, "max_y": g.RAIL_MAX_Y},
+        "centerline_x": g.CENTERLINE_X,
+        "workspace": {"min_x": g.WS_MIN_X, "max_x": g.WS_MAX_X,
+                      "min_y": g.WS_MIN_Y, "max_y": g.WS_MAX_Y},
+        "motors": [{"x": g.MOTOR_X[m], "y": g.MOTOR_Y[m]} for m in range(4)],
+        "home": {"x": g.HOME_X, "y": g.HOME_Y},
+        "attach_r": g.ATTACH_R_MM,
+        "attach_chirality": g.ATTACH_CHIRALITY,
+        "nominal_theta_deg": math.degrees(g.MALLET_THETA_RAD),
+        "spool_radius": g.SPOOL_RADIUS_MM,
+    }
 
 
 @app.get("/camera/status")
@@ -292,6 +322,7 @@ async def live_game(ws: WebSocket):
                 hw_x_mm, hw_y_mm = hardware_dynamics.get_hw_position_mm()
                 frame_msg["hw_x_mm"] = round(hw_x_mm, 1)
                 frame_msg["hw_y_mm"] = round(hw_y_mm, 1)
+                frame_msg["hw"] = hardware_dynamics.hw_state()
             await ws.send_json(frame_msg)
 
             if terminated or truncated:

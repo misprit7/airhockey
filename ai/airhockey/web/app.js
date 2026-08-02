@@ -386,23 +386,52 @@ function screenToPhysics(clientX, clientY) {
     return { x: clampedX, y: clampedY };
 }
 
-// Mouse control
-canvas.addEventListener("mousemove", (e) => {
+// Mouse control.
+//
+// "follow" chases the pointer continuously; "click" only issues a target
+// when you commit to one and holds position otherwise. On hardware the
+// difference matters: continuous following turns every twitch of the hand
+// into a commanded move, which is the wrong thing to be watching while you
+// are still checking whether a single commanded move lands where it should.
+let controlMode = "follow";   // "follow" | "click"
+
+function sendTarget(clientX, clientY) {
     if (mode !== "live" || !ws || !config) return;
-    const pos = screenToPhysics(e.clientX, e.clientY);
+    const pos = screenToPhysics(clientX, clientY);
+    lastCommandedSim = pos;
     ws.send(JSON.stringify({ type: "move", ...pos }));
+}
+let lastCommandedSim = null;
+
+canvas.addEventListener("mousemove", (e) => {
+    if (controlMode !== "follow") return;
+    sendTarget(e.clientX, e.clientY);
 });
 
-// Touch control for mobile
+canvas.addEventListener("click", (e) => {
+    sendTarget(e.clientX, e.clientY);
+});
+
+// Touch control for mobile. A tap is the touch equivalent of a click, so it
+// commits in either mode; dragging only steers in follow mode.
 function handleTouch(e) {
     e.preventDefault();
-    if (mode !== "live" || !ws || !config) return;
+    if (e.type === "touchmove" && controlMode !== "follow") return;
     const touch = e.touches[0];
-    const pos = screenToPhysics(touch.clientX, touch.clientY);
-    ws.send(JSON.stringify({ type: "move", ...pos }));
+    if (!touch) return;
+    sendTarget(touch.clientX, touch.clientY);
 }
 canvas.addEventListener("touchstart", handleTouch, { passive: false });
 canvas.addEventListener("touchmove", handleTouch, { passive: false });
+
+document.getElementById("btn-control").addEventListener("click", () => {
+    controlMode = controlMode === "follow" ? "click" : "follow";
+    const btn = document.getElementById("btn-control");
+    btn.textContent = controlMode === "follow"
+        ? "Control: Follow" : "Control: Click";
+    btn.style.backgroundColor = controlMode === "click" ? "#3a4a7a" : "";
+    canvas.style.cursor = controlMode === "click" ? "pointer" : "crosshair";
+});
 
 // Buttons
 document.getElementById("btn-reset").addEventListener("click", () => {
@@ -727,6 +756,7 @@ initReplayMode();
         on = !on;
         btn.textContent = on ? 'Camera: On' : 'Camera: Off';
         panel.classList.toggle('hidden', !on);
+        resize();                          // the field canvas re-fits too
         if (on) {
             const s = await (await fetch('/camera/start', {method: 'POST'})).json();
             paint(s);
@@ -739,5 +769,245 @@ initReplayMode();
             img.removeAttribute('src');
             await fetch('/camera/stop', {method: 'POST'});
         }
+    });
+})();
+
+
+// ── live state view ────────────────────────────────────────────────
+// A scale drawing of what the software believes, in the table's own frame.
+//
+// The point is comparison, not decoration. The camera and the step counts
+// are two independent answers to "where is the paddle", and the only way to
+// tell a kinematics error from a calibration error from a mechanical one is
+// to see both answers at once, in millimetres, against the geometry the
+// controller is actually using. So both are drawn, and the gap between them
+// is stated numerically.
+//
+// Orientation matches the tracker view beside it: the table's long axis
+// (grid x) runs vertically with the robot end at the BOTTOM, and grid y
+// increases to the right.
+(() => {
+    const btn = document.getElementById('btn-state');
+    const panel = document.getElementById('state-panel');
+    const cv = document.getElementById('state-canvas');
+    const readout = document.getElementById('state-readout');
+    if (!btn || !cv) return;
+
+    const c = cv.getContext('2d');
+    let geom = null, on = false, poll = null, camPose = null, camNote = null;
+
+    const C = {
+        felt: '#13251c',
+        rail: '#3a7a5a',
+        grid: '#5a5a6a',
+        stripe: '#c060c0',
+        ws: '#6a8a6a',
+        motor: '#e6e64a',
+        cable: 'rgba(255,176,64,0.55)',
+        enc: '#ffb040',       // controller / step counts
+        cam: '#40d8ff',       // camera
+        cmd: '#8a8a9a',
+        text: '#c8c8d4',
+    };
+
+    // Drawing bounds include the motors, which sit OUTSIDE the rails in y —
+    // clipping them to the table would hide the fact that the anchors are
+    // wider than the playfield, which is the whole shape of the problem.
+    function bounds() {
+        const r = geom.rails;
+        let x0 = r.min_x, x1 = r.max_x, y0 = r.min_y, y1 = r.max_y;
+        for (const m of geom.motors) {
+            x0 = Math.min(x0, m.x); x1 = Math.max(x1, m.x);
+            y0 = Math.min(y0, m.y); y1 = Math.max(y1, m.y);
+        }
+        const pad = 45;
+        return { x0: x0 - pad, x1: x1 + pad, y0: y0 - pad, y1: y1 + pad };
+    }
+
+    let T = null;   // grid mm -> css px
+    function layout() {
+        const box = cv.getBoundingClientRect();
+        const dpr = window.devicePixelRatio || 1;
+        cv.width = Math.max(1, Math.round(box.width * dpr));
+        cv.height = Math.max(1, Math.round(box.height * dpr));
+        c.setTransform(dpr, 0, 0, dpr, 0, 0);
+        if (!geom) return;
+        const b = bounds();
+        const s = Math.min(box.width / (b.y1 - b.y0),
+                           box.height / (b.x1 - b.x0));
+        const ox = (box.width - (b.y1 - b.y0) * s) / 2;
+        const oy = (box.height - (b.x1 - b.x0) * s) / 2;
+        T = { s, b, ox, oy, w: box.width, h: box.height };
+    }
+
+    // grid (x, y) mm -> canvas px. Grid x is VERTICAL (down), y horizontal.
+    const P = (gx, gy) => [T.ox + (gy - T.b.y0) * T.s,
+                           T.oy + (gx - T.b.x0) * T.s];
+
+    function rect(x0, y0, x1, y1, stroke, fill, dash) {
+        const [ax, ay] = P(x0, y0), [bx, by] = P(x1, y1);
+        c.save();
+        c.setLineDash(dash || []);
+        if (fill) { c.fillStyle = fill; c.fillRect(ax, ay, bx - ax, by - ay); }
+        if (stroke) {
+            c.strokeStyle = stroke; c.lineWidth = 1;
+            c.strokeRect(ax, ay, bx - ax, by - ay);
+        }
+        c.restore();
+    }
+
+    function line(x0, y0, x1, y1, stroke, width, dash) {
+        const [ax, ay] = P(x0, y0), [bx, by] = P(x1, y1);
+        c.save();
+        c.setLineDash(dash || []);
+        c.strokeStyle = stroke; c.lineWidth = width || 1;
+        c.beginPath(); c.moveTo(ax, ay); c.lineTo(bx, by); c.stroke();
+        c.restore();
+    }
+
+    function attach(m, gx, gy, thetaRad) {
+        const phi = thetaRad + geom.attach_chirality * (Math.PI / 2) * m;
+        return [gx + geom.attach_r * Math.cos(phi),
+                gy + geom.attach_r * Math.sin(phi)];
+    }
+
+    // A paddle plus the four cables the model has running to it. Drawing the
+    // cables is what makes a wrong pose obvious: they visibly stop pointing
+    // at the spools.
+    function paddle(gx, gy, thetaRad, colour, label, withCables) {
+        if (withCables) {
+            for (let m = 0; m < 4; m++) {
+                const [ax, ay] = attach(m, gx, gy, thetaRad);
+                line(ax, ay, geom.motors[m].x, geom.motors[m].y, C.cable, 1);
+            }
+        }
+        const [px, py] = P(gx, gy);
+        const r = Math.max(4, geom.attach_r * T.s);
+        c.save();
+        c.strokeStyle = colour; c.lineWidth = 2;
+        c.beginPath(); c.arc(px, py, r, 0, Math.PI * 2); c.stroke();
+        // Orientation arm — theta is a real degree of freedom here, so it
+        // gets drawn rather than assumed away.
+        const [tx, ty] = P(gx + geom.attach_r * 1.9 * Math.cos(thetaRad),
+                           gy + geom.attach_r * 1.9 * Math.sin(thetaRad));
+        c.beginPath(); c.moveTo(px, py); c.lineTo(tx, ty); c.stroke();
+        c.fillStyle = colour;
+        c.beginPath(); c.arc(px, py, 2.5, 0, Math.PI * 2); c.fill();
+        c.font = '10px ui-monospace, Menlo, monospace';
+        c.fillText(label, px + r + 4, py - r - 2);
+        c.restore();
+    }
+
+    function draw() {
+        if (!on) return;
+        requestAnimationFrame(draw);
+        if (!geom || !T) return;
+        c.clearRect(0, 0, T.w, T.h);
+
+        const g = geom;
+        rect(g.rails.min_x, g.rails.min_y, g.rails.max_x, g.rails.max_y,
+             C.rail, C.felt);
+        rect(0, 0, g.grid.x, g.grid.y, C.grid);
+        line(g.centerline_x, g.rails.min_y, g.centerline_x, g.rails.max_y,
+             C.stripe, 1.5);
+        rect(g.workspace.min_x, g.workspace.min_y,
+             g.workspace.max_x, g.workspace.max_y, C.ws, null, [5, 4]);
+
+        c.save();
+        c.font = '10px ui-monospace, Menlo, monospace';
+        g.motors.forEach((m, i) => {
+            const [mx, my] = P(m.x, m.y);
+            c.strokeStyle = C.motor; c.lineWidth = 1.5;
+            c.beginPath(); c.arc(mx, my, 5, 0, Math.PI * 2); c.stroke();
+            c.beginPath();
+            c.moveTo(mx - 7, my); c.lineTo(mx + 7, my);
+            c.moveTo(mx, my - 7); c.lineTo(mx, my + 7);
+            c.stroke();
+            c.fillStyle = C.motor;
+            c.fillText('M' + i, mx + 9, my + 3);
+        });
+        c.restore();
+
+        const hw = frame && frame.hw ? frame.hw : null;
+        const nomTh = g.nominal_theta_deg * Math.PI / 180;
+
+        if (hw) {
+            const [cx, cy] = P(hw.cmd_x_mm, hw.cmd_y_mm);
+            c.save();
+            c.strokeStyle = C.cmd; c.lineWidth = 1; c.setLineDash([3, 3]);
+            c.beginPath();
+            c.moveTo(cx - 6, cy); c.lineTo(cx + 6, cy);
+            c.moveTo(cx, cy - 6); c.lineTo(cx, cy + 6);
+            c.stroke(); c.restore();
+            paddle(hw.x_mm, hw.y_mm, nomTh, C.enc, 'encoder', true);
+        }
+        if (camPose) {
+            paddle(camPose.x, camPose.y, camPose.theta_deg * Math.PI / 180,
+                   C.cam, 'camera', false);
+        }
+
+        const L = [];
+        L.push(camPose
+            ? `camera   x ${camPose.x.toFixed(1).padStart(7)}  y ${camPose.y.toFixed(1).padStart(6)}   θ ${camPose.theta_deg.toFixed(1)}°`
+            : `camera   ${camNote || 'not running'}`);
+        L.push(hw
+            ? `encoder  x ${hw.x_mm.toFixed(1).padStart(7)}  y ${hw.y_mm.toFixed(1).padStart(6)}   θ ${g.nominal_theta_deg.toFixed(1)}° assumed`
+            : 'encoder  hardware off');
+        if (hw && camPose) {
+            const dx = camPose.x - hw.x_mm, dy = camPose.y - hw.y_mm;
+            L.push(`Δ        x ${dx.toFixed(1).padStart(7)}  y ${dy.toFixed(1).padStart(6)}   |Δ| ${Math.hypot(dx, dy).toFixed(1)} mm`);
+        }
+        if (hw) {
+            L.push(`counts   ${hw.counts.map((v) => String(v).padStart(7)).join(' ')}`);
+            L.push(`target   x ${hw.cmd_x_mm.toFixed(1).padStart(7)}  y ${hw.cmd_y_mm.toFixed(1).padStart(6)}   ${hw.speed_mm_s} mm/s`);
+        }
+        readout.textContent = L.join('\n');
+    }
+
+    const collapse = document.getElementById('btn-state-collapse');
+    if (collapse) {
+        collapse.addEventListener('click', () => {
+            const shut = panel.classList.toggle('collapsed');
+            collapse.textContent = shut ? '▼' : '▲';
+            collapse.setAttribute('aria-expanded', String(!shut));
+            collapse.setAttribute('aria-label',
+                shut ? 'Expand state view' : 'Collapse state view');
+        });
+    }
+
+    // The canvas resizes whenever ANOTHER panel is toggled, not just on
+    // window resize, so watch the element rather than the window.
+    if (window.ResizeObserver) {
+        new ResizeObserver(() => { if (on && geom) layout(); }).observe(cv);
+    } else {
+        window.addEventListener('resize', () => { if (on) layout(); });
+    }
+
+    btn.addEventListener('click', async () => {
+        on = !on;
+        btn.textContent = on ? 'State view: On' : 'State view: Off';
+        panel.classList.toggle('hidden', !on);
+        resize();                          // the field canvas re-fits too
+        if (!on) { clearInterval(poll); poll = null; return; }
+        if (!geom) {
+            try {
+                geom = await (await fetch('/api/geometry')).json();
+            } catch (e) {
+                readout.textContent = 'geometry unavailable: ' + e;
+                readout.classList.add('bad');
+                return;
+            }
+        }
+        layout();
+        // The camera pose comes from the same endpoint the tracker view
+        // polls; it is simply null while the camera is off.
+        poll = setInterval(async () => {
+            try {
+                const s = await (await fetch('/camera/status')).json();
+                camPose = s.pose || null;
+                camNote = s.error || s.note || (s.running ? 'searching…' : 'not running');
+            } catch (e) { camPose = null; camNote = 'status unavailable'; }
+        }, 150);
+        requestAnimationFrame(draw);
     });
 })();

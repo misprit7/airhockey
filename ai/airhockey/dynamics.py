@@ -191,18 +191,19 @@ class HardwareDynamics(MotorDynamics):
         self._last_hw_send = 0.0
         self._hw_x_mm = geom.HOME_X
         self._hw_y_mm = geom.HOME_Y
+        self._hw_counts = [0, 0, 0, 0]
+        self._cmd_x_mm = geom.HOME_X
+        self._cmd_y_mm = geom.HOME_Y
 
     def set_speed(self, mm_s: float) -> None:
         self.speed = max(1.0, min(float(mm_s), self.max_speed))
 
     def reset(self, x: float, y: float) -> None:
         try:
-            mm_x, mm_y, _, _ = self.client.get_position()
-            self._hw_x_mm = mm_x
-            self._hw_y_mm = mm_y
-            self.x, self.y = self._mm_to_sim(mm_x, mm_y)
-            print(f"  HW reset: at ({mm_x:.1f}, {mm_y:.1f}) mm = sim "
-                  f"({self.x:.3f}, {self.y:.3f})")
+            self._read_state()
+            self.x, self.y = self._mm_to_sim(self._hw_x_mm, self._hw_y_mm)
+            print(f"  HW reset: at ({self._hw_x_mm:.1f}, {self._hw_y_mm:.1f})"
+                  f" mm = sim ({self.x:.3f}, {self.y:.3f})")
         except Exception as e:
             print(f"  HW reset: failed to read position: {e}, using sim coords")
             self.x = x
@@ -210,22 +211,42 @@ class HardwareDynamics(MotorDynamics):
 
     def update(self, target_x: float, target_y: float, dt: float):
         mm_x, mm_y = self._sim_to_mm(target_x, target_y)
+        self._cmd_x_mm, self._cmd_y_mm = mm_x, mm_y
         now = self._time.monotonic()
         if now - self._last_hw_send >= 1.0 / self._hw_rate:
             self._last_hw_send = now
             try:
                 self.client.command_position(mm_x, mm_y, self.speed)
-                act_x, act_y, _, _ = self.client.get_position()
-                self._hw_x_mm = act_x
-                self._hw_y_mm = act_y
-                self.x, self.y = self._mm_to_sim(act_x, act_y)
+                self._read_state()
+                self.x, self.y = self._mm_to_sim(self._hw_x_mm, self._hw_y_mm)
             except Exception as e:
                 print(f"HardwareDynamics: command failed: {e}")
         return self.x, self.y
 
+    def _read_state(self) -> None:
+        """One STATUS round trip instead of POS: the step counts come back
+        for free and they are the only record of what the machine believes
+        per cable, which is what a position disagreement has to be traced
+        through."""
+        s = self.client.get_status()
+        self._hw_x_mm, self._hw_y_mm = s["x"], s["y"]
+        self._hw_counts = [s["c0"], s["c1"], s["c2"], s["c3"]]
+
     def get_hw_position_mm(self):
         """Last known hardware position in mm (grid frame)."""
         return self._hw_x_mm, self._hw_y_mm
+
+    def hw_state(self) -> dict:
+        """Everything the controller believes, in grid mm — for the live
+        state view, which exists to be compared against the camera."""
+        return {
+            "x_mm": round(self._hw_x_mm, 1),
+            "y_mm": round(self._hw_y_mm, 1),
+            "cmd_x_mm": round(self._cmd_x_mm, 1),
+            "cmd_y_mm": round(self._cmd_y_mm, 1),
+            "counts": list(self._hw_counts),
+            "speed_mm_s": round(self.speed, 1),
+        }
 
     def _sim_to_mm(self, sx: float, sy: float):
         """Sim metres -> grid-frame mm, clamped into the workspace."""
