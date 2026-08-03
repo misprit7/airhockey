@@ -59,7 +59,10 @@ Robotic air hockey table that uses reinforcement learning trained in simulation,
     `capture_intrinsics.py` (continuous, self-selecting ChArUco capture),
     `calibrate_intrinsics.py`, `check_intrinsics.py` (coverage +
     distortion-extrapolation audit), `calibrate_extrinsics.py`,
-    `measure_motors.py`, `track_mallet.py` (mallet position at z=67mm),
+    `measure_anchors.py` (motor anchors from retroreflectors on the spool
+    axes — supersedes `measure_motors.py`, which fitted ellipses to the
+    spool top faces at an assumed height), `measure_motors.py`,
+    `track_mallet.py` (mallet position at z=67mm),
     `calib_report.py`, `table_grid.py`, `gen_targets.py`, `snap.cpp`
   - `calib/` - Solved intrinsics, extrinsics, marker and motor-anchor JSON
   - `Makefile` - Builds sFoundation library and control programs
