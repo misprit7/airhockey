@@ -265,12 +265,24 @@ async def live_game(ws: WebSocket):
                                     sim_height=cfg.height,
                                     cal_pose_mm=cal_pose,
                                 )
-                                hw_center_x = cfg.width / 2
-                                hw_center_y = cfg.height / 4
+                                # Target the paddle where it ALREADY IS, not
+                                # the middle of the workspace. Enabling used
+                                # to command a move to HOME the instant the
+                                # drives came up — so the first thing the rig
+                                # ever did was move, before anyone had asked
+                                # it to and before there was any chance to
+                                # see whether it was going to behave. Now
+                                # nothing is commanded until you click, which
+                                # also makes "does it misbehave while merely
+                                # energized?" a question you can answer.
+                                sx, sy = hardware_dynamics._mm_to_sim(mx, my)
                                 env.agent_dynamics = hardware_dynamics
-                                env.agent_dynamics.reset(hw_center_x, hw_center_y)
-                                target_x = hw_center_x
-                                target_y = hw_center_y
+                                env.agent_dynamics.reset(sx, sy)
+                                target_x = sx
+                                target_y = sy
+                                print(f"  HW: holding at the measured pose, "
+                                      f"sim ({sx:.3f}, {sy:.3f}) — nothing "
+                                      f"commanded until you click")
                             except Exception as e:
                                 print(f"Hardware connect failed: {e}")
                                 use_hardware = False
