@@ -35,7 +35,10 @@ MOTOR_X = [1067.6, 2043.3, 2046.6, 1063.0]
 MOTOR_Y = [1082.0, 1041.2, -96.7, -139.7]
 
 # ── Spool ──
-SPOOL_RADIUS_MM = 35.0
+# McMaster 6245K418 pulley, 4 in OD, stated effective diameter 3.25 in.
+# The single largest scale factor in the machine — see the header, including
+# why the catalogue number needs checking against a wound-turns measurement.
+SPOOL_RADIUS_MM = 41.275
 SPOOL_CIRCUMFERENCE_MM = 2.0 * math.pi * SPOOL_RADIUS_MM
 WINDING_SIDE = [-1.0, 1.0, -1.0, 1.0]   # UNVERIFIED — see the header
 RETRACT_CW = [True, False, True, False]

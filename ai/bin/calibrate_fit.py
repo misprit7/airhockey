@@ -44,9 +44,11 @@ RETRACT_SIGN = np.array([-1.0, 1.0, -1.0, 1.0])  # API count sign that retracts
 SIDES = np.array(geom.WINDING_SIDE)              # winding side — still unverified
 CHIRALITY_CONFIRMED = -1  # arms 0-3 run CLOCKWISE around the mallet (hardware)
 
-# Initial anchor guess — MEASURED optically 2026-08-01 (spool tops on the
-# z = 36 mm plane through the calibrated camera pose); source of truth is
-# vision/calib/motor_anchors.json, mirrored in fw/include/cdpr_config.h.
+# Initial anchor guess — pulled from shared/cdpr_geometry.py, which is the
+# one Python copy of the header. Measured 2026-08-02 from retroreflectors
+# on the spool axes, with the plane height fitted to caliper measurements
+# against the air-hole grid; source of truth is
+# vision/calib/motor_anchors.json.
 # GRID frame: origin at the corner hole nearest the human's right corner
 # (the old rail-corner origin is at roughly (-19, -33) in this frame).
 #

@@ -121,15 +121,32 @@ constexpr float MOTOR_Y[NUM_MOTORS] = {
 
 // ── Spool ───────────────────────────────────────────────────────────
 //
-// Flat spool, motor shaft vertical, wire winds at radius 35 mm. This is the
-// WINDING radius where the cable sits — deliberately not the ~76 mm
-// top-face flange diameter the vision measurement reports, which is the
-// outer disc and is used only as a calibration cross-check.
+// Motor shaft vertical. This is the WINDING radius — where the cable
+// actually sits — which is the single largest scale factor in the machine:
+// every commanded millimetre of paddle motion is converted through it, so a
+// 1% error here is a 1% error on every move, everywhere.
 //
-// The wire stacks on itself, so the effective winding radius grows slightly
+// 2026-08-02: the original 3D-printed spools were SLIPPING on their shafts
+// and were replaced with McMaster 6245K418 pulleys, 4 in OD with a stated
+// effective diameter of 3.25 in = 82.55 mm, hence r = 41.275 mm. That is
+// +18% on the old 35 mm, so every pre-2026-08-02 motion measurement was
+// taken at a different scale AND against slipping spools; none of it
+// carries over.
+//
+// !! VERIFY THIS BY MEASUREMENT, NOT FROM THE CATALOGUE. !!
+// For a V-groove pulley the quoted pitch/effective diameter is defined by
+// where a BELT of the matching section rides. A round cable is not a belt:
+// a thin wire sinks deeper into the groove and winds at a smaller radius,
+// and how much smaller depends on the wire diameter and the groove angle.
+// The definitive check needs no motion of the robot — with the drives down,
+// rotate one spool by hand through N whole turns and measure the cable paid
+// out. That length is N * 2 * pi * r directly; 10 turns is ~2593 mm at this
+// radius, so a tape good to 5 mm pins r to about 0.2%.
+//
+// The wire also stacks on itself, so the effective radius grows slightly
 // with wound length — a known position-dependent scale error, unmodelled.
 
-constexpr float SPOOL_RADIUS_MM = 35.0f;
+constexpr float SPOOL_RADIUS_MM = 41.275f; // 3.25 in effective diameter
 constexpr float SPOOL_CIRCUMFERENCE_MM = 2.0f * (float)M_PI * SPOOL_RADIUS_MM;
 
 // Which side of each spool the wire leaves, as a sign in the wrap term.

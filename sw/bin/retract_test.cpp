@@ -4,6 +4,7 @@
 #include <cmath>
 #include <string>
 #include <vector>
+#include "cdpr_geometry.h"
 #include "pubSysCls.h"
 
 using namespace sFnd;
@@ -31,10 +32,12 @@ using namespace sFnd;
 static volatile sig_atomic_t g_stop = 0;
 void sigHandler(int) { g_stop = 1; }
 
-static const double SPOOL_RADIUS_MM = 35.0;
-static const double SPOOL_CIRCUMFERENCE_MM = 2.0 * M_PI * SPOOL_RADIUS_MM;  // ~219.9mm
-
-static const bool RETRACT_CW[4] = {true, false, true, false};
+// Spool size and retraction sense come from the shared header, NOT from a
+// local copy. This file had its own SPOOL_RADIUS_MM = 35.0 and its own
+// RETRACT_CW until 2026-08-02, and when the spools were replaced the shared
+// header moved to 41.275 mm while this kept quietly converting millimetres
+// at the old scale — an 18% error in a tool whose entire job is to tell you
+// which way a motor turns.
 static const int CW_API_SIGN = -1;  // negative counts = clockwise
 
 static const double TEST_SPEED_MM_S = 5.0;   // slow: ~2 s per 10mm phase
@@ -88,7 +91,7 @@ int main(int argc, char *argv[]) {
     sa.sa_handler = sigHandler;
     sigaction(SIGINT, &sa, NULL);
 
-    double test_mm = 10.0;  // per-phase cable travel (~28 deg of spool)
+    double test_mm = 10.0;  // per-phase cable travel (~14 deg of spool)
     if (argc > 1)
         test_mm = atof(argv[1]);
 
