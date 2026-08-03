@@ -1,24 +1,24 @@
 {
   "date": "2026-08-02 22:51",
-  "method": "retroreflective marker on the spool axis, back-projected onto the calipered marker plane",
-  "marker_height_mm": 33.5,
+  "method": "retroreflective marker on each spool axis for the camera ray; caliper measurements against the air-hole grid for the position along it (see shared/cdpr_geometry.h)",
+  "marker_height_mm": 24.3,
   "bursts_averaged": 9,
   "anchors_mm": {
     "0": [
-      1067.0,
-      1078.1
+      1067.6,
+      1082.0
     ],
     "1": [
-      2036.5,
-      1037.6
+      2043.3,
+      1041.2
     ],
     "2": [
-      2039.8,
-      -93.1
+      2046.6,
+      -96.7
     ],
     "3": [
-      1062.4,
-      -135.8
+      1063.0,
+      -139.7
     ]
   },
   "spread_mm": {
@@ -38,5 +38,13 @@
       0.01,
       0.0
     ]
+  },
+  "marker_height_note": "EFFECTIVE plane, fitted to the calipers, not the calipered marker height of 33.5 mm. rms residual 1.38 mm against four caliper constraints.",
+  "calipers_mm": {
+    "0": "y = 144.5 past the row-37 hole line",
+    "1": "132.5 from the corner hole at (1955.8, 939.8)",
+    "2": "133.0 from the corner hole at (1955.8, 0)",
+    "3": "y = -139.5, i.e. 139.5 past the row-0 hole line",
+    "uncertainty_mm": 0.5
   }
 }
