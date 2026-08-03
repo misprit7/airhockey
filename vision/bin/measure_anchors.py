@@ -133,7 +133,13 @@ def main() -> int:
                     help="marker height above the PLAYING SURFACE (mm), "
                          "calipered to the top of the marker")
     ap.add_argument("--frames", type=int, default=25,
-                    help="frames to median together (default 25)")
+                    help="frames to median together per burst (default 25)")
+    ap.add_argument("--repeats", type=int, default=5,
+                    help="independent bursts to average (default 5). The "
+                         "spread across them is the honest precision of this "
+                         "measurement — a single burst repeats to only about "
+                         "1.5 mm, which is the same size as the errors being "
+                         "chased, so do not trust one.")
     ap.add_argument("--radius", type=float, default=90.0,
                     help="px search radius around the expected position")
     ap.add_argument("--exposure", type=int, default=1000)
@@ -148,46 +154,69 @@ def main() -> int:
     want = expected_pixels(K, dist, rvec, tvec, args.height)
 
     stream = Stream(args.exposure, args.gain)
+    bursts = []
     try:
-        frames = []
-        deadline = time.time() + 20.0
-        while len(frames) < args.frames and time.time() < deadline:
-            img = stream.grab()
-            if img is not None:
-                frames.append(img)
-        if not frames:
-            print("no frames — is the tracker view still holding the camera?")
-            return 1
-        # Median rather than mean: a single frame with a stray reflection
-        # then cannot drag a centroid, and the markers are static so there
-        # is no motion blur to worry about.
-        img = np.median(np.stack(frames), axis=0).astype(np.uint8)
+        for _ in range(max(1, args.repeats)):
+            frames = []
+            deadline = time.time() + 20.0
+            while len(frames) < args.frames and time.time() < deadline:
+                img = stream.grab()
+                if img is not None:
+                    frames.append(img)
+            if not frames:
+                break
+            # Median rather than mean: a single frame with a stray reflection
+            # then cannot drag a centroid, and the markers are static so
+            # there is no motion blur to worry about.
+            bursts.append(np.median(np.stack(frames), axis=0).astype(np.uint8))
     finally:
         stream.close()
-    print(f"{len(frames)} frames, median combined\n")
+    if not bursts:
+        print("no frames — is the tracker view still holding the camera?")
+        return 1
+    img = bursts[-1]
+    print(f"{len(bursts)} bursts of up to {args.frames} frames each\n")
 
-    glare = find_glare(img)
-    px = []
+    # Solve each burst independently and average the RESULTS, so the spread
+    # across bursts is a real error bar rather than a claim.
     h, w = img.shape[:2]
+    per_burst, last = [], [None] * 4
+    for b in bursts:
+        glare = find_glare(b)
+        px = []
+        for m in range(4):
+            hit = find_marker(b, glare, known, want[m], args.radius)
+            px.append(None if hit is None else hit)
+        if any(p is None for p in px):
+            continue
+        last = px
+        per_burst.append(backproject_pixels(
+            np.array([p[0] for p in px]), K, dist, rvec, tvec, args.height))
+
     for m in range(4):
-        hit = find_marker(img, glare, known, want[m], args.radius)
-        if hit is None:
+        if last[m] is None:
             print(f"  M{m}: NO MARKER within {args.radius:.0f} px of "
                   f"({want[m][0]:.0f}, {want[m][1]:.0f}). Widen --radius, or "
                   f"the marker is not visible from here.")
-            px.append(None)
-            continue
-        c, area, peak, bg = hit
-        edge = min(c[0], c[1], w - c[0], h - c[1])
-        warn = "   << within 60 px of the frame edge" if edge < 60 else ""
-        print(f"  M{m}: ({c[0]:7.1f}, {c[1]:7.1f}) px   "
-              f"{np.linalg.norm(c - want[m]):5.1f} px from prediction   "
-              f"area {area:3d}  peak {peak:3d} over bg {bg:.0f}{warn}")
-        px.append(c)
-    if any(p is None for p in px):
+        else:
+            c, area, peak, bg = last[m]
+            edge = min(c[0], c[1], w - c[0], h - c[1])
+            warn = "   << within 60 px of the frame edge" if edge < 60 else ""
+            print(f"  M{m}: ({c[0]:7.1f}, {c[1]:7.1f}) px   "
+                  f"{np.linalg.norm(c - want[m]):5.1f} px from prediction   "
+                  f"area {area:3d}  peak {peak:3d} over bg {bg:.0f}{warn}")
+    if not per_burst:
+        print("\nno burst resolved all four markers")
         return 1
+    px = [p[0] for p in last]
 
-    got = backproject_pixels(np.array(px), K, dist, rvec, tvec, args.height)
+    stack = np.stack(per_burst)              # (bursts, 4, 2)
+    got = stack.mean(axis=0)
+    spread = stack.max(axis=0) - stack.min(axis=0)
+    print(f"\n{len(per_burst)}/{len(bursts)} bursts resolved all four; "
+          f"spread across them (mm):")
+    for m in range(4):
+        print(f"   M{m}   x {spread[m][0]:4.1f}   y {spread[m][1]:4.1f}")
 
     print(f"\nback-projected onto z = {args.height} mm\n")
     print("   m      current (x, y)          measured (x, y)        moved")
@@ -227,9 +256,13 @@ def main() -> int:
             "method": "retroreflective marker on the spool axis, "
                       "back-projected onto the calipered marker plane",
             "marker_height_mm": args.height,
+            "bursts_averaged": len(per_burst),
             "anchors_mm": {str(m): [round(float(got[m][0]), 1),
                                     round(float(got[m][1]), 1)]
                            for m in range(4)},
+            "spread_mm": {str(m): [round(float(spread[m][0]), 2),
+                                   round(float(spread[m][1]), 2)]
+                          for m in range(4)},
         }, indent=2) + "\n")
         print(f"wrote {OUT_JSON}")
         print("\nPaste into shared/cdpr_geometry.h, then mirror into "

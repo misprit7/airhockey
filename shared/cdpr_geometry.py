@@ -26,9 +26,13 @@ RAIL_MAX_X = 1987.9
 RAIL_MIN_Y = -32.6
 RAIL_MAX_Y = 972.4
 
-# ── Motor anchors, measured optically 2026-08-01 ──
-MOTOR_X = [1067.1, 2030.6, 2031.6, 1064.1]
-MOTOR_Y = [1073.3, 1035.6, -87.7, -129.8]
+# ── Motor anchors ──
+# Measured 2026-08-02 from retroreflective markers on the spool axes,
+# back-projected onto the calipered z = 33.5 mm marker plane. Repeats to
+# 0.1 mm but is only good to a few mm in truth — all four sit outside the
+# region the extrinsics were fitted on. See the header.
+MOTOR_X = [1067.0, 2036.5, 2039.8, 1062.4]
+MOTOR_Y = [1078.1, 1037.6, -93.1, -135.8]
 
 # ── Spool ──
 SPOOL_RADIUS_MM = 35.0
@@ -54,7 +58,7 @@ WS_MAX_Y = 720.0
 HOME_X = (WS_MIN_X + WS_MAX_X) / 2.0   # 1480.0
 HOME_Y = (WS_MIN_Y + WS_MAX_Y) / 2.0   # 470.0
 
-WRAP_REF_ANGLE = [-0.970615, -2.342757, 2.350696, 0.964515]
+WRAP_REF_ANGLE = [-0.974191, -2.346320, 2.353256, 0.967263]
 
 # ── Heights above the playing surface ──
 MARKER_Z_MM = 3.3    # field markers, on 3D-printed mounts

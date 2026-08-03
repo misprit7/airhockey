@@ -68,31 +68,43 @@ constexpr float RAIL_MAX_Y = 972.4f;
 
 // ── Motor anchor positions ──────────────────────────────────────────
 //
-// MEASURED OPTICALLY 2026-08-01 by vision/bin/measure_motors.py: ellipse
-// fits to the white spool top faces, back-projected onto the plane
-// z = 36 mm through the calibrated camera pose. Source of truth is
+// MEASURED 2026-08-02 by vision/bin/measure_anchors.py: a retroreflective
+// marker sits on each spool's axis; its centroid is back-projected onto the
+// plane z = 33.5 mm (the marker height, calipered) through the calibrated
+// camera pose, averaged over 9 bursts. Source of truth is
 // vision/calib/motor_anchors.json.
 //
-// These are NOT a rectangle — the mid-table pair spans 1203 mm in y while
-// the robot-end pair spans 1123 mm, because the two pairs use different
+// This replaced an ellipse fit to the spool TOP FACES at an assumed 36 mm
+// (vision/bin/measure_motors.py), which inferred the axis from a dim,
+// partly-occluded outline. The anchors moved 4.8 to 9.8 mm.
+//
+// These are NOT a rectangle — the mid-table pair spans 1214 mm in y while
+// the robot-end pair spans 1131 mm, because the two pairs use different
 // mounting brackets. Any code that derives anchors from a width/height pair
 // is wrong by construction.
 //
-// Accuracy is dominated by the 36 mm spool-top height, not the image fit:
-// an error dh there shifts an anchor by 0.42*dh (mid-table pair) to
-// 0.84*dh (robot-end pair). Re-measure if the spools are re-mounted.
+// !! PRECISION IS NOT ACCURACY HERE. !!
+// The measurement repeats to 0.1 mm, and that number means very little. All
+// four anchors sit OUTSIDE the quadrilateral of the four markers the
+// extrinsics were fitted on (x 38..1918, y 38..902), so the distortion model
+// is extrapolating; M1 and M2 land 30-43 px from the frame edge at half the
+// brightness of the mid-table pair. Measured against the air-hole grid with
+// calipers, M3 reads about 140 mm outside row 0 where this says 135.8 — a
+// 4 mm residual that the marker method reduced but did not remove. Treat
+// these as good to a few millimetres, worst at the robot end, and re-measure
+// if the spools are re-mounted.
 
 constexpr float MOTOR_X[NUM_MOTORS] = {
-    1067.1f, // 0: mid-table, far side
-    2030.6f, // 1: robot corner, far side
-    2031.6f, // 2: robot corner, near side
-    1064.1f, // 3: mid-table, near side
+    1067.0f, // 0: mid-table, far side
+    2036.5f, // 1: robot corner, far side
+    2039.8f, // 2: robot corner, near side
+    1062.4f, // 3: mid-table, near side
 };
 constexpr float MOTOR_Y[NUM_MOTORS] = {
-    1073.3f, // 0
-    1035.6f, // 1
-    -87.7f,  // 2
-    -129.8f, // 3
+    1078.1f, // 0
+    1037.6f, // 1
+    -93.1f,  // 2
+    -135.8f, // 3
 };
 
 // ── Spool ───────────────────────────────────────────────────────────
@@ -203,10 +215,10 @@ constexpr float HOME_Y = (WS_MIN_Y + WS_MAX_Y) / 2.0f;  // 470
 // absorbed when the controller is homed, so it is free.
 // Values are atan2(HOME_Y - MOTOR_Y[m], HOME_X - MOTOR_X[m]).
 constexpr float WRAP_REF_ANGLE[NUM_MOTORS] = {
-    -0.970615f, // 0
-    -2.342757f, // 1
-    2.350696f,  // 2
-    0.964515f,  // 3
+    -0.974191f, // 0
+    -2.346320f, // 1
+    2.353256f,  // 2
+    0.967263f,  // 3
 };
 
 // ── Kinematics ──────────────────────────────────────────────────────
