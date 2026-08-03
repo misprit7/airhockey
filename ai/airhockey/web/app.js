@@ -393,10 +393,22 @@ function screenToPhysics(clientX, clientY) {
 // difference matters: continuous following turns every twitch of the hand
 // into a commanded move, which is the wrong thing to be watching while you
 // are still checking whether a single commanded move lands where it should.
-let controlMode = "follow";   // "follow" | "click"
+// Click is the default because it is the safe one: nothing is commanded
+// until you commit to a target. Follow turns every twitch of the hand into
+// a move, which is wrong while you are still checking whether a single
+// commanded move lands where it should.
+let controlMode = "click";    // "click" | "follow"
 
-function sendTarget(clientX, clientY) {
-    if (mode !== "live" || !ws || !config) return;
+// `deliberate` distinguishes a click or tap from the pointer merely passing
+// over the canvas. Only a deliberate action may pull the UI out of replay —
+// otherwise moving the mouse across the field would silently abandon the
+// recording you were watching.
+function sendTarget(clientX, clientY, deliberate) {
+    if (!ws || !config) return;
+    if (mode !== "live") {
+        if (!deliberate) return;
+        setMode("live");
+    }
     const pos = screenToPhysics(clientX, clientY);
     lastCommandedSim = pos;
     ws.send(JSON.stringify({ type: "move", ...pos }));
@@ -405,11 +417,14 @@ let lastCommandedSim = null;
 
 canvas.addEventListener("mousemove", (e) => {
     if (controlMode !== "follow") return;
-    sendTarget(e.clientX, e.clientY);
+    sendTarget(e.clientX, e.clientY, false);
 });
 
 canvas.addEventListener("click", (e) => {
-    sendTarget(e.clientX, e.clientY);
+    // In follow mode the pointer is already there and mousemove has sent it;
+    // resending would double up on the wire for no benefit.
+    if (controlMode === "follow" && mode === "live") return;
+    sendTarget(e.clientX, e.clientY, true);
 });
 
 // Touch control for mobile. A tap is the touch equivalent of a click, so it
@@ -419,19 +434,23 @@ function handleTouch(e) {
     if (e.type === "touchmove" && controlMode !== "follow") return;
     const touch = e.touches[0];
     if (!touch) return;
-    sendTarget(touch.clientX, touch.clientY);
+    sendTarget(touch.clientX, touch.clientY, e.type === "touchstart");
 }
 canvas.addEventListener("touchstart", handleTouch, { passive: false });
 canvas.addEventListener("touchmove", handleTouch, { passive: false });
 
-document.getElementById("btn-control").addEventListener("click", () => {
-    controlMode = controlMode === "follow" ? "click" : "follow";
+function setControlMode(next) {
+    controlMode = next;
     const btn = document.getElementById("btn-control");
-    btn.textContent = controlMode === "follow"
-        ? "Control: Follow" : "Control: Click";
-    btn.style.backgroundColor = controlMode === "click" ? "#3a4a7a" : "";
-    canvas.style.cursor = controlMode === "click" ? "pointer" : "crosshair";
+    btn.textContent = next === "follow" ? "Control: Follow" : "Control: Click";
+    btn.style.backgroundColor = next === "click" ? "#3a4a7a" : "";
+    canvas.style.cursor = next === "click" ? "pointer" : "crosshair";
+}
+
+document.getElementById("btn-control").addEventListener("click", () => {
+    setControlMode(controlMode === "follow" ? "click" : "follow");
 });
+setControlMode(controlMode);
 
 // Buttons
 document.getElementById("btn-reset").addEventListener("click", () => {
@@ -448,6 +467,9 @@ document.getElementById("btn-physics").addEventListener("click", () => {
 });
 
 document.getElementById("btn-hardware").addEventListener("click", () => {
+    // Driving the machine from replay mode is never what you meant: the
+    // field is showing a recording, and every target you set is discarded.
+    if (mode !== "live") setMode("live");
     if (ws) ws.send(JSON.stringify({ type: "toggle_hardware" }));
 });
 
@@ -458,27 +480,29 @@ document.getElementById("chk-hw-overlay").addEventListener("change", (e) => {
 // Mode switching
 let recordingsRefreshTimer = null;
 
-document.querySelectorAll(".mode-btn").forEach((btn) => {
-    btn.addEventListener("click", () => {
-        document.querySelectorAll(".mode-btn").forEach((b) => b.classList.remove("active"));
-        btn.classList.add("active");
-        mode = btn.dataset.mode;
+function setMode(next) {
+    mode = next;
+    document.querySelectorAll(".mode-btn").forEach(
+        (b) => b.classList.toggle("active", b.dataset.mode === next));
 
-        const replayPanel = document.getElementById("replay-panel");
-        if (mode === "replay") {
-            replayPanel.classList.remove("hidden");
-            loadRecordingsList();
-            // Auto-refresh recording list every 5 seconds
-            if (recordingsRefreshTimer) clearInterval(recordingsRefreshTimer);
-            recordingsRefreshTimer = setInterval(loadRecordingsList, 5000);
-        } else {
-            replayPanel.classList.add("hidden");
-            if (recordingsRefreshTimer) clearInterval(recordingsRefreshTimer);
-            recordingsRefreshTimer = null;
-            stopReplay();
-            puckTrail = [];
-        }
-    });
+    const replayPanel = document.getElementById("replay-panel");
+    if (mode === "replay") {
+        replayPanel.classList.remove("hidden");
+        loadRecordingsList();
+        // Auto-refresh recording list every 5 seconds
+        if (recordingsRefreshTimer) clearInterval(recordingsRefreshTimer);
+        recordingsRefreshTimer = setInterval(loadRecordingsList, 5000);
+    } else {
+        replayPanel.classList.add("hidden");
+        if (recordingsRefreshTimer) clearInterval(recordingsRefreshTimer);
+        recordingsRefreshTimer = null;
+        stopReplay();
+        puckTrail = [];
+    }
+}
+
+document.querySelectorAll(".mode-btn").forEach((btn) => {
+    btn.addEventListener("click", () => setMode(btn.dataset.mode));
 });
 
 // Replay
