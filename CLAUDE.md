@@ -120,7 +120,26 @@ python ai/bin/profile_loop.py
 ```
 
 ## Hardware
-- **Motors**: Teknic ClearPath-SC CPM-SCSK-2331P-ELNA (NEMA 23 integrated servo, 310 oz-in peak torque, 4000 RPM)
+- **Motors**: Teknic ClearPath-SC, NEMA 23 integrated servos — **two different
+  models**, confirmed on hardware 2026-08-03 via `sw/build/check_limits`:
+  - nodes 0 and 2: `CPM-SCSK-2331P-ELNA` — 310 oz-in (2.19 N·m) peak,
+    **4000 rpm**, encoder 0.057° (~6400 counts/rev)
+  - nodes 1 and 3: `CPM-SCSK-2331S-RLNA` — 620 oz-in (4.38 N·m) peak,
+    **2580 rpm**, encoder 0.450° (800 counts/rev)
+
+  On a CDPR every cable moves together, so the system takes the WORST of each:
+  **2580 rpm and 2.19 N·m**. Any sizing calculation that assumes 4000 rpm is
+  55% optimistic. The encoder difference is real and per-node — the `ENC` path
+  reads `Info.PositioningResolution` per node for exactly this reason.
+
+  NOT verified: that the step/dir INPUT resolution is 800 counts/rev on all
+  four. `fw/include/cdpr_config.h` assumes it is. That is a ClearView setting
+  independent of encoder resolution, and if the two model types differ there,
+  the Teensy drives them at different scales — which would look like cables
+  fighting. Worth confirming before blaming the kinematics.
+- **Shaft**: Ø9.5 mm (3/8"), 3 mm keyway, key 3×3×10 mm not supplied
+  (McMaster 96717A086). Teknic's manual explicitly recommends circumferential
+  clamping over set screws.
 - **Communication**: SC4-Hub (USB) -> sFoundation C++ API -> motors via proprietary serial
 - **Power**: 24-75V DC supply
 

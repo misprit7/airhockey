@@ -5,3 +5,21 @@ Motors connected (not yet enabled).
 Listening on localhost:8421
 Ctrl+C to stop.
 
+Client connected.
+  ENABLE
+  calibrating at measured (1484.5, 432.1) theta 136.26 deg
+  Teensy: OK CAL
+  pretension disabled (cables left slack)
+  Teensy: OK START
+  -> enabled
+  Teensy: OK SPEED 40.0
+  speed limit -> 40.0 mm/s
+  Teensy: OK CMD
+  DISABLE
+  Teensy: OK STOP
+  Teensy: OK RELEASE
+  -> disabled
+Client disconnected (QUIT).
+
+Shutting down...
+Done.
