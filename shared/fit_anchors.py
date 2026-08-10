@@ -97,12 +97,47 @@ def main() -> int:
         description=__doc__,
         formatter_class=argparse.RawDescriptionHelpFormatter)
     ap.add_argument("measurements", nargs="+", metavar="M:col,row,dist")
+    ap.add_argument("--point", action="store_true",
+                    help="solve a bare point rather than a motor anchor and "
+                         "print it, changing nothing. Use the motor slot as a "
+                         "label. For locating the MALLET independently of the "
+                         "camera: pick a definite feature, measure it to three "
+                         "holes, and compare with what vision reports.")
+    ap.add_argument("--height", type=float, default=0.0,
+                    help="height of the measured feature above the playing "
+                         "surface (mm). A tape from a hole to a point above "
+                         "the table reads the 3D distance; this projects it "
+                         "back down to the table plane.")
     ap.add_argument("--write", action="store_true",
                     help="update vision/calib/motor_anchors.json and print "
                          "the constants for the header and the mirror")
     args = ap.parse_args()
 
     groups = parse(args.measurements)
+
+    if args.height:
+        # Slant range -> horizontal. Small (about 1 mm in 700 at 40 mm) but
+        # we are chasing 14 mm with half-millimetre measurements.
+        for m, obs in groups.items():
+            groups[m] = [(x, y, math.sqrt(max(d * d - args.height ** 2, 0.0)))
+                         for x, y, d in obs]
+        print(f"corrected {args.height:.1f} mm of height out of every "
+              f"distance\n")
+
+    if args.point:
+        for m in sorted(groups):
+            obs = groups[m]
+            if len(obs) < 3:
+                print(f"point {m}: need 3 measurements, got {len(obs)}")
+                continue
+            centroid = np.array([np.mean([o[0] for o in obs]),
+                                 np.mean([o[1] for o in obs])])
+            p, r = solve(obs, centroid)
+            print(f"point {m}: ({p[0]:8.2f}, {p[1]:8.2f})   "
+                  f"residuals {np.round(r, 2)}  "
+                  f"rms {np.sqrt((r ** 2).mean()):.2f} mm")
+        return 0
+
     anchors = {m: [geom.MOTOR_X[m], geom.MOTOR_Y[m]] for m in range(4)}
 
     print(f"grid pitch {geom.GRID_PITCH_MM} mm; hole (col,row) at "
