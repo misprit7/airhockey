@@ -133,15 +133,13 @@ constexpr float MOTOR_Y[NUM_MOTORS] = {
 //              rotational inertia for the drives' tune, vibrated at rest
 //   2026-08-05 goBILDA 3400 Series hub-mount round-belt pulley, 96 mm PD
 //
-// !! THE 96 IS A DIAMETER. !!
-// The part is named for its 96 mm PITCH DIAMETER, so r = 48 mm. This was
-// reported as "the radius is 9.6 cm", which would be a 192 mm pulley and
-// does not exist in the series — the 3400 range is 32 / 64 / 96 mm PD. If
-// the fitted part is actually the 64 mm PD variant, this constant is wrong
-// by 50%, which on a force-closed rig is not a subtle error: it shows up
-// immediately as cables fighting.
+// The 96 is a DIAMETER — the part is named for its 96 mm pitch diameter, so
+// r = 48 mm. Confirmed with the builder 2026-08-05, after it was first
+// reported as a 9.6 cm radius. Worth stating plainly because the series
+// also comes in 32 and 64 mm PD, and picking the wrong one puts a 50% error
+// straight into the one constant that scales every commanded millimetre.
 //
-// !! AND VERIFY IT BY MEASUREMENT, NOT FROM THE PART NAME. !!
+// !! STILL VERIFY BY MEASUREMENT, NOT FROM THE PART NAME. !!
 // Pitch diameter is defined by where a round BELT of the matching section
 // rides. A cable is thinner than that belt, so it sits deeper in the groove
 // and winds at a smaller radius. The definitive check needs no motion of
