@@ -17,21 +17,20 @@ NUM_MOTORS = 4
 # ── Table geometry (grid frame; origin = corner hole nearest the human's
 # right corner, +x toward the robot end, +y human's-right to left) ──
 GRID_PITCH_MM = 25.4
-GRID_X_MM = 77.0 * GRID_PITCH_MM     # 1955.8
-GRID_Y_MM = 37.0 * GRID_PITCH_MM     # 939.8
-CENTERLINE_X = 38.5 * GRID_PITCH_MM  # 977.9
+GRID_X_MM = 79.0 * GRID_PITCH_MM     # 2006.6
+GRID_Y_MM = 38.0 * GRID_PITCH_MM     # 965.2
+CENTERLINE_X = 39.5 * GRID_PITCH_MM  # 1003.3
 
-RAIL_MIN_X = -32.1
-RAIL_MAX_X = 1987.9
-RAIL_MIN_Y = -32.6
-RAIL_MAX_Y = 972.4
+RAIL_MIN_X = -6.7
+RAIL_MAX_X = 2013.3
+RAIL_MIN_Y = -19.9
+RAIL_MAX_Y = 985.1
 
 # ── Motor anchors ──
-# Measured 2026-08-02. Camera fixes the ray each anchor lies on; calipers
-# against the air-hole grid fix where along it — an effective plane of
-# z = 24.3 mm, rms residual 1.38 mm against four caliper constraints.
-# See the header: 24.3 is a fitted number, not a physical height.
-MOTOR_X = [1067.6, 2043.3, 2043.2, 1063.0]
+# ONLY M2 IS TRUSTWORTHY — trilaterated from caliper distances to three
+# air holes, rms 0.07 mm. M0/M1/M3 predate the 78x38 -> 80x39 grid-count
+# fix and were measured through the wrong camera pose. See the header.
+MOTOR_X = [1067.6, 2043.3, 2094.0, 1063.0]
 MOTOR_Y = [1082.0, 1041.2, -97.7, -139.7]
 
 # ── Spool ──
@@ -54,15 +53,15 @@ MALLET_THETA_RAD = 2.3561945   # 135 deg — see the header for why not 0
 # Not the rails: cables pull only, so the paddle is holdable only inside the
 # anchor hull, and tension grows without bound near its boundary. See the
 # header for why the centreline itself is unreachable.
-WS_MIN_X = 1230.0
-WS_MAX_X = 1730.0
-WS_MIN_Y = 220.0
-WS_MAX_Y = 720.0
+WS_MIN_X = 1258.0
+WS_MAX_X = 1758.0
+WS_MIN_Y = 233.0
+WS_MAX_Y = 733.0
 
-HOME_X = (WS_MIN_X + WS_MAX_X) / 2.0   # 1480.0
-HOME_Y = (WS_MIN_Y + WS_MAX_Y) / 2.0   # 470.0
+HOME_X = (WS_MIN_X + WS_MAX_X) / 2.0   # 1508.0
+HOME_Y = (WS_MIN_Y + WS_MAX_Y) / 2.0   # 483.0
 
-WRAP_REF_ANGLE = [-0.977833, -2.349231, 2.352215, 0.970928]
+WRAP_REF_ANGLE = [-0.936818, -2.335256, 2.360737, 0.950319]
 
 # ── Heights above the playing surface ──
 MARKER_Z_MM = 3.3    # field markers, on 3D-printed mounts

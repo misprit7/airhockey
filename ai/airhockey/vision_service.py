@@ -68,9 +68,9 @@ C_WS = (110, 110, 110)        # workspace limit
 C_MOTOR = (90, 230, 230)      # measured motor anchors
 
 # Inch/hole coordinates are quoted from the first hole RIGHT of the centre
-# stripe. The stripe sits between columns 38 and 39, so 39 is the reference
-# and holes land on whole numbers.
-X_REF_COL = 39
+# stripe. On the 80-column grid the stripe sits between columns 39 and 40,
+# so 40 is the reference and holes land on whole numbers.
+X_REF_COL = 40
 
 
 def unproject_grid(nx: int = 41, ny: int = 41, z: float = 0.0) -> dict:

@@ -849,7 +849,7 @@ function gridLookup(grid, u, v) {
 // 25 mm discrepancy that was an off-by-one. The stripe itself sits BETWEEN
 // hole columns 38 and 39, so column 39 is the reference and hole positions
 // stay whole numbers.
-const X_REF_COL = 39;            // ceil(CENTERLINE_X / 25.4)
+const X_REF_COL = 40;            // ceil(CENTERLINE_X / 25.4), 80-col grid
 const Y_REF_ROW = 0;             // the near-rail hole line
 
 function inches(mm) {

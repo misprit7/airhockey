@@ -8,14 +8,31 @@ directions are unchanged from the old rail frame: +x toward the robot end,
 sits at roughly (-19, -33) mm in this frame; rail positions are
 approximate, hole positions are exact.
 
-Holes: (i * 25.4, j * 25.4) mm, i in 0..77 (78 columns, i=77 at the robot
-end), j in 0..37 (38 rows, j=37 at the far rail).
+Holes: (i * 25.4, j * 25.4) mm, i in 0..79 (80 columns, i=79 at the robot
+end), j in 0..38 (39 rows, j=38 at the far rail).
 
-(Columns were originally reported as 79, but the corner-marker calibration
-residuals settled it empirically — scanning grid-count hypotheses against
-4-corner PnP residuals: 78x38 gives 0.98 px RMS vs 3.6 px for 79x38 and
-4.7 px for 78x39. 78 also matches the centerline lying BETWEEN two columns
-and puts the measured stripe markers 1.8 mm from that centerline.)
+COUNTED ON THE TABLE 2026-08-10, and confirmed optically: re-solving the
+4-corner pose under each hypothesis gives 0.276 px RMS for 80x39 against
+0.728 for 78x38, with every neighbour between 2.3 and 10.6 px.
+
+This file previously said 78x38 and claimed the same kind of empirical
+support. That check was real but its candidate set was not: it varied ONE
+count at a time from 78x38 and compared 78x38, 79x38 and 78x39. 80x39 is
+two steps away in both axes and was never tried, so the scan returned the
+best of three wrong answers and it looked convincing.
+
+The consequences were large and took a long time to find, because nothing
+downstream fails loudly. GRID_X_MM and GRID_Y_MM set where the corner
+MARKERS are assumed to be, so a wrong count put two of the four
+pose-fitting markers 50.8 mm out in x and two 25.4 mm out in y. Four points
+fitting a 6-DOF pose absorb that into the pose rather than into the
+residual, so the calibration reported sub-pixel agreement while placing the
+mallet tens of millimetres from where it actually was. It also moved
+CENTERLINE_X by 25.4 mm, which shifted the workspace and every anchor
+derived through the camera.
+
+If you change these counts, everything measured through the camera has to
+be redone — extrinsics first, then any anchor that came from it.
 
 Permanent markers: 0.5 in square retroreflectors on the playing surface
 (z ~ tape thickness, treated as 0). Four corner markers, each centered 1.5
@@ -28,19 +45,19 @@ bootstrap (vision/calib/markers.json) — values below are nominal.
 """
 
 PITCH_MM = 25.4
-N_COLS = 78   # x direction, i in 0..77
-N_ROWS = 38   # y direction, j in 0..37
+N_COLS = 80   # x direction, i in 0..79
+N_ROWS = 39   # y direction, j in 0..38
 
-GRID_X_MM = (N_COLS - 1) * PITCH_MM   # 1955.8 — robot-end corner hole x
-GRID_Y_MM = (N_ROWS - 1) * PITCH_MM   # 939.8  — far-rail corner hole y
+GRID_X_MM = (N_COLS - 1) * PITCH_MM   # 2006.6 — robot-end corner hole x
+GRID_Y_MM = (N_ROWS - 1) * PITCH_MM   # 965.2  — far-rail corner hole y
 
 # Rails, approximate only (grid assumed centered on the 2020x1005 table):
-RAIL_MIN_X = -32.1
-RAIL_MAX_X = 1987.9
-RAIL_MIN_Y = -32.6
-RAIL_MAX_Y = 972.4
+RAIL_MIN_X = -(2020.0 - GRID_X_MM) / 2.0    # -6.7
+RAIL_MAX_X = GRID_X_MM - RAIL_MIN_X         # 2013.3
+RAIL_MIN_Y = -(1005.0 - GRID_Y_MM) / 2.0    # -19.9
+RAIL_MAX_Y = GRID_Y_MM - RAIL_MIN_Y         # 985.1
 
-CENTERLINE_X = 38.5 * PITCH_MM        # 977.9 — between columns 38 and 39
+CENTERLINE_X = (N_COLS - 1) / 2.0 * PITCH_MM  # 1003.3 — between cols 39, 40
 
 
 def hole_xy(i, j):
