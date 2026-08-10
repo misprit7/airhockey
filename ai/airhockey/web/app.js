@@ -803,6 +803,47 @@ function makeZoomable(el, apply) {
 
 const zoomLabel = (st) => (st.zoom > 1.01 ? `   ×${st.zoom.toFixed(1)}` : '');
 
+// Where in an <img> the pointer is, as a fraction of the PICTURE — not of
+// the element. object-fit: contain letterboxes the picture inside the box,
+// and the zoom transform moves the box, so neither the element rect nor the
+// natural size is usable alone. getBoundingClientRect() already reflects
+// the transform, and the scale is uniform, so the letterbox maths works
+// directly in the transformed rect.
+function imageFraction(img, clientX, clientY) {
+    const r = img.getBoundingClientRect();
+    if (!img.naturalWidth || !r.width) return null;
+    const na = img.naturalWidth / img.naturalHeight;
+    let cw, ch;
+    if (r.width / r.height > na) { ch = r.height; cw = ch * na; }
+    else { cw = r.width; ch = cw / na; }
+    const u = (clientX - (r.left + (r.width - cw) / 2)) / cw;
+    const v = (clientY - (r.top + (r.height - ch) / 2)) / ch;
+    return (u < 0 || u > 1 || v < 0 || v > 1) ? null : { u, v };
+}
+
+// Bilinear lookup into the server's unprojection grid.
+function gridLookup(grid, u, v) {
+    if (!grid || !grid.mm) return null;
+    const fx = u * (grid.nx - 1), fy = v * (grid.ny - 1);
+    const i = Math.min(grid.nx - 2, Math.max(0, Math.floor(fx)));
+    const j = Math.min(grid.ny - 2, Math.max(0, Math.floor(fy)));
+    const tx = fx - i, ty = fy - j;
+    const at = (a, b) => grid.mm[b * grid.nx + a];
+    const out = [0, 0];
+    for (let k = 0; k < 2; k++) {
+        out[k] = at(i, j)[k] * (1 - tx) * (1 - ty)
+               + at(i + 1, j)[k] * tx * (1 - ty)
+               + at(i, j + 1)[k] * (1 - tx) * ty
+               + at(i + 1, j + 1)[k] * tx * ty;
+    }
+    return out;
+}
+
+const cursorLine = (mm, suffix) => (mm === null
+    ? 'cursor   —'
+    : `cursor   x ${mm[0].toFixed(1).padStart(7)}  y ${mm[1].toFixed(1).padStart(6)}`
+      + (suffix || ''));
+
 // ── live tracker view ──────────────────────────────────────────────
 // The camera is NOT started automatically: only one process can hold the
 // Spinnaker device, so taking it unasked would break track_mallet and the
@@ -839,8 +880,23 @@ const zoomLabel = (st) => (st.zoom > 1.01 ? `   ×${st.zoom.toFixed(1)}` : '');
         status.textContent = (p
             ? `x ${p.x.toFixed(1)}  y ${p.y.toFixed(1)} mm   θ ${p.theta_deg.toFixed(1)}°   ${s.fps} fps`
             : (s.note ? s.note : 'searching for the paddle…') + `   ${s.fps} fps`)
-            + zoomLabel(zoom);
+            + zoomLabel(zoom)
+            + '\n' + cursorLine(cursorMm, '  (table surface)');
     };
+
+    // Cursor position in TABLE millimetres, so you can hover an air hole and
+    // read what the calibration thinks it is. On the table surface (z = 0),
+    // not the mallet plane — the thing you want to check against is the grid.
+    let grid = null, cursorMm = null;
+    frame.addEventListener('pointermove', (e) => {
+        const f = imageFraction(img, e.clientX, e.clientY);
+        cursorMm = f && grid ? gridLookup(grid, f.u, f.v) : null;
+        if (last) paint(last);
+    });
+    frame.addEventListener('pointerleave', () => {
+        cursorMm = null;
+        if (last) paint(last);
+    });
 
     const collapse = document.getElementById('btn-camera-collapse');
     if (collapse) {
@@ -862,6 +918,12 @@ const zoomLabel = (st) => (st.zoom > 1.01 ? `   ×${st.zoom.toFixed(1)}` : '');
             const s = await (await fetch('/camera/start', {method: 'POST'})).json();
             paint(s);
             if (!s.error) img.src = '/camera/stream?t=' + Date.now();
+            // Fetched per start, not once: re-running the extrinsics changes
+            // the mapping, and a stale grid would read plausibly and wrongly.
+            try {
+                const g = await (await fetch('/camera/unproject')).json();
+                grid = g.error ? null : g;
+            } catch (_) { grid = null; }
             poll = setInterval(async () => {
                 paint(await (await fetch('/camera/status')).json());
             }, 500);
@@ -950,6 +1012,24 @@ const zoomLabel = (st) => (st.zoom > 1.01 ? `   ×${st.zoom.toFixed(1)}` : '');
     const zoom = makeZoomable(cv, () => {
         cv.style.cursor = zoom.zoom > 1 ? 'grab' : 'zoom-in';
     });
+
+    // Cursor in grid millimetres — the exact inverse of P() below, so what
+    // it reports is the same coordinate the drawing uses rather than a
+    // second, subtly different mapping.
+    let cursorMm = null;
+    const unproject = (clientX, clientY) => {
+        if (!T) return null;
+        const r = cv.getBoundingClientRect();
+        const cx = T.w / 2, cy = T.h / 2;
+        const bx = (clientX - r.left - cx - zoom.panX) / zoom.zoom + cx;
+        const by = (clientY - r.top - cy - zoom.panY) / zoom.zoom + cy;
+        return [(by - T.oy) / T.s + T.b.x0,      // grid x is VERTICAL
+                (bx - T.ox) / T.s + T.b.y0];
+    };
+    cv.addEventListener('pointermove', (e) => {
+        cursorMm = unproject(e.clientX, e.clientY);
+    });
+    cv.addEventListener('pointerleave', () => { cursorMm = null; });
 
     // grid (x, y) mm -> canvas px. Grid x is VERTICAL (down), y horizontal.
     const P = (gx, gy) => {
@@ -1105,6 +1185,7 @@ const zoomLabel = (st) => (st.zoom > 1.01 ? `   ×${st.zoom.toFixed(1)}` : '');
         L.push((camPose
             ? `camera   x ${camPose.x.toFixed(1).padStart(7)}  y ${camPose.y.toFixed(1).padStart(6)}   θ ${camPose.theta_deg.toFixed(1)}°`
             : `camera   ${camNote || 'not running'}`) + zoomLabel(zoom));
+        L.push(cursorLine(cursorMm));
         // "controller", not "encoder": this x/y is the Teensy's integrated
         // trajectory, i.e. where it BELIEVES it stepped the paddle to. The
         // drives' actual encoders are the per-cable row below.

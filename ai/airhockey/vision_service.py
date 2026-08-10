@@ -68,6 +68,43 @@ C_WS = (110, 110, 110)        # workspace limit
 C_MOTOR = (90, 230, 230)      # measured motor anchors
 
 
+def unproject_grid(nx: int = 41, ny: int = 41, z: float = 0.0) -> dict:
+    """Map the VIEW's normalised coordinates to table millimetres.
+
+    Sampled on a grid and interpolated in the browser rather than solved per
+    mouse move: undistortion has no closed form, so doing it live would mean
+    a round trip per pointer event. The mapping is smooth, so a 41x41 grid
+    interpolates to well under the calibration's own error.
+
+    Coordinates are normalised (0..1 across the view, 0..1 down it) so this
+    survives any change to DISPLAY_W.
+    """
+    import sys as _sys
+    from pathlib import Path as _P
+    _sys.path.insert(0, str(_P(__file__).resolve().parents[2] / "vision" / "bin"))
+    from camera import backproject_pixels
+    from track_mallet import load_pose
+
+    K, dist, rvec, tvec, _ = load_pose()
+    sh, sw = 1080, 1440                      # sensor height, width
+
+    us = np.linspace(0.0, 1.0, nx)
+    vs = np.linspace(0.0, 1.0, ny)
+    px = []
+    for v in vs:
+        for u in us:
+            # Inverse of the 180 + 90CW rotation _annotate applies:
+            # forward was (sx, sy) -> (sy, sw - 1 - sx).
+            dx, dy = u * (sh - 1), v * (sw - 1)
+            px.append((sw - 1 - dy, dx))
+    mm = backproject_pixels(np.array(px, dtype=np.float64), K, dist,
+                            rvec, tvec, z)
+    return {
+        "nx": nx, "ny": ny, "z": z,
+        "mm": [[round(float(a), 2), round(float(b), 2)] for a, b in mm],
+    }
+
+
 class VisionService:
     """Background camera owner. Start it, read `latest_pose()` / `frame_jpeg()`."""
 

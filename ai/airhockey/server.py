@@ -132,6 +132,16 @@ async def geometry():
     }
 
 
+@app.get("/camera/unproject")
+async def camera_unproject(z: float = 0.0):
+    """Grid mapping the tracker view to table mm, for the cursor readout."""
+    from airhockey.vision_service import unproject_grid
+    try:
+        return unproject_grid(z=z)
+    except Exception as e:                       # noqa: BLE001
+        return {"error": f"{type(e).__name__}: {e}"}
+
+
 @app.get("/camera/status")
 async def camera_status():
     return VISION.status()

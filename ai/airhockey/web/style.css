@@ -515,7 +515,11 @@ canvas {
     text-align: center;
 }
 #camera-status.bad, #state-readout.bad { color: #ff8080; }
-#state-readout { white-space: pre; line-height: 1.5; font-size: 11px; }
+#camera-status, #state-readout {
+    white-space: pre;
+    line-height: 1.5;
+    font-size: 11px;
+}
 
 /* The explanation is reference material, not something to read every time:
    it lives on the heading's tooltip on desktop. */
