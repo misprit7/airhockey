@@ -885,9 +885,12 @@ const cursorLine = (mm, suffix) => (mm === null
         status.classList.remove('bad');
         const p = s.pose;
         status.textContent = (p
-            ? `x ${p.x.toFixed(1)}  y ${p.y.toFixed(1)} mm   θ ${p.theta_deg.toFixed(1)}°   ${s.fps} fps`
-            : (s.note ? s.note : 'searching for the paddle…') + `   ${s.fps} fps`)
-            + zoomLabel(zoom)
+            ? `paddle   x ${p.x.toFixed(1).padStart(7)}  y ${p.y.toFixed(1).padStart(6)} mm`
+              + `   =  ${(p.x / 25.4).toFixed(2).padStart(6)}, `
+              + `${(p.y / 25.4).toFixed(2).padStart(5)} holes`
+              + `   θ ${p.theta_deg.toFixed(1)}°`
+            : (s.note ? s.note : 'searching for the paddle…'))
+            + `   ${s.fps} fps` + zoomLabel(zoom)
             + '\n' + cursorLine(cursorMm, '  (table surface)');
     };
 
@@ -1190,7 +1193,10 @@ const cursorLine = (mm, suffix) => (mm === null
 
         const L = [];
         L.push((camPose
-            ? `camera   x ${camPose.x.toFixed(1).padStart(7)}  y ${camPose.y.toFixed(1).padStart(6)}   θ ${camPose.theta_deg.toFixed(1)}°`
+            ? `camera   x ${camPose.x.toFixed(1).padStart(7)}  y ${camPose.y.toFixed(1).padStart(6)} mm`
+              + `   =  ${(camPose.x / 25.4).toFixed(2).padStart(6)}, `
+              + `${(camPose.y / 25.4).toFixed(2).padStart(5)} holes`
+              + `   θ ${camPose.theta_deg.toFixed(1)}°`
             : `camera   ${camNote || 'not running'}`) + zoomLabel(zoom));
         L.push(cursorLine(cursorMm));
         // "controller", not "encoder": this x/y is the Teensy's integrated

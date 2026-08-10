@@ -317,6 +317,13 @@ class VisionService:
             cv2.putText(vis, f"({cx:.0f}, {cy:.0f}) mm", (c[0] + 32, c[1] - 6),
                         cv2.FONT_HERSHEY_SIMPLEX, 0.5, C_PADDLE, 1,
                         cv2.LINE_AA)
+            # Same number in hole coordinates. The grid is a 25.4 mm pitch,
+            # so this is inches too — and holes are the only ground truth on
+            # this table, which makes it the form you can actually check.
+            cv2.putText(vis, f"({cx / 25.4:.2f}, {cy / 25.4:.2f}) holes",
+                        (c[0] + 32, c[1] - 22),
+                        cv2.FONT_HERSHEY_SIMPLEX, 0.45, C_PADDLE, 1,
+                        cv2.LINE_AA)
 
         msg = note or ("paddle not found" if pose is None else None)
         if msg:
