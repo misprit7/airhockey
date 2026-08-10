@@ -474,14 +474,26 @@ canvas {
     gap: 6px;
 }
 
+/* The image is CSS-transformed for zoom, so it needs a clipping frame —
+   without one a zoomed frame spills over the status line and the field. */
+#camera-view {
+    flex: 1;
+    min-height: 0;
+    display: flex;
+    overflow: hidden;
+    border-radius: 10px;
+    background: #000;
+    cursor: zoom-in;
+    touch-action: none;
+}
+
 #camera-img {
     flex: 1;
     min-height: 0;
     width: 100%;
     display: block;
-    border-radius: 10px;
-    background: #000;
     object-fit: contain;         /* fills the height; 3:4 sets the width */
+    transform-origin: 50% 50%;
 }
 
 #state-canvas {
@@ -491,7 +503,8 @@ canvas {
     display: block;
     border-radius: 10px;
     background: #0a0a12;
-    cursor: default;
+    cursor: zoom-in;
+    touch-action: none;
 }
 
 #camera-status, #state-readout {

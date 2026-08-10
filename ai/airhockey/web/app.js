@@ -740,6 +740,77 @@ async function initReplayMode() {
 initReplayMode();
 
 
+// ── zoom / pan, shared by the tracker view and the state view ──────
+//
+// Zoom is anchored on the POINTER, not the centre: the thing under the
+// cursor stays under the cursor, so you zoom by pointing at what you want
+// rather than zooming and then hunting for it. Both views express the
+// result the same way — scale about the element centre plus a pan offset —
+// which is what CSS transforms do natively and what the canvas can be made
+// to do by folding it into its own coordinate mapping.
+//
+// Deliberately not attached to the field canvas: that one commands the
+// machine on click, and a drag that means "pan" in one panel and "move the
+// paddle" in another is exactly the ambiguity you don't want near hardware.
+const ZOOM_MAX = 12;
+
+function makeZoomable(el, apply) {
+    const st = { zoom: 1, panX: 0, panY: 0 };
+    let dragging = false, lastX = 0, lastY = 0;
+
+    const reset = () => { st.zoom = 1; st.panX = 0; st.panY = 0; };
+
+    el.addEventListener('wheel', (e) => {
+        e.preventDefault();
+        const r = el.getBoundingClientRect();
+        // Pointer position relative to the element centre, which is what
+        // both the CSS transform-origin and the canvas mapping scale about.
+        const mx = e.clientX - r.left - r.width / 2;
+        const my = e.clientY - r.top - r.height / 2;
+        const before = st.zoom;
+        // Exponential so each notch is a constant RATIO — linear steps feel
+        // glacial when zoomed out and violent when zoomed in.
+        st.zoom = Math.min(ZOOM_MAX, Math.max(1,
+            st.zoom * Math.exp(-e.deltaY * 0.0015)));
+        const k = st.zoom / before;
+        st.panX = mx * (1 - k) + st.panX * k;
+        st.panY = my * (1 - k) + st.panY * k;
+        if (st.zoom === 1) reset();          // snap cleanly back to fitted
+        apply(st);
+    }, { passive: false });
+
+    el.addEventListener('pointerdown', (e) => {
+        if (st.zoom === 1) return;           // nothing to pan while fitted
+        dragging = true;
+        lastX = e.clientX; lastY = e.clientY;
+        el.setPointerCapture(e.pointerId);
+        el.style.cursor = 'grabbing';
+    });
+    el.addEventListener('pointermove', (e) => {
+        if (!dragging) return;
+        st.panX += e.clientX - lastX;
+        st.panY += e.clientY - lastY;
+        lastX = e.clientX; lastY = e.clientY;
+        apply(st);
+    });
+    const release = (e) => {
+        if (!dragging) return;
+        dragging = false;
+        try { el.releasePointerCapture(e.pointerId); } catch (_) {}
+        el.style.cursor = '';
+    };
+    el.addEventListener('pointerup', release);
+    el.addEventListener('pointercancel', release);
+    el.addEventListener('dblclick', (e) => {
+        e.preventDefault();
+        reset();
+        apply(st);
+    });
+    return st;
+}
+
+const zoomLabel = (st) => (st.zoom > 1.01 ? `   ×${st.zoom.toFixed(1)}` : '');
+
 // ── live tracker view ──────────────────────────────────────────────
 // The camera is NOT started automatically: only one process can hold the
 // Spinnaker device, so taking it unasked would break track_mallet and the
@@ -748,11 +819,24 @@ initReplayMode();
     const btn = document.getElementById('btn-camera');
     const panel = document.getElementById('camera-panel');
     const img = document.getElementById('camera-img');
+    const frame = document.getElementById('camera-view');
     const status = document.getElementById('camera-status');
     if (!btn) return;
-    let on = false, poll = null;
+    let on = false, poll = null, last = null;
+
+    // Scroll to zoom, drag to pan, double-click to fit. The transform goes
+    // on the <img>; the wheel listener goes on the clipping frame, which
+    // does not move, so the pointer maths stays in one fixed coordinate
+    // system however far you have zoomed.
+    const zoom = makeZoomable(frame, (st) => {
+        img.style.transform =
+            `translate(${st.panX}px, ${st.panY}px) scale(${st.zoom})`;
+        frame.style.cursor = st.zoom > 1 ? 'grab' : 'zoom-in';
+        if (last) paint(last);
+    });
 
     const paint = (s) => {
+        last = s;
         if (s.error) {
             status.textContent = 'error: ' + s.error;
             status.classList.add('bad');
@@ -760,9 +844,10 @@ initReplayMode();
         }
         status.classList.remove('bad');
         const p = s.pose;
-        status.textContent = p
+        status.textContent = (p
             ? `x ${p.x.toFixed(1)}  y ${p.y.toFixed(1)} mm   θ ${p.theta_deg.toFixed(1)}°   ${s.fps} fps`
-            : (s.note ? s.note : 'searching for the paddle…') + `   ${s.fps} fps`;
+            : (s.note ? s.note : 'searching for the paddle…') + `   ${s.fps} fps`)
+            + zoomLabel(zoom);
     };
 
     const collapse = document.getElementById('btn-camera-collapse');
@@ -865,9 +950,23 @@ initReplayMode();
         T = { s, b, ox, oy, w: box.width, h: box.height };
     }
 
+    // Scroll to zoom, drag to pan, double-click to fit. Folded into the
+    // coordinate mapping rather than applied as a canvas transform on
+    // purpose: this way GEOMETRY scales but line widths and label text do
+    // not, so a zoomed-in view gets more detail instead of fatter strokes
+    // and giant text.
+    const zoom = makeZoomable(cv, () => {
+        cv.style.cursor = zoom.zoom > 1 ? 'grab' : 'zoom-in';
+    });
+
     // grid (x, y) mm -> canvas px. Grid x is VERTICAL (down), y horizontal.
-    const P = (gx, gy) => [T.ox + (gy - T.b.y0) * T.s,
-                           T.oy + (gx - T.b.x0) * T.s];
+    const P = (gx, gy) => {
+        const bx = T.ox + (gy - T.b.y0) * T.s;
+        const by = T.oy + (gx - T.b.x0) * T.s;
+        const cx = T.w / 2, cy = T.h / 2;
+        return [(bx - cx) * zoom.zoom + cx + zoom.panX,
+                (by - cy) * zoom.zoom + cy + zoom.panY];
+    };
 
     function rect(x0, y0, x1, y1, stroke, fill, dash) {
         const [ax, ay] = P(x0, y0), [bx, by] = P(x1, y1);
@@ -937,7 +1036,7 @@ initReplayMode();
             c.restore();
         }
         const [px, py] = P(gx, gy);
-        const r = Math.max(4, geom.attach_r * T.s);
+        const r = Math.max(4, geom.attach_r * T.s * zoom.zoom);
         c.save();
         c.strokeStyle = colour; c.lineWidth = 2;
         c.beginPath(); c.arc(px, py, r, 0, Math.PI * 2); c.stroke();
@@ -1011,9 +1110,9 @@ initReplayMode();
         }
 
         const L = [];
-        L.push(camPose
+        L.push((camPose
             ? `camera   x ${camPose.x.toFixed(1).padStart(7)}  y ${camPose.y.toFixed(1).padStart(6)}   θ ${camPose.theta_deg.toFixed(1)}°`
-            : `camera   ${camNote || 'not running'}`);
+            : `camera   ${camNote || 'not running'}`) + zoomLabel(zoom));
         // "controller", not "encoder": this x/y is the Teensy's integrated
         // trajectory, i.e. where it BELIEVES it stepped the paddle to. The
         // drives' actual encoders are the per-cable row below.
