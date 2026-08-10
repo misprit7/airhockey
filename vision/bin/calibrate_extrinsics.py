@@ -134,7 +134,7 @@ def weighted_centroid(img, stats, j, pad=4):
 
 
 def detect_markers(img, mask, expect=len(MARKERS_XY), min_area=10,
-                   max_area=600, border=40):
+                   max_area=600, border=40, prior=None, prior_radius=60.0):
     """Sub-pixel centroids of the marker blobs, glare region excluded.
 
     `border` drops blobs hugging the frame edge. Every table marker sits on
@@ -163,12 +163,59 @@ def detect_markers(img, mask, expect=len(MARKERS_XY), min_area=10,
     if edge:
         print(f"    ignored {edge} blob(s) within {border}px of the frame "
               "edge (off-field reflections)")
+    if len(blobs) != expect and prior is not None:
+        picked = resolve_against_prior(blobs, prior, prior_radius)
+        if picked is not None:
+            return picked
     if len(blobs) != expect:
         listing = ", ".join(f"area {int(a)} @({c[0]:.0f},{c[1]:.0f})"
                             for a, c in sorted(blobs, key=lambda b: -b[0]))
         sys.exit(f"found {len(blobs)} marker blobs, expected {expect}: "
-                 f"[{listing}] — adjust exposure or remove stray reflectors")
+                 f"[{listing}] — adjust exposure, remove stray reflectors, or "
+                 f"(if a previous pose exists) it was too far off to use as a "
+                 f"prior")
     return np.array([b[1] for b in blobs], dtype=np.float64)
+
+
+def resolve_against_prior(blobs, prior, radius):
+    """Pick the field markers out of a crowded frame using the OLD pose.
+
+    The mallet's retroreflectors are the same size and brightness as a field
+    marker — nothing local to a blob distinguishes them. What does is that
+    the field markers are bolted down and the camera is on a fixed mount, so
+    the previous pose predicts where they land to within a few pixels even
+    after a knock. Anything else in the frame is not a field marker.
+
+    This is a PRIOR, not an answer: it only decides which blobs to feed the
+    solve. Their measured positions are used unchanged, so a camera that has
+    genuinely moved still gets a correctly updated pose — the prior just has
+    to be close enough to identify, not to be right.
+
+    Returns None (fall through to the hard error) if any marker has no blob
+    within `radius`, or if two markers claim the same one. Both mean the
+    prior is too stale to trust, which must fail loudly rather than quietly
+    calibrate against the wrong points.
+    """
+    if len(blobs) < len(prior):
+        return None
+    pts = np.array([b[1] for b in blobs], dtype=np.float64)
+    chosen, drifts = [], []
+    for want in prior:
+        d = np.linalg.norm(pts - want, axis=1)
+        j = int(np.argmin(d))
+        if d[j] > radius:
+            print(f"    prior: no blob within {radius:.0f}px of "
+                  f"({want[0]:.0f},{want[1]:.0f}) — not using it")
+            return None
+        chosen.append(j)
+        drifts.append(d[j])
+    if len(set(chosen)) != len(chosen):
+        print("    prior: two markers matched the same blob — not using it")
+        return None
+    print(f"    prior: kept {len(chosen)} of {len(blobs)} blobs "
+          f"(drift {min(drifts):.1f}-{max(drifts):.1f}px), "
+          f"ignored {len(blobs) - len(chosen)} — mallet or strays")
+    return pts[chosen]
 
 
 def normalize(pts):
@@ -373,7 +420,28 @@ def report_and_save(best, n_frames, n_markers, K):
     print(f"saved {CALIB_DIR}/extrinsics.npz and .json")
 
 
-def read_frames(images):
+def previous_marker_pixels(K, dist):
+    """Where the last solved pose says the field markers land, or None.
+
+    Used only to tell field markers apart from the mallet and other stray
+    reflectors — see resolve_against_prior. Absent on a first calibration,
+    in which case the frame has to be clean.
+    """
+    f = CALIB_DIR / "extrinsics.npz"
+    if not f.exists():
+        return None
+    try:
+        d = np.load(f)
+        obj = np.hstack([np.array(MARKERS_XY, dtype=np.float64),
+                         np.full((len(MARKERS_XY), 1), MARKER_Z_MM)])
+        px, _ = cv2.projectPoints(obj, d["rvec"], d["tvec"], K, dist)
+        return px.reshape(-1, 2)
+    except Exception as e:                          # noqa: BLE001
+        print(f"    prior: could not load previous pose ({e})")
+        return None
+
+
+def read_frames(images, prior=None, prior_radius=60.0):
     """Detect marker blobs in each image; save the first glare mask."""
     frames = []
     glare_saved = False
@@ -390,15 +458,16 @@ def read_frames(images):
             print(f"  glare mask: {n_mask} px masked "
                   f"({'saved' if n_mask else 'EMPTY — no glare cluster found'})"
                   f" -> calib/glare_mask.png")
-        pts = detect_markers(img, mask)
+        pts = detect_markers(img, mask, prior=prior, prior_radius=prior_radius)
         frames.append(pts)
         print(f"  {path}: {len(pts)} markers")
     return frames
 
 
-def run(images):
+def run(images, use_prior=True, prior_radius=60.0):
     K, dist = load_intrinsics()
-    frames = read_frames(images)
+    prior = previous_marker_pixels(K, dist) if use_prior else None
+    frames = read_frames(images, prior=prior, prior_radius=prior_radius)
     report_spread(frames)
     best = solve(frames, CORNERS_XY, K, dist, subset=True)
     meas = validate_heldout(best, K)
@@ -493,10 +562,15 @@ def main():
     ap = argparse.ArgumentParser(description=__doc__)
     ap.add_argument("images", nargs="*", help="low-exposure frames")
     ap.add_argument("--capture", type=int, metavar="N",
-                    help="grab N frames from the camera and solve from those. "
-                         "TAKE THE MALLET OFF THE TABLE FIRST — its "
-                         "retroreflectors are indistinguishable from field "
-                         "markers and the solve refuses to guess.")
+                    help="grab N frames from the camera and solve from those")
+    ap.add_argument("--no-prior", action="store_true",
+                    help="do not use the previous pose to tell field markers "
+                         "from the mallet and other reflectors; every frame "
+                         "must then contain exactly the 6 markers and nothing "
+                         "else")
+    ap.add_argument("--prior-radius", type=float, default=60.0,
+                    help="px a marker may have drifted and still be matched "
+                         "to the previous pose (default 60)")
     ap.add_argument("--exposure", type=int, default=1000)
     ap.add_argument("--gain", type=float, default=0.0)
     ap.add_argument("--shots-dir", default=str(
@@ -512,7 +586,7 @@ def main():
                          args.shots_dir)
     if not images:
         sys.exit(__doc__)
-    run(images)
+    run(images, use_prior=not args.no_prior, prior_radius=args.prior_radius)
 
 
 if __name__ == "__main__":

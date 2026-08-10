@@ -25,7 +25,21 @@ SNAP = VISION / "build" / "snap"
 class Stream:
     """Frames from `snap --stream`, one per request so we never lag."""
 
-    def __init__(self, exposure, gain):
+    # Frames to throw away after opening. The first frames off this camera
+    # come back progressively brighter as the sensor and the IR ring settle:
+    # measured on a corner marker, its peak went 25, 44, 133, 183, 194, 194
+    # before levelling. Frame 0 is dark enough that a real marker falls below
+    # the detector's threshold and simply is not there.
+    #
+    # This is not cosmetic. Marker detection thresholds on the frame maximum,
+    # so an early frame silently loses the DIMMEST markers — the far corners,
+    # the ones a pose solve most depends on. It also explains why repeated
+    # anchor measurements agreed to 0.1 mm within one camera session but
+    # drifted ~1.5 mm between sessions: each session's first burst was
+    # measuring partly-cold frames.
+    WARMUP_FRAMES = 8
+
+    def __init__(self, exposure, gain, warmup=None):
         if not SNAP.exists():
             sys.exit(f"{SNAP} not built — run `make` in vision/")
         # Die with the parent. Without this, killing the owning process
@@ -54,6 +68,10 @@ class Stream:
         if hdr[:8] != b"SNAPSTRM":
             sys.exit(f"unexpected stream header {hdr[:8]!r}")
         self.w, self.h = struct.unpack("<II", hdr[8:16])
+
+        n = self.WARMUP_FRAMES if warmup is None else warmup
+        for _ in range(n):
+            self.grab()
 
     def _read(self, n):
         buf = b""
