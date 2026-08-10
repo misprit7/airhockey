@@ -67,6 +67,11 @@ C_STRIPE = (200, 90, 200)     # projected centreline — lands on the painted st
 C_WS = (110, 110, 110)        # workspace limit
 C_MOTOR = (90, 230, 230)      # measured motor anchors
 
+# Inch/hole coordinates are quoted from the first hole RIGHT of the centre
+# stripe. The stripe sits between columns 38 and 39, so 39 is the reference
+# and holes land on whole numbers.
+X_REF_COL = 39
+
 
 def unproject_grid(nx: int = 41, ny: int = 41, z: float = 0.0) -> dict:
     """Map the VIEW's normalised coordinates to table millimetres.
@@ -317,10 +322,14 @@ class VisionService:
             cv2.putText(vis, f"({cx:.0f}, {cy:.0f}) mm", (c[0] + 32, c[1] - 6),
                         cv2.FONT_HERSHEY_SIMPLEX, 0.5, C_PADDLE, 1,
                         cv2.LINE_AA)
-            # Same number in hole coordinates. The grid is a 25.4 mm pitch,
-            # so this is inches too — and holes are the only ground truth on
-            # this table, which makes it the form you can actually check.
-            cv2.putText(vis, f"({cx / 25.4:.2f}, {cy / 25.4:.2f}) holes",
+            # In inches from the centre stripe, which is the same as counting
+            # air holes — the grid is a 25.4 mm pitch. x is measured from the
+            # first hole right of the stripe rather than from the origin
+            # corner: the stripe is painted and visible, and counting 40-odd
+            # holes from the far end by eye is how an off-by-one turns into
+            # an argument about a 25 mm calibration error.
+            cv2.putText(vis, f"({cx / 25.4 - X_REF_COL:+.2f}, "
+                             f"{cy / 25.4:.2f}) in",
                         (c[0] + 32, c[1] - 22),
                         cv2.FONT_HERSHEY_SIMPLEX, 0.45, C_PADDLE, 1,
                         cv2.LINE_AA)

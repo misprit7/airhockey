@@ -839,16 +839,27 @@ function gridLookup(grid, u, v) {
     return out;
 }
 
-// Also in hole coordinates, which is the same thing as inches: the air-hole
-// grid is on a 25.4 mm pitch, so dividing by it gives the hole number
-// directly. Hovering a hole and reading "50.00, 10.00" is a far more direct
-// check than converting in your head, and holes are the only ground truth
-// on this table.
+// Hole coordinates, which are also inches — the grid is a 25.4 mm pitch, so
+// dividing by it gives the hole number. Holes are the only ground truth on
+// this table, so this is the form you can walk over and check.
+//
+// x is counted from the FIRST HOLE RIGHT OF THE CENTRE STRIPE, not from the
+// far corner. The stripe is painted and visible; the origin hole is 40-odd
+// holes away and counting that far by eye is how you end up arguing about a
+// 25 mm discrepancy that was an off-by-one. The stripe itself sits BETWEEN
+// hole columns 38 and 39, so column 39 is the reference and hole positions
+// stay whole numbers.
+const X_REF_COL = 39;            // ceil(CENTERLINE_X / 25.4)
+const Y_REF_ROW = 0;             // the near-rail hole line
+
+function inches(mm) {
+    const hx = mm[0] / 25.4 - X_REF_COL, hy = mm[1] / 25.4 - Y_REF_ROW;
+    return `${hx >= 0 ? '+' : ''}${hx.toFixed(2)}, ${hy.toFixed(2)} in`;
+}
+
 const cursorLine = (mm, suffix) => (mm === null
     ? 'cursor   —'
-    : `cursor   x ${mm[0].toFixed(1).padStart(7)}  y ${mm[1].toFixed(1).padStart(6)} mm`
-      + `   =  ${(mm[0] / 25.4).toFixed(2).padStart(6)}, `
-      + `${(mm[1] / 25.4).toFixed(2).padStart(5)} holes`
+    : `cursor   ${mm[0].toFixed(1)}, ${mm[1].toFixed(1)} mm   ${inches(mm)}`
       + (suffix || ''));
 
 // ── live tracker view ──────────────────────────────────────────────
@@ -885,10 +896,8 @@ const cursorLine = (mm, suffix) => (mm === null
         status.classList.remove('bad');
         const p = s.pose;
         status.textContent = (p
-            ? `paddle   x ${p.x.toFixed(1).padStart(7)}  y ${p.y.toFixed(1).padStart(6)} mm`
-              + `   =  ${(p.x / 25.4).toFixed(2).padStart(6)}, `
-              + `${(p.y / 25.4).toFixed(2).padStart(5)} holes`
-              + `   θ ${p.theta_deg.toFixed(1)}°`
+            ? `paddle   ${p.x.toFixed(1)}, ${p.y.toFixed(1)} mm   `
+              + `${inches([p.x, p.y])}   θ ${p.theta_deg.toFixed(1)}°`
             : (s.note ? s.note : 'searching for the paddle…'))
             + `   ${s.fps} fps` + zoomLabel(zoom)
             + '\n' + cursorLine(cursorMm, '  (table surface)');
@@ -1193,10 +1202,9 @@ const cursorLine = (mm, suffix) => (mm === null
 
         const L = [];
         L.push((camPose
-            ? `camera   x ${camPose.x.toFixed(1).padStart(7)}  y ${camPose.y.toFixed(1).padStart(6)} mm`
-              + `   =  ${(camPose.x / 25.4).toFixed(2).padStart(6)}, `
-              + `${(camPose.y / 25.4).toFixed(2).padStart(5)} holes`
-              + `   θ ${camPose.theta_deg.toFixed(1)}°`
+            ? `camera   ${camPose.x.toFixed(1)}, ${camPose.y.toFixed(1)} mm   `
+              + `${inches([camPose.x, camPose.y])}   `
+              + `θ ${camPose.theta_deg.toFixed(1)}°`
             : `camera   ${camNote || 'not running'}`) + zoomLabel(zoom));
         L.push(cursorLine(cursorMm));
         // "controller", not "encoder": this x/y is the Teensy's integrated
