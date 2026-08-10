@@ -461,17 +461,58 @@ def selftest():
     print("selftest PASSED")
 
 
+def capture(n, exposure, gain, out_dir):
+    """Grab n frames straight from the camera, so re-calibrating is one
+    command rather than snap-then-glob. The camera can only be held by one
+    process: stop the tracker view in the web UI first."""
+    sys.path.insert(0, str(Path(__file__).resolve().parent))
+    from camera import Stream
+
+    out = Path(out_dir)
+    out.mkdir(parents=True, exist_ok=True)
+    for stale in out.glob("*.png"):
+        stale.unlink()          # frames from before the camera moved are poison
+    stream = Stream(exposure, gain)
+    paths = []
+    try:
+        while len(paths) < n:
+            img = stream.grab()
+            if img is None:
+                continue
+            p = out / f"shot_{len(paths):03d}.png"
+            cv2.imwrite(str(p), img)
+            paths.append(str(p))
+    finally:
+        stream.close()
+    print(f"captured {len(paths)} frames at {exposure} us / gain {gain} "
+          f"into {out}\n")
+    return paths
+
+
 def main():
     ap = argparse.ArgumentParser(description=__doc__)
     ap.add_argument("images", nargs="*", help="low-exposure frames")
+    ap.add_argument("--capture", type=int, metavar="N",
+                    help="grab N frames from the camera and solve from those. "
+                         "TAKE THE MALLET OFF THE TABLE FIRST — its "
+                         "retroreflectors are indistinguishable from field "
+                         "markers and the solve refuses to guess.")
+    ap.add_argument("--exposure", type=int, default=1000)
+    ap.add_argument("--gain", type=float, default=0.0)
+    ap.add_argument("--shots-dir", default=str(
+        Path(__file__).resolve().parent.parent / "extr_shots"))
     ap.add_argument("--selftest", action="store_true")
     args = ap.parse_args()
     if args.selftest:
         selftest()
         return
-    if not args.images:
+    images = args.images
+    if args.capture:
+        images = capture(args.capture, args.exposure, args.gain,
+                         args.shots_dir)
+    if not images:
         sys.exit(__doc__)
-    run(args.images)
+    run(images)
 
 
 if __name__ == "__main__":
