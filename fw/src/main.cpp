@@ -424,7 +424,7 @@ static void squareTestLoop() {
 // of slack in every string.
 // ============================================================================
 
-constexpr float RETRACT_TEST_MM   = 10.0f; // cable travel per move (~14° of spool)
+constexpr float RETRACT_TEST_MM   = 10.0f; // cable travel per move (~12° of spool)
 constexpr float RETRACT_TEST_MM_S = 5.0f;  // slow: ~2 s per move
 
 static uint32_t lastPromptMs = 0;

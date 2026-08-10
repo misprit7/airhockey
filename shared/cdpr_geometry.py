@@ -35,10 +35,11 @@ MOTOR_X = [1067.6, 2043.3, 2046.6, 1063.0]
 MOTOR_Y = [1082.0, 1041.2, -96.7, -139.7]
 
 # ── Spool ──
-# McMaster 6245K418 pulley, 4 in OD, stated effective diameter 3.25 in.
-# The single largest scale factor in the machine — see the header, including
-# why the catalogue number needs checking against a wound-turns measurement.
-SPOOL_RADIUS_MM = 41.275
+# goBILDA 3400 Series hub-mount round-belt pulley, 96 mm PITCH DIAMETER,
+# so r = 48 mm. The single largest scale factor in the machine — see the
+# header for why the part name needs checking against a wound-turns
+# measurement, and for the 96-is-a-diameter-not-a-radius trap.
+SPOOL_RADIUS_MM = 48.0
 SPOOL_CIRCUMFERENCE_MM = 2.0 * math.pi * SPOOL_RADIUS_MM
 WINDING_SIDE = [-1.0, 1.0, -1.0, 1.0]   # UNVERIFIED — see the header
 RETRACT_CW = [True, False, True, False]

@@ -126,27 +126,37 @@ constexpr float MOTOR_Y[NUM_MOTORS] = {
 // every commanded millimetre of paddle motion is converted through it, so a
 // 1% error here is a 1% error on every move, everywhere.
 //
-// 2026-08-02: the original 3D-printed spools were SLIPPING on their shafts
-// and were replaced with McMaster 6245K418 pulleys, 4 in OD with a stated
-// effective diameter of 3.25 in = 82.55 mm, hence r = 41.275 mm. That is
-// +18% on the old 35 mm, so every pre-2026-08-02 motion measurement was
-// taken at a different scale AND against slipping spools; none of it
-// carries over.
+// History, because none of it carries over and it is easy to compare the
+// wrong pair of numbers:
+//   original   3D-printed, r = 35 mm     — SLIPPED on the shafts
+//   2026-08-02 McMaster 6245K418 iron pulley, r = 41.275 mm — too much
+//              rotational inertia for the drives' tune, vibrated at rest
+//   2026-08-05 goBILDA 3400 Series hub-mount round-belt pulley, 96 mm PD
 //
-// !! VERIFY THIS BY MEASUREMENT, NOT FROM THE CATALOGUE. !!
-// For a V-groove pulley the quoted pitch/effective diameter is defined by
-// where a BELT of the matching section rides. A round cable is not a belt:
-// a thin wire sinks deeper into the groove and winds at a smaller radius,
-// and how much smaller depends on the wire diameter and the groove angle.
-// The definitive check needs no motion of the robot — with the drives down,
-// rotate one spool by hand through N whole turns and measure the cable paid
-// out. That length is N * 2 * pi * r directly; 10 turns is ~2593 mm at this
-// radius, so a tape good to 5 mm pins r to about 0.2%.
+// !! THE 96 IS A DIAMETER. !!
+// The part is named for its 96 mm PITCH DIAMETER, so r = 48 mm. This was
+// reported as "the radius is 9.6 cm", which would be a 192 mm pulley and
+// does not exist in the series — the 3400 range is 32 / 64 / 96 mm PD. If
+// the fitted part is actually the 64 mm PD variant, this constant is wrong
+// by 50%, which on a force-closed rig is not a subtle error: it shows up
+// immediately as cables fighting.
 //
-// The wire also stacks on itself, so the effective radius grows slightly
-// with wound length — a known position-dependent scale error, unmodelled.
+// !! AND VERIFY IT BY MEASUREMENT, NOT FROM THE PART NAME. !!
+// Pitch diameter is defined by where a round BELT of the matching section
+// rides. A cable is thinner than that belt, so it sits deeper in the groove
+// and winds at a smaller radius. The definitive check needs no motion of
+// the robot — with the drives down, rotate one spool by hand through N
+// whole turns and measure the cable paid out. That length is N * 2 * pi * r
+// directly; 10 turns is ~3016 mm at this radius, so a tape good to 5 mm
+// pins r to about 0.15%.
+//
+// The groove is single, and the workspace needs ~2.4 turns, so the cable
+// cannot lie in one lane: turns sit at different lateral positions and
+// therefore at slightly different depths in a curved groove. That is a
+// radius variation of order 1%, unmodelled, and it varies with how much
+// cable is out. Same for the wire stacking on itself.
 
-constexpr float SPOOL_RADIUS_MM = 41.275f; // 3.25 in effective diameter
+constexpr float SPOOL_RADIUS_MM = 48.0f; // 96 mm pitch DIAMETER / 2
 constexpr float SPOOL_CIRCUMFERENCE_MM = 2.0f * (float)M_PI * SPOOL_RADIUS_MM;
 
 // Which side of each spool the wire leaves, as a sign in the wrap term.

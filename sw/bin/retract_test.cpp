@@ -91,7 +91,7 @@ int main(int argc, char *argv[]) {
     sa.sa_handler = sigHandler;
     sigaction(SIGINT, &sa, NULL);
 
-    double test_mm = 10.0;  // per-phase cable travel (~14 deg of spool)
+    double test_mm = 10.0;  // per-phase cable travel (~12 deg of spool)
     if (argc > 1)
         test_mm = atof(argv[1]);
 
