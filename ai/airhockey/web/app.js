@@ -839,9 +839,16 @@ function gridLookup(grid, u, v) {
     return out;
 }
 
+// Also in hole coordinates, which is the same thing as inches: the air-hole
+// grid is on a 25.4 mm pitch, so dividing by it gives the hole number
+// directly. Hovering a hole and reading "50.00, 10.00" is a far more direct
+// check than converting in your head, and holes are the only ground truth
+// on this table.
 const cursorLine = (mm, suffix) => (mm === null
     ? 'cursor   —'
-    : `cursor   x ${mm[0].toFixed(1).padStart(7)}  y ${mm[1].toFixed(1).padStart(6)}`
+    : `cursor   x ${mm[0].toFixed(1).padStart(7)}  y ${mm[1].toFixed(1).padStart(6)} mm`
+      + `   =  ${(mm[0] / 25.4).toFixed(2).padStart(6)}, `
+      + `${(mm[1] / 25.4).toFixed(2).padStart(5)} holes`
       + (suffix || ''));
 
 // ── live tracker view ──────────────────────────────────────────────
