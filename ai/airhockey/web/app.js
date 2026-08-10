@@ -673,16 +673,11 @@ resize();
 render();
 connect();
 
-// Default to replay mode with most recent recording
-async function initReplayMode() {
-    // Switch to replay mode
-    mode = "replay";
-    document.querySelectorAll(".mode-btn").forEach((b) => b.classList.remove("active"));
-    document.querySelector('.mode-btn[data-mode="replay"]').classList.add("active");
-    const replayPanel = document.getElementById("replay-panel");
-    replayPanel.classList.remove("hidden");
-
-    // Load recordings and auto-select the first (most recent)
+// Load the most recent recording into the replay panel, WITHOUT switching
+// to it. The UI opens in live mode: this is a control surface for a machine
+// as much as a viewer, and starting on a recording meant every click on the
+// field was silently discarded until you noticed the mode button.
+async function loadLatestRecording() {
     try {
         const resp = await fetch("/api/recordings");
         const recordings = await resp.json();
@@ -727,17 +722,14 @@ async function initReplayMode() {
             const slider = document.getElementById("replay-slider");
             slider.max = replayData.length - 1;
             slider.value = 0;
-            showReplayFrame(0);
+            // Loaded and ready, but NOT painted — render() only draws replay
+            // frames while mode === "replay", so live keeps the canvas.
         }
     } catch (e) {
-        console.error("Failed to init replay mode", e);
+        console.error("Failed to preload the latest recording", e);
     }
-
-    // Start auto-refresh
-    if (recordingsRefreshTimer) clearInterval(recordingsRefreshTimer);
-    recordingsRefreshTimer = setInterval(loadRecordingsList, 5000);
 }
-initReplayMode();
+loadLatestRecording();
 
 
 // ── zoom / pan, shared by the tracker view and the state view ──────

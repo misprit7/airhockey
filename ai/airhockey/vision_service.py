@@ -36,8 +36,24 @@ import cdpr_geometry as geom  # noqa: E402
 # axis (grid x) runs vertically with the robot end at the bottom, and grid y
 # increases to the right — the same convention the sim canvas uses. That is
 # the sensor frame rotated 180 (origin bottom-left) and then 90 clockwise.
-DISPLAY_W = 560          # encoded width; detection always uses full res
-JPEG_QUALITY = 72
+# Encoded width. The sensor is 1440x1080 and the view is rotated into
+# portrait, so 1080 is NATIVE — anything less throws pixels away before the
+# browser ever sees them. It used to be 560, which is barely half, and that
+# was invisible while the view was displayed at about 500 px wide and
+# unquestionable. It stopped being invisible the moment the view could zoom:
+# magnifying a half-resolution frame just magnifies the resampling.
+#
+# Detection has always run on the raw full-resolution frame and is unaffected
+# either way; this is purely what gets shipped to the browser. The cost is
+# bandwidth and JPEG encode time, both of which are cheap next to being
+# unable to see what the tracker is looking at.
+DISPLAY_W = 1080
+# 75, not higher, and the cliff is sharp: OpenCV switches from 4:2:0 to
+# 4:4:4 chroma somewhere in the mid-70s, and this frame costs 57 KB at q70
+# against 121 KB at q78 for no visible gain. The source is a grayscale
+# sensor image — the only colour in it is the overlay — so full chroma
+# resolution is spent almost entirely on nothing.
+JPEG_QUALITY = 75
 TARGET_FPS = 12.0
 
 # Overlay colours (BGR).
@@ -271,8 +287,9 @@ class VisionService:
                         cv2.FONT_HERSHEY_SIMPLEX, 0.5, C_GLARE, 1, cv2.LINE_AA)
 
         vh, vw = vis.shape[:2]
-        vis = cv2.resize(vis, (DISPLAY_W, int(vh * DISPLAY_W / vw)),
-                         interpolation=cv2.INTER_AREA)
+        if DISPLAY_W < vw:      # never upscale — that only invents detail
+            vis = cv2.resize(vis, (DISPLAY_W, int(vh * DISPLAY_W / vw)),
+                             interpolation=cv2.INTER_AREA)
         ok, buf = cv2.imencode(".jpg", vis,
                                [cv2.IMWRITE_JPEG_QUALITY, JPEG_QUALITY])
         return buf.tobytes() if ok else None

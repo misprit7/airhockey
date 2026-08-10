@@ -189,6 +189,7 @@ async def live_game(ws: WebSocket):
         opponent_policy="follow",
         record=True,
         action_dt=1 / 60,
+        still_puck=True,     # a human is driving — see AirHockeyEnv
     )
     obs, info = env.reset()
 

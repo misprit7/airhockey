@@ -47,6 +47,13 @@ class AirHockeyEnv(gym.Env):
         opponent_policy: str = "idle",  # "idle", "follow", "random"
         record: bool = False,
         frame_stack: int = 1,  # kept for API compat, must be 1
+        # Human at the controls rather than a training run: the puck starts
+        # dead centre at rest and is never nudged. Both of the behaviours
+        # this disables — the randomised moving start and the stuck-puck
+        # kick — exist to keep reward signal flowing during training, and
+        # both are wrong when someone is watching to see what the machine
+        # does when told to move.
+        still_puck: bool = False,
     ):
         super().__init__()
 
@@ -60,6 +67,7 @@ class AirHockeyEnv(gym.Env):
         self.max_episode_steps = max_episode_steps
         self.max_score = max_score
         self.opponent_policy = opponent_policy
+        self.still_puck = still_puck
         self.frame_stack = 1  # always 1; velocities replace stacking
         self._step_count = 0
 
@@ -116,7 +124,7 @@ class AirHockeyEnv(gym.Env):
         self._step_count = 0
         self._puck_slow_count = 0
 
-        state = self.engine.reset(self._rng)
+        state = self.engine.reset(self._rng, still=self.still_puck)
 
         self.agent_dynamics.reset(state.paddle_agent.x, state.paddle_agent.y)
 
@@ -204,7 +212,7 @@ class AirHockeyEnv(gym.Env):
         else:
             self._puck_slow_count = 0
 
-        if self._puck_slow_count >= 120:
+        if self._puck_slow_count >= 120 and not self.still_puck:
             # Penalize if puck stalled on agent's side (agent should have hit it)
             if state.puck.y < self.table_config.height / 2:
                 reward -= 0.5

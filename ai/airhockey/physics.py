@@ -81,21 +81,35 @@ class PhysicsEngine:
     def reset(
         self,
         rng: np.random.Generator | None = None,
+        still: bool = False,
     ) -> PhysicsState:
-        """Reset to initial state with puck at center."""
+        """Reset to initial state.
+
+        `still` puts the puck dead centre at rest and the paddles on the
+        centreline of their own halves. That is for a HUMAN at the controls:
+        the randomised, already-moving start exists so training episodes
+        produce reward signal quickly, and it is exactly wrong when someone
+        is trying to see where the machine actually goes when told to move.
+        """
         cfg = self.config
         if rng is None:
             rng = np.random.default_rng()
 
-        # Randomize puck: anywhere in agent's half, heading toward agent
-        angle = rng.uniform(-np.pi * 0.8, -np.pi * 0.2)  # downward-ish
-        speed = rng.uniform(0.3, 1.5)
-        puck_x = rng.uniform(cfg.puck_radius, cfg.width - cfg.puck_radius)
-        puck_y = rng.uniform(cfg.height * 0.25, cfg.height * 0.6)
+        if still:
+            angle = speed = 0.0
+            puck_x, puck_y = cfg.width / 2, cfg.height / 2
+            paddle_x, paddle_y = cfg.width / 2, cfg.height / 4
+        else:
+            # Randomize puck: anywhere in agent's half, heading toward agent
+            angle = rng.uniform(-np.pi * 0.8, -np.pi * 0.2)  # downward-ish
+            speed = rng.uniform(0.3, 1.5)
+            puck_x = rng.uniform(cfg.puck_radius, cfg.width - cfg.puck_radius)
+            puck_y = rng.uniform(cfg.height * 0.25, cfg.height * 0.6)
 
-        # Randomize paddle start position in agent's half
-        paddle_x = rng.uniform(cfg.paddle_radius, cfg.width - cfg.paddle_radius)
-        paddle_y = rng.uniform(cfg.paddle_radius, cfg.height / 2 - cfg.paddle_radius)
+            # Randomize paddle start position in agent's half
+            paddle_x = rng.uniform(cfg.paddle_radius, cfg.width - cfg.paddle_radius)
+            paddle_y = rng.uniform(cfg.paddle_radius,
+                                   cfg.height / 2 - cfg.paddle_radius)
 
         self.state = PhysicsState(
             puck=PuckState(
