@@ -79,7 +79,19 @@ constexpr float RAIL_MAX_Y = 972.4f;
 // outside the quadrilateral the extrinsics were fitted on (x 38..1918,
 // y 38..902), with M1 and M2 landing 30-43 px from the frame edge.
 //
-// So the height came from calipers against the air-hole grid instead:
+// 2026-08-09: M2 REPLACED by direct trilateration from caliper distances to
+// three air holes — 131.0 mm from the corner hole (col 77, row 0), 265.0 mm
+// from (77, 6), 259.0 mm from (71, 0). Residuals +0.10 / -0.06 / -0.05 mm,
+// rms 0.07: the three measurements agree to a tenth of a millimetre, which
+// nothing optical here has come close to. It moved M2 by 3.5 mm.
+//
+// That is now the preferred method for all four — shared/fit_anchors.py.
+// Distances need no squareness and no axis to measure along, and the third
+// distance turns a bare solution into a check. M0, M1 and M3 below are still
+// the older camera-plus-caliper numbers and should be redone the same way.
+//
+// The older method, for the three that still use it: the height came from
+// calipers against the air-hole grid, because
 //     M0   144.5 mm past the row-37 hole line
 //     M3   139.5 mm past the row-0 hole line
 //     M1   132.5 mm from the corner hole at (1955.8, 939.8)
@@ -109,13 +121,13 @@ constexpr float RAIL_MAX_Y = 972.4f;
 constexpr float MOTOR_X[NUM_MOTORS] = {
     1067.6f, // 0: mid-table, far side
     2043.3f, // 1: robot corner, far side
-    2046.6f, // 2: robot corner, near side
+    2043.2f, // 2: robot corner, near side  CALIPERED
     1063.0f, // 3: mid-table, near side
 };
 constexpr float MOTOR_Y[NUM_MOTORS] = {
     1082.0f, // 0
     1041.2f, // 1
-    -96.7f,  // 2
+    -97.7f,  // 2  CALIPERED
     -139.7f, // 3
 };
 
@@ -254,7 +266,7 @@ constexpr float HOME_Y = (WS_MIN_Y + WS_MAX_Y) / 2.0f;  // 470
 constexpr float WRAP_REF_ANGLE[NUM_MOTORS] = {
     -0.977833f, // 0
     -2.349231f, // 1
-    2.356106f,  // 2
+    2.352215f,  // 2
     0.970928f,  // 3
 };
 

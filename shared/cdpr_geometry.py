@@ -31,8 +31,8 @@ RAIL_MAX_Y = 972.4
 # against the air-hole grid fix where along it — an effective plane of
 # z = 24.3 mm, rms residual 1.38 mm against four caliper constraints.
 # See the header: 24.3 is a fitted number, not a physical height.
-MOTOR_X = [1067.6, 2043.3, 2046.6, 1063.0]
-MOTOR_Y = [1082.0, 1041.2, -96.7, -139.7]
+MOTOR_X = [1067.6, 2043.3, 2043.2, 1063.0]
+MOTOR_Y = [1082.0, 1041.2, -97.7, -139.7]
 
 # ── Spool ──
 # goBILDA 3400 Series hub-mount round-belt pulley, 96 mm PITCH DIAMETER,
@@ -62,7 +62,7 @@ WS_MAX_Y = 720.0
 HOME_X = (WS_MIN_X + WS_MAX_X) / 2.0   # 1480.0
 HOME_Y = (WS_MIN_Y + WS_MAX_Y) / 2.0   # 470.0
 
-WRAP_REF_ANGLE = [-0.977833, -2.349231, 2.356106, 0.970928]
+WRAP_REF_ANGLE = [-0.977833, -2.349231, 2.352215, 0.970928]
 
 # ── Heights above the playing surface ──
 MARKER_Z_MM = 3.3    # field markers, on 3D-printed mounts

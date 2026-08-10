@@ -1,7 +1,6 @@
 {
   "date": "2026-08-02 22:51",
-  "method": "retroreflective marker on each spool axis for the camera ray; caliper measurements against the air-hole grid for the position along it (see shared/cdpr_geometry.h)",
-  "marker_height_mm": 24.3,
+  "method": "caliper distances to air holes, trilaterated (shared/fit_anchors.py)",
   "bursts_averaged": 9,
   "anchors_mm": {
     "0": [
@@ -13,8 +12,8 @@
       1041.2
     ],
     "2": [
-      2046.6,
-      -96.7
+      2043.2,
+      -97.7
     ],
     "3": [
       1063.0,
@@ -39,7 +38,6 @@
       0.0
     ]
   },
-  "marker_height_note": "EFFECTIVE plane, fitted to the calipers, not the calipered marker height of 33.5 mm. rms residual 1.38 mm against four caliper constraints.",
   "calipers_mm": {
     "0": "y = 144.5 past the row-37 hole line",
     "1": "132.5 from the corner hole at (1955.8, 939.8)",
@@ -47,5 +45,24 @@
     "3": "y = -139.5, i.e. 139.5 past the row-0 hole line",
     "uncertainty_mm": 0.5
   },
-  "note": "spools replaced 2026-08-02 with McMaster 6245K418 pulleys; the shaft axes -- and therefore these anchors -- did not move, but the retroreflective markers and their 33.5 mm height belonged to the old spools, so re-measure both before re-running measure_anchors.py"
+  "note": "spools replaced 2026-08-02 with McMaster 6245K418 pulleys; the shaft axes -- and therefore these anchors -- did not move, but the retroreflective markers and their 33.5 mm height belonged to the old spools, so re-measure both before re-running measure_anchors.py",
+  "measurements": {
+    "2": [
+      [
+        77.0,
+        0.0,
+        131.0
+      ],
+      [
+        77.0,
+        5.999999999999999,
+        265.0
+      ],
+      [
+        71.0,
+        0.0,
+        259.0
+      ]
+    ]
+  }
 }
