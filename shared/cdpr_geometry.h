@@ -74,57 +74,59 @@ constexpr float RAIL_MAX_Y = 985.1f;
 // MEASURED 2026-08-10, after the 78x38 -> 80x39 grid fix and against the
 // re-solved camera pose. Two methods, and the mix is deliberate:
 //
-// M1, M2, M3 — CALIPERS, trilaterated from distances to three air holes
-// (shared/fit_anchors.py). Each anchor gets its best available measurement.
+// ALL FOUR CALIPERED, trilaterated from distances to three air holes each
+// (shared/fit_anchors.py). Distances beat axis offsets: they need no
+// squareness and no axis to measure along, 100 mm outside the rails with
+// nothing to square against, and the third distance turns a bare solution
+// into a check.
+//   M0  145.8 mm from hole (44,38), 225.5 from (50,38), 250.5 from (41,34)
+//       -> rms 0.51 mm
 //   M1  131.0 mm from hole (79,38), 259.5 from (73,38), 265.0 from (79,32)
 //       -> rms 0.19 mm
 //   M2  131.0 mm from hole (79,0),  259.0 from (73,0),  265.0 from (79,6)
 //       -> rms 0.07 mm
 //   M3  141.9 mm from hole (43,0),  226.5 from (50,0),  255.5 from (40,4)
 //       -> rms 0.01 mm
-// M1 and M2 land 97.4 and 97.7 mm outside their rails and 88.0 and 87.4 mm
-// past col 79 — the two robot-end brackets agreeing to 0.6 mm as mirror
-// images should, which nothing in the fit forces.
 //
-// M0 — optical, pending calipers. vision/bin/measure_anchors.py finds a
-// retroreflector on each spool axis and back-projects it onto the plane
-// z = 33.5 mm, the calipered marker height. Repeatable to 0.1 mm over 9
-// bursts; ACCURATE to a few mm, which is a different number.
+// Two symmetries fall out that nothing in the fit forces, so they are real
+// checks rather than construction: the robot-end pair sits 97.4 and 97.7 mm
+// outside its rails and 88.0 and 87.4 mm past col 79; the mid-table pair
+// sits 143.5 and 141.9 mm outside its rails at x within 2.3 mm.
 //
-// HOW ACCURATE, measured rather than asserted — the optical value differed
-// from the caliper truth by 2.2 mm at M3 (457 px from the principal point),
-// 3.4 mm at M1 (770 px) and 4.2 mm at M2 (806 px). Monotonic in radius,
-// with the intrinsics data running out at 728 px — interpolating at M3,
-// extrapolating at the other two. M0 is the most interior at 400 px, so it
-// should move least; if it moves several mm, that breaks the pattern and is
-// worth a second look rather than acceptance.
+// WHAT THE CAMERA WAS WORTH, now that there is truth to compare it to.
+// vision/bin/measure_anchors.py had measured all four optically at the
+// calipered z = 33.5 mm. Its errors, against these:
+//   M0  1.5 mm   400 px from the principal point
+//   M3  2.2 mm   457 px
+//   M1  3.4 mm   770 px
+//   M2  4.2 mm   806 px
+// Monotonic in image radius, with the intrinsics data ending at 728 px —
+// M0 and M3 interpolating, M1 and M2 extrapolating. That is a lens-model
+// limit, not noise: the optical measurement repeats to 0.1 mm. Use the
+// camera for anything inside the marker quadrilateral and calipers for
+// anything outside it.
 //
-// WHY THE HEIGHT CAN BE TRUSTED NOW, HAVING BEEN A FUDGE BEFORE.
-// The camera fixes the RAY each anchor lies on very well but leaves the
-// position ALONG it entirely to the assumed plane height — the lever is
-// 0.42 mm/mm for the mid-table pair and 0.82 for the robot-end pair.
-// Fitting that height to five independent caliper constraints now wants
-// 35.0 mm (rms 2.16) against the calipered 33.5 (rms 2.32), so the measured
-// height is used as-is; the 0.16 mm is not worth a fudge factor.
-//
-// Before the grid fix the same fit demanded 24.3 mm against the same
-// calipered 33.5. That 9 mm was never a property of the markers: it was the
-// grid-count error in disguise, being absorbed by the only free parameter
-// the procedure had. A fitted constant that drifts 9 mm from a directly
-// measured one is a symptom, not a calibration — treat it that way.
+// The optical route also needs an assumed plane height, and the camera
+// cannot supply it — the lever is 0.42 mm/mm for the mid-table pair and
+// 0.82 for the robot-end pair. Fitting that height to the caliper
+// constraints wants 35.0 mm against the calipered 33.5. Before the
+// 78x38 -> 80x39 grid fix the same fit demanded 24.3 mm: that 9 mm was the
+// grid error in disguise, absorbed by the only free parameter the procedure
+// had. A fitted constant that drifts far from a directly measured one is a
+// symptom, not a calibration.
 //
 // These are NOT a rectangle — the two pairs use different mounting
 // brackets, so any code deriving anchors from a width/height pair is wrong
 // by construction. Re-measure if the spools are re-mounted.
 
 constexpr float MOTOR_X[NUM_MOTORS] = {
-    1095.6f, // 0: mid-table, far side    optical
+    1095.7f, // 0: mid-table, far side    CALIPERED
     2094.6f, // 1: robot corner, far side  CALIPERED
     2094.0f, // 2: robot corner, near side CALIPERED
     1093.4f, // 3: mid-table, near side    CALIPERED
 };
 constexpr float MOTOR_Y[NUM_MOTORS] = {
-    1107.2f, // 0
+    1108.7f, // 0  CALIPERED
     1062.6f, // 1  CALIPERED
     -97.7f,  // 2  CALIPERED
     -141.9f, // 3  CALIPERED
@@ -263,7 +265,7 @@ constexpr float HOME_Y = (WS_MIN_Y + WS_MAX_Y) / 2.0f;  // 483
 // absorbed when the controller is homed, so it is free.
 // Values are atan2(HOME_Y - MOTOR_Y[m], HOME_X - MOTOR_X[m]).
 constexpr float WRAP_REF_ANGLE[NUM_MOTORS] = {
-    -0.986946f, // 0
+    -0.988161f, // 0
     -2.362197f, // 1
     2.360737f, // 2
     0.985013f, // 3

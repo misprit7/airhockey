@@ -50,8 +50,19 @@ ANCHORS_JSON = (Path(__file__).resolve().parent.parent
                 / "vision" / "calib" / "motor_anchors.json")
 
 
+LAST_COL = round(geom.GRID_X_MM / geom.GRID_PITCH_MM)   # 79
+LAST_ROW = round(geom.GRID_Y_MM / geom.GRID_PITCH_MM)   # 38
+
+
 def parse(tokens):
-    """'M:col,row,dist' -> {motor: [(x_mm, y_mm, dist), ...]}"""
+    """'M:col,row,dist' -> {motor: [(x_mm, y_mm, dist), ...]}
+
+    Indices may be NEGATIVE, Python-style: -1 is the last hole, -2 the one
+    before it. Counting back from the rail you are standing at beats
+    counting forty holes from the far corner, and it is how the two worst
+    mistakes in this geometry happened — an off-by-one in x that read as a
+    25 mm calibration error, and a grid count that was wrong by two.
+    """
     out: dict[int, list] = {}
     for t in tokens:
         try:
@@ -62,6 +73,13 @@ def parse(tokens):
             sys.exit(f"cannot parse {t!r} — expected M:col,row,distance_mm")
         if not 0 <= m < 4:
             sys.exit(f"motor {m} out of range in {t!r}")
+        if col < 0:
+            col += LAST_COL + 1
+        if row < 0:
+            row += LAST_ROW + 1
+        if not (0 <= col <= LAST_COL and 0 <= row <= LAST_ROW):
+            sys.exit(f"hole ({col:g}, {row:g}) is off the grid in {t!r} — "
+                     f"columns are 0..{LAST_COL}, rows 0..{LAST_ROW}")
         out.setdefault(m, []).append(
             (col * geom.GRID_PITCH_MM, row * geom.GRID_PITCH_MM, dist))
     return out
