@@ -37,6 +37,17 @@ class CDPRClient:
     Protocol is simple line-based text over TCP on localhost:8421.
     """
 
+    # Every round trip gets a deadline. Without one, a master that stops
+    # responding — wedged, or merely SIGSTOP'd by a stray Ctrl-Z — parks this
+    # recv forever, and because the server calls straight through to here on
+    # its asyncio loop, one frozen process takes the whole UI down with it,
+    # camera stream included. Callers already treat an exception as "hardware
+    # went away"; the timeout is what lets that path ever run.
+    RESPONSE_TIMEOUT_S = 2.0
+    # ENABLE is the exception: it drives the Teensy through tensioning and
+    # START, and the master allows 10 s for those internally.
+    ENABLE_TIMEOUT_S = 20.0
+
     def __init__(self, host: str = "127.0.0.1", port: int = 8421):
         self.host = host
         self.port = port
@@ -45,6 +56,7 @@ class CDPRClient:
     def connect(self) -> None:
         self._sock = socket.socket(socket.AF_INET, socket.SOCK_STREAM)
         self._sock.setsockopt(socket.IPPROTO_TCP, socket.TCP_NODELAY, 1)
+        self._sock.settimeout(self.RESPONSE_TIMEOUT_S)
         self._sock.connect((self.host, self.port))
 
     def close(self) -> None:
@@ -56,15 +68,35 @@ class CDPRClient:
             self._sock.close()
             self._sock = None
 
-    def _send(self, cmd: str) -> str:
-        """Send a command and return the response line."""
-        self._sock.sendall((cmd + "\n").encode())
-        data = b""
-        while b"\n" not in data:
-            chunk = self._sock.recv(1024)
-            if not chunk:
-                raise ConnectionError("Server closed connection")
-            data += chunk
+    def _send(self, cmd: str, timeout: float | None = None) -> str:
+        """Send a command and return the response line.
+
+        A timeout drops the connection rather than retrying. The protocol is
+        one reply per command with nothing to match them up, so a reply that
+        arrives after we stopped waiting would be handed back as the answer to
+        whatever we asked NEXT — every later reading off by one command, which
+        reads as plausible data rather than as a fault. Closing is the only
+        way to resynchronise.
+        """
+        if self._sock is None:
+            raise ConnectionError("not connected to cdpr_master")
+        try:
+            self._sock.settimeout(timeout or self.RESPONSE_TIMEOUT_S)
+            self._sock.sendall((cmd + "\n").encode())
+            data = b""
+            while b"\n" not in data:
+                chunk = self._sock.recv(1024)
+                if not chunk:
+                    raise ConnectionError("Server closed connection")
+                data += chunk
+        except socket.timeout:
+            self._sock.close()
+            self._sock = None
+            raise ConnectionError(
+                f"cdpr_master did not answer {cmd.split()[0]} within "
+                f"{timeout or self.RESPONSE_TIMEOUT_S:g}s; connection dropped "
+                f"(is it stopped? check for State: T in /proc/<pid>/status)"
+            ) from None
         return data.decode().strip()
 
     def enable(self, cal_x_mm: float | None = None,
@@ -80,19 +112,20 @@ class CDPRClient:
         any error there offsets every later command:
             python vision/bin/track_mallet.py
         """
+        t = self.ENABLE_TIMEOUT_S
         if cal_x_mm is None or cal_y_mm is None:
-            resp = self._send("ENABLE")
+            resp = self._send("ENABLE", timeout=t)
         elif cal_theta_deg is None:
-            resp = self._send(f"ENABLE {cal_x_mm:.2f} {cal_y_mm:.2f}")
+            resp = self._send(f"ENABLE {cal_x_mm:.2f} {cal_y_mm:.2f}", timeout=t)
         else:
             resp = self._send(f"ENABLE {cal_x_mm:.2f} {cal_y_mm:.2f} "
-                              f"{cal_theta_deg:.2f}")
+                              f"{cal_theta_deg:.2f}", timeout=t)
         if not resp.startswith("OK"):
             raise RuntimeError(f"enable failed: {resp}")
 
     def disable(self) -> None:
         """Stop Teensy motion controller and disable motors."""
-        resp = self._send("DISABLE")
+        resp = self._send("DISABLE", timeout=self.ENABLE_TIMEOUT_S)
         if not resp.startswith("OK"):
             raise RuntimeError(f"CDPR disable failed: {resp}")
 
