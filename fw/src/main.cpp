@@ -47,7 +47,7 @@ constexpr Mode START_MODE = MODE_SERIAL;
 static Mode g_mode = START_MODE;
 
 // Speed cap applied on boot in host-control mode.
-constexpr float SERIAL_DEFAULT_SPEED_MM_S = 40.0f;
+constexpr float SERIAL_DEFAULT_SPEED_MM_S = 200.0f;
 
 // Defined further down with the square test; needed by the serial
 // handler above it so SQUARE can be entered at runtime.
@@ -88,10 +88,14 @@ static void sendStatus() {
   cdpr.getCartPosition(x, y);
   cdpr.getCartVelocity(vx, vy);
   cdpr.getMotorCounts(counts);
-  Serial.printf("S %.2f %.2f %.2f %.2f %ld %ld %ld %ld\n",
+  // The trailing three are newer than the rest; anything parsing this
+  // should treat them as optional so an older host still works.
+  Serial.printf("S %.2f %.2f %.2f %.2f %ld %ld %ld %ld %.1f %.1f %u\n",
                 x, y, vx, vy,
                 (long)counts[0], (long)counts[1],
-                (long)counts[2], (long)counts[3]);
+                (long)counts[2], (long)counts[3],
+                cdpr.getVelocityLimit(), cdpr.getAccelLimit(),
+                (unsigned)cdpr.getLimitFlags());
 }
 
 static void processCommand(char *line) {
@@ -116,7 +120,16 @@ static void processCommand(char *line) {
       return;
     }
     cdpr.setVelocityLimit(v);
-    Serial.printf("OK SPEED %.1f\n", v);
+    Serial.printf("OK SPEED %.1f\n", cdpr.getVelocityLimit());
+    return;
+  } else if (strcasecmp(cmd, "ACCEL") == 0) {
+    float v;
+    if (sscanf(args, "%f", &v) != 1) {
+      Serial.println("ERR ACCEL requires mm/s^2");
+      return;
+    }
+    cdpr.setAccelLimit(v);
+    Serial.printf("OK ACCEL %.1f\n", cdpr.getAccelLimit());
     return;
   } else if (strcasecmp(cmd, "SQUARE") == 0) {
     g_mode = MODE_SQUARE;

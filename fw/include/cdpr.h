@@ -38,6 +38,19 @@ public:
   // does harm.
   void setVelocityLimit(float mm_s);
 
+  // Cap the trajectory acceleration (mm/s^2). Clamped to MAX_ACCEL_MM_S2.
+  void setAccelLimit(float mm_s2);
+
+  float getVelocityLimit() const;
+  float getAccelLimit() const;
+
+  // Which limit the last tick actually hit, per axis. Bit 0/1 = x
+  // accel/speed, bit 2/3 = y accel/speed. A move that is accel-limited the
+  // whole way never reached its speed cap, so raising the speed does
+  // nothing — that is the question this answers, and guessing at it from
+  // the outside is most of why tuning a profile is tedious.
+  uint8_t getLimitFlags() const;
+
   // Read current state. All thread-safe (briefly disables interrupts).
   void getTarget(float &x, float &y) const;
   void getCartPosition(float &x, float &y) const;   // theoretical position
@@ -86,6 +99,8 @@ private:
   volatile float cartX_, cartY_;     // theoretical position (mm)
   volatile float velX_,  velY_;      // current velocity (mm/s)
   volatile float velLimit_;          // trajectory speed cap (mm/s)
+  volatile float accelLimit_;        // trajectory accel cap (mm/s^2)
+  volatile uint8_t limitFlags_;      // which limit bound on the last tick
   float theta_;                      // paddle orientation (rad)
 
   // ── Target (set from main loop, read by ISR) ──

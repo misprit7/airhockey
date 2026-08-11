@@ -104,6 +104,10 @@ struct TeensyStatus {
     double x, y;        // cart position (mm)
     double vx, vy;      // cart velocity (mm/s)
     int c0, c1, c2, c3; // motor step counts
+    // Newer firmware appends these; older does not, so they are optional
+    // and default to zero rather than making the whole line unparseable.
+    double vlim, alim;  // active speed / accel limits
+    int limit_flags;    // bit 0/1 x accel/speed, bit 2/3 y accel/speed
     bool valid;          // at least one status received
 };
 
@@ -112,16 +116,14 @@ static TeensyStatus g_status = {};
 
 // Parse "S x y vx vy c0 c1 c2 c3"
 static bool parseStatus(const char *line, TeensyStatus &st) {
-    double x, y, vx, vy;
-    int c0, c1, c2, c3;
-    if (sscanf(line, "S %lf %lf %lf %lf %d %d %d %d",
-               &x, &y, &vx, &vy, &c0, &c1, &c2, &c3) == 8) {
-        st.x = x; st.y = y; st.vx = vx; st.vy = vy;
-        st.c0 = c0; st.c1 = c1; st.c2 = c2; st.c3 = c3;
-        st.valid = true;
-        return true;
-    }
-    return false;
+    st = {};
+    int n = sscanf(line, "S %lf %lf %lf %lf %d %d %d %d %lf %lf %d",
+                   &st.x, &st.y, &st.vx, &st.vy,
+                   &st.c0, &st.c1, &st.c2, &st.c3,
+                   &st.vlim, &st.alim, &st.limit_flags);
+    if (n < 8) return false;
+    st.valid = true;
+    return true;
 }
 
 // ── TCP command handling ────────────────────────────────────────────────
@@ -313,11 +315,31 @@ static int handleCommand(const char *line, ClearPath &robot, int client_fd, int 
     } else if (strncmp(line, "STATUS", 6) == 0) {
         std::lock_guard<std::mutex> lock(g_status_mutex);
         if (g_status.valid) {
-            snprintf(resp, sizeof(resp), "OK %.2f %.2f %.2f %.2f %d %d %d %d\n",
+            snprintf(resp, sizeof(resp),
+                     "OK %.2f %.2f %.2f %.2f %d %d %d %d %.1f %.1f %d\n",
                      g_status.x, g_status.y, g_status.vx, g_status.vy,
-                     g_status.c0, g_status.c1, g_status.c2, g_status.c3);
+                     g_status.c0, g_status.c1, g_status.c2, g_status.c3,
+                     g_status.vlim, g_status.alim, g_status.limit_flags);
         } else {
             snprintf(resp, sizeof(resp), "ERR no status available\n");
+        }
+
+    } else if (strncmp(line, "LIMITS", 6) == 0) {
+        // Set the trajectory speed and acceleration caps at runtime. Both
+        // live in the Teensy; this only forwards them.
+        double sp, ac;
+        if (sscanf(line, "LIMITS %lf %lf", &sp, &ac) != 2) {
+            snprintf(resp, sizeof(resp), "ERR LIMITS needs speed accel\n");
+        } else {
+            char c[64];
+            snprintf(c, sizeof(c), "SPEED %.2f\n", sp);
+            sendTeensy(teensy_fd, c);
+            waitTeensyOK(teensy_fd);
+            snprintf(c, sizeof(c), "ACCEL %.2f\n", ac);
+            sendTeensy(teensy_fd, c);
+            waitTeensyOK(teensy_fd);
+            logf("  limits -> %.1f mm/s, %.1f mm/s^2\n", sp, ac);
+            snprintf(resp, sizeof(resp), "OK\n");
         }
 
     } else if (strncmp(line, "ENC", 3) == 0) {

@@ -72,7 +72,8 @@ static GpioInfo resolvePin(int pin) {
 CDPR::CDPR(const int stepPins[NUM_MOTORS], const int dirPins[NUM_MOTORS],
            uint32_t tickRateHz)
     : tickRateHz_(tickRateHz), dt_(1.0f / tickRateHz), cartX_(0), cartY_(0),
-      velX_(0), velY_(0), velLimit_(MAX_VELOCITY_MM_S), theta_(MALLET_THETA_RAD),
+      velX_(0), velY_(0), velLimit_(MAX_VELOCITY_MM_S), accelLimit_(DEFAULT_ACCEL_MM_S2),
+      limitFlags_(0), theta_(MALLET_THETA_RAD),
       targetX_(0), targetY_(0), stepSetReg_(nullptr),
       stepClrReg_(nullptr), dirSetReg_(nullptr), dirClrReg_(nullptr) {
   for (int i = 0; i < NUM_MOTORS; i++) {
@@ -158,6 +159,17 @@ void CDPR::setVelocityLimit(float mm_s) {
   velLimit_ = (mm_s > MAX_VELOCITY_MM_S) ? MAX_VELOCITY_MM_S : mm_s;
   interrupts();
 }
+
+void CDPR::setAccelLimit(float mm_s2) {
+  if (mm_s2 <= 0.0f) return;
+  noInterrupts();
+  accelLimit_ = (mm_s2 > MAX_ACCEL_MM_S2) ? MAX_ACCEL_MM_S2 : mm_s2;
+  interrupts();
+}
+
+float CDPR::getVelocityLimit() const { return velLimit_; }
+float CDPR::getAccelLimit() const { return accelLimit_; }
+uint8_t CDPR::getLimitFlags() const { return limitFlags_; }
 
 void CDPR::getTarget(float &x, float &y) const {
   noInterrupts();
@@ -301,7 +313,7 @@ void CDPR::stopTimer() {
 // ============================================================================
 
 static float trapezoidalStep(float pos, float vel, float target, float maxVel,
-                             float maxAccel, float dt) {
+                             float maxAccel, float dt, uint8_t &flags) {
   float err = target - pos;
   float absErr = fabsf(err);
 
@@ -322,12 +334,19 @@ static float trapezoidalStep(float pos, float vel, float target, float maxVel,
 
   float dv = desiredVel - vel;
   float maxDv = maxAccel * dt;
-  if (dv > maxDv)
+  if (dv > maxDv) {
     dv = maxDv;
-  if (dv < -maxDv)
+    flags |= 1;                    // acceleration is the binding limit
+  }
+  if (dv < -maxDv) {
     dv = -maxDv;
+    flags |= 1;
+  }
 
-  return vel + dv;
+  const float out = vel + dv;
+  if (fabsf(out) >= maxVel * 0.999f)
+    flags |= 2;                    // riding the speed cap
+  return out;
 }
 
 // ============================================================================
@@ -344,10 +363,10 @@ void CDPR::tick() {
   float ty = targetY_;
 
   // ── Independent trapezoidal profiles for each axis ──
-  velX_ = trapezoidalStep(cartX_, velX_, tx, velLimit_, MAX_ACCEL_MM_S2,
-                          dt_);
-  velY_ = trapezoidalStep(cartY_, velY_, ty, velLimit_, MAX_ACCEL_MM_S2,
-                          dt_);
+  uint8_t fx = 0, fy = 0;
+  velX_ = trapezoidalStep(cartX_, velX_, tx, velLimit_, accelLimit_, dt_, fx);
+  velY_ = trapezoidalStep(cartY_, velY_, ty, velLimit_, accelLimit_, dt_, fy);
+  limitFlags_ = (uint8_t)(fx | (fy << 2));
 
   // ── Advance theoretical cart position ──
   if (fabsf(tx - cartX_) < 0.01f) {

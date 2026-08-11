@@ -156,8 +156,8 @@ class HardwareDynamics(MotorDynamics):
         self,
         sim_width: float = 1.0,
         sim_height: float = 2.0,
-        speed_mm_s: float = 40.0,
-        max_speed_mm_s: float = 120.0,
+        speed_mm_s: float = 200.0,
+        max_speed_mm_s: float = 600.0,
         host: str = "127.0.0.1",
         port: int = 8421,
         cal_pose_mm: tuple[float, float, float] | None = None,
@@ -197,9 +197,17 @@ class HardwareDynamics(MotorDynamics):
         self._enc = None
         self._enc_zero = None
         self._last_enc_read = 0.0
+        self._speed_limit = None
+        self._accel_limit = None
+        self._limit_flags = 0
 
     def set_speed(self, mm_s: float) -> None:
         self.speed = max(1.0, min(float(mm_s), self.max_speed))
+
+    def set_limits(self, speed_mm_s: float, accel_mm_s2: float) -> None:
+        """Push both caps to the Teensy, which is where the profile lives."""
+        self.set_speed(speed_mm_s)
+        self.client.set_limits(self.speed, max(1.0, float(accel_mm_s2)))
 
     def reset(self, x: float, y: float) -> None:
         try:
@@ -234,6 +242,9 @@ class HardwareDynamics(MotorDynamics):
         s = self.client.get_status()
         self._hw_x_mm, self._hw_y_mm = s["x"], s["y"]
         self._hw_counts = [s["c0"], s["c1"], s["c2"], s["c3"]]
+        self._speed_limit = s.get("speed_limit")
+        self._accel_limit = s.get("accel_limit")
+        self._limit_flags = s.get("limit_flags", 0)
         # The drives' own encoders, at a slower cadence — this is a separate
         # serial round trip to four nodes and does not need to keep up with
         # the command rate.
@@ -291,6 +302,11 @@ class HardwareDynamics(MotorDynamics):
             "trq_pct": None if not self._enc else [round(v, 1)
                                                   for v in self._enc["trq"]],
             "speed_mm_s": round(self.speed, 1),
+            # What the Teensy is actually enforcing, and which cap the last
+            # tick hit. Bit 0/1 = x accel/speed, bit 2/3 = y accel/speed.
+            "speed_limit": self._speed_limit,
+            "accel_limit": self._accel_limit,
+            "limit_flags": self._limit_flags,
         }
 
     def _sim_to_mm(self, sx: float, sy: float):

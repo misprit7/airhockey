@@ -192,6 +192,7 @@ async def live_game(ws: WebSocket):
 
     use_instant = False
     use_hardware = False
+    ui_mode = "control"     # "control" | "sim"; replay never reaches here
     hardware_dynamics = None
     agent_dynamics = DelayedDynamics(max_speed=5.0, max_accel=60.0, time_constant=0.01)
     env = AirHockeyEnv(
@@ -312,12 +313,51 @@ async def live_game(ws: WebSocket):
                                 env.engine.state.paddle_agent.y,
                             )
                         await ws.send_json({"type": "hardware_mode", "enabled": use_hardware})
+                    elif msg_type == "set_limits":
+                        hd = hardware_dynamics
+                        if hd:
+                            try:
+                                hd.set_limits(float(msg.get("speed", hd.speed)),
+                                              float(msg.get("accel", 400.0)))
+                            except Exception as e:      # noqa: BLE001
+                                print(f"set_limits failed: {e}")
+                    elif msg_type == "set_mode":
+                        # "control" = human driving the machine, no world.
+                        # "sim" = the full game. Replay never reaches here.
+                        ui_mode = ("control" if msg.get("mode") == "control"
+                                   else "sim")
                     elif msg_type == "reset":
                         obs, info = env.reset()
                         target_x = cfg.width / 2
                         target_y = cfg.height * 0.15
             except (TimeoutError, asyncio.TimeoutError):
                 pass
+
+            terminated = truncated = False
+            if ui_mode == "control":
+                # No physics at all. A human driving the machine does not
+                # want a simulated puck in the way, and it is not merely
+                # cosmetic: a goal calls env.reset(), which repositions the
+                # agent paddle and would command the hardware to move on its
+                # own. Drive the dynamics directly and skip the world.
+                ax, ay = env.agent_dynamics.update(target_x, target_y,
+                                                   env.action_dt)
+                frame_msg = {
+                    "type": "frame",
+                    "control": True,
+                    "agent_x": ax,
+                    "agent_y": ay,
+                }
+                if use_hardware and hardware_dynamics:
+                    frame_msg["hw_x"] = hardware_dynamics.x
+                    frame_msg["hw_y"] = hardware_dynamics.y
+                    hx, hy = hardware_dynamics.get_hw_position_mm()
+                    frame_msg["hw_x_mm"] = round(hx, 1)
+                    frame_msg["hw_y_mm"] = round(hy, 1)
+                    frame_msg["hw"] = hardware_dynamics.hw_state()
+                await ws.send_json(frame_msg)
+                await asyncio.sleep(1 / 60)
+                continue
 
             # Convert physics coords to normalized [-1, 1] action space
             norm_x = (target_x - env._action_low[0]) / (env._action_high[0] - env._action_low[0]) * 2 - 1

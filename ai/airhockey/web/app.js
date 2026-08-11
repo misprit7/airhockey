@@ -5,7 +5,9 @@ const ctx = canvas.getContext("2d");
 let config = null;
 let frame = null;
 let ws = null;
-let mode = "live"; // "live" or "replay"
+// "control" = driving the machine by hand, no world simulated at all;
+// "sim" = the full game; "replay" = watching a recording.
+let mode = "control";
 let replayData = null;
 let replayIndex = 0;
 let replayPlaying = false;
@@ -116,6 +118,8 @@ function drawTable() {
     ctx.beginPath();
     ctx.arc(tx(config.width / 2), ty(config.height / 2), ts(0.008), 0, Math.PI * 2);
     ctx.fill();
+
+    if (mode === "control") return;   // nothing to score into
 
     // Goals
     const goalLeft = (config.width - config.goal_width) / 2;
@@ -291,9 +295,15 @@ function render() {
     drawTable();
 
     if (frame) {
-        drawPuck(frame.puck_x, frame.puck_y);
+        // Control mode draws only your paddle: there is no puck and no
+        // opponent until they are actually tracked, and drawing a simulated
+        // one next to a real machine invites reading it as real.
+        if (mode !== "control" && frame.puck_x !== undefined) {
+            drawPuck(frame.puck_x, frame.puck_y);
+            drawPaddle(frame.opponent_x, frame.opponent_y, COLORS.opponent,
+                       COLORS.opponentGlow, COLORS.opponentRing);
+        }
         drawPaddle(frame.agent_x, frame.agent_y, COLORS.agent, COLORS.agentGlow, COLORS.agentRing);
-        drawPaddle(frame.opponent_x, frame.opponent_y, COLORS.opponent, COLORS.opponentGlow, COLORS.opponentRing);
         if (hwPosition && showHwOverlay) {
             drawHwPaddle(hwPosition.x, hwPosition.y);
         }
@@ -309,6 +319,12 @@ function connect() {
 
     ws.onopen = () => {
         document.getElementById("status").textContent = "Connected";
+        // Re-assert the mode. The server starts every connection in control,
+        // so without this a reconnect while in sim would silently drop the
+        // world out from under the UI.
+        if (mode !== "replay") {
+            ws.send(JSON.stringify({ type: "set_mode", mode: mode }));
+        }
     };
 
     ws.onmessage = (e) => {
@@ -317,14 +333,15 @@ function connect() {
         if (msg.type === "config") {
             config = msg;
             resize();
-        } else if (msg.type === "frame" && mode === "live") {
+        } else if (msg.type === "frame" && mode !== "replay") {
             frame = msg;
             if (msg.hw_x !== undefined && msg.hw_y !== undefined) {
                 hwPosition = { x: msg.hw_x, y: msg.hw_y };
             } else {
                 hwPosition = null;
             }
-            updateScoreboard(msg);
+            updateLimitState(msg.hw);
+            if (mode === "sim") updateScoreboard(msg);
         } else if (msg.type === "game_over") {
             document.getElementById("status").textContent = `Game Over! ${msg.score_agent}-${msg.score_opponent}`;
             loadRecordingsList();
@@ -405,9 +422,9 @@ let controlMode = "click";    // "click" | "follow"
 // recording you were watching.
 function sendTarget(clientX, clientY, deliberate) {
     if (!ws || !config) return;
-    if (mode !== "live") {
+    if (mode === "replay") {
         if (!deliberate) return;
-        setMode("live");
+        setMode("control");
     }
     const pos = screenToPhysics(clientX, clientY);
     lastCommandedSim = pos;
@@ -423,7 +440,7 @@ canvas.addEventListener("mousemove", (e) => {
 canvas.addEventListener("click", (e) => {
     // In follow mode the pointer is already there and mousemove has sent it;
     // resending would double up on the wire for no benefit.
-    if (controlMode === "follow" && mode === "live") return;
+    if (controlMode === "follow" && mode !== "replay") return;
     sendTarget(e.clientX, e.clientY, true);
 });
 
@@ -469,7 +486,7 @@ document.getElementById("btn-physics").addEventListener("click", () => {
 document.getElementById("btn-hardware").addEventListener("click", () => {
     // Driving the machine from replay mode is never what you meant: the
     // field is showing a recording, and every target you set is discarded.
-    if (mode !== "live") setMode("live");
+    if (mode === "replay") setMode("control");
     if (ws) ws.send(JSON.stringify({ type: "toggle_hardware" }));
 });
 
@@ -484,6 +501,21 @@ function setMode(next) {
     mode = next;
     document.querySelectorAll(".mode-btn").forEach(
         (b) => b.classList.toggle("active", b.dataset.mode === next));
+
+    // The server needs to know: in control mode it skips the physics
+    // entirely rather than simulating a world nobody is looking at. That is
+    // not cosmetic — a simulated goal calls env.reset(), which repositions
+    // the paddle and would command the hardware to move on its own.
+    if (ws && ws.readyState === 1 && next !== "replay") {
+        ws.send(JSON.stringify({ type: "set_mode", mode: next }));
+    }
+    // Scoring and the clock mean nothing without a simulated game.
+    document.getElementById("scoreboard").style.visibility =
+        next === "sim" ? "" : "hidden";
+    document.getElementById("topbar-stats").style.visibility =
+        next === "sim" ? "" : "hidden";
+    document.getElementById("sidebar-reward").style.display =
+        next === "sim" ? "" : "none";
 
     const replayPanel = document.getElementById("replay-panel");
     if (mode === "replay") {
@@ -730,7 +762,48 @@ async function loadLatestRecording() {
     }
 }
 loadLatestRecording();
+setMode(mode);
 
+
+// ── motion limits ──────────────────────────────────────────────────
+// The profile lives on the Teensy; these push the caps to it and read back
+// which one is actually binding. Worth knowing because the two are not
+// interchangeable: a move that is accel-limited the whole way never reaches
+// its speed cap, so raising the speed changes nothing.
+(() => {
+    const sp = document.getElementById("lim-speed");
+    const ac = document.getElementById("lim-accel");
+    const btn = document.getElementById("btn-limits");
+    if (!btn) return;
+    btn.addEventListener("click", () => {
+        if (!ws || ws.readyState !== 1) return;
+        ws.send(JSON.stringify({ type: "set_limits",
+                                 speed: parseFloat(sp.value),
+                                 accel: parseFloat(ac.value) }));
+    });
+})();
+
+function updateLimitState(hw) {
+    const el = document.getElementById("limit-state");
+    if (!el) return;
+    if (!hw || hw.limit_flags === undefined || hw.speed_limit == null) {
+        el.textContent = "limited by: \u2014";
+        el.className = "";
+        return;
+    }
+    const f = hw.limit_flags;
+    // bit 0/1 = x accel/speed, bit 2/3 = y accel/speed
+    const accel = (f & 1) || (f & 4);
+    const speed = (f & 2) || (f & 8);
+    const what = accel && speed ? "accel + speed"
+               : accel ? "acceleration"
+               : speed ? "speed"
+               : "nothing (idle or coasting)";
+    el.textContent = `limited by: ${what}\n`
+        + `Teensy has ${hw.speed_limit.toFixed(0)} mm/s, `
+        + `${hw.accel_limit.toFixed(0)} mm/s\u00b2`;
+    el.className = accel ? "accel" : speed ? "speed" : "";
+}
 
 // ── zoom / pan, shared by the tracker view and the state view ──────
 //

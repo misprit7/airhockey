@@ -49,7 +49,13 @@ inline float countsToMm(float counts) { return counts * MM_PER_COUNT; }
 // they live in the shared header.
 
 constexpr float MAX_VELOCITY_MM_S = 7200.0f;
-constexpr float MAX_ACCEL_MM_S2 = 400.0f;
+
+// Acceleration: a DEFAULT that motion starts at, and a CEILING the runtime
+// setter will not exceed. They were one constant, which meant changing how
+// hard the rig accelerates required a reflash — and reflashing to try a
+// number is how you end up not trying it.
+constexpr float DEFAULT_ACCEL_MM_S2 = 400.0f;
+constexpr float MAX_ACCEL_MM_S2 = 5000.0f;
 
 // ── Control loop ────────────────────────────────────────────────────
 

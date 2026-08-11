@@ -117,6 +117,12 @@ class CDPRClient:
             return float(parts[1]), float(parts[2]), float(parts[3]), float(parts[4])
         raise RuntimeError(f"CDPR pos failed: {resp}")
 
+    def set_limits(self, speed_mm_s: float, accel_mm_s2: float) -> None:
+        """Set the Teensy's trajectory speed and acceleration caps."""
+        resp = self._send(f"LIMITS {speed_mm_s:.2f} {accel_mm_s2:.2f}")
+        if not resp.startswith("OK"):
+            raise RuntimeError(f"CDPR limits failed: {resp}")
+
     def get_encoders(self) -> dict:
         """Read the DRIVES' encoders, not the Teensy's step counts.
 
@@ -143,7 +149,7 @@ class CDPRClient:
         resp = self._send("STATUS")
         if resp.startswith("OK"):
             parts = resp.split()
-            return {
+            out = {
                 "x": float(parts[1]),
                 "y": float(parts[2]),
                 "vx": float(parts[3]),
@@ -153,4 +159,10 @@ class CDPRClient:
                 "c2": int(parts[7]),
                 "c3": int(parts[8]),
             }
+            # Optional: older firmware stops at the step counts.
+            if len(parts) >= 12:
+                out["speed_limit"] = float(parts[9])
+                out["accel_limit"] = float(parts[10])
+                out["limit_flags"] = int(parts[11])
+            return out
         raise RuntimeError(f"CDPR status failed: {resp}")

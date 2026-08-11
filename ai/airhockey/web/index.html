@@ -81,8 +81,16 @@
                 </label>
             </div>
             <div id="mode-select">
-                <button class="mode-btn active" data-mode="live">Live</button>
+                <button class="mode-btn active" data-mode="control">Control</button>
+                <button class="mode-btn" data-mode="sim">Simulation</button>
                 <button class="mode-btn" data-mode="replay">Replay</button>
+            </div>
+            <div id="limits-panel">
+                <h3 title="The trajectory profile lives on the Teensy. These push the caps to it at runtime, and the indicator says which one the last tick actually hit — a move that is accel-limited the whole way never reached its speed cap, so raising the speed would do nothing.">Motion limits &#9432;</h3>
+                <label>Speed <input type="number" id="lim-speed" min="1" max="600" step="10" value="200"> mm/s</label>
+                <label>Accel <input type="number" id="lim-accel" min="1" max="5000" step="50" value="400"> mm/s&sup2;</label>
+                <button id="btn-limits">Apply</button>
+                <div id="limit-state">limited by: &mdash;</div>
             </div>
             <div id="replay-panel" class="hidden">
                 <h3>Recordings</h3>

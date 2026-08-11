@@ -554,3 +554,40 @@ canvas {
     #camera-panel.collapsed #camera-body,
     #state-panel.collapsed #state-body { display: none; }
 }
+
+/* ── motion limits ─────────────────────────────────────────────────── */
+#limits-panel {
+    display: flex;
+    flex-direction: column;
+    gap: 6px;
+}
+#limits-panel h3 { font-size: 13px; font-weight: 500; color: #999; }
+#limits-panel label {
+    display: flex;
+    align-items: center;
+    justify-content: space-between;
+    gap: 6px;
+    font-size: 12px;
+    color: #aaa;
+}
+#limits-panel input {
+    width: 72px;
+    background: #1a1a26;
+    border: 1px solid #2a2a3a;
+    border-radius: 4px;
+    color: #ccc;
+    padding: 4px 6px;
+    font: 12px ui-monospace, Menlo, monospace;
+}
+#limits-panel button { padding: 6px 10px; font-size: 12px; }
+#limit-state {
+    font: 11px ui-monospace, Menlo, monospace;
+    color: #888;
+    text-align: center;
+    white-space: pre-line;
+    line-height: 1.5;
+}
+/* Amber for accel-bound, blue for speed-bound: which one is binding is the
+   whole point of the readout, so they must not look alike. */
+#limit-state.accel { color: #ffb040; }
+#limit-state.speed { color: #4a9eff; }
