@@ -210,7 +210,7 @@ class HardwareDynamics(MotorDynamics):
     def reset_peaks(self) -> None:
         self.client.reset_peaks()
 
-    ACCEL_CEILING = 20000.0      # mirrors MAX_ACCEL_MM_S2
+    ACCEL_CEILING = 120000.0     # mirrors MAX_ACCEL_MM_S2
 
     def set_limits(self, speed_mm_s: float, accel_mm_s2: float) -> dict:
         """Push both caps to the Teensy, which is where the profile lives.

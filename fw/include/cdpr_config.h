@@ -61,31 +61,35 @@ constexpr float MAX_VELOCITY_MM_S = 12000.0f;
 // setter will not exceed. They were one constant, which meant changing how
 // hard the rig accelerates required a reflash — and reflashing to try a
 // number is how you end up not trying it.
-// Accel: 20000 is a JUDGEMENT, not a derived number, and it is worth being
-// honest about that. The only physical bound is torque — 46 N per cable
-// into ~349 g of effective mass, roughly 261000 mm/s^2 — and that assumes
-// peak torque with no opposing tension, so it is an upper bound rather than
-// something to design against. 20000 sits an order of magnitude under it,
-// which is a bring-up posture, not a hardware fact. Raise it once motion is
-// trusted.
+// Accel. The ceiling is 120000 so it never blocks a limit test; the
+// DEFAULT of 400 is what keeps the rig tame day to day.
 //
-// The drives ALSO carry Motion.VelLimit = 1000 RPM and Motion.AccLimit =
-// 5000 RPM/s (see sw/build/check_limits). Those are SOFTWARE settings
-// stored in the drive, not physical limits, and they are almost certainly
-// irrelevant here: they govern moves the DRIVE generates over sFoundation,
-// and all motion on this rig is step/dir pulses the drive simply follows.
-// Almost certainly is not certainly. If VelLimit did gate step/dir, the
-// cable ceiling would be 1000 rpm x 48 mm = 5027 mm/s, not 12968 — a factor
-// of 2.6. The test costs nothing: command a fast move and watch 'stepped'
-// against 'measured' in the state view. A drive that is being limited falls
-// behind the step count and never catches up.
+// There is no single right number, because what the cables can deliver
+// varies 12x across the workspace. Solving for the largest net force the
+// four PULL-ONLY cables can make (an LP over tensions capped at 45.6 N,
+// which is 2.19 N.m over a 48 mm spool) against ~270 g of effective mass
+// — paddle plus rotor and spool inertia reflected through the cables:
 //
-// Worth knowing: within a 500 mm workspace the SPEED cap is unreachable
-// anyway. From 250 mm of run-up, 20000 mm/s^2 tops out at 3162 mm/s, and
-// reaching 12968 would need 336000 mm/s^2. Acceleration is what actually
-// governs how fast this thing moves, not the speed limit.
+//     workspace centre     114000 mm/s^2
+//     robot end             97000
+//     far corner            59000
+//     near the centreline   17400
+//     worst corner           9000
+//
+// The corners are poor because they approach the anchor hull, where the
+// tension needed for a given force diverges. So a global cap is the wrong
+// abstraction: 120000 is reachable at the centre and impossible near the
+// centreline. Commanding more than the cables can make does not break
+// anything — the drives torque-limit — but the mallet falls behind and the
+// cables fight, which reads exactly like a kinematics bug. Watch 'stepped'
+// against 'measured' and the torque row; that is what saturation looks
+// like.
+//
+// The real fix is a position- and direction-dependent limit computed from
+// the cable Jacobian, which is four dot products. Until then this is a
+// ceiling, not a promise.
 constexpr float DEFAULT_ACCEL_MM_S2 = 400.0f;
-constexpr float MAX_ACCEL_MM_S2 = 20000.0f;
+constexpr float MAX_ACCEL_MM_S2 = 120000.0f;
 
 // ── Control loop ────────────────────────────────────────────────────
 
