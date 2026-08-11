@@ -220,15 +220,49 @@ class HardwareDynamics(MotorDynamics):
         """
         want_s, want_a = float(speed_mm_s), float(accel_mm_s2)
         self.set_speed(want_s)
+        before = (self._speed_limit, self._accel_limit)
         self.client.set_limits(want_s, want_a)
-        self._read_state()                       # refresh from the Teensy
-        got_s = self._speed_limit if self._speed_limit is not None else want_s
-        got_a = self._accel_limit if self._accel_limit is not None else want_a
+        got_s, got_a = self._await_limits(want_s, want_a, before)
         self.speed = got_s
         return {
             "speed": got_s, "accel": got_a,
-            "clamped": abs(got_s - want_s) > 0.5 or abs(got_a - want_a) > 0.5,
+            "clamped_speed": abs(got_s - want_s) > 0.5,
+            "clamped_accel": abs(got_a - want_a) > 0.5,
         }
+
+    # The master does not query the Teensy on demand: STATUS hands back a
+    # cache its reader thread refills from the 50 Hz status line. So the
+    # obvious "write, then read what took" is a race the write usually
+    # loses, and the answer is the caps from BEFORE the change. Reported as
+    # 'firmware clamped' and written back into the fields, that reads as the
+    # UI corrupting a value nobody touched.
+    LIMIT_SETTLE_S = 0.25          # >10 status frames at 20 ms
+    LIMIT_POLL_S = 0.005
+
+    def _await_limits(self, want_s: float, want_a: float, before):
+        """Read the caps back only once the status can reflect the write.
+
+        Accepts on either of two conditions, because only their combination
+        covers a firmware that clamps: the caps now match what was asked, or
+        they differ from what was there before it was asked. Matching alone
+        would spin until the deadline whenever the firmware legitimately
+        refused a value; differing alone would never fire when the request
+        was a no-op.
+        """
+        deadline = self._time.monotonic() + self.LIMIT_SETTLE_S
+        have_baseline = None not in before
+        while True:
+            self._read_state()
+            got = (self._speed_limit, self._accel_limit)
+            if got[0] is None or got[1] is None:
+                return want_s, want_a      # firmware predates the cap readout
+            settled = (abs(got[0] - want_s) < 0.5
+                       and abs(got[1] - want_a) < 0.5)
+            if settled or (have_baseline and got != before):
+                return got
+            if self._time.monotonic() >= deadline:
+                return got
+            self._time.sleep(self.LIMIT_POLL_S)
 
     def reset(self, x: float, y: float) -> None:
         try:

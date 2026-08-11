@@ -5,17 +5,128 @@ Motors connected (not yet enabled).
 Listening on localhost:8421
 Ctrl+C to stop.
 
-  Teensy: Tension released
-  Teensy: OK RELEASE
 Client connected.
   ENABLE
-  calibrating at measured (1519.0, 479.5) theta 135.02 deg
+  calibrating at measured (1530.0, 464.5) theta 135.33 deg
   Teensy: OK CAL
   Teensy: OK TENSION
   Teensy: OK START
   -> enabled
   Teensy: OK SPEED 200.0
   speed limit -> 200.0 mm/s
+  Teensy: OK CMD
+  Teensy: OK CMD
+  Teensy: OK CMD
+  Teensy: OK CMD
+  Teensy: OK CMD
+  Teensy: OK CMD
+  Teensy: OK CMD
+  Teensy: OK CMD
+  Teensy: OK CMD
+  Teensy: OK CMD
+  Teensy: OK CMD
+  Teensy: OK CMD
+  Teensy: OK CMD
+  Teensy: OK CMD
+  Teensy: OK CMD
+  Teensy: OK CMD
+  Teensy: OK CMD
+  Teensy: OK CMD
+  Teensy: OK CMD
+  DISABLE
+  Teensy: OK STOP
+  Teensy: OK RELEASE
+  -> disabled
+Client disconnected (QUIT).
+Client connected.
+  ENABLE
+  calibrating at measured (1561.2, 494.2) theta 132.86 deg
+  Teensy: OK CAL
+  Teensy: OK TENSION
+  Teensy: OK START
+  -> enabled
+  Teensy: OK CMD
+  Teensy: OK CMD
+  Teensy: OK CMD
+  Teensy: OK CMD
+  Teensy: OK CMD
+  Teensy: OK CMD
+  Teensy: OK CMD
+  Teensy: OK CMD
+  Teensy: OK CMD
+  Teensy: OK CMD
+  Teensy: OK CMD
+  Teensy: OK CMD
+  Teensy: OK CMD
+  Teensy: OK CMD
+  Teensy: OK CMD
+  Teensy: OK CMD
+  Teensy: OK CMD
+  Teensy: OK CMD
+  Teensy: OK CMD
+  Teensy: OK CMD
+  Teensy: OK CMD
+  Teensy: OK CMD
+  Teensy: OK CMD
+  Teensy: OK CMD
+  Teensy: OK CMD
+  Teensy: OK CMD
+  Teensy: OK CMD
+  Teensy: OK CMD
+  Teensy: OK CMD
+  Teensy: OK CMD
+  Teensy: OK CMD
+  Teensy: OK CMD
+  Teensy: OK CMD
+  Teensy: OK CMD
+  Teensy: OK CMD
+  Teensy: OK CMD
+  Teensy: OK CMD
+  Teensy: OK CMD
+  Teensy: OK CMD
+  Teensy: OK CMD
+  Teensy: OK CMD
+  Teensy: OK CMD
+  Teensy: OK CMD
+  Teensy: OK CMD
+  Teensy: OK CMD
+  Teensy: OK CMD
+  Teensy: OK CMD
+  Teensy: OK CMD
+  Teensy: OK CMD
+  Teensy: OK CMD
+  Teensy: OK CMD
+  Teensy: OK CMD
+  Teensy: OK CMD
+  Teensy: OK CMD
+  Teensy: OK CMD
+  Teensy: OK CMD
+  Teensy: OK CMD
+  Teensy: OK CMD
+  Teensy: OK CMD
+  Teensy: OK CMD
+  Teensy: OK CMD
+  Teensy: OK CMD
+  Teensy: OK CMD
+  Teensy: OK CMD
+  Teensy: OK CMD
+  Teensy: OK CMD
+  Teensy: OK CMD
+  Teensy: OK CMD
+  Teensy: OK CMD
+  Teensy: OK CMD
+  Teensy: OK CMD
+  Teensy: OK CMD
+  Teensy: OK CMD
+  Teensy: OK CMD
+  Teensy: OK CMD
+  Teensy: OK CMD
+  Teensy: OK CMD
+  Teensy: OK CMD
+  Teensy: OK CMD
+  Teensy: OK CMD
+  Teensy: OK CMD
+  Teensy: OK CMD
   Teensy: OK CMD
   Teensy: OK CMD
   Teensy: OK CMD
@@ -67,9 +178,37 @@ Client connected.
   limits -> 400.0 mm/s, 400.0 mm/s^2
   Teensy: OK CMD
   Teensy: OK CMD
-  Teensy: OK SPEED 400.0
-  Teensy: OK ACCEL 20000.0
-  limits -> 400.0 mm/s, 20000.0 mm/s^2
+  Teensy: OK CMD
+  Teensy: OK CMD
+  Teensy: OK CMD
+  Teensy: OK CMD
+  Teensy: OK CMD
+  Teensy: OK CMD
+  Teensy: OK CMD
+  Teensy: OK CMD
+  Teensy: OK CMD
+  Teensy: OK CMD
+  Teensy: OK CMD
+  Teensy: OK CMD
+  Teensy: OK CMD
+  Teensy: OK CMD
+  Teensy: OK CMD
+  Teensy: OK CMD
+  Teensy: OK CMD
+  Teensy: OK CMD
+  Teensy: OK CMD
+  Teensy: OK CMD
+  Teensy: OK CMD
+  Teensy: OK CMD
+  Teensy: OK CMD
+  Teensy: OK CMD
+  Teensy: OK CMD
+  Teensy: OK CMD
+  Teensy: OK CMD
+  Teensy: OK CMD
+  Teensy: OK SPEED 200.0
+  Teensy: OK ACCEL 30000.0
+  limits -> 200.0 mm/s, 30000.0 mm/s^2
   Teensy: OK SPEED 400.0
   speed limit -> 400.0 mm/s
   Teensy: OK CMD
@@ -84,10 +223,47 @@ Client connected.
   Teensy: OK CMD
   Teensy: OK CMD
   Teensy: OK CMD
+  Teensy: OK SPEED 400.0
+  Teensy: OK ACCEL 200.0
+  limits -> 400.0 mm/s, 200.0 mm/s^2
   Teensy: OK CMD
   Teensy: OK CMD
   Teensy: OK CMD
   Teensy: OK CMD
+  Teensy: OK CMD
+  Teensy: OK CMD
+  Teensy: OK SPEED 400.0
+  Teensy: OK ACCEL 15000.0
+  limits -> 400.0 mm/s, 15000.0 mm/s^2
+  Teensy: OK CMD
+  Teensy: OK CMD
+  Teensy: OK CMD
+  Teensy: OK CMD
+  Teensy: OK SPEED 400.0
+  Teensy: OK ACCEL 100.0
+  limits -> 400.0 mm/s, 100.0 mm/s^2
+  Teensy: OK CMD
+  Teensy: OK CMD
+  Teensy: OK CMD
+  Teensy: OK CMD
+  Teensy: OK SPEED 400.0
+  Teensy: OK ACCEL 7500.0
+  limits -> 400.0 mm/s, 7500.0 mm/s^2
+  Teensy: OK CMD
+  Teensy: OK CMD
+  Teensy: OK CMD
+  Teensy: OK CMD
+  Teensy: OK SPEED 400.0
+  Teensy: OK ACCEL 50.0
+  limits -> 400.0 mm/s, 50.0 mm/s^2
+  Teensy: OK CMD
+  Teensy: OK CMD
+  Teensy: OK CMD
+  Teensy: OK CMD
+  Teensy: OK CMD
+  Teensy: OK SPEED 400.0
+  Teensy: OK ACCEL 3750.0
+  limits -> 400.0 mm/s, 3750.0 mm/s^2
   Teensy: OK CMD
   Teensy: OK CMD
   Teensy: OK CMD
@@ -98,29 +274,29 @@ Client connected.
   Teensy: OK CMD
   Teensy: OK CMD
   Teensy: OK SPEED 400.0
-  Teensy: OK ACCEL 800.0
-  limits -> 400.0 mm/s, 800.0 mm/s^2
+  Teensy: OK ACCEL 100.0
+  limits -> 400.0 mm/s, 100.0 mm/s^2
+  Teensy: OK CMD
+  Teensy: OK CMD
+  Teensy: OK CMD
+  Teensy: OK CMD
+  Teensy: OK CMD
   Teensy: OK CMD
   Teensy: OK CMD
   Teensy: OK CMD
   Teensy: OK SPEED 400.0
-  Teensy: OK ACCEL 40000.0
-  limits -> 400.0 mm/s, 40000.0 mm/s^2
+  Teensy: OK ACCEL 7500.0
+  limits -> 400.0 mm/s, 7500.0 mm/s^2
   Teensy: OK CMD
   Teensy: OK CMD
   Teensy: OK CMD
   Teensy: OK CMD
   Teensy: OK CMD
-  Teensy: OK SPEED 800.0
-  Teensy: OK ACCEL 800.0
-  limits -> 800.0 mm/s, 800.0 mm/s^2
   Teensy: OK CMD
   Teensy: OK CMD
-  Teensy: OK SPEED 800.0
-  Teensy: OK ACCEL 40000.0
-  limits -> 800.0 mm/s, 40000.0 mm/s^2
-  Teensy: OK SPEED 800.0
-  speed limit -> 800.0 mm/s
+  Teensy: OK SPEED 400.0
+  Teensy: OK ACCEL 200.0
+  limits -> 400.0 mm/s, 200.0 mm/s^2
   Teensy: OK CMD
   Teensy: OK CMD
   Teensy: OK CMD
@@ -129,9 +305,6 @@ Client connected.
   Teensy: OK CMD
   Teensy: OK CMD
   Teensy: OK CMD
-  Teensy: OK SPEED 1600.0
-  Teensy: OK ACCEL 800.0
-  limits -> 1600.0 mm/s, 800.0 mm/s^2
   Teensy: OK CMD
   Teensy: OK CMD
   Teensy: OK CMD
@@ -140,516 +313,8 @@ Client connected.
   Teensy: OK CMD
   Teensy: OK CMD
   Teensy: OK CMD
-  Teensy: OK CMD
-  Teensy: OK CMD
-  Teensy: OK SPEED 1600.0
-  Teensy: OK ACCEL 40000.0
-  limits -> 1600.0 mm/s, 40000.0 mm/s^2
-  Teensy: OK SPEED 1600.0
-  speed limit -> 1600.0 mm/s
-  Teensy: OK CMD
-  Teensy: OK CMD
-  Teensy: OK CMD
-  Teensy: OK CMD
-  Teensy: OK CMD
-  Teensy: OK CMD
-  Teensy: OK CMD
-  Teensy: OK CMD
-  Teensy: OK CMD
-  Teensy: OK CMD
-  Teensy: OK CMD
-  Teensy: OK CMD
-  Teensy: OK CMD
-  Teensy: OK SPEED 3200.0
-  Teensy: OK ACCEL 800.0
-  limits -> 3200.0 mm/s, 800.0 mm/s^2
-  Teensy: OK CMD
-  Teensy: OK CMD
-  Teensy: OK CMD
-  Teensy: OK CMD
-  Teensy: OK CMD
-  Teensy: OK CMD
-  Teensy: OK CMD
-  Teensy: OK CMD
-  Teensy: OK CMD
-  Teensy: OK CMD
-  Teensy: OK CMD
-  Teensy: OK CMD
-  Teensy: OK CMD
-  Teensy: OK CMD
-  Teensy: OK SPEED 3200.0
-  Teensy: OK ACCEL 40000.0
-  limits -> 3200.0 mm/s, 40000.0 mm/s^2
-  Teensy: OK SPEED 3200.0
-  speed limit -> 3200.0 mm/s
-  Teensy: OK CMD
-  Teensy: OK CMD
-  Teensy: OK CMD
-  Teensy: OK CMD
-  Teensy: OK CMD
-  Teensy: OK CMD
-  Teensy: OK CMD
-  Teensy: OK CMD
-  Teensy: OK SPEED 6400.0
-  Teensy: OK ACCEL 800.0
-  limits -> 6400.0 mm/s, 800.0 mm/s^2
-  Teensy: OK CMD
-  Teensy: OK CMD
-  Teensy: OK CMD
-  Teensy: OK CMD
-  Teensy: OK CMD
-  Teensy: OK CMD
-  Teensy: OK CMD
-  Teensy: OK CMD
-  Teensy: OK SPEED 6400.0
-  Teensy: OK ACCEL 40000.0
-  limits -> 6400.0 mm/s, 40000.0 mm/s^2
-  Teensy: OK SPEED 6400.0
-  speed limit -> 6400.0 mm/s
-  Teensy: OK CMD
-  Teensy: OK CMD
-  Teensy: OK CMD
-  Teensy: OK CMD
-  Teensy: OK CMD
-  Teensy: OK CMD
-  Teensy: OK CMD
-  Teensy: OK CMD
-  Teensy: OK CMD
-  Teensy: OK CMD
-  Teensy: OK SPEED 3200.0
-  Teensy: OK ACCEL 800.0
-  limits -> 3200.0 mm/s, 800.0 mm/s^2
-  Teensy: OK SPEED 3200.0
-  speed limit -> 3200.0 mm/s
-  Teensy: OK CMD
-  Teensy: OK CMD
-  Teensy: OK CMD
-  Teensy: OK CMD
-  Teensy: OK CMD
-  Teensy: OK CMD
-  Teensy: OK CMD
-  Teensy: OK CMD
-  Teensy: OK SPEED 3200.0
-  Teensy: OK ACCEL 80000.0
-  limits -> 3200.0 mm/s, 80000.0 mm/s^2
-  Teensy: OK CMD
-  Teensy: OK CMD
-  Teensy: OK CMD
-  Teensy: OK CMD
-  Teensy: OK CMD
-  Teensy: OK CMD
-  Teensy: OK CMD
-  Teensy: OK CMD
-  Teensy: OK SPEED 3200.0
-  Teensy: OK ACCEL 1600.0
-  limits -> 3200.0 mm/s, 1600.0 mm/s^2
-  Teensy: OK CMD
-  Teensy: OK CMD
-  Teensy: OK SPEED 3200.0
-  Teensy: OK ACCEL 120000.0
-  limits -> 3200.0 mm/s, 160000.0 mm/s^2
-  Teensy: OK CMD
-  Teensy: OK CMD
-  Teensy: OK SPEED 3200.0
-  Teensy: OK ACCEL 3200.0
-  limits -> 3200.0 mm/s, 3200.0 mm/s^2
-  Teensy: OK CMD
-  Teensy: OK CMD
-  Teensy: OK CMD
-  Teensy: OK CMD
-  Teensy: OK CMD
-  Teensy: OK CMD
-  Teensy: OK CMD
-  Teensy: OK CMD
-  Teensy: OK SPEED 3200.0
-  Teensy: OK ACCEL 60000.0
-  limits -> 3200.0 mm/s, 60000.0 mm/s^2
-  Teensy: OK CMD
-  Teensy: OK CMD
-  Teensy: OK SPEED 3200.0
-  Teensy: OK ACCEL 1600.0
-  limits -> 3200.0 mm/s, 1600.0 mm/s^2
-  Teensy: OK CMD
-  Teensy: OK CMD
-  Teensy: OK CMD
-  Teensy: OK CMD
-  Teensy: OK CMD
-  Teensy: OK CMD
-  Teensy: OK CMD
-  Teensy: OK CMD
-  Teensy: OK CMD
-  Teensy: OK CMD
-  Teensy: OK CMD
-  Teensy: OK CMD
-  Teensy: OK CMD
-  Teensy: OK CMD
-  Teensy: OK CMD
-  Teensy: OK CMD
-  Teensy: OK SPEED 1600.0
-  Teensy: OK ACCEL 60000.0
-  limits -> 1600.0 mm/s, 60000.0 mm/s^2
-  Teensy: OK CMD
-  Teensy: OK CMD
-  Teensy: OK CMD
-  Teensy: OK CMD
-  Teensy: OK CMD
-  Teensy: OK CMD
-  Teensy: OK CMD
-  Teensy: OK CMD
-  Teensy: OK CMD
-  Teensy: OK CMD
-  Teensy: OK CMD
-  Teensy: OK CMD
-  Teensy: OK CMD
-  Teensy: OK CMD
-  Teensy: OK CMD
-  Teensy: OK CMD
-  Teensy: OK CMD
-  Teensy: OK CMD
-  Teensy: OK CMD
-  Teensy: OK CMD
-  Teensy: OK CMD
-  Teensy: OK CMD
-  Teensy: OK CMD
-  Teensy: OK CMD
-  Teensy: OK CMD
-  Teensy: OK CMD
-  Teensy: OK CMD
-  Teensy: OK CMD
-  Teensy: OK CMD
-  Teensy: OK CMD
-  Teensy: OK CMD
-  Teensy: OK CMD
-  Teensy: OK CMD
-  Teensy: OK CMD
-  Teensy: OK CMD
-  Teensy: OK CMD
-  Teensy: OK CMD
-  Teensy: OK CMD
-  Teensy: OK CMD
-  Teensy: OK CMD
-  Teensy: OK CMD
-  Teensy: OK CMD
-  Teensy: OK CMD
-  Teensy: OK CMD
-  Teensy: OK CMD
-  Teensy: OK CMD
-  Teensy: OK CMD
-  Teensy: OK CMD
-  Teensy: OK CMD
-  Teensy: OK CMD
-  Teensy: OK CMD
-  Teensy: OK CMD
-  Teensy: OK CMD
-  Teensy: OK CMD
-  Teensy: OK CMD
-  Teensy: OK CMD
-  Teensy: OK CMD
-  Teensy: OK CMD
-  Teensy: OK CMD
-  Teensy: OK CMD
-  Teensy: OK CMD
-  Teensy: OK CMD
-  Teensy: OK CMD
-  Teensy: OK CMD
-  Teensy: OK CMD
-  Teensy: OK CMD
-  Teensy: OK CMD
-  Teensy: OK CMD
-  Teensy: OK CMD
-  Teensy: OK CMD
-  Teensy: OK CMD
-  Teensy: OK CMD
-  Teensy: OK CMD
-  Teensy: OK CMD
-  Teensy: OK CMD
-  Teensy: OK CMD
-  Teensy: OK CMD
-  Teensy: OK CMD
-  Teensy: OK CMD
-  Teensy: OK CMD
-  Teensy: OK CMD
-  Teensy: OK CMD
-  Teensy: OK CMD
-  Teensy: OK CMD
-  Teensy: OK CMD
-  Teensy: OK CMD
-  Teensy: OK CMD
-  Teensy: OK CMD
-  Teensy: OK CMD
-  Teensy: OK CMD
-  Teensy: OK CMD
-  Teensy: OK CMD
-  Teensy: OK CMD
-  Teensy: OK CMD
-  Teensy: OK CMD
-  Teensy: OK CMD
-  Teensy: OK CMD
-  Teensy: OK CMD
-  Teensy: OK CMD
-  Teensy: OK CMD
-  Teensy: OK CMD
-  Teensy: OK CMD
-  Teensy: OK CMD
-  Teensy: OK CMD
-  Teensy: OK CMD
-  Teensy: OK CMD
-  Teensy: OK CMD
-  Teensy: OK CMD
-  Teensy: OK CMD
-  Teensy: OK CMD
-  Teensy: OK CMD
-  Teensy: OK CMD
-  Teensy: OK CMD
-  Teensy: OK CMD
-  Teensy: OK CMD
-  Teensy: OK CMD
-  Teensy: OK CMD
-  Teensy: OK CMD
-  Teensy: OK CMD
-  Teensy: OK CMD
-  Teensy: OK CMD
-  Teensy: OK CMD
-  Teensy: OK CMD
-  Teensy: OK CMD
-  Teensy: OK CMD
-  Teensy: OK CMD
-  Teensy: OK CMD
-  Teensy: OK CMD
-  Teensy: OK CMD
-  Teensy: OK CMD
-  Teensy: OK CMD
-  Teensy: OK CMD
-  Teensy: OK CMD
-  Teensy: OK CMD
-  Teensy: OK CMD
-  Teensy: OK CMD
-  Teensy: OK CMD
-  Teensy: OK CMD
-  Teensy: OK CMD
-  Teensy: OK CMD
-  Teensy: OK CMD
-  Teensy: OK CMD
-  Teensy: OK CMD
-  Teensy: OK CMD
-  Teensy: OK CMD
-  Teensy: OK CMD
-  Teensy: OK CMD
-  Teensy: OK CMD
-  Teensy: OK CMD
-  Teensy: OK CMD
-  Teensy: OK CMD
-  Teensy: OK CMD
-  Teensy: OK CMD
-  Teensy: OK CMD
-  Teensy: OK CMD
-  Teensy: OK CMD
-  Teensy: OK CMD
-  Teensy: OK CMD
-  Teensy: OK CMD
-  Teensy: OK CMD
-  Teensy: OK CMD
-  Teensy: OK CMD
-  Teensy: OK CMD
-  Teensy: OK CMD
-  Teensy: OK CMD
-  Teensy: OK CMD
-  Teensy: OK CMD
-  Teensy: OK CMD
-  Teensy: OK CMD
-  Teensy: OK CMD
-  Teensy: OK CMD
-  Teensy: OK CMD
-  Teensy: OK CMD
-  Teensy: OK CMD
-  Teensy: OK CMD
-  Teensy: OK CMD
-  Teensy: OK CMD
-  Teensy: OK CMD
-  Teensy: OK CMD
-  Teensy: OK CMD
-  Teensy: OK CMD
-  Teensy: OK CMD
-  Teensy: OK CMD
-  Teensy: OK CMD
-  Teensy: OK CMD
-  Teensy: OK CMD
-  Teensy: OK CMD
-  Teensy: OK CMD
-  Teensy: OK CMD
-  Teensy: OK CMD
-  Teensy: OK CMD
-  Teensy: OK CMD
-  Teensy: OK CMD
-  Teensy: OK CMD
-  Teensy: OK CMD
-  Teensy: OK CMD
-  Teensy: OK CMD
-  Teensy: OK CMD
-  Teensy: OK CMD
-  Teensy: OK CMD
-  Teensy: OK CMD
-  Teensy: OK CMD
-  Teensy: OK CMD
-  Teensy: OK CMD
-  Teensy: OK CMD
-  Teensy: OK CMD
-  Teensy: OK CMD
-  Teensy: OK CMD
-  Teensy: OK CMD
-  Teensy: OK CMD
-  Teensy: OK CMD
-  Teensy: OK CMD
-  Teensy: OK CMD
-  Teensy: OK CMD
-  Teensy: OK CMD
-  Teensy: OK CMD
-  Teensy: OK CMD
-  Teensy: OK CMD
-  Teensy: OK CMD
-  Teensy: OK CMD
-  Teensy: OK CMD
-  Teensy: OK CMD
-  Teensy: OK CMD
-  Teensy: OK CMD
-  Teensy: OK CMD
-  Teensy: OK CMD
-  Teensy: OK CMD
-  Teensy: OK CMD
-  Teensy: OK CMD
-  Teensy: OK CMD
-  Teensy: OK CMD
-  Teensy: OK CMD
-  Teensy: OK CMD
-  Teensy: OK CMD
-  Teensy: OK CMD
-  Teensy: OK CMD
-  Teensy: OK CMD
-  Teensy: OK CMD
-  Teensy: OK CMD
-  Teensy: OK CMD
-  Teensy: OK CMD
-  Teensy: OK CMD
-  Teensy: OK CMD
-  Teensy: OK CMD
-  Teensy: OK CMD
-  Teensy: OK CMD
-  Teensy: OK CMD
-  Teensy: OK CMD
-  Teensy: OK CMD
-  Teensy: OK CMD
-  Teensy: OK CMD
-  Teensy: OK CMD
-  Teensy: OK CMD
-  Teensy: OK CMD
-  Teensy: OK CMD
-  Teensy: OK CMD
-  Teensy: OK CMD
-  Teensy: OK CMD
-  Teensy: OK CMD
-  Teensy: OK CMD
-  Teensy: OK CMD
-  Teensy: OK CMD
-  Teensy: OK CMD
-  Teensy: OK CMD
-  Teensy: OK CMD
-  Teensy: OK CMD
-  Teensy: OK CMD
-  Teensy: OK CMD
-  Teensy: OK CMD
-  Teensy: OK CMD
-  Teensy: OK CMD
-  Teensy: OK CMD
-  Teensy: OK CMD
-  Teensy: OK CMD
-  Teensy: OK CMD
-  Teensy: OK CMD
-  Teensy: OK CMD
-  Teensy: OK CMD
-  Teensy: OK CMD
-  Teensy: OK CMD
-  Teensy: OK CMD
-  Teensy: OK CMD
-  Teensy: OK CMD
-  Teensy: OK CMD
-  Teensy: OK CMD
-  Teensy: OK CMD
-  Teensy: OK CMD
-  Teensy: OK CMD
-  Teensy: OK CMD
-  Teensy: OK CMD
-  Teensy: OK CMD
-  Teensy: OK CMD
-  Teensy: OK CMD
-  Teensy: OK CMD
-  Teensy: OK CMD
-  Teensy: OK CMD
-  Teensy: OK CMD
-  Teensy: OK CMD
-  Teensy: OK CMD
-  Teensy: OK CMD
-  Teensy: OK CMD
-  Teensy: OK CMD
-  Teensy: OK CMD
-  Teensy: OK CMD
-  Teensy: OK CMD
-  Teensy: OK CMD
-  Teensy: OK CMD
-  Teensy: OK CMD
-  Teensy: OK CMD
-  Teensy: OK CMD
-  Teensy: OK CMD
-  Teensy: OK CMD
-  Teensy: OK CMD
-  Teensy: OK CMD
-  Teensy: OK CMD
-  Teensy: OK CMD
-  Teensy: OK CMD
-  Teensy: OK CMD
-  Teensy: OK CMD
-  Teensy: OK CMD
-  Teensy: OK CMD
-  Teensy: OK CMD
-  Teensy: OK CMD
-  Teensy: OK CMD
-  Teensy: OK CMD
-  Teensy: OK CMD
-  Teensy: OK CMD
-  Teensy: OK CMD
-  Teensy: OK CMD
-  Teensy: OK CMD
-  Teensy: OK CMD
-  Teensy: OK CMD
-  Teensy: OK CMD
-  Teensy: OK CMD
-  Teensy: OK CMD
-  Teensy: OK CMD
-  Teensy: OK CMD
-  Teensy: OK CMD
-  Teensy: OK CMD
-  Teensy: OK CMD
-  Teensy: OK CMD
-  Teensy: OK CMD
-  Teensy: OK CMD
-  Teensy: OK CMD
-  Teensy: OK CMD
-  Teensy: OK CMD
-  Teensy: OK CMD
-  Teensy: OK CMD
-  Teensy: OK CMD
-  Teensy: OK CMD
-  Teensy: OK CMD
-  Teensy: OK CMD
-  Teensy: OK CMD
-  Teensy: OK CMD
-  Teensy: OK CMD
-  Teensy: OK CMD
-  Teensy: OK CMD
-  Teensy: OK CMD
-  Teensy: OK CMD
-  Teensy: OK CMD
-  Teensy: OK CMD
-  Teensy: OK CMD
-  Teensy: OK CMD
-  Teensy: OK CMD
-  Teensy: OK CMD
+  DISABLE
+  Teensy: OK STOP
+  Teensy: OK RELEASE
+  -> disabled
+Client disconnected (QUIT).

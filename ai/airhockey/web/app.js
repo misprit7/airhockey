@@ -807,11 +807,22 @@ function showLimitResult(m) {
         el.className = "bad";
         return;
     }
-    document.getElementById("lim-speed").value = Math.round(m.speed);
-    document.getElementById("lim-accel").value = Math.round(m.accel);
-    if (m.clamped) {
-        el.textContent = `firmware clamped to ${Math.round(m.speed)} mm/s, `
-            + `${Math.round(m.accel)} mm/s\u00b2`;
+    // Correct a field ONLY where the firmware actually refused the value.
+    // Echoing both back meant scaling one of them rewrote the other, so
+    // pressing speed x2 silently changed accel to whatever the last status
+    // happened to carry \u2014 a value the user never entered, in a field they
+    // never touched.
+    const clamped = [];
+    if (m.clamped_speed) {
+        document.getElementById("lim-speed").value = Math.round(m.speed);
+        clamped.push(`speed to ${Math.round(m.speed)} mm/s`);
+    }
+    if (m.clamped_accel) {
+        document.getElementById("lim-accel").value = Math.round(m.accel);
+        clamped.push(`accel to ${Math.round(m.accel)} mm/s\u00b2`);
+    }
+    if (clamped.length) {
+        el.textContent = `firmware clamped ${clamped.join(", ")}`;
         el.className = "bad";
     } else {
         el.textContent = `applied ${Math.round(m.speed)} mm/s, `
