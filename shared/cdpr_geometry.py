@@ -30,8 +30,8 @@ RAIL_MAX_Y = 985.1
 # ONLY M2 IS TRUSTWORTHY — trilaterated from caliper distances to three
 # air holes, rms 0.07 mm. M0/M1/M3 predate the 78x38 -> 80x39 grid-count
 # fix and were measured through the wrong camera pose. See the header.
-MOTOR_X = [1095.6, 2094.8, 2094.0, 1091.7]
-MOTOR_Y = [1107.2, 1066.0, -97.7, -140.6]
+MOTOR_X = [1095.6, 2094.8, 2094.0, 1093.4]
+MOTOR_Y = [1107.2, 1066.0, -97.7, -141.9]
 
 # ── Spool ──
 # goBILDA 3400 Series hub-mount round-belt pulley, 96 mm PITCH DIAMETER,
@@ -61,7 +61,7 @@ WS_MAX_Y = 733.0
 HOME_X = (WS_MIN_X + WS_MAX_X) / 2.0   # 1508.0
 HOME_Y = (WS_MIN_Y + WS_MAX_Y) / 2.0   # 483.0
 
-WRAP_REF_ANGLE = [-0.986946, -2.359443, 2.360737, 0.982165]
+WRAP_REF_ANGLE = [-0.986946, -2.359443, 2.360737, 0.985013]
 
 # ── Heights above the playing surface ──
 MARKER_Z_MM = 3.3    # field markers, on 3D-printed mounts

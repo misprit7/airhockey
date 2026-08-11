@@ -74,17 +74,24 @@ constexpr float RAIL_MAX_Y = 985.1f;
 // MEASURED 2026-08-10, after the 78x38 -> 80x39 grid fix and against the
 // re-solved camera pose. Two methods, and the mix is deliberate:
 //
-// M0, M1, M3 — optical. vision/bin/measure_anchors.py finds a
+// M2 and M3 — CALIPERS, trilaterated from distances to three air holes
+// (shared/fit_anchors.py). Each anchor gets its best available measurement.
+//   M2  131.0 mm from hole (79,0), 265.0 from (79,6), 259.0 from (73,0)
+//       -> rms 0.07 mm
+//   M3  141.9 mm from hole (43,0), 226.5 from (50,0), 255.5 from (40,4)
+//       -> rms 0.01 mm
+//
+// M0, M1 — optical, pending calipers. vision/bin/measure_anchors.py finds a
 // retroreflector on each spool axis and back-projects it onto the plane
 // z = 33.5 mm, the calipered marker height. Repeatable to 0.1 mm over 9
-// bursts; ACCURATE to about 2-4 mm, which is a different number.
+// bursts; ACCURATE to a few mm, which is a different number.
 //
-// M2 — calipers, kept in preference to its own optical value because
-// trilateration from three air holes gave rms 0.07 mm (131.0 mm from hole
-// (79,0), 265.0 from (79,6), 259.0 from (73,0)) and the optical route lands
-// 4.2 mm away from that. Each anchor gets its best available measurement;
-// there is nothing to gain from making them uniformly worse. Use
-// shared/fit_anchors.py to do the other three the same way when convenient.
+// HOW ACCURATE, measured rather than asserted — the optical value differed
+// from the caliper truth by 4.2 mm at M2 and 2.2 mm at M3. That ordering is
+// not luck: M2 projects 806 px from the principal point and M3 only 457,
+// against intrinsics data that runs out at 728. The lens model is
+// extrapolating at M2 and interpolating at M3. So expect M1 (770 px) to be
+// the worst of the four and M0 (400 px) the best.
 //
 // WHY THE HEIGHT CAN BE TRUSTED NOW, HAVING BEEN A FUDGE BEFORE.
 // The camera fixes the RAY each anchor lies on very well but leaves the
@@ -108,13 +115,13 @@ constexpr float MOTOR_X[NUM_MOTORS] = {
     1095.6f, // 0: mid-table, far side    optical
     2094.8f, // 1: robot corner, far side  optical
     2094.0f, // 2: robot corner, near side CALIPERED
-    1091.7f, // 3: mid-table, near side    optical
+    1093.4f, // 3: mid-table, near side    CALIPERED
 };
 constexpr float MOTOR_Y[NUM_MOTORS] = {
     1107.2f, // 0
     1066.0f, // 1
     -97.7f,  // 2  CALIPERED
-    -140.6f, // 3
+    -141.9f, // 3  CALIPERED
 };
 
 // ── Spool ───────────────────────────────────────────────────────────
@@ -253,7 +260,7 @@ constexpr float WRAP_REF_ANGLE[NUM_MOTORS] = {
     -0.986946f, // 0
     -2.359443f, // 1
     2.360737f, // 2
-    0.982165f, // 3
+    0.985013f, // 3
 };
 
 // ── Kinematics ──────────────────────────────────────────────────────
