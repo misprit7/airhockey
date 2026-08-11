@@ -786,15 +786,14 @@ setMode(mode);
     };
     btn.addEventListener("click", apply);
 
-    // Scale-and-apply, so exploring the useful range is two clicks rather
-    // than typing. Clamped to the field's own max so the button cannot ask
-    // for something that will just be rejected.
+    // Scale-and-apply, so exploring the range is two clicks rather than
+    // typing. No ceiling here — ask for whatever, and the firmware's reply
+    // says what it accepted. The one clamp lives in one place.
     document.querySelectorAll(".lim-scale").forEach((b) => {
         b.addEventListener("click", () => {
             const el = document.getElementById(b.dataset.for);
-            const want = parseFloat(el.value) * parseFloat(b.dataset.mul);
-            el.value = Math.max(parseFloat(el.min),
-                                Math.min(parseFloat(el.max), Math.round(want)));
+            el.value = Math.max(1, Math.round(parseFloat(el.value)
+                                              * parseFloat(b.dataset.mul)));
             apply();
         });
     });
@@ -811,9 +810,8 @@ function showLimitResult(m) {
     document.getElementById("lim-speed").value = Math.round(m.speed);
     document.getElementById("lim-accel").value = Math.round(m.accel);
     if (m.clamped) {
-        el.textContent = `clamped to ${Math.round(m.speed)} / `
-            + `${Math.round(m.accel)}  (max ${Math.round(m.speed_max)} / `
-            + `${Math.round(m.accel_max)})`;
+        el.textContent = `firmware clamped to ${Math.round(m.speed)} mm/s, `
+            + `${Math.round(m.accel)} mm/s\u00b2`;
         el.className = "bad";
     } else {
         el.textContent = `applied ${Math.round(m.speed)} mm/s, `

@@ -157,7 +157,6 @@ class HardwareDynamics(MotorDynamics):
         sim_width: float = 1.0,
         sim_height: float = 2.0,
         speed_mm_s: float = 200.0,
-        max_speed_mm_s: float = 12000.0,
         host: str = "127.0.0.1",
         port: int = 8421,
         cal_pose_mm: tuple[float, float, float] | None = None,
@@ -175,12 +174,13 @@ class HardwareDynamics(MotorDynamics):
         self.geom = geom
         self.sim_width = sim_width
         self.sim_half_height = sim_height / 2.0
-        # The DEFAULT is deliberately conservative — the winding-side sign
-        # is still unverified, so commanded motion stays slow enough to
-        # watch. The CEILING is the hardware's, so it is never the reason
-        # something cannot go faster. See fw/include/cdpr_config.h.
-        self.speed = min(speed_mm_s, max_speed_mm_s)
-        self.max_speed = max_speed_mm_s
+        # A DEFAULT, deliberately conservative — the winding-side sign is
+        # still unverified, so commanded motion stays slow enough to watch.
+        # There is deliberately NO ceiling here: the only clamp in the whole
+        # chain lives in the firmware (fw/include/cdpr_config.h), because a
+        # limit duplicated in three places is a limit that will disagree with
+        # itself, and the one you raise is never the one that was binding.
+        self.speed = speed_mm_s
         self.x = 0.0
         self.y = 0.0
         self.client = CDPRClient(host, port)
@@ -205,29 +205,29 @@ class HardwareDynamics(MotorDynamics):
         self._usage = {}
 
     def set_speed(self, mm_s: float) -> None:
-        self.speed = max(1.0, min(float(mm_s), self.max_speed))
+        self.speed = float(mm_s)          # the Teensy decides what is legal
 
     def reset_peaks(self) -> None:
         self.client.reset_peaks()
 
-    ACCEL_CEILING = 120000.0     # mirrors MAX_ACCEL_MM_S2
-
     def set_limits(self, speed_mm_s: float, accel_mm_s2: float) -> dict:
-        """Push both caps to the Teensy, which is where the profile lives.
+        """Push both caps to the Teensy and report back what it accepted.
 
-        Returns what was actually applied and what the ceilings are, so the
-        caller can say so instead of silently clamping — a limit that is
-        quietly ignored is worse than one that refuses.
+        Nothing is clamped here. The firmware clamps, and then we ASK it
+        what it ended up with rather than predicting — so there is no second
+        copy of the ceiling to drift out of step with the first, and the
+        answer is true by construction instead of by agreement.
         """
         want_s, want_a = float(speed_mm_s), float(accel_mm_s2)
-        accel = max(1.0, min(want_a, self.ACCEL_CEILING))
         self.set_speed(want_s)
-        self.client.set_limits(self.speed, accel)
+        self.client.set_limits(want_s, want_a)
+        self._read_state()                       # refresh from the Teensy
+        got_s = self._speed_limit if self._speed_limit is not None else want_s
+        got_a = self._accel_limit if self._accel_limit is not None else want_a
+        self.speed = got_s
         return {
-            "speed": self.speed, "accel": accel,
-            "speed_max": self.max_speed, "accel_max": self.ACCEL_CEILING,
-            "clamped": (abs(self.speed - want_s) > 0.5
-                        or abs(accel - want_a) > 0.5),
+            "speed": got_s, "accel": got_a,
+            "clamped": abs(got_s - want_s) > 0.5 or abs(got_a - want_a) > 0.5,
         }
 
     def reset(self, x: float, y: float) -> None:
