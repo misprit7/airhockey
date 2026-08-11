@@ -157,7 +157,7 @@ class HardwareDynamics(MotorDynamics):
         sim_width: float = 1.0,
         sim_height: float = 2.0,
         speed_mm_s: float = 200.0,
-        max_speed_mm_s: float = 600.0,
+        max_speed_mm_s: float = 12000.0,
         host: str = "127.0.0.1",
         port: int = 8421,
         cal_pose_mm: tuple[float, float, float] | None = None,
@@ -175,8 +175,10 @@ class HardwareDynamics(MotorDynamics):
         self.geom = geom
         self.sim_width = sim_width
         self.sim_half_height = sim_height / 2.0
-        # Deliberately conservative: the cable model's winding-side sign is
-        # still unverified, so keep commanded motion slow enough to watch.
+        # The DEFAULT is deliberately conservative — the winding-side sign
+        # is still unverified, so commanded motion stays slow enough to
+        # watch. The CEILING is the hardware's, so it is never the reason
+        # something cannot go faster. See fw/include/cdpr_config.h.
         self.speed = min(speed_mm_s, max_speed_mm_s)
         self.max_speed = max_speed_mm_s
         self.x = 0.0
@@ -208,10 +210,25 @@ class HardwareDynamics(MotorDynamics):
     def reset_peaks(self) -> None:
         self.client.reset_peaks()
 
-    def set_limits(self, speed_mm_s: float, accel_mm_s2: float) -> None:
-        """Push both caps to the Teensy, which is where the profile lives."""
-        self.set_speed(speed_mm_s)
-        self.client.set_limits(self.speed, max(1.0, float(accel_mm_s2)))
+    ACCEL_CEILING = 20000.0      # mirrors MAX_ACCEL_MM_S2
+
+    def set_limits(self, speed_mm_s: float, accel_mm_s2: float) -> dict:
+        """Push both caps to the Teensy, which is where the profile lives.
+
+        Returns what was actually applied and what the ceilings are, so the
+        caller can say so instead of silently clamping — a limit that is
+        quietly ignored is worse than one that refuses.
+        """
+        want_s, want_a = float(speed_mm_s), float(accel_mm_s2)
+        accel = max(1.0, min(want_a, self.ACCEL_CEILING))
+        self.set_speed(want_s)
+        self.client.set_limits(self.speed, accel)
+        return {
+            "speed": self.speed, "accel": accel,
+            "speed_max": self.max_speed, "accel_max": self.ACCEL_CEILING,
+            "clamped": (abs(self.speed - want_s) > 0.5
+                        or abs(accel - want_a) > 0.5),
+        }
 
     def reset(self, x: float, y: float) -> None:
         try:

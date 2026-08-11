@@ -48,14 +48,44 @@ inline float countsToMm(float counts) { return counts * MM_PER_COUNT; }
 // table is. The workspace bounds are a property of the anchor geometry, so
 // they live in the shared header.
 
-constexpr float MAX_VELOCITY_MM_S = 7200.0f;
+// Ceilings, set just under what the hardware can actually do so that the
+// cap is never the reason something is slow — the DEFAULTS below and in
+// main.cpp are what keep it tame.
+//
+// Speed: the motors bind at 2580 rpm x 48 mm spool = 12968 mm/s of cable,
+// and paddle speed cannot exceed cable rate (|J_i . u| <= 1). The Teensy's
+// own step rate would allow 18850, so the motor is the limit, not us.
+constexpr float MAX_VELOCITY_MM_S = 12000.0f;
 
 // Acceleration: a DEFAULT that motion starts at, and a CEILING the runtime
 // setter will not exceed. They were one constant, which meant changing how
 // hard the rig accelerates required a reflash — and reflashing to try a
 // number is how you end up not trying it.
+// Accel: 20000 is a JUDGEMENT, not a derived number, and it is worth being
+// honest about that. The only physical bound is torque — 46 N per cable
+// into ~349 g of effective mass, roughly 261000 mm/s^2 — and that assumes
+// peak torque with no opposing tension, so it is an upper bound rather than
+// something to design against. 20000 sits an order of magnitude under it,
+// which is a bring-up posture, not a hardware fact. Raise it once motion is
+// trusted.
+//
+// The drives ALSO carry Motion.VelLimit = 1000 RPM and Motion.AccLimit =
+// 5000 RPM/s (see sw/build/check_limits). Those are SOFTWARE settings
+// stored in the drive, not physical limits, and they are almost certainly
+// irrelevant here: they govern moves the DRIVE generates over sFoundation,
+// and all motion on this rig is step/dir pulses the drive simply follows.
+// Almost certainly is not certainly. If VelLimit did gate step/dir, the
+// cable ceiling would be 1000 rpm x 48 mm = 5027 mm/s, not 12968 — a factor
+// of 2.6. The test costs nothing: command a fast move and watch 'stepped'
+// against 'measured' in the state view. A drive that is being limited falls
+// behind the step count and never catches up.
+//
+// Worth knowing: within a 500 mm workspace the SPEED cap is unreachable
+// anyway. From 250 mm of run-up, 20000 mm/s^2 tops out at 3162 mm/s, and
+// reaching 12968 would need 336000 mm/s^2. Acceleration is what actually
+// governs how fast this thing moves, not the speed limit.
 constexpr float DEFAULT_ACCEL_MM_S2 = 400.0f;
-constexpr float MAX_ACCEL_MM_S2 = 5000.0f;
+constexpr float MAX_ACCEL_MM_S2 = 20000.0f;
 
 // ── Control loop ────────────────────────────────────────────────────
 

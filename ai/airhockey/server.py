@@ -315,12 +315,18 @@ async def live_game(ws: WebSocket):
                         await ws.send_json({"type": "hardware_mode", "enabled": use_hardware})
                     elif msg_type == "set_limits":
                         hd = hardware_dynamics
-                        if hd:
+                        if not hd:
+                            await ws.send_json({"type": "limits",
+                                                "error": "hardware is off"})
+                        else:
                             try:
-                                hd.set_limits(float(msg.get("speed", hd.speed)),
-                                              float(msg.get("accel", 400.0)))
+                                r = hd.set_limits(
+                                    float(msg.get("speed", hd.speed)),
+                                    float(msg.get("accel", 400.0)))
+                                await ws.send_json({"type": "limits", **r})
                             except Exception as e:      # noqa: BLE001
-                                print(f"set_limits failed: {e}")
+                                await ws.send_json({"type": "limits",
+                                                    "error": str(e)})
                     elif msg_type == "reset_peaks":
                         if hardware_dynamics:
                             try:

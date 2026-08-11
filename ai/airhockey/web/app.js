@@ -351,6 +351,8 @@ function connect() {
         } else if (msg.type === "physics_mode") {
             document.getElementById("btn-physics").textContent =
                 msg.instant ? "Physics: Instant" : "Physics: Realistic";
+        } else if (msg.type === "limits") {
+            showLimitResult(msg);
         } else if (msg.type === "hardware_mode") {
             document.getElementById("btn-hardware").textContent =
                 msg.enabled ? "Hardware: ON" : "Hardware: Off";
@@ -775,13 +777,50 @@ setMode(mode);
     const ac = document.getElementById("lim-accel");
     const btn = document.getElementById("btn-limits");
     if (!btn) return;
-    btn.addEventListener("click", () => {
+
+    const apply = () => {
         if (!ws || ws.readyState !== 1) return;
         ws.send(JSON.stringify({ type: "set_limits",
                                  speed: parseFloat(sp.value),
                                  accel: parseFloat(ac.value) }));
+    };
+    btn.addEventListener("click", apply);
+
+    // Scale-and-apply, so exploring the useful range is two clicks rather
+    // than typing. Clamped to the field's own max so the button cannot ask
+    // for something that will just be rejected.
+    document.querySelectorAll(".lim-scale").forEach((b) => {
+        b.addEventListener("click", () => {
+            const el = document.getElementById(b.dataset.for);
+            const want = parseFloat(el.value) * parseFloat(b.dataset.mul);
+            el.value = Math.max(parseFloat(el.min),
+                                Math.min(parseFloat(el.max), Math.round(want)));
+            apply();
+        });
     });
 })();
+
+function showLimitResult(m) {
+    const el = document.getElementById("limit-msg");
+    if (!el) return;
+    if (m.error) {
+        el.textContent = m.error;
+        el.className = "bad";
+        return;
+    }
+    document.getElementById("lim-speed").value = Math.round(m.speed);
+    document.getElementById("lim-accel").value = Math.round(m.accel);
+    if (m.clamped) {
+        el.textContent = `clamped to ${Math.round(m.speed)} / `
+            + `${Math.round(m.accel)}  (max ${Math.round(m.speed_max)} / `
+            + `${Math.round(m.accel_max)})`;
+        el.className = "bad";
+    } else {
+        el.textContent = `applied ${Math.round(m.speed)} mm/s, `
+            + `${Math.round(m.accel)} mm/s\u00b2`;
+        el.className = "";
+    }
+}
 
 function updateLimitState(hw) {
     const set = (kind, frac, peak, limit, unit) => {

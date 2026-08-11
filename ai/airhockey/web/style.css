@@ -623,3 +623,29 @@ canvas {
     display: none;
 }
 #btn-reset-peaks { padding: 5px 10px; font-size: 11px; }
+
+.limit-row {
+    display: flex;
+    align-items: center;
+    gap: 4px;
+    font: 11px ui-monospace, Menlo, monospace;
+    color: #aaa;
+}
+.limit-row .lim-name { width: 34px; flex-shrink: 0; }
+.limit-row .lim-unit { width: 42px; flex-shrink: 0; color: #777; }
+.limit-row input { flex: 1; min-width: 0; }
+.lim-scale {
+    padding: 3px 6px;
+    font-size: 11px;
+    flex-shrink: 0;
+    min-width: 30px;
+}
+#limit-msg {
+    font: 11px ui-monospace, Menlo, monospace;
+    text-align: center;
+    min-height: 14px;
+    color: #7ac97a;
+}
+/* A rejected limit has to LOOK rejected. Silently clamping is how you end
+   up believing the machine is slower than it is. */
+#limit-msg.bad { color: #ff8080; }
