@@ -318,3 +318,10 @@ Client connected.
   Teensy: OK RELEASE
   -> disabled
 Client disconnected (QUIT).
+Client connected.
+Client disconnected.
+Client connected.
+Client disconnected.
+
+Shutting down...
+Done.

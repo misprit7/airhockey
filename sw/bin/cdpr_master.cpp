@@ -20,7 +20,32 @@
 #include "clearpath.h"
 
 static volatile sig_atomic_t g_stop = 0;
-void sigHandler(int) { g_stop = 1; }
+
+// First Ctrl-C asks for the clean exit: release tension, de-energize, close.
+// A SECOND one gives up and dies on the spot.
+//
+// Without the escape hatch a repeat Ctrl-C only re-sets a flag that is
+// already set, so if the clean path ever stalls the process is unkillable
+// from its own terminal and the only way out is another shell. An
+// unkillable master leaves the drives energized just the same, so refusing
+// to die buys no safety -- it only removes the operator's last option.
+//
+// The bail-out skips de-energizing, so it says so on the way out. Only
+// write() and raise() are used here; neither printf nor logf is
+// async-signal-safe.
+void sigHandler(int sig) {
+    if (g_stop) {
+        static const char msg[] =
+            "\n!! forced exit -- motors may still be energized, "
+            "check before touching the rig\n";
+        ssize_t ignored = write(STDERR_FILENO, msg, sizeof(msg) - 1);
+        (void)ignored;
+        signal(sig, SIG_DFL);
+        raise(sig);
+        return;
+    }
+    g_stop = 1;
+}
 
 static const int DEFAULT_PORT = 8421;
 static const int TEENSY_BAUD = B115200;
