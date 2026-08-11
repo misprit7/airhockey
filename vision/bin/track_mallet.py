@@ -38,6 +38,8 @@ import cv2
 import numpy as np
 
 sys.path.insert(0, str(Path(__file__).resolve().parent))
+sys.path.insert(0, str(Path(__file__).resolve().parents[2] / "shared"))
+import cdpr_geometry as geom  # noqa: E402
 from calibrate_extrinsics import (MARKER_Z_MM, MARKERS_FILE,  # noqa: E402
                                   find_glare, load_intrinsics,
                                   weighted_centroid)
@@ -50,9 +52,14 @@ CALIB_DIR = Path(__file__).resolve().parent.parent / "calib"
 # result rather than merely displacing it.
 MALLET_Z_MM = 67.0      # centre marker, on top of the paddle
 ARM_Z_MM = 49.0         # the two arm markers, lower down on the cross
+SPOOL_MARKER_Z_MM = 33.5  # retroreflectors on the four spool axes
 ARM_SPAN_DEG = 90.0     # arms 0 and 3 are adjacent, so 90 deg apart
 CLUSTER_PX = 60.0       # paddle markers sit within this of each other
-FIELD_REJECT_PX = 14.0  # a blob this close to a known marker is that marker
+# A blob this close to a known permanent marker IS that marker. Generous
+# enough to cover projection error at the anchors, which sit outside the
+# region the extrinsics were fitted on, and still far short of the ~35 px
+# that separates the paddle's own markers from each other.
+FIELD_REJECT_PX = 20.0
 MIN_AREA = 6
 MAX_AREA = 600
 BORDER_PX = 40         # off-field reflections hug the frame edge
@@ -72,8 +79,26 @@ def load_pose():
 
 
 def field_marker_pixels(K, dist, rvec, tvec, field):
-    """Where the permanent markers land, so we can ignore them."""
-    obj = np.hstack([field, np.full((len(field), 1), MARKER_Z_MM)])
+    """Where the permanent retroreflectors land, so we can ignore them.
+
+    Both sets: the six on the playing surface AND the four on the spool
+    axes. The spool markers are there so the anchors can be re-measured
+    (vision/bin/measure_anchors.py), and blob-for-blob they are
+    indistinguishable from a paddle marker — the mid-table pair in
+    particular lands ~110 px inside the frame, well clear of the border
+    filter that catches off-field junk. Left in, they get counted as paddle
+    candidates and the pose solve returns nonsense.
+
+    What separates them is that they are bolted down and their positions
+    are known to well under a millimetre, so projecting them costs nothing
+    and removes the ambiguity outright.
+    """
+    obj = np.vstack([
+        np.hstack([np.asarray(field, float),
+                   np.full((len(field), 1), MARKER_Z_MM)]),
+        np.array([[geom.MOTOR_X[m], geom.MOTOR_Y[m], SPOOL_MARKER_Z_MM]
+                  for m in range(len(geom.MOTOR_X))], dtype=float),
+    ])
     px, _ = cv2.projectPoints(obj, rvec, tvec, K, dist)
     return px.reshape(-1, 2)
 
