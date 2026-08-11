@@ -771,8 +771,16 @@ function makeZoomable(el, apply) {
         apply(st);
     }, { passive: false });
 
+    // An <img> is natively draggable, so without this the browser starts an
+    // HTML5 image drag on the first pointermove and swallows every event
+    // after it — the pan moves once and then freezes. Killing dragstart is
+    // what actually fixes it; draggable="false" alone is not reliable across
+    // browsers.
+    el.addEventListener('dragstart', (e) => e.preventDefault());
+
     el.addEventListener('pointerdown', (e) => {
         if (st.zoom === 1) return;           // nothing to pan while fitted
+        e.preventDefault();                  // no text selection, no img drag
         dragging = true;
         lastX = e.clientX; lastY = e.clientY;
         el.setPointerCapture(e.pointerId);
@@ -789,7 +797,7 @@ function makeZoomable(el, apply) {
         if (!dragging) return;
         dragging = false;
         try { el.releasePointerCapture(e.pointerId); } catch (_) {}
-        el.style.cursor = '';
+        el.style.cursor = st.zoom > 1 ? 'grab' : 'default';
     };
     el.addEventListener('pointerup', release);
     el.addEventListener('pointercancel', release);
@@ -882,7 +890,7 @@ const cursorLine = (mm, suffix) => (mm === null
     const zoom = makeZoomable(frame, (st) => {
         img.style.transform =
             `translate(${st.panX}px, ${st.panY}px) scale(${st.zoom})`;
-        frame.style.cursor = st.zoom > 1 ? 'grab' : 'zoom-in';
+        frame.style.cursor = st.zoom > 1 ? 'grab' : 'default';
         if (last) paint(last);
     });
 
@@ -1029,7 +1037,7 @@ const cursorLine = (mm, suffix) => (mm === null
     // not, so a zoomed-in view gets more detail instead of fatter strokes
     // and giant text.
     const zoom = makeZoomable(cv, () => {
-        cv.style.cursor = zoom.zoom > 1 ? 'grab' : 'zoom-in';
+        cv.style.cursor = zoom.zoom > 1 ? 'grab' : 'default';
     });
 
     // Cursor in grid millimetres — the exact inverse of P() below, so what

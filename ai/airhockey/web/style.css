@@ -483,8 +483,12 @@ canvas {
     overflow: hidden;
     border-radius: 10px;
     background: #000;
-    cursor: zoom-in;
+    /* Plain cursor: clicking does nothing here, so zoom-in was a promise the
+       view does not keep. It becomes a grab hand once zoomed, where dragging
+       IS the thing you can do. */
+    cursor: default;
     touch-action: none;
+    user-select: none;
 }
 
 #camera-img {
@@ -494,6 +498,8 @@ canvas {
     display: block;
     object-fit: contain;         /* fills the height; 3:4 sets the width */
     transform-origin: 50% 50%;
+    -webkit-user-drag: none;
+    user-select: none;
 }
 
 #state-canvas {
@@ -503,8 +509,9 @@ canvas {
     display: block;
     border-radius: 10px;
     background: #0a0a12;
-    cursor: zoom-in;
+    cursor: default;
     touch-action: none;
+    user-select: none;
 }
 
 #camera-status, #state-readout {
