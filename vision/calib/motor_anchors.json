@@ -1,23 +1,23 @@
 {
-  "date": "2026-08-02 22:51",
-  "method": "caliper distances to air holes, trilaterated (shared/fit_anchors.py)",
+  "date": "2026-08-10",
+  "method": "M0/M1/M3: retroreflector on each spool axis, back-projected onto the calipered z = 33.5 mm plane (vision/bin/measure_anchors.py). M2: caliper trilateration, kept because it is 0.07 mm against 2-4 mm for the optical route.",
   "bursts_averaged": 9,
   "anchors_mm": {
     "0": [
-      1067.6,
-      1082.0
+      1095.6,
+      1107.2
     ],
     "1": [
-      2043.3,
-      1041.2
+      2094.8,
+      1066.0
     ],
     "2": [
-      2043.2,
+      2094.0,
       -97.7
     ],
     "3": [
-      1063.0,
-      -139.7
+      1091.7,
+      -140.6
     ]
   },
   "spread_mm": {
@@ -64,5 +64,7 @@
         259.0
       ]
     ]
-  }
+  },
+  "marker_height_mm": 33.5,
+  "validation": "fitting the plane height to five independent caliper constraints wants 35.0 mm (rms 2.16) against the calipered 33.5 (rms 2.32). Before the 78x38 -> 80x39 grid fix the same fit demanded 24.3 mm, so that 9 mm was the grid error in disguise."
 }

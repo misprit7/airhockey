@@ -166,10 +166,12 @@ def main() -> int:
             print("      !! residuals are large — one measurement disagrees "
                   "with the others; re-check before trusting this")
             ok = False
+        last_col = round(geom.GRID_X_MM / geom.GRID_PITCH_MM)
+        last_row = round(geom.GRID_Y_MM / geom.GRID_PITCH_MM)
         across = (f"{-p[1]:.1f} mm outside row 0" if p[1] < 0
-                  else f"{p[1] - geom.GRID_Y_MM:.1f} mm outside row 37")
+                  else f"{p[1] - geom.GRID_Y_MM:.1f} mm outside row {last_row}")
         print(f"      against the grid: {across}, "
-              f"{p[0] - geom.GRID_X_MM:+.1f} mm past col 77\n")
+              f"{p[0] - geom.GRID_X_MM:+.1f} mm past col {last_col}\n")
         anchors[m] = [round(float(p[0]), 1), round(float(p[1]), 1)]
 
     unmeasured = [m for m in range(4) if m not in groups]

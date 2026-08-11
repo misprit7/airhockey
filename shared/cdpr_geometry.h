@@ -71,48 +71,50 @@ constexpr float RAIL_MAX_Y = 985.1f;
 
 // ── Motor anchor positions ──────────────────────────────────────────
 //
-// ONLY M2 IS TRUSTWORTHY. M0, M1 and M3 ARE KNOWN BAD — see below.
+// MEASURED 2026-08-10, after the 78x38 -> 80x39 grid fix and against the
+// re-solved camera pose. Two methods, and the mix is deliberate:
 //
-// M2, 2026-08-10: trilaterated from caliper distances to three air holes —
-// 131.0 mm from the corner hole (col 79, row 0), 265.0 mm from (79, 6),
-// 259.0 mm from (73, 0). Residuals +0.10 / -0.06 / -0.05 mm, rms 0.07.
-// Distances beat axis offsets: they need no squareness and no axis to
-// measure along, and the third one turns a bare solution into a check.
-// Use shared/fit_anchors.py.
+// M0, M1, M3 — optical. vision/bin/measure_anchors.py finds a
+// retroreflector on each spool axis and back-projects it onto the plane
+// z = 33.5 mm, the calipered marker height. Repeatable to 0.1 mm over 9
+// bursts; ACCURATE to about 2-4 mm, which is a different number.
 //
-// M0, M1, M3 came from vision/bin/measure_anchors.py — a retroreflector on
-// each spool axis, back-projected through the camera pose — reconciled
-// against calipers. Two things have since invalidated them:
+// M2 — calipers, kept in preference to its own optical value because
+// trilateration from three air holes gave rms 0.07 mm (131.0 mm from hole
+// (79,0), 265.0 from (79,6), 259.0 from (73,0)) and the optical route lands
+// 4.2 mm away from that. Each anchor gets its best available measurement;
+// there is nothing to gain from making them uniformly worse. Use
+// shared/fit_anchors.py to do the other three the same way when convenient.
 //
-//   * the grid count was wrong (78x39 -> 80x39, 2026-08-10). The corner
-//     markers that fit the camera pose are placed relative to the grid
-//     EXTENT, so the pose those anchors were measured through was wrong.
-//     The caliper constraints used to reconcile them were mis-referenced
-//     the same way: "144.5 mm past the row-37 hole line" was measured past
-//     the LAST row, which is row 38, so it was 25.4 mm off before it was
-//     even used.
-//   * the spools were replaced, taking the markers with them, so the
-//     optical route cannot simply be re-run.
+// WHY THE HEIGHT CAN BE TRUSTED NOW, HAVING BEEN A FUDGE BEFORE.
+// The camera fixes the RAY each anchor lies on very well but leaves the
+// position ALONG it entirely to the assumed plane height — the lever is
+// 0.42 mm/mm for the mid-table pair and 0.82 for the robot-end pair.
+// Fitting that height to five independent caliper constraints now wants
+// 35.0 mm (rms 2.16) against the calipered 33.5 (rms 2.32), so the measured
+// height is used as-is; the 0.16 mm is not worth a fudge factor.
 //
-// They are left in place only because a stale number beats no number for
-// getting the rig to move at all. Do not trust anything computed from them.
-// Re-measure all three with fit_anchors.py, three distances each.
+// Before the grid fix the same fit demanded 24.3 mm against the same
+// calipered 33.5. That 9 mm was never a property of the markers: it was the
+// grid-count error in disguise, being absorbed by the only free parameter
+// the procedure had. A fitted constant that drifts 9 mm from a directly
+// measured one is a symptom, not a calibration — treat it that way.
 //
 // These are NOT a rectangle — the two pairs use different mounting
 // brackets, so any code deriving anchors from a width/height pair is wrong
 // by construction. Re-measure if the spools are re-mounted.
 
 constexpr float MOTOR_X[NUM_MOTORS] = {
-    1067.6f, // 0: mid-table, far side
-    2043.3f, // 1: robot corner, far side
-    2094.0f, // 2: robot corner, near side  CALIPERED
-    1063.0f, // 3: mid-table, near side
+    1095.6f, // 0: mid-table, far side    optical
+    2094.8f, // 1: robot corner, far side  optical
+    2094.0f, // 2: robot corner, near side CALIPERED
+    1091.7f, // 3: mid-table, near side    optical
 };
 constexpr float MOTOR_Y[NUM_MOTORS] = {
-    1082.0f, // 0
-    1041.2f, // 1
+    1107.2f, // 0
+    1066.0f, // 1
     -97.7f,  // 2  CALIPERED
-    -139.7f, // 3
+    -140.6f, // 3
 };
 
 // ── Spool ───────────────────────────────────────────────────────────
@@ -248,10 +250,10 @@ constexpr float HOME_Y = (WS_MIN_Y + WS_MAX_Y) / 2.0f;  // 483
 // absorbed when the controller is homed, so it is free.
 // Values are atan2(HOME_Y - MOTOR_Y[m], HOME_X - MOTOR_X[m]).
 constexpr float WRAP_REF_ANGLE[NUM_MOTORS] = {
-    -0.936818f, // 0
-    -2.335256f, // 1
+    -0.986946f, // 0
+    -2.359443f, // 1
     2.360737f, // 2
-    0.950319f, // 3
+    0.982165f, // 3
 };
 
 // ── Kinematics ──────────────────────────────────────────────────────

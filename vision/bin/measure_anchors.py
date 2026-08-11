@@ -232,11 +232,13 @@ def main() -> int:
     P = geom.GRID_PITCH_MM
     for m in range(4):
         x, y = got[m]
+        last_col = round(geom.GRID_X_MM / P)
+        last_row = round(geom.GRID_Y_MM / P)
         col = round(x / P)
-        along = (f"col {col} {x - col * P:+.1f}" if col <= 77
-                 else f"{x - geom.GRID_X_MM:+.1f} past col 77")
+        along = (f"col {col} {x - col * P:+.1f}" if col <= last_col
+                 else f"{x - geom.GRID_X_MM:+.1f} past col {last_col}")
         across = (f"{-y:6.1f} mm outside row 0" if y < 0
-                  else f"{y - geom.GRID_Y_MM:6.1f} mm outside row 37")
+                  else f"{y - geom.GRID_Y_MM:6.1f} mm outside row {last_row}")
         print(f"   M{m}   {along:>22}   {across}")
 
     vis = cv2.cvtColor(cv2.convertScaleAbs(img, alpha=3.0), cv2.COLOR_GRAY2BGR)
