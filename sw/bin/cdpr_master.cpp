@@ -108,6 +108,8 @@ struct TeensyStatus {
     // and default to zero rather than making the whole line unparseable.
     double vlim, alim;  // active speed / accel limits
     int limit_flags;    // bit 0/1 x accel/speed, bit 2/3 y accel/speed
+    double sfrac, afrac;        // 0..1 of each cap right now
+    double speak, apeak;        // ... and the peak since the last reset
     bool valid;          // at least one status received
 };
 
@@ -117,10 +119,12 @@ static TeensyStatus g_status = {};
 // Parse "S x y vx vy c0 c1 c2 c3"
 static bool parseStatus(const char *line, TeensyStatus &st) {
     st = {};
-    int n = sscanf(line, "S %lf %lf %lf %lf %d %d %d %d %lf %lf %d",
+    int n = sscanf(line,
+                   "S %lf %lf %lf %lf %d %d %d %d %lf %lf %d %lf %lf %lf %lf",
                    &st.x, &st.y, &st.vx, &st.vy,
                    &st.c0, &st.c1, &st.c2, &st.c3,
-                   &st.vlim, &st.alim, &st.limit_flags);
+                   &st.vlim, &st.alim, &st.limit_flags,
+                   &st.sfrac, &st.afrac, &st.speak, &st.apeak);
     if (n < 8) return false;
     st.valid = true;
     return true;
@@ -316,10 +320,13 @@ static int handleCommand(const char *line, ClearPath &robot, int client_fd, int 
         std::lock_guard<std::mutex> lock(g_status_mutex);
         if (g_status.valid) {
             snprintf(resp, sizeof(resp),
-                     "OK %.2f %.2f %.2f %.2f %d %d %d %d %.1f %.1f %d\n",
+                     "OK %.2f %.2f %.2f %.2f %d %d %d %d %.1f %.1f %d "
+                     "%.4f %.4f %.4f %.4f\n",
                      g_status.x, g_status.y, g_status.vx, g_status.vy,
                      g_status.c0, g_status.c1, g_status.c2, g_status.c3,
-                     g_status.vlim, g_status.alim, g_status.limit_flags);
+                     g_status.vlim, g_status.alim, g_status.limit_flags,
+                     g_status.sfrac, g_status.afrac,
+                     g_status.speak, g_status.apeak);
         } else {
             snprintf(resp, sizeof(resp), "ERR no status available\n");
         }
@@ -341,6 +348,11 @@ static int handleCommand(const char *line, ClearPath &robot, int client_fd, int 
             logf("  limits -> %.1f mm/s, %.1f mm/s^2\n", sp, ac);
             snprintf(resp, sizeof(resp), "OK\n");
         }
+
+    } else if (strncmp(line, "RESETPEAK", 9) == 0) {
+        sendTeensy(teensy_fd, "RESETPEAK\n");
+        waitTeensyOK(teensy_fd);
+        snprintf(resp, sizeof(resp), "OK\n");
 
     } else if (strncmp(line, "ENC", 3) == 0) {
         // The drives' own encoders — the only measurement of where the

@@ -51,6 +51,19 @@ public:
   // the outside is most of why tuning a profile is tedious.
   uint8_t getLimitFlags() const;
 
+  // How much of each cap is being used, 0..1, as the WORST axis — so 1.0
+  // means that limit is binding, which is exactly when the flag above sets.
+  //
+  // The peaks are tracked HERE rather than in the UI because the profile
+  // runs at 50 kHz and status is polled around 10 Hz: a peak sampled from
+  // outside would miss nearly every transient, which is the one thing a
+  // peak is for.
+  float getSpeedFrac() const;
+  float getAccelFrac() const;
+  float getPeakSpeedFrac() const;
+  float getPeakAccelFrac() const;
+  void resetPeaks();
+
   // Read current state. All thread-safe (briefly disables interrupts).
   void getTarget(float &x, float &y) const;
   void getCartPosition(float &x, float &y) const;   // theoretical position
@@ -101,6 +114,8 @@ private:
   volatile float velLimit_;          // trajectory speed cap (mm/s)
   volatile float accelLimit_;        // trajectory accel cap (mm/s^2)
   volatile uint8_t limitFlags_;      // which limit bound on the last tick
+  volatile float speedFrac_, accelFrac_;          // 0..1 of each cap, now
+  volatile float peakSpeedFrac_, peakAccelFrac_;  // since the last reset
   float theta_;                      // paddle orientation (rad)
 
   // ── Target (set from main loop, read by ISR) ──

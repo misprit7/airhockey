@@ -200,9 +200,13 @@ class HardwareDynamics(MotorDynamics):
         self._speed_limit = None
         self._accel_limit = None
         self._limit_flags = 0
+        self._usage = {}
 
     def set_speed(self, mm_s: float) -> None:
         self.speed = max(1.0, min(float(mm_s), self.max_speed))
+
+    def reset_peaks(self) -> None:
+        self.client.reset_peaks()
 
     def set_limits(self, speed_mm_s: float, accel_mm_s2: float) -> None:
         """Push both caps to the Teensy, which is where the profile lives."""
@@ -245,6 +249,8 @@ class HardwareDynamics(MotorDynamics):
         self._speed_limit = s.get("speed_limit")
         self._accel_limit = s.get("accel_limit")
         self._limit_flags = s.get("limit_flags", 0)
+        self._usage = {k: s.get(k) for k in
+                       ("speed_frac", "accel_frac", "speed_peak", "accel_peak")}
         # The drives' own encoders, at a slower cadence — this is a separate
         # serial round trip to four nodes and does not need to keep up with
         # the command rate.
@@ -307,6 +313,7 @@ class HardwareDynamics(MotorDynamics):
             "speed_limit": self._speed_limit,
             "accel_limit": self._accel_limit,
             "limit_flags": self._limit_flags,
+            **{k: v for k, v in self._usage.items() if v is not None},
         }
 
     def _sim_to_mm(self, sx: float, sy: float):

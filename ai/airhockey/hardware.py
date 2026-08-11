@@ -123,6 +123,12 @@ class CDPRClient:
         if not resp.startswith("OK"):
             raise RuntimeError(f"CDPR limits failed: {resp}")
 
+    def reset_peaks(self) -> None:
+        """Zero the Teensy's peak usage trackers."""
+        resp = self._send("RESETPEAK")
+        if not resp.startswith("OK"):
+            raise RuntimeError(f"CDPR peak reset failed: {resp}")
+
     def get_encoders(self) -> dict:
         """Read the DRIVES' encoders, not the Teensy's step counts.
 
@@ -164,5 +170,10 @@ class CDPRClient:
                 out["speed_limit"] = float(parts[9])
                 out["accel_limit"] = float(parts[10])
                 out["limit_flags"] = int(parts[11])
+            if len(parts) >= 16:
+                out["speed_frac"] = float(parts[12])
+                out["accel_frac"] = float(parts[13])
+                out["speed_peak"] = float(parts[14])
+                out["accel_peak"] = float(parts[15])
             return out
         raise RuntimeError(f"CDPR status failed: {resp}")

@@ -73,7 +73,8 @@ CDPR::CDPR(const int stepPins[NUM_MOTORS], const int dirPins[NUM_MOTORS],
            uint32_t tickRateHz)
     : tickRateHz_(tickRateHz), dt_(1.0f / tickRateHz), cartX_(0), cartY_(0),
       velX_(0), velY_(0), velLimit_(MAX_VELOCITY_MM_S), accelLimit_(DEFAULT_ACCEL_MM_S2),
-      limitFlags_(0), theta_(MALLET_THETA_RAD),
+      limitFlags_(0), speedFrac_(0), accelFrac_(0),
+      peakSpeedFrac_(0), peakAccelFrac_(0), theta_(MALLET_THETA_RAD),
       targetX_(0), targetY_(0), stepSetReg_(nullptr),
       stepClrReg_(nullptr), dirSetReg_(nullptr), dirClrReg_(nullptr) {
   for (int i = 0; i < NUM_MOTORS; i++) {
@@ -170,6 +171,17 @@ void CDPR::setAccelLimit(float mm_s2) {
 float CDPR::getVelocityLimit() const { return velLimit_; }
 float CDPR::getAccelLimit() const { return accelLimit_; }
 uint8_t CDPR::getLimitFlags() const { return limitFlags_; }
+float CDPR::getSpeedFrac() const { return speedFrac_; }
+float CDPR::getAccelFrac() const { return accelFrac_; }
+float CDPR::getPeakSpeedFrac() const { return peakSpeedFrac_; }
+float CDPR::getPeakAccelFrac() const { return peakAccelFrac_; }
+
+void CDPR::resetPeaks() {
+  noInterrupts();
+  peakSpeedFrac_ = 0.0f;
+  peakAccelFrac_ = 0.0f;
+  interrupts();
+}
 
 void CDPR::getTarget(float &x, float &y) const {
   noInterrupts();
@@ -364,9 +376,22 @@ void CDPR::tick() {
 
   // ── Independent trapezoidal profiles for each axis ──
   uint8_t fx = 0, fy = 0;
+  const float vx0 = velX_, vy0 = velY_;
   velX_ = trapezoidalStep(cartX_, velX_, tx, velLimit_, accelLimit_, dt_, fx);
   velY_ = trapezoidalStep(cartY_, velY_, ty, velLimit_, accelLimit_, dt_, fy);
   limitFlags_ = (uint8_t)(fx | (fy << 2));
+
+  // Worst axis, because the caps are enforced per axis — so these reach 1.0
+  // exactly when the corresponding flag sets, rather than at some diagonal
+  // fraction of it.
+  const float ax = (velX_ - vx0) / dt_;
+  const float ay = (velY_ - vy0) / dt_;
+  const float sf = fmaxf(fabsf(velX_), fabsf(velY_)) / velLimit_;
+  const float af = fmaxf(fabsf(ax), fabsf(ay)) / accelLimit_;
+  speedFrac_ = sf;
+  accelFrac_ = af;
+  if (sf > peakSpeedFrac_) peakSpeedFrac_ = sf;
+  if (af > peakAccelFrac_) peakAccelFrac_ = af;
 
   // ── Advance theoretical cart position ──
   if (fabsf(tx - cartX_) < 0.01f) {

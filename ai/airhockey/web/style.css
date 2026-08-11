@@ -580,14 +580,46 @@ canvas {
     font: 12px ui-monospace, Menlo, monospace;
 }
 #limits-panel button { padding: 6px 10px; font-size: 12px; }
-#limit-state {
+/* Two gauges rather than a sentence: which cap is saturated, and how close
+   the other one is, are both continuous quantities — and the gap between
+   the live fill and the peak marker is the thing you actually watch. */
+.limit-gauge {
+    display: flex;
+    align-items: center;
+    gap: 6px;
     font: 11px ui-monospace, Menlo, monospace;
     color: #888;
-    text-align: center;
-    white-space: pre-line;
-    line-height: 1.5;
 }
-/* Amber for accel-bound, blue for speed-bound: which one is binding is the
-   whole point of the readout, so they must not look alike. */
-#limit-state.accel { color: #ffb040; }
-#limit-state.speed { color: #4a9eff; }
+.gauge-label { width: 34px; flex-shrink: 0; }
+.gauge-pct { width: 34px; flex-shrink: 0; text-align: right; }
+.gauge-track {
+    position: relative;
+    flex: 1;
+    height: 10px;
+    background: #1a1a26;
+    border: 1px solid #2a2a3a;
+    border-radius: 3px;
+    overflow: hidden;
+}
+.gauge-fill {
+    position: absolute;
+    inset: 0 auto 0 0;
+    width: 0;
+    border-radius: 2px;
+    transition: width 0.08s linear;
+}
+/* Blue speed, amber accel — the same colours the state view uses for
+   camera and controller, so the palette means one thing throughout. */
+.gauge-fill.speed { background: #4a9eff; }
+.gauge-fill.accel { background: #ffb040; }
+.gauge-peak {
+    position: absolute;
+    top: -1px;
+    bottom: -1px;
+    width: 2px;
+    background: #fff;
+    opacity: 0.85;
+    left: 0;
+    display: none;
+}
+#btn-reset-peaks { padding: 5px 10px; font-size: 11px; }

@@ -90,12 +90,15 @@ static void sendStatus() {
   cdpr.getMotorCounts(counts);
   // The trailing three are newer than the rest; anything parsing this
   // should treat them as optional so an older host still works.
-  Serial.printf("S %.2f %.2f %.2f %.2f %ld %ld %ld %ld %.1f %.1f %u\n",
+  Serial.printf("S %.2f %.2f %.2f %.2f %ld %ld %ld %ld %.1f %.1f %u "
+                "%.4f %.4f %.4f %.4f\n",
                 x, y, vx, vy,
                 (long)counts[0], (long)counts[1],
                 (long)counts[2], (long)counts[3],
                 cdpr.getVelocityLimit(), cdpr.getAccelLimit(),
-                (unsigned)cdpr.getLimitFlags());
+                (unsigned)cdpr.getLimitFlags(),
+                cdpr.getSpeedFrac(), cdpr.getAccelFrac(),
+                cdpr.getPeakSpeedFrac(), cdpr.getPeakAccelFrac());
 }
 
 static void processCommand(char *line) {
@@ -130,6 +133,10 @@ static void processCommand(char *line) {
     }
     cdpr.setAccelLimit(v);
     Serial.printf("OK ACCEL %.1f\n", cdpr.getAccelLimit());
+    return;
+  } else if (strcasecmp(cmd, "RESETPEAK") == 0) {
+    cdpr.resetPeaks();
+    Serial.println("OK RESETPEAK");
     return;
   } else if (strcasecmp(cmd, "SQUARE") == 0) {
     g_mode = MODE_SQUARE;

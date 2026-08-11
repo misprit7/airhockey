@@ -784,26 +784,47 @@ setMode(mode);
 })();
 
 function updateLimitState(hw) {
-    const el = document.getElementById("limit-state");
-    if (!el) return;
-    if (!hw || hw.limit_flags === undefined || hw.speed_limit == null) {
-        el.textContent = "limited by: \u2014";
-        el.className = "";
+    const set = (kind, frac, peak, limit, unit) => {
+        const fill = document.getElementById(`gauge-${kind}`);
+        const mark = document.getElementById(`peak-${kind}`);
+        const pct = document.getElementById(`pct-${kind}`);
+        if (frac === undefined || frac === null) {
+            fill.style.width = "0%";
+            mark.style.display = "none";
+            pct.textContent = "\u2014";
+            return;
+        }
+        // Clamp the DISPLAY at 100%, not the value: per-axis caps mean a
+        // diagonal can exceed 1.0, and a bar that overflows its track just
+        // looks broken. The number beside it still tells the truth.
+        fill.style.width = `${Math.min(100, frac * 100)}%`;
+        pct.textContent = `${Math.round(frac * 100)}%`;
+        if (peak === undefined || peak === null || peak <= 0) {
+            mark.style.display = "none";
+        } else {
+            mark.style.display = "block";
+            mark.style.left = `calc(${Math.min(100, peak * 100)}% - 1px)`;
+            mark.title = `peak ${Math.round(peak * 100)}%`
+                + (limit ? ` = ${(peak * limit).toFixed(0)} ${unit}` : "");
+        }
+    };
+    if (!hw) {
+        set("speed", null); set("accel", null);
         return;
     }
-    const f = hw.limit_flags;
-    // bit 0/1 = x accel/speed, bit 2/3 = y accel/speed
-    const accel = (f & 1) || (f & 4);
-    const speed = (f & 2) || (f & 8);
-    const what = accel && speed ? "accel + speed"
-               : accel ? "acceleration"
-               : speed ? "speed"
-               : "nothing (idle or coasting)";
-    el.textContent = `limited by: ${what}\n`
-        + `Teensy has ${hw.speed_limit.toFixed(0)} mm/s, `
-        + `${hw.accel_limit.toFixed(0)} mm/s\u00b2`;
-    el.className = accel ? "accel" : speed ? "speed" : "";
+    set("speed", hw.speed_frac, hw.speed_peak, hw.speed_limit, "mm/s");
+    set("accel", hw.accel_frac, hw.accel_peak, hw.accel_limit, "mm/s\u00b2");
 }
+
+(() => {
+    const b = document.getElementById("btn-reset-peaks");
+    if (!b) return;
+    b.addEventListener("click", () => {
+        if (ws && ws.readyState === 1) {
+            ws.send(JSON.stringify({ type: "reset_peaks" }));
+        }
+    });
+})();
 
 // ── zoom / pan, shared by the tracker view and the state view ──────
 //

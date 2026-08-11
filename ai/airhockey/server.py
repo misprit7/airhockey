@@ -321,6 +321,12 @@ async def live_game(ws: WebSocket):
                                               float(msg.get("accel", 400.0)))
                             except Exception as e:      # noqa: BLE001
                                 print(f"set_limits failed: {e}")
+                    elif msg_type == "reset_peaks":
+                        if hardware_dynamics:
+                            try:
+                                hardware_dynamics.reset_peaks()
+                            except Exception as e:      # noqa: BLE001
+                                print(f"reset_peaks failed: {e}")
                     elif msg_type == "set_mode":
                         # "control" = human driving the machine, no world.
                         # "sim" = the full game. Replay never reaches here.

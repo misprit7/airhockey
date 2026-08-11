@@ -90,7 +90,23 @@
                 <label>Speed <input type="number" id="lim-speed" min="1" max="600" step="10" value="200"> mm/s</label>
                 <label>Accel <input type="number" id="lim-accel" min="1" max="5000" step="50" value="400"> mm/s&sup2;</label>
                 <button id="btn-limits">Apply</button>
-                <div id="limit-state">limited by: &mdash;</div>
+                <div class="limit-gauge">
+                    <span class="gauge-label">speed</span>
+                    <div class="gauge-track">
+                        <div class="gauge-fill speed" id="gauge-speed"></div>
+                        <div class="gauge-peak" id="peak-speed"></div>
+                    </div>
+                    <span class="gauge-pct" id="pct-speed">&mdash;</span>
+                </div>
+                <div class="limit-gauge">
+                    <span class="gauge-label">accel</span>
+                    <div class="gauge-track">
+                        <div class="gauge-fill accel" id="gauge-accel"></div>
+                        <div class="gauge-peak" id="peak-accel"></div>
+                    </div>
+                    <span class="gauge-pct" id="pct-accel">&mdash;</span>
+                </div>
+                <button id="btn-reset-peaks" title="Zero the peak markers. The peaks are tracked on the Teensy at 50 kHz, not sampled here at 10 Hz, so they catch transients the readout never sees.">Reset peaks</button>
             </div>
             <div id="replay-panel" class="hidden">
                 <h3>Recordings</h3>
