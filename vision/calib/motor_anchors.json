@@ -8,8 +8,8 @@
       1107.2
     ],
     "1": [
-      2094.8,
-      1066.0
+      2094.6,
+      1062.6
     ],
     "2": [
       2094.0,
@@ -47,21 +47,21 @@
   },
   "note": "spools replaced 2026-08-02 with McMaster 6245K418 pulleys; the shaft axes -- and therefore these anchors -- did not move, but the retroreflective markers and their 33.5 mm height belonged to the old spools, so re-measure both before re-running measure_anchors.py",
   "measurements": {
-    "3": [
+    "1": [
       [
-        43.00000000000001,
-        0.0,
-        141.9
+        79.0,
+        38.0,
+        131.0
       ],
       [
-        50.0,
-        0.0,
-        226.5
+        73.0,
+        38.0,
+        259.5
       ],
       [
-        40.0,
-        4.0,
-        255.5
+        79.0,
+        32.0,
+        265.0
       ]
     ]
   },

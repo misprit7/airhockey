@@ -74,24 +74,30 @@ constexpr float RAIL_MAX_Y = 985.1f;
 // MEASURED 2026-08-10, after the 78x38 -> 80x39 grid fix and against the
 // re-solved camera pose. Two methods, and the mix is deliberate:
 //
-// M2 and M3 — CALIPERS, trilaterated from distances to three air holes
+// M1, M2, M3 — CALIPERS, trilaterated from distances to three air holes
 // (shared/fit_anchors.py). Each anchor gets its best available measurement.
-//   M2  131.0 mm from hole (79,0), 265.0 from (79,6), 259.0 from (73,0)
+//   M1  131.0 mm from hole (79,38), 259.5 from (73,38), 265.0 from (79,32)
+//       -> rms 0.19 mm
+//   M2  131.0 mm from hole (79,0),  259.0 from (73,0),  265.0 from (79,6)
 //       -> rms 0.07 mm
-//   M3  141.9 mm from hole (43,0), 226.5 from (50,0), 255.5 from (40,4)
+//   M3  141.9 mm from hole (43,0),  226.5 from (50,0),  255.5 from (40,4)
 //       -> rms 0.01 mm
+// M1 and M2 land 97.4 and 97.7 mm outside their rails and 88.0 and 87.4 mm
+// past col 79 — the two robot-end brackets agreeing to 0.6 mm as mirror
+// images should, which nothing in the fit forces.
 //
-// M0, M1 — optical, pending calipers. vision/bin/measure_anchors.py finds a
+// M0 — optical, pending calipers. vision/bin/measure_anchors.py finds a
 // retroreflector on each spool axis and back-projects it onto the plane
 // z = 33.5 mm, the calipered marker height. Repeatable to 0.1 mm over 9
 // bursts; ACCURATE to a few mm, which is a different number.
 //
 // HOW ACCURATE, measured rather than asserted — the optical value differed
-// from the caliper truth by 4.2 mm at M2 and 2.2 mm at M3. That ordering is
-// not luck: M2 projects 806 px from the principal point and M3 only 457,
-// against intrinsics data that runs out at 728. The lens model is
-// extrapolating at M2 and interpolating at M3. So expect M1 (770 px) to be
-// the worst of the four and M0 (400 px) the best.
+// from the caliper truth by 2.2 mm at M3 (457 px from the principal point),
+// 3.4 mm at M1 (770 px) and 4.2 mm at M2 (806 px). Monotonic in radius,
+// with the intrinsics data running out at 728 px — interpolating at M3,
+// extrapolating at the other two. M0 is the most interior at 400 px, so it
+// should move least; if it moves several mm, that breaks the pattern and is
+// worth a second look rather than acceptance.
 //
 // WHY THE HEIGHT CAN BE TRUSTED NOW, HAVING BEEN A FUDGE BEFORE.
 // The camera fixes the RAY each anchor lies on very well but leaves the
@@ -113,13 +119,13 @@ constexpr float RAIL_MAX_Y = 985.1f;
 
 constexpr float MOTOR_X[NUM_MOTORS] = {
     1095.6f, // 0: mid-table, far side    optical
-    2094.8f, // 1: robot corner, far side  optical
+    2094.6f, // 1: robot corner, far side  CALIPERED
     2094.0f, // 2: robot corner, near side CALIPERED
     1093.4f, // 3: mid-table, near side    CALIPERED
 };
 constexpr float MOTOR_Y[NUM_MOTORS] = {
     1107.2f, // 0
-    1066.0f, // 1
+    1062.6f, // 1  CALIPERED
     -97.7f,  // 2  CALIPERED
     -141.9f, // 3  CALIPERED
 };
@@ -258,7 +264,7 @@ constexpr float HOME_Y = (WS_MIN_Y + WS_MAX_Y) / 2.0f;  // 483
 // Values are atan2(HOME_Y - MOTOR_Y[m], HOME_X - MOTOR_X[m]).
 constexpr float WRAP_REF_ANGLE[NUM_MOTORS] = {
     -0.986946f, // 0
-    -2.359443f, // 1
+    -2.362197f, // 1
     2.360737f, // 2
     0.985013f, // 3
 };
