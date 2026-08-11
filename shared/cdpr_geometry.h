@@ -240,8 +240,8 @@ constexpr float MALLET_THETA_RAD = 2.3561945f; // 135 deg
 // cable stays in tension — which is only true strictly inside the convex
 // hull of the four anchors, and the tension needed to resist a given
 // disturbance grows without bound as you approach that hull. The anchors
-// span x = 1064..2031, so the region the CABLES control is much smaller
-// than the robot half of the TABLE; the centreline at x = 977.9 is 86 mm
+// span x = 1093..2095, so the region the CABLES control is much smaller
+// than the robot half of the TABLE; the centreline at x = 1003.3 is 90 mm
 // outside the hull and is not reachable at any torque. Staying near the
 // middle keeps the cables well spread and the tensions modest.
 //
