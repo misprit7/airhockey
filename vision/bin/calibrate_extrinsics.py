@@ -58,7 +58,7 @@ from scipy.optimize import linear_sum_assignment
 sys.path.insert(0, str(Path(__file__).resolve().parent))
 from camera import backproject_undistorted  # noqa: E402
 from table_grid import (CENTERLINE_X, GRID_X_MM, GRID_Y_MM,  # noqa: E402
-                        MARKER_Z_MM, MARKERS_XY, stripe_x)
+                        MARKER_Z_MM, MARKERS_XY)
 
 CALIB_DIR = Path(__file__).resolve().parent.parent / "calib"
 MARKERS_FILE = CALIB_DIR / "markers.json"
@@ -381,18 +381,15 @@ def validate_heldout(best, K):
     print("\nHELD-OUT CHECK — stripe markers, not used in the fit.")
     print("x is known independently (painted stripe is registered to the "
           "hole grid); y is measured.")
-    print("Scored against the stripe's measured LINE, not a constant x: the "
-          "stripe is centred on\nthe grid but tilted 0.18 deg across it, and "
-          "charging that to the calibration cost us\na long hunt for a "
-          "misplaced sticker that was never there.")
     err = []
     for p in meas:
-        want = stripe_x(p[1])
-        e = p[0] - want
+        e = p[0] - CENTERLINE_X
         err.append(abs(e))
         print(f"  measured ({p[0]:7.1f}, {p[1]:7.1f})   "
-              f"x error {e:+6.2f} mm vs stripe {want:7.2f} "
-              f"(flat centreline would say {p[0] - CENTERLINE_X:+6.2f})")
+              f"x error {e:+6.2f} mm vs centerline {CENTERLINE_X:.1f}")
+    print("  NOTE: these two carry a +-1.5 mm antisymmetric term of unresolved "
+          "origin (see\n  table_grid.py). Read the worst below as a BOUND on "
+          "the error, not as the error.")
     print(f"  worst held-out error: {max(err):.2f} mm  <- the honest "
           "accuracy number near table centre")
     if max(err) > 3.0:
