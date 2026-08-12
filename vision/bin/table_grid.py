@@ -65,6 +65,39 @@ RAIL_MAX_Y = GRID_Y_MM - RAIL_MIN_Y         # 985.1
 
 CENTERLINE_X = (N_COLS - 1) / 2.0 * PITCH_MM  # 1003.3 — between cols 39, 40
 
+# ── The painted stripe is centred on the grid but NOT parallel to it ──────
+#
+# Measured 2026-08-12 from ambient-light frames: the painted line was found
+# as an intensity ridge, high-passed to strip the IR ring's gradient, and
+# back-projected onto the surface. 949 samples, 0.24 mm rms about a straight
+# line, excluding y 400-600 where the face-off circle crosses it and widens
+# the ridge from 8 px to 14 px.
+#
+#   x at y=0     1001.76        x at y=965    1004.78
+#   mean x       1003.27        vs CENTERLINE_X 1003.3   <- centred to 0.03 mm
+#   tilt         0.180 deg      3.0 mm across the table
+#
+# The mean is anchored to CENTERLINE_X below rather than to the measured
+# 1003.27, because "the stripe is centred on the hole grid" is a fact about
+# how the table was made, while the 0.03 mm is measurement. Only the TILT is
+# taken from the measurement.
+#
+# This matters because the held-out validation scores the stripe markers'
+# x against the stripe. Scoring them against a CONSTANT x charged the tilt
+# to the calibration as +-1.5 mm of error it never had — and sent us looking
+# for a misplaced sticker that did not exist. The stickers sit on the
+# painted line to within 0.1 mm.
+#
+# Confirmed under two independent poses: the sticker pair implies 0.151 deg
+# through the CNC-truth mounted corners and 0.172 deg through the sticker
+# corners, so the tilt is the table's, not a pose artifact.
+STRIPE_TILT_RAD = 0.00313          # +x per +y, 3.0 mm over 965.2
+
+
+def stripe_x(y):
+    """Painted centre-stripe x at a given grid y, in mm."""
+    return CENTERLINE_X + STRIPE_TILT_RAD * (y - GRID_Y_MM / 2.0)
+
 
 def hole_xy(i, j):
     """Grid-frame (x, y) in mm of hole (i, j)."""
