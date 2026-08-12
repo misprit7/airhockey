@@ -31,6 +31,7 @@ for _p in (_ROOT / "vision" / "bin", _ROOT / "shared"):
         sys.path.insert(0, str(_p))
 
 import cdpr_geometry as geom  # noqa: E402
+from table_grid import MARKER_NAMES as _MARKER_NAMES  # noqa: E402
 
 # Output is PORTRAIT to match the sim field beside it: the table's long
 # axis (grid x) runs vertically with the robot end at the bottom, and grid y
@@ -297,12 +298,25 @@ class VisionService:
                                        cv2.CHAIN_APPROX_SIMPLE)
             cv2.drawContours(vis, cnts, -1, C_GLARE, 2)
 
+        # known_px is the six field markers followed by the four spool-axis
+        # markers. They were all labelled F0..F9, which said nothing about
+        # which physical thing to go and look at — and now that the field
+        # markers are hand-placed stickers rather than CNC-located mounts,
+        # that is exactly what you want to know when one reads off.
+        n_field = len(_MARKER_NAMES)
         for i, p in enumerate(known_px):
             c = flip(p)
-            cv2.circle(vis, c, 13, C_FIELD, 1)
-            cv2.putText(vis, f"F{i}", (c[0] + 16, c[1] + 5),
-                        cv2.FONT_HERSHEY_SIMPLEX, 0.45, C_FIELD, 1,
-                        cv2.LINE_AA)
+            if i < n_field:
+                cv2.circle(vis, c, 13, C_FIELD, 1)
+                cv2.putText(vis, _MARKER_NAMES[i], (c[0] + 16, c[1] + 5),
+                            cv2.FONT_HERSHEY_SIMPLEX, 0.42, C_FIELD, 1,
+                            cv2.LINE_AA)
+            else:
+                # Spool markers: circle only. The M0-M3 cross drawn above is
+                # the anchor the MODEL believes in and this is the marker the
+                # camera actually sees, so drawing both is the point — but
+                # labelling both just prints the same name twice.
+                cv2.circle(vis, c, 13, C_MOTOR, 1)
 
         if pose is not None:
             cx, cy = float(pose["centre"][0]), float(pose["centre"][1])

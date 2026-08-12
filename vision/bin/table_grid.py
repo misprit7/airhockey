@@ -134,6 +134,11 @@ def _sticker_xy(gx, gy, xo, yo, inset):
 STICKER_MARKERS_XY = [_sticker_xy(gx, gy, xo, yo, ins)
                       for _, gx, gy, xo, yo, ins in _WALL_OFFSETS]
 
+# Names in MARKERS_XY order, for overlays and diagnostics. Worth having:
+# "F3 is 2 mm out" says nothing about which corner to go and look at, and
+# these markers are now hand-placed things that DO need looking at.
+MARKER_NAMES = [name for name, *_ in _WALL_OFFSETS]
+
 # Stickers lie on the playing surface; treat as zero like any tape.
 STICKER_MARKER_Z_MM = 0.0
 
