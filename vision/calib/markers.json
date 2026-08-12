@@ -1,5 +1,5 @@
 {
-  "date": "2026-08-12 00:26",
+  "date": "2026-08-12 00:35",
   "note": "first 4 = grid-truth corners, the ONLY markers in the fit; rest are held-out validation (x = grid centerline, y measured)",
   "n_fitted": 4,
   "markers_mm": [
@@ -16,16 +16,16 @@
       981.4
     ],
     [
-      2013.4,
+      2010.4,
       981.4
     ],
     [
       1003.3,
-      -14.9
+      -14.6
     ],
     [
       1003.3,
-      978.7
+      978.4
     ]
   ]
 }

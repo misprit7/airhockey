@@ -104,30 +104,38 @@ MOUNTED_MARKER_Z_MM = 3.3   # sat on printed mounts above the playing surface
 STICKER_DIAMETER_MM = 7.0
 _R = STICKER_DIAMETER_MM / 2.0
 
-# name -> (grid x, grid y, x wall offset or None, y wall offset, x inset)
-# The inset is normally the radius (flush). Top-right is the exception: a
-# physical irregularity there holds the sticker 4.5 mm off the wall.
+# name -> (grid x, grid y, x wall offset or None, y wall offset, x edge gap)
+#
+# The edge gap is the clearance between the wall and the nearest EDGE of the
+# sticker, so flush is zero and the radius gets added in one place for
+# everything. robot/far is the exception: a physical irregularity holds it
+# ~4 mm off the wall in x.
+#
+# Stated as a gap rather than as a wall-to-centre distance because the two
+# differ by exactly one radius, and getting that backwards is a silent 3.5 mm
+# on a marker that FITS the pose. It was in here backwards once already.
 _WALL_OFFSETS = [
-    ("human/near",  0.0,      0.0,       4.7,  19.0, _R),
-    ("robot/near",  GRID_X_MM, 0.0,      11.7, 19.4, _R),
-    ("human/far",   0.0,      GRID_Y_MM,  3.8, 19.7, _R),
-    ("robot/far",   GRID_X_MM, GRID_Y_MM, 11.3, 19.7, 4.5),
-    ("stripe/near", CENTERLINE_X, 0.0,   None, 19.2, _R),
-    ("stripe/far",  CENTERLINE_X, GRID_Y_MM, None, 19.7, _R),
+    ("human/near",  0.0,      0.0,       4.7,  19.0, 0.0),
+    ("robot/near",  GRID_X_MM, 0.0,      11.7, 19.4, 0.0),
+    ("human/far",   0.0,      GRID_Y_MM,  3.8, 19.7, 0.0),
+    ("robot/far",   GRID_X_MM, GRID_Y_MM, 11.3, 19.7, 4.0),
+    ("stripe/near", CENTERLINE_X, 0.0,   None, 19.2, 0.0),
+    ("stripe/far",  CENTERLINE_X, GRID_Y_MM, None, 19.7, 0.0),
 ]
 
 
-def _sticker_xy(gx, gy, xo, yo, inset):
+def _sticker_xy(gx, gy, xo, yo, gap):
     """Marker centre from its grid line and the wall it rests against.
 
-    The wall lies OUTWARD of the grid line by the measured offset, and the
-    sticker's centre sits `inset` back from the wall, so the centre lands at
-    (offset - inset) outward. Sign comes from which half of the table the
-    marker is in — every one of these is against the wall it is nearest.
+    The wall lies OUTWARD of the grid line by the measured offset. The
+    sticker's near edge sits `gap` back from the wall and its centre a
+    further radius, so the centre lands (offset - radius - gap) outward.
+    Sign comes from which half of the table the marker is in — every one of
+    these is against the wall it is nearest.
     """
     sx = -1.0 if gx < GRID_X_MM / 2 else +1.0
     sy = -1.0 if gy < GRID_Y_MM / 2 else +1.0
-    x = gx if xo is None else gx + sx * (xo - inset)
+    x = gx if xo is None else gx + sx * (xo - _R - gap)
     return (round(x, 2), round(gy + sy * (yo - _R), 2))
 
 
