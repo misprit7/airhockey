@@ -34,14 +34,20 @@ derived through the camera.
 If you change these counts, everything measured through the camera has to
 be redone — extrinsics first, then any anchor that came from it.
 
-Permanent markers: 0.5 in square retroreflectors on the playing surface
-(z ~ tape thickness, treated as 0). Four corner markers, each centered 1.5
-pitches diagonally inward from its extreme corner hole (i.e. centered in
-the grid cell one square in from the corner), plus two centerline markers
-centered in the OUTERMOST cell (0.5 pitch from the edge row — one square
-closer to the rails than the corners). Only the corners are grid-truth;
-the centerline pair's exact positions are measured by the extrinsics
-bootstrap (vision/calib/markers.json) — values below are nominal.
+Permanent markers: 7 mm circular stickers lying flat on the playing
+surface, each flush against a wall (see _WALL_OFFSETS below). Four corner
+markers fit the pose; two centre-stripe markers are held out as
+validation.
+
+Note what changed with the stickers, because it changes what the numbers
+mean. The old mounted markers sat in known grid CELLS, so their positions
+were CNC-truth. These are referenced to the walls instead, and the walls
+are neither exactly straight nor squarely placed around the grid — the
+measurements below show the grid sitting 3.6 mm off centre between the
+side walls, and the near wall tilted 0.4 mm across the table. So the
+corner positions are now measured data with real uncertainty in them,
+where they used to be exact. The trade is deliberate: the mounts stood
+proud of the surface and the puck hit them.
 """
 
 PITCH_MM = 25.4
@@ -66,13 +72,15 @@ def hole_xy(i, j):
 
 
 _IN = 1.5 * PITCH_MM  # 38.1 — corner-marker inset, both axes
-
-# Marker centers (order is irrelevant to the solvers). First 4 (corners)
-# are exact; the centerline pair are nominal — real positions come from the
-# bootstrap measurement.
 _EDGE = 0.5 * PITCH_MM  # centerline markers sit in the outermost cell
 
-MARKERS_XY = [
+# ── Legacy markers: 0.5 in retroreflective squares on 3D-printed mounts ────
+#
+# Superseded 2026-08-12 because they stand proud of the surface and the puck
+# hits them. Kept because both sets are physically on the table during the
+# changeover, so the two calibrations can be compared against each other.
+# Delete once the mounts come off.
+MOUNTED_MARKERS_XY = [
     (_IN, _IN),                          # human end, near rail
     (GRID_X_MM - _IN, _IN),              # robot end, near rail
     (_IN, GRID_Y_MM - _IN),              # human end, far rail
@@ -80,3 +88,57 @@ MARKERS_XY = [
     (CENTERLINE_X, _EDGE),               # centerline, near rail (nominal)
     (CENTERLINE_X, GRID_Y_MM - _EDGE),   # centerline, far rail (nominal)
 ]
+MOUNTED_MARKER_Z_MM = 3.3   # sat on printed mounts above the playing surface
+
+# ── Current markers: 7 mm circular stickers, flush against the walls ──────
+#
+# Flat, so nothing for the puck to hit. The cost is that their positions are
+# no longer grid-truth: a hole is where the CNC put it, whereas these are
+# referenced to the WALLS, which are neither exactly straight nor squarely
+# placed around the grid. So the wall offsets below are measured data, not
+# derived, and the marker centre is one sticker RADIUS in from the wall.
+#
+# Measured 2026-08-12 with calipers: distance from the nearest grid line to
+# the wall, at each marker. The x column is absent for the centre pair —
+# those sit on the painted stripe, not against a side wall.
+STICKER_DIAMETER_MM = 7.0
+_R = STICKER_DIAMETER_MM / 2.0
+
+# name -> (grid x, grid y, x wall offset or None, y wall offset, x inset)
+# The inset is normally the radius (flush). Top-right is the exception: a
+# physical irregularity there holds the sticker 4.5 mm off the wall.
+_WALL_OFFSETS = [
+    ("human/near",  0.0,      0.0,       4.7,  19.0, _R),
+    ("robot/near",  GRID_X_MM, 0.0,      11.7, 19.4, _R),
+    ("human/far",   0.0,      GRID_Y_MM,  3.8, 19.7, _R),
+    ("robot/far",   GRID_X_MM, GRID_Y_MM, 11.3, 19.7, 4.5),
+    ("stripe/near", CENTERLINE_X, 0.0,   None, 19.2, _R),
+    ("stripe/far",  CENTERLINE_X, GRID_Y_MM, None, 19.7, _R),
+]
+
+
+def _sticker_xy(gx, gy, xo, yo, inset):
+    """Marker centre from its grid line and the wall it rests against.
+
+    The wall lies OUTWARD of the grid line by the measured offset, and the
+    sticker's centre sits `inset` back from the wall, so the centre lands at
+    (offset - inset) outward. Sign comes from which half of the table the
+    marker is in — every one of these is against the wall it is nearest.
+    """
+    sx = -1.0 if gx < GRID_X_MM / 2 else +1.0
+    sy = -1.0 if gy < GRID_Y_MM / 2 else +1.0
+    x = gx if xo is None else gx + sx * (xo - inset)
+    return (round(x, 2), round(gy + sy * (yo - _R), 2))
+
+
+STICKER_MARKERS_XY = [_sticker_xy(gx, gy, xo, yo, ins)
+                      for _, gx, gy, xo, yo, ins in _WALL_OFFSETS]
+
+# Stickers lie on the playing surface; treat as zero like any tape.
+STICKER_MARKER_Z_MM = 0.0
+
+# ── The set in use ────────────────────────────────────────────────────────
+# Order matters to the solvers: the first four are the pose-fitting corners,
+# the last two are held out.
+MARKERS_XY = STICKER_MARKERS_XY
+MARKER_Z_MM = STICKER_MARKER_Z_MM

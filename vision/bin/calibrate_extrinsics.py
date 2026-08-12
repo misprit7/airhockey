@@ -58,7 +58,7 @@ from scipy.optimize import linear_sum_assignment
 sys.path.insert(0, str(Path(__file__).resolve().parent))
 from camera import backproject_undistorted  # noqa: E402
 from table_grid import (CENTERLINE_X, GRID_X_MM, GRID_Y_MM,  # noqa: E402
-                        MARKERS_XY)
+                        MARKER_Z_MM, MARKERS_XY)
 
 CALIB_DIR = Path(__file__).resolve().parent.parent / "calib"
 MARKERS_FILE = CALIB_DIR / "markers.json"
@@ -69,7 +69,12 @@ CORNERS_XY = MARKERS_XY[:4]
 N_MARKERS = len(MARKERS_XY)
 N_HELDOUT = N_MARKERS - len(CORNERS_XY)
 
-MARKER_Z_MM = 3.3  # markers sit on 3D-printed mounts above the surface
+# MARKER_Z_MM comes from table_grid with the marker positions, because it
+# belongs to the markers: the old mounted set stood 3.3 mm proud, the sticker
+# set lies flat. That 3.3 mm is not a rounding detail — the camera is ~1810 mm
+# up, so at the corners (~1100 mm out) it leans the apparent position ~2 mm
+# outward. Carrying the wrong height for a set is enough on its own to make
+# two calibrations of the same table disagree.
 
 # The marker layout (corner rectangle + centerline pair) is symmetric under
 # a 180 deg rotation, so reprojection alone cannot tell the true pose from
@@ -133,9 +138,13 @@ def weighted_centroid(img, stats, j, pad=4):
     return np.array([(w * xs).sum() / tot, (w * ys).sum() / tot])
 
 
-def detect_markers(img, mask, expect=len(MARKERS_XY), min_area=10,
-                   max_area=600, border=40, prior=None, prior_radius=60.0):
-    """Sub-pixel centroids of the marker blobs, glare region excluded.
+def find_blobs(img, mask, min_area=10, max_area=600, border=40, quiet=False,
+               thr=None):
+    """Every candidate marker blob in the frame, as (area, sub-pixel centre).
+
+    Split out from detect_markers so callers that expect MORE than one marker
+    set in a frame can do their own assignment — during the mounted-to-sticker
+    changeover both sets are on the table at once.
 
     `border` drops blobs hugging the frame edge. Every table marker sits on
     the playing field, which projects well inside the image (the closest is
@@ -145,8 +154,16 @@ def detect_markers(img, mask, expect=len(MARKERS_XY), min_area=10,
     """
     work = img.copy()
     work[mask > 0] = 0
-    thr = max(64, int(work.max()) // 2)
-    _, bw = cv2.threshold(work, thr, 255, cv2.THRESH_BINARY)
+    # Half the brightest blob, by default. That assumes the markers are within
+    # ~2x of each other in brightness, which the mounted set satisfied. The
+    # 7 mm stickers do NOT: retroreflective return falls off with viewing
+    # angle, so the pair near image centre saturate at 255 while the four
+    # corner ones peak around 100 — a relative threshold set by the brightest
+    # then silently drops exactly the four markers that fit the pose. Pass an
+    # absolute `thr` when the set has that kind of spread.
+    if thr is None:
+        thr = max(64, int(work.max()) // 2)
+    _, bw = cv2.threshold(work, int(thr), 255, cv2.THRESH_BINARY)
     n, lab, stats, cents = cv2.connectedComponentsWithStats(bw)
     blobs, edge = [], 0
     for j in range(1, n):
@@ -160,9 +177,17 @@ def detect_markers(img, mask, expect=len(MARKERS_XY), min_area=10,
             edge += 1
             continue
         blobs.append((area, c))
-    if edge:
+    if edge and not quiet:
         print(f"    ignored {edge} blob(s) within {border}px of the frame "
               "edge (off-field reflections)")
+    return blobs
+
+
+def detect_markers(img, mask, expect=len(MARKERS_XY), min_area=10,
+                   max_area=600, border=40, prior=None, prior_radius=60.0,
+                   thr=None):
+    """Sub-pixel centroids of the marker blobs, glare region excluded."""
+    blobs = find_blobs(img, mask, min_area, max_area, border, thr=thr)
     if len(blobs) != expect and prior is not None:
         picked = resolve_against_prior(blobs, prior, prior_radius)
         if picked is not None:
@@ -250,9 +275,13 @@ def pose_is_sane(rvec, tvec, K):
     return robot_left == ROBOT_END_IMAGE_LEFT
 
 
-def solve(img_pts_frames, field, K, dist, subset=False):
+def solve(img_pts_frames, field, K, dist, subset=False, z=MARKER_Z_MM):
     """Joint pose over frames; correspondence (and optionally which blobs
     belong to `field` at all, when subset=True) resolved automatically.
+
+    `z` is the marker height above the playing surface, a parameter rather
+    than a constant because the two marker sets sit at different heights and
+    solving one at the other's height is a silent few-mm error.
 
     Returns the best pose dict; ["extras"] holds each frame's leftover
     undistorted image points when subset=True.
@@ -287,7 +316,7 @@ def solve(img_pts_frames, field, K, dist, subset=False):
                 extras.append(np.delete(u, sub, axis=0))
             ip = np.concatenate(ip_all).astype(np.float64)
             op = np.concatenate(op_all).astype(np.float64)
-            op3 = np.hstack([op, np.full((len(op), 1), MARKER_Z_MM)])
+            op3 = np.hstack([op, np.full((len(op), 1), z)])
             ok, rvec, tvec = cv2.solvePnP(op3, ip, K, None,
                                           flags=cv2.SOLVEPNP_ITERATIVE)
             if not ok or not pose_is_sane(rvec, tvec, K):
@@ -441,7 +470,7 @@ def previous_marker_pixels(K, dist):
         return None
 
 
-def read_frames(images, prior=None, prior_radius=60.0):
+def read_frames(images, prior=None, prior_radius=60.0, thr=None):
     """Detect marker blobs in each image; save the first glare mask."""
     frames = []
     glare_saved = False
@@ -458,16 +487,18 @@ def read_frames(images, prior=None, prior_radius=60.0):
             print(f"  glare mask: {n_mask} px masked "
                   f"({'saved' if n_mask else 'EMPTY — no glare cluster found'})"
                   f" -> calib/glare_mask.png")
-        pts = detect_markers(img, mask, prior=prior, prior_radius=prior_radius)
+        pts = detect_markers(img, mask, prior=prior,
+                             prior_radius=prior_radius, thr=thr)
         frames.append(pts)
         print(f"  {path}: {len(pts)} markers")
     return frames
 
 
-def run(images, use_prior=True, prior_radius=60.0):
+def run(images, use_prior=True, prior_radius=60.0, thr=None):
     K, dist = load_intrinsics()
     prior = previous_marker_pixels(K, dist) if use_prior else None
-    frames = read_frames(images, prior=prior, prior_radius=prior_radius)
+    frames = read_frames(images, prior=prior, prior_radius=prior_radius,
+                         thr=thr)
     report_spread(frames)
     best = solve(frames, CORNERS_XY, K, dist, subset=True)
     meas = validate_heldout(best, K)
@@ -571,6 +602,13 @@ def main():
     ap.add_argument("--prior-radius", type=float, default=60.0,
                     help="px a marker may have drifted and still be matched "
                          "to the previous pose (default 60)")
+    ap.add_argument("--threshold", type=int, default=55,
+                    help="absolute detection threshold. Tuned to the sticker "
+                         "set: the centre pair saturate at 255 while the four "
+                         "corners peak at 90-112, so the old relative rule "
+                         "(half the brightest = 127) drops exactly the four "
+                         "markers that fit the pose. Pass 0 for the relative "
+                         "rule; raise it if stray reflections get through")
     ap.add_argument("--exposure", type=int, default=1000)
     ap.add_argument("--gain", type=float, default=0.0)
     ap.add_argument("--shots-dir", default=str(
@@ -586,7 +624,8 @@ def main():
                          args.shots_dir)
     if not images:
         sys.exit(__doc__)
-    run(images, use_prior=not args.no_prior, prior_radius=args.prior_radius)
+    run(images, use_prior=not args.no_prior, prior_radius=args.prior_radius,
+        thr=args.threshold or None)
 
 
 if __name__ == "__main__":

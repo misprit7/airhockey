@@ -18,3 +18,4 @@ build/
 calib/report*
 __pycache__/
 .ruff_cache/
+cmp_shots/

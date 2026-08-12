@@ -35,3 +35,6 @@ hw/**/jlcpcb_lib/
 hw/**/fabrication-toolkit-options.json
 hw/**/jlcpcb/
 hw/**/production/
+
+# Runtime logs from cdpr_master — regenerated every run
+logs/
