@@ -44,6 +44,17 @@ Robotic air hockey table that uses reinforcement learning trained in simulation,
 - `fw/` - Teensy 4.1 step/dir firmware. **All motion runs here.**
   - `include/cdpr_config.h` - Stepper specifics only (DIR levels, counts/rev,
     limits); geometry comes from `shared/`
+  - `include/motion_profile.h` - The trajectory law: ONE velocity profile
+    along the direction of travel, capping the MAGNITUDE of velocity and of
+    its change. Deliberately free of `Arduino.h` so it can be compiled and
+    exercised on the host. Replaced two independent per-axis trapezoids,
+    which ran 41% over both caps on a diagonal and bent the path badly when
+    the axes were unequal (80 mm off a 500x150 move).
+  - `test/` - Host tests for the pure-math parts. `make -C fw/test` builds
+    and runs them; no Teensy involved. The one that matters is the step
+    synchronisation check — it drives the real profile through the real
+    cable kinematics and asserts no motor is ever owed more than the one
+    step a tick can emit.
 - `sw/` - Host-side support for the physical robot
   - `bin/cdpr_master.cpp` - Bridge: energizes the ClearPath servos, forwards
     commands to the Teensy over serial, serves TCP
@@ -150,6 +161,7 @@ make -C sw                       # sFoundation SDK first time, then binaries
 make -C vision                   # snap (Spinnaker capture)
 pio run -d fw                    # Teensy firmware
 pio run -d fw -t upload          # flash it
+make -C fw/test                  # host tests for the motion profile
 
 # Motors: activate must STAY RUNNING (it de-energizes on exit, and q is
 # the emergency stop). Nothing moves until commanded.

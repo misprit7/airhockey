@@ -132,7 +132,9 @@ struct TeensyStatus {
     // Newer firmware appends these; older does not, so they are optional
     // and default to zero rather than making the whole line unparseable.
     double vlim, alim;  // active speed / accel limits
-    int limit_flags;    // bit 0/1 x accel/speed, bit 2/3 y accel/speed
+    int limit_flags;    // bit 0 = accel-limited, bit 1 = at the speed cap.
+                        // Two bits, not four: the Teensy runs one profile
+                        // along the direction of travel, not one per axis.
     double sfrac, afrac;        // 0..1 of each cap right now
     double speak, apeak;        // ... and the peak since the last reset
     bool valid;          // at least one status received

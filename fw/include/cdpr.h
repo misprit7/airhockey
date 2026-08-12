@@ -2,6 +2,7 @@
 
 #include <Arduino.h>
 #include "cdpr_config.h"
+#include "motion_profile.h"
 
 // ============================================================================
 // CDPR — Cable-Driven Parallel Robot motion controller
@@ -44,15 +45,19 @@ public:
   float getVelocityLimit() const;
   float getAccelLimit() const;
 
-  // Which limit the last tick actually hit, per axis. Bit 0/1 = x
-  // accel/speed, bit 2/3 = y accel/speed. A move that is accel-limited the
-  // whole way never reached its speed cap, so raising the speed does
-  // nothing — that is the question this answers, and guessing at it from
-  // the outside is most of why tuning a profile is tedious.
+  // Which limit the last tick actually hit: MOTION_LIMIT_ACCEL (bit 0) and
+  // MOTION_LIMIT_SPEED (bit 1). Two bits rather than the old four, because
+  // there is now one profile along the direction of travel instead of one per
+  // axis. A move that is accel-limited the whole way never reached its speed
+  // cap, so raising the speed does nothing — that is the question this
+  // answers, and guessing at it from the outside is most of why tuning a
+  // profile is tedious.
   uint8_t getLimitFlags() const;
 
-  // How much of each cap is being used, 0..1, as the WORST axis — so 1.0
-  // means that limit is binding, which is exactly when the flag above sets.
+  // How much of each cap is being used, 0..1, as the MAGNITUDE of velocity
+  // and acceleration — so 1.0 means that limit is binding, which is exactly
+  // when the flag above sets. Magnitude rather than worst-axis: on a diagonal
+  // the per-axis reading showed 100% while the cart was at 141% of both caps.
   //
   // The peaks are tracked HERE rather than in the UI because the profile
   // runs at 50 kHz and status is polled around 10 Hz: a peak sampled from

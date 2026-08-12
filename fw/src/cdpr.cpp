@@ -317,110 +317,87 @@ void CDPR::stopTimer() {
 }
 
 // ============================================================================
-// 1D trapezoidal profile helper
-//
-// Given current position, velocity, and target position along one axis,
-// compute the new velocity after one tick. Accelerates toward target,
-// decelerates to stop exactly at target.
-// ============================================================================
-
-static float trapezoidalStep(float pos, float vel, float target, float maxVel,
-                             float maxAccel, float dt, uint8_t &flags) {
-  float err = target - pos;
-  float absErr = fabsf(err);
-
-  if (absErr < 0.001f && fabsf(vel) < 0.1f) {
-    return 0.0f;
-  }
-
-  float sign = (err > 0) ? 1.0f : -1.0f;
-  bool movingToward = (vel * sign > 0);
-  float brakeDist = (vel * vel) / (2.0f * maxAccel);
-
-  float desiredVel;
-  if (movingToward && brakeDist >= absErr) {
-    desiredVel = 0.0f;
-  } else {
-    desiredVel = sign * maxVel;
-  }
-
-  float dv = desiredVel - vel;
-  float maxDv = maxAccel * dt;
-  if (dv > maxDv) {
-    dv = maxDv;
-    flags |= 1;                    // acceleration is the binding limit
-  }
-  if (dv < -maxDv) {
-    dv = -maxDv;
-    flags |= 1;
-  }
-
-  const float out = vel + dv;
-  if (fabsf(out) >= maxVel * 0.999f)
-    flags |= 2;                    // riding the speed cap
-  return out;
-}
-
-// ============================================================================
 // ISR tick
 //
 // Runs at tickRateHz_ (default 50 kHz). Each tick:
-//   1. Run independent trapezoidal profiles for X and Y
+//   1. Advance the velocity VECTOR one step toward the target
 //   2. Advance theoretical cart position
 //   3. Convert to motor counts via IK, emit steps atomically
+//
+// Only step 1 changed when the profile went vector. Steps 2 and 3 are what
+// keep the four motors synchronised and they work the same way they always
+// did: every motor's target is derived from ONE shared cart position, so the
+// motors cannot drift relative to each other by construction — whatever the
+// trajectory law does, it moves a single point and the IK follows it. The
+// profile is upstream of synchronisation, not part of it.
 // ============================================================================
 
 void CDPR::tick() {
-  float tx = targetX_;
-  float ty = targetY_;
+  const float tx = targetX_;
+  const float ty = targetY_;
 
-  // ── Independent trapezoidal profiles for each axis ──
-  uint8_t fx = 0, fy = 0;
+  // ── One profile along the direction of travel ──
   const float vx0 = velX_, vy0 = velY_;
-  velX_ = trapezoidalStep(cartX_, velX_, tx, velLimit_, accelLimit_, dt_, fx);
-  velY_ = trapezoidalStep(cartY_, velY_, ty, velLimit_, accelLimit_, dt_, fy);
-  limitFlags_ = (uint8_t)(fx | (fy << 2));
+  float nvx, nvy;
+  limitFlags_ = motionProfileStep(cartX_, cartY_, velX_, velY_, tx, ty,
+                                  velLimit_, accelLimit_, dt_, nvx, nvy);
+  velX_ = nvx;
+  velY_ = nvy;
 
-  // Worst axis, because the caps are enforced per axis — so these reach 1.0
-  // exactly when the corresponding flag sets, rather than at some diagonal
-  // fraction of it.
+  // Magnitudes, not worst-axis. The per-axis version read 100% on each axis
+  // during a diagonal while the cart was really at 141% of both caps, so the
+  // gauges understated exactly the move that used the most of the machine.
   const float ax = (velX_ - vx0) / dt_;
   const float ay = (velY_ - vy0) / dt_;
-  const float sf = fmaxf(fabsf(velX_), fabsf(velY_)) / velLimit_;
-  const float af = fmaxf(fabsf(ax), fabsf(ay)) / accelLimit_;
+  const float sf = sqrtf(velX_ * velX_ + velY_ * velY_) / velLimit_;
+  const float af = sqrtf(ax * ax + ay * ay) / accelLimit_;
   speedFrac_ = sf;
   accelFrac_ = af;
   if (sf > peakSpeedFrac_) peakSpeedFrac_ = sf;
   if (af > peakAccelFrac_) peakAccelFrac_ = af;
 
   // ── Advance theoretical cart position ──
-  if (fabsf(tx - cartX_) < 0.01f) {
+  //
+  // Park on the target only when close AND slow, and park both axes at once.
+  // Zeroing one axis' velocity the moment the cart crossed the target's x —
+  // which the per-axis version did, mid-flight, while y was still running —
+  // is what put a kink in the end of every diagonal move.
+  const float rx = tx - cartX_;
+  const float ry = ty - cartY_;
+  const float distSq = rx * rx + ry * ry;
+  const float speedSq = velX_ * velX_ + velY_ * velY_;
+  if (distSq < MOTION_POS_EPS_MM * MOTION_POS_EPS_MM &&
+      speedSq < MOTION_VEL_EPS_MM_S * MOTION_VEL_EPS_MM_S) {
     cartX_ = tx;
-    velX_ = 0;
-  } else {
-    cartX_ += velX_ * dt_;
-  }
-
-  if (fabsf(ty - cartY_) < 0.01f) {
     cartY_ = ty;
+    velX_ = 0;
     velY_ = 0;
   } else {
+    cartX_ += velX_ * dt_;
     cartY_ += velY_ * dt_;
   }
 
   // ── Convert to motor counts and step atomically ──
   //
-  // Build bitmasks for which step pins need to go HIGH and which LOW,
-  // and which dir pins need to be set/cleared. Then write each GPIO
-  // port once for simultaneous transitions.
+  // Set every dir pin, wait out the drives' setup time, pulse every step pin,
+  // wait out the pulse width, drop them together. All four motors see their
+  // edges within the same pair of microsecond windows — that, and the shared
+  // cart position above, is the whole synchronisation story.
+  //
+  // The IK runs ONCE per motor and the result is reused for both the dir and
+  // the step pass. It used to be computed twice per motor per tick, with
+  // identical inputs both times (neither cart position nor this motor's count
+  // changes in between), so this is the same numbers for half the work — and
+  // at 50 kHz, ISR headroom is what keeps ticks from being dropped, which
+  // WOULD desynchronise the motors.
 
+  int32_t err[NUM_MOTORS];
   for (int i = 0; i < NUM_MOTORS; i++) {
-    int32_t target = cableLengthToCounts(i, cartX_, cartY_);
-    int32_t error = target - motorCounts_[i];
+    err[i] = cableLengthToCounts(i, cartX_, cartY_) - motorCounts_[i];
 
-    if (error > 0) {
+    if (err[i] > 0) {
       digitalWriteFast(dirPins_[i], dirLevelExtend(i));   // cable lengthens
-    } else if (error < 0) {
+    } else if (err[i] < 0) {
       digitalWriteFast(dirPins_[i], dirLevelRetract(i));  // cable shortens
     }
   }
@@ -428,12 +405,9 @@ void CDPR::tick() {
   delayMicroseconds(2);  // direction setup time
 
   for (int i = 0; i < NUM_MOTORS; i++) {
-    int32_t target = cableLengthToCounts(i, cartX_, cartY_);
-    int32_t error = target - motorCounts_[i];
-
-    if (error != 0) {
+    if (err[i] != 0) {
       digitalWriteFast(stepPins_[i], HIGH);
-      motorCounts_[i] += (error > 0) ? 1 : -1;
+      motorCounts_[i] += (err[i] > 0) ? 1 : -1;
     }
   }
 
