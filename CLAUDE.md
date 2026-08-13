@@ -206,10 +206,22 @@ python vision/bin/puck_stream.py                # live puck position at 200 Hz
 python vision/bin/puck_stream.py --raw          # every surviving blob
 python ai/bin/goalie_demo.py --dry-run          # goalie, commands nothing
 
-# Motors: activate must STAY RUNNING (it de-energizes on exit, and q is
-# the emergency stop). Nothing moves until commanded.
+# Motors. These are MUTUALLY EXCLUSIVE — pick one. Every one of them calls
+# PortsOpen on the same SC-Hub USB port, and a second process trying to open
+# it just errors. Running activate "alongside" cdpr_master does not work.
+#
+#   activate     manual: energize by hand, no TCP. ENTER toggles all four,
+#                q is the emergency stop, and it de-energizes on exit, so it
+#                must STAY RUNNING for the motors to stay on.
+#   cdpr_master  everything driven over TCP (web UI, ai/bin/goalie_demo.py).
+#                It opens the port itself and energizes on ENABLE, so it does
+#                NOT want activate running. Ctrl-C is the stop here, and a
+#                second Ctrl-C forces the exit.
+#   test_motor   standalone single-motor check.
+#
+# Nothing moves until commanded, whichever you pick.
 sw/build/activate                # ENTER toggles all four
-sw/build/cdpr_master             # TCP 8421 -> Teensy bridge
+sw/build/cdpr_master             # TCP 8421 -> Teensy bridge; use ALONE
 sw/build/test_motor              # or: sw/build/test_motor /dev/ttyACM0
 
 # Camera / calibration

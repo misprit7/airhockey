@@ -4,7 +4,9 @@
     # dry run — tracks and predicts, commands nothing. Start here.
     python ai/bin/goalie_demo.py --dry-run
 
-    # for real (needs sw/build/activate and sw/build/cdpr_master running)
+    # for real — needs sw/build/cdpr_master running, and ONLY that. Do not
+    # also run sw/build/activate: both open the same SC-Hub port and the
+    # second one errors. cdpr_master energizes the drives itself.
     python ai/bin/goalie_demo.py
 
 This ENERGIZES the drives itself. It has to: cdpr_master serves one client at
@@ -96,8 +98,9 @@ def main():
             client.connect()
         except OSError as e:
             sys.exit(f"cannot reach cdpr_master on 8421 ({e}) — is it running?\n"
-                     "  sw/build/activate      (keep running)\n"
-                     "  sw/build/cdpr_master")
+                     "  sw/build/cdpr_master\n"
+                     "Run that ALONE — not alongside sw/build/activate, which "
+                     "opens the same USB port.")
 
         if not args.no_enable:
             # This ENERGIZES the drives and starts the control loop. It has to
