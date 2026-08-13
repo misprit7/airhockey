@@ -83,9 +83,37 @@ Robotic air hockey table that uses reinforcement learning trained in simulation,
     axes — supersedes `measure_motors.py`, which fitted ellipses to the
     spool top faces at an assumed height), `measure_motors.py`,
     `track_mallet.py` (mallet position at z=67mm),
-    `calib_report.py`, `table_grid.py`, `gen_targets.py`, `snap.cpp`
+    `calib_report.py`, `table_grid.py`, `gen_targets.py`, `snap.cpp`,
+    `blobtrack.cpp` + `puck_stream.py` (200 Hz puck tracking — see below)
   - `calib/` - Solved intrinsics, extrinsics, marker and motor-anchor JSON
   - `Makefile` - Builds sFoundation library and control programs
+
+### Fast puck tracking (200 Hz)
+`bin/blobtrack.cpp` -> `build/blobtrack` runs the camera free-running and
+streams BLOB COORDINATES rather than frames: at 200 Hz a 1440x1080 Mono8
+frame is 311 MB/s down a pipe and puts Python in the hot loop. Thresholding
+and centroiding happen in C++; `bin/puck_stream.py` decides which blob is the
+puck, because that is a calibration question and calibration lives in Python.
+
+Measured: 200 Hz at full 1440x1080, zero incomplete frames, worst inter-frame
+gap 5.00 ms. Camera caps at 226 Hz.
+
+Exposure/gain matter more than they look. 300 us keeps blur to ~1.5 mm at
+5 m/s, but at 0 dB the puck marker peaks at 96 against a threshold of 90 and
+was detected in 11% of frames. 12 dB of gain saturates it and the background
+only goes 2 -> 5, because the scene is dark by construction. Defaults are
+300 us / 12 dB / threshold 90 -> 100% detection.
+
+Known blind spot: the IR ring's own reflection is ~92 x 103 mm at table
+centre. The tracker coasts on the last velocity for up to 150 ms across it.
+
+### Hardcoded goalie (DEMO — delete when a policy lands)
+`airhockey/demo_goalie.py` + `bin/goalie_demo.py` + `tests/test_demo_goalie.py`.
+Straight lines, elastic walls, point paddle. Deliberately isolated: nothing
+else imports it, and it is meant to be deleted rather than refactored. The
+tracking underneath it is the part that survives.
+    python ai/bin/goalie_demo.py --dry-run   # tracks + predicts, commands nothing
+    python ai/bin/goalie_demo.py             # moves the robot
 
 ## Key Design Decisions
 - **Physics are general-purpose**: Support configurable camera delay, motor dynamics models, friction, restitution, etc. Goal is to closely match real-world behavior.
@@ -171,6 +199,12 @@ make -C vision                   # snap (Spinnaker capture)
 pio run -d fw                    # Teensy firmware
 pio run -d fw -t upload          # flash it
 make -C fw/test                  # host tests for the motion profile
+
+# Puck tracking / goalie demo
+vision/build/blobtrack --probe                  # report achievable frame rate
+python vision/bin/puck_stream.py                # live puck position at 200 Hz
+python vision/bin/puck_stream.py --raw          # every surviving blob
+python ai/bin/goalie_demo.py --dry-run          # goalie, commands nothing
 
 # Motors: activate must STAY RUNNING (it de-energizes on exit, and q is
 # the emergency stop). Nothing moves until commanded.

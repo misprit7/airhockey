@@ -10,9 +10,12 @@ BUILD_DIR := build
 
 .PHONY: all clean
 
-all: $(BUILD_DIR)/snap
+all: $(BUILD_DIR)/snap $(BUILD_DIR)/blobtrack
 
 $(BUILD_DIR)/snap: bin/snap.cpp | $(BUILD_DIR)
+	$(CXX) $(CXXFLAGS) -o $@ $< $(LDFLAGS)
+
+$(BUILD_DIR)/blobtrack: bin/blobtrack.cpp | $(BUILD_DIR)
 	$(CXX) $(CXXFLAGS) -o $@ $< $(LDFLAGS)
 
 $(BUILD_DIR):
