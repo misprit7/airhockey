@@ -94,3 +94,9 @@ constexpr float MAX_ACCEL_MM_S2 = 120000.0f;
 // ── Control loop ────────────────────────────────────────────────────
 
 constexpr uint32_t DEFAULT_TICK_RATE_HZ = 50000;
+
+// Bounds on the acceleration ramp (s). The floor is a few ticks, below which
+// it is not slewing at all; the ceiling stops a typo parking the rig, since
+// a 200 ms ramp makes every short move take seconds.
+constexpr float MIN_ACCEL_RAMP_S = 0.0002f;
+constexpr float MAX_ACCEL_RAMP_S = 0.050f;

@@ -57,6 +57,7 @@ static float trapezoidalStep(float pos, float vel, float target, float maxVel,
 struct Result {
   float maxSpeed;        // peak |v|
   float maxAccel;        // peak |dv|/dt
+  float maxJerk;         // peak |da|/dt
   float maxCrossTrack;   // furthest the path strayed from the straight line
   int   maxStepErr;      // worst |counts owed| to any motor in any tick  <-- sync
   float finalDist;       // how close it parked
@@ -64,10 +65,12 @@ struct Result {
 };
 
 static Result run(float x0, float y0, float vx0, float vy0, float tx, float ty,
-                  float vMax, float aMax, bool vectorLaw, long maxTicks = 4000000) {
-  Result r = {0, 0, 0, 0, 0, 0};
+                  float vMax, float aMax, bool vectorLaw, long maxTicks = 4000000,
+                  float ramp = MOTION_ACCEL_RAMP_S) {
+  Result r = {0, 0, 0, 0, 0, 0, 0};
 
   float x = x0, y = y0, vx = vx0, vy = vy0;
+  float ax_ = 0.0f, ay_ = 0.0f;
 
   // Straight line from start to target, for the cross-track measurement.
   const float lx = tx - x0, ly = ty - y0;
@@ -85,10 +88,13 @@ static Result run(float x0, float y0, float vx0, float vy0, float tx, float ty,
     const float pvx = vx, pvy = vy;
 
     if (vectorLaw) {
-      float nvx, nvy;
-      motionProfileStep(x, y, vx, vy, tx, ty, vMax, aMax, DT, nvx, nvy);
-      vx = nvx;
-      vy = nvy;
+      float nvx, nvy, nax, nay;
+      const float pax = ax_, pay = ay_;
+      motionProfileStep(x, y, vx, vy, ax_, ay_, tx, ty, vMax, aMax, ramp, DT,
+                        nvx, nvy, nax, nay);
+      vx = nvx; vy = nvy; ax_ = nax; ay_ = nay;
+      const float jk = sqrtf((nax-pax)*(nax-pax) + (nay-pay)*(nay-pay)) / DT;
+      if (jk > r.maxJerk) r.maxJerk = jk;
     } else {
       vx = trapezoidalStep(x, vx, tx, vMax, aMax, DT);
       vy = trapezoidalStep(y, vy, ty, vMax, aMax, DT);
@@ -106,7 +112,7 @@ static Result run(float x0, float y0, float vx0, float vy0, float tx, float ty,
     if (vectorLaw) {
       if (distSq < MOTION_POS_EPS_MM * MOTION_POS_EPS_MM &&
           speedSq < MOTION_VEL_EPS_MM_S * MOTION_VEL_EPS_MM_S) {
-        x = tx; y = ty; vx = 0; vy = 0;
+        x = tx; y = ty; vx = 0; vy = 0; ax_ = 0; ay_ = 0;
       } else {
         x += vx * DT; y += vy * DT;
       }
@@ -276,6 +282,66 @@ int main() {
              d, r.finalDist, r.ticks * DT * 1e3f, r.maxAccel, 100 * r.maxAccel / a);
       check(r.finalDist < 0.02f, "short move did not converge");
       check(r.maxAccel <= a * 1.001f, "short move exceeded the accel cap");
+    }
+    printf("\n");
+  }
+
+  // ── 5. Jerk limiting ────────────────────────────────────────────────────
+  //
+  // The regression that matters here is the limit cycle. An earlier attempt
+  // set the desired acceleration to (vDes - v)/dt, which at dt = 20 us
+  // saturates at the cap for any velocity error above ~0.1 mm/s — a relay.
+  // Slew-limiting a relay hunts instead of settling, and it did: every ramp
+  // beyond ~1 ms failed to converge, worse at higher accel caps. Nothing else
+  // in this file catches that, because at the default ramp the old code
+  // happened to converge. So sweep cap AGAINST ramp and require settling
+  // everywhere.
+  {
+    printf("5. Jerk limiting: acceleration slews rather than steps\n");
+    const float v = MAX_VELOCITY_MM_S;
+    const long LIM = 200000;              // 4 s of simulated time
+    const float ramps[] = {0.001f, 0.003f, 0.008f, 0.030f};
+    const float accels[] = {8000.0f, 40000.0f, 120000.0f};
+    printf("   settling (must converge for every cap x ramp pair):\n");
+    printf("        cap  ");
+    for (unsigned k = 0; k < 4; k++) printf("%8.0fms", ramps[k] * 1000.0f);
+    printf("\n");
+    for (unsigned ai = 0; ai < 3; ai++) {
+      printf("   %9.0f  ", accels[ai]);
+      for (unsigned k = 0; k < 4; k++) {
+        bool all_ok = true;
+        const float sweep_d[] = {40.0f, 300.0f};
+        for (unsigned di = 0; di < 2; di++) {
+          const float d = sweep_d[di];
+          Result r = run(cx - d / 2, cy, 0, 0, cx + d / 2, cy, v, accels[ai],
+                         true, LIM, ramps[k]);
+          if (r.ticks >= LIM || r.finalDist > 0.05f) all_ok = false;
+          // the jerk cap itself, and the guarantee the backstop carries
+          check(r.maxJerk <= (accels[ai] / ramps[k]) * 1.02f + 1.0f,
+                "jerk cap exceeded");
+          check(r.maxSpeed <= v * 1.001f, "speed cap exceeded under jerk lag");
+          check(r.maxStepErr <= 1, "MOTORS WOULD DESYNC under jerk limiting");
+        }
+        printf("%10s", all_ok ? "ok" : "HUNT");
+        check(all_ok, "profile did not settle — limit cycle regression");
+      }
+      printf("\n");
+    }
+    // What it costs, so the number in the header stays honest.
+    printf("\n   move-time cost vs a 0.2 ms ramp, cap 8000 mm/s^2:\n");
+    const float cost_d[] = {25.0f, 100.0f, 500.0f};
+    for (unsigned di = 0; di < 3; di++) {
+      const float d = cost_d[di];
+      Result base = run(cx - d / 2, cy, 0, 0, cx + d / 2, cy, v, 8000.0f,
+                        true, LIM, 0.0002f);
+      printf("     %5.0f mm:", d);
+      for (unsigned k = 0; k < 4; k++) {
+        Result r = run(cx - d / 2, cy, 0, 0, cx + d / 2, cy, v, 8000.0f,
+                       true, LIM, ramps[k]);
+        printf("  %4.0fms %+6.1f%%", ramps[k] * 1000.0f,
+               100.0f * ((float)r.ticks / (float)base.ticks - 1.0f));
+      }
+      printf("\n");
     }
     printf("\n");
   }

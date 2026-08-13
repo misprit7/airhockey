@@ -72,7 +72,9 @@ static GpioInfo resolvePin(int pin) {
 CDPR::CDPR(const int stepPins[NUM_MOTORS], const int dirPins[NUM_MOTORS],
            uint32_t tickRateHz)
     : tickRateHz_(tickRateHz), dt_(1.0f / tickRateHz), cartX_(0), cartY_(0),
-      velX_(0), velY_(0), velLimit_(MAX_VELOCITY_MM_S), accelLimit_(DEFAULT_ACCEL_MM_S2),
+      velX_(0), velY_(0), accX_(0), accY_(0),
+      velLimit_(MAX_VELOCITY_MM_S), accelLimit_(DEFAULT_ACCEL_MM_S2),
+      accelRamp_(MOTION_ACCEL_RAMP_S),
       limitFlags_(0), speedFrac_(0), accelFrac_(0),
       peakSpeedFrac_(0), peakAccelFrac_(0), theta_(MALLET_THETA_RAD),
       targetX_(0), targetY_(0), stepSetReg_(nullptr),
@@ -139,6 +141,8 @@ void CDPR::begin(float calX, float calY, float theta) {
   cartY_ = calY;
   velX_ = 0;
   velY_ = 0;
+  accX_ = 0;
+  accY_ = 0;
   targetX_ = calX;
   targetY_ = calY;
 }
@@ -167,6 +171,16 @@ void CDPR::setAccelLimit(float mm_s2) {
   accelLimit_ = (mm_s2 > MAX_ACCEL_MM_S2) ? MAX_ACCEL_MM_S2 : mm_s2;
   interrupts();
 }
+
+void CDPR::setAccelRamp(float seconds) {
+  if (seconds < MIN_ACCEL_RAMP_S) seconds = MIN_ACCEL_RAMP_S;
+  if (seconds > MAX_ACCEL_RAMP_S) seconds = MAX_ACCEL_RAMP_S;
+  noInterrupts();
+  accelRamp_ = seconds;
+  interrupts();
+}
+
+float CDPR::getAccelRamp() const { return accelRamp_; }
 
 float CDPR::getVelocityLimit() const { return velLimit_; }
 float CDPR::getAccelLimit() const { return accelLimit_; }
@@ -338,11 +352,15 @@ void CDPR::tick() {
 
   // ── One profile along the direction of travel ──
   const float vx0 = velX_, vy0 = velY_;
-  float nvx, nvy;
-  limitFlags_ = motionProfileStep(cartX_, cartY_, velX_, velY_, tx, ty,
-                                  velLimit_, accelLimit_, dt_, nvx, nvy);
+  float nvx, nvy, nax, nay;
+  limitFlags_ = motionProfileStep(cartX_, cartY_, velX_, velY_,
+                                  accX_, accY_, tx, ty,
+                                  velLimit_, accelLimit_, accelRamp_, dt_,
+                                  nvx, nvy, nax, nay);
   velX_ = nvx;
   velY_ = nvy;
+  accX_ = nax;
+  accY_ = nay;
 
   // Magnitudes, not worst-axis. The per-axis version read 100% on each axis
   // during a diagonal while the cart was really at 141% of both caps, so the
@@ -372,6 +390,8 @@ void CDPR::tick() {
     cartY_ = ty;
     velX_ = 0;
     velY_ = 0;
+    accX_ = 0;   // parked: drop the slew state too, or the next move starts
+    accY_ = 0;   // by unwinding a stale acceleration
   } else {
     cartX_ += velX_ * dt_;
     cartY_ += velY_ * dt_;

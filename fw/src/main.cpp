@@ -134,6 +134,18 @@ static void processCommand(char *line) {
     cdpr.setAccelLimit(v);
     Serial.printf("OK ACCEL %.1f\n", cdpr.getAccelLimit());
     return;
+  } else if (strcasecmp(cmd, "RAMP") == 0) {
+    // Milliseconds to slew acceleration from zero to the cap. Tune against
+    // the cable's measured ringing period: too short and the step is still
+    // impulsive enough to rock the paddle, too long and short moves crawl.
+    float ms;
+    if (sscanf(args, "%f", &ms) != 1) {
+      Serial.println("ERR RAMP requires milliseconds");
+      return;
+    }
+    cdpr.setAccelRamp(ms * 0.001f);
+    Serial.printf("OK RAMP %.2f\n", cdpr.getAccelRamp() * 1000.0f);
+    return;
   } else if (strcasecmp(cmd, "RESETPEAK") == 0) {
     cdpr.resetPeaks();
     Serial.println("OK RESETPEAK");

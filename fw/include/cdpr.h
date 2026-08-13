@@ -42,6 +42,15 @@ public:
   // Cap the trajectory acceleration (mm/s^2). Clamped to MAX_ACCEL_MM_S2.
   void setAccelLimit(float mm_s2);
 
+  // Time the profile takes to slew acceleration from zero to the cap (s).
+  // Jerk is aMax/ramp, so the move shape does not change when the accel cap
+  // does. Longer is gentler on the cables and on the paddle's tendency to
+  // tip, and slower: at aMax = 8000 a 3 ms ramp costs ~2% on a 500 mm move
+  // and ~17% on a 25 mm one, and 8 ms costs 16% and 89%. Tune it against the
+  // measured cable ringing, not from the bench.
+  void setAccelRamp(float seconds);
+  float getAccelRamp() const;
+
   float getVelocityLimit() const;
   float getAccelLimit() const;
 
@@ -116,8 +125,10 @@ private:
   // ── Cart trajectory (updated every tick in ISR) ──
   volatile float cartX_, cartY_;     // theoretical position (mm)
   volatile float velX_,  velY_;      // current velocity (mm/s)
+  volatile float accX_, accY_;       // current acceleration (mm/s^2), STATE
   volatile float velLimit_;          // trajectory speed cap (mm/s)
   volatile float accelLimit_;        // trajectory accel cap (mm/s^2)
+  volatile float accelRamp_;         // seconds to slew accel 0 -> cap
   volatile uint8_t limitFlags_;      // which limit bound on the last tick
   volatile float speedFrac_, accelFrac_;          // 0..1 of each cap, now
   volatile float peakSpeedFrac_, peakAccelFrac_;  // since the last reset

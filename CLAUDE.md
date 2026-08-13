@@ -50,6 +50,15 @@ Robotic air hockey table that uses reinforcement learning trained in simulation,
     exercised on the host. Replaced two independent per-axis trapezoids,
     which ran 41% over both caps on a diagonal and bent the path badly when
     the axes were unequal (80 mm off a 500x150 move).
+    Also JERK-LIMITED: acceleration slews over `RAMP` ms rather than
+    stepping on in one tick. The paddle is pulled 49 mm above the surface
+    over a ~40 mm base, so it tips at about g*r/h ~ 0.8 g, and an
+    instantaneous accel step both applies that moment impulsively and
+    overshoots an elastic cable by up to 2x. Parameterised as a ramp TIME
+    (jerk = aMax/ramp) so move shape survives a change of accel cap. Set at
+    runtime: `RAMP <ms>` over serial. Cost at the 3 ms default is +7% on a
+    500 mm move and +39% on a 25 mm one -- tune against the cable's measured
+    ringing period, not from the bench.
   - `test/` - Host tests for the pure-math parts. `make -C fw/test` builds
     and runs them; no Teensy involved. The one that matters is the step
     synchronisation check — it drives the real profile through the real

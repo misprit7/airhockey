@@ -26,10 +26,38 @@
 // where the machine goes, so it should be checkable without a Teensy.
 // ============================================================================
 
-// Which cap bound the last step. Two bits now, not four: there is one profile,
-// not one per axis.
+// Which cap bound the last step. One profile, not one per axis.
 constexpr uint8_t MOTION_LIMIT_ACCEL = 1u << 0;
 constexpr uint8_t MOTION_LIMIT_SPEED = 1u << 1;
+constexpr uint8_t MOTION_LIMIT_JERK = 1u << 2;
+
+// ── Jerk limiting ─────────────────────────────────────────────────────────
+//
+// Acceleration is slewed rather than stepped. Without this the profile puts
+// full acceleration on in ONE 20 us tick, which does two things to a
+// cable-driven rig: it applies the tipping moment impulsively, and it steps
+// an elastic system, which overshoots the steady-state tension by up to 2x.
+// The paddle is pulled 49 mm above the surface over a base of ~40 mm, so it
+// tips at about g*r/h ~ 0.8 g — the 2x overshoot is the difference between
+// tipping and not.
+//
+// Parameterised as a RAMP TIME rather than an absolute jerk, so the shape of
+// the move does not change when the accel cap does: jerk = aMax / ramp. The
+// velocity overshoot past vMax then grows as aMax*ramp/2 (linear) instead of
+// aMax^2/2J (quadratic) — 180 mm/s at the 120000 ceiling and a 3 ms ramp,
+// against 6850 mm/s of headroom below the step-rate ceiling.
+constexpr float MOTION_ACCEL_RAMP_S = 0.003f;
+
+// The velocity loop needs a time constant of its own, and this is the whole
+// reason an earlier attempt at this did not work. The desired acceleration
+// used to be (vDes - v)/dt, which with dt = 20 us saturates at +-aMax for any
+// velocity error above ~0.1 mm/s — i.e. the acceleration command was
+// bang-bang. Rate-limiting a relay is the textbook way to build a limit
+// cycle, and it duly hunted around the target instead of settling, at every
+// ramp longer than about 1 ms. Making the demand PROPORTIONAL to velocity
+// error gives the slew something smooth to track, and every combination of
+// cap and ramp then converges.
+constexpr float MOTION_VEL_TAU_MULT = 2.0f;
 
 // sqrt(2*a*d) is the fastest approach that can still stop within d. Riding it
 // exactly is marginally stable — any quantisation error puts the cart on the
@@ -47,19 +75,29 @@ constexpr float MOTION_POS_EPS_MM = 0.01f;
 // Speed below which the cart may be parked exactly on the target.
 constexpr float MOTION_VEL_EPS_MM_S = 0.5f;
 
-// Advance the velocity vector one tick toward `t`, and report which cap bound.
+// Advance the velocity and acceleration vectors one tick toward `t`, and
+// report which cap bound.
+//
+// Acceleration is now STATE — pass the previous value back in. It has to be,
+// because bounding its rate of change is the whole point; a stateless version
+// has nothing to slew from.
 //
 // GUARANTEE (relied on for step synchronisation, see CDPR::tick):
-//   if |v| <= vMax on entry then |vOut| <= vMax on exit.
-// Both the current and the desired velocity lie in the disk of radius vMax,
-// and the output is a point on the segment between them; a disk is convex, so
-// the segment cannot leave it. Starting from rest, |v| <= vMax holds forever
-// by induction. If vMax is LOWERED mid-flight the cart is briefly outside the
-// new disk, and the same argument makes it converge back monotonically without
-// ever exceeding the old cap.
+//   |vOut| <= vMax, unconditionally.
+// This used to follow from convexity — old and desired velocity both lay in
+// the disk of radius vMax and the output was on the segment between them.
+// That argument DIES with jerk limiting, because the acceleration now lags
+// and can still be pointing outward when the demand has already reversed, so
+// the output is no longer on that segment. The final clamp below is what
+// carries the guarantee instead. It is a backstop, not a working part: the
+// overshoot it catches is bounded by aMax*ramp/2, ~180 mm/s at the ceiling,
+// and the step-rate headroom is 6850. If it ever fires hard, the ramp is too
+// long for the accel cap and the profile shape is not what you think.
 inline uint8_t motionProfileStep(float px, float py, float vx, float vy,
-                                 float tx, float ty, float vMax, float aMax,
-                                 float dt, float &vxOut, float &vyOut) {
+                                 float ax, float ay, float tx, float ty,
+                                 float vMax, float aMax, float rampS, float dt,
+                                 float &vxOut, float &vyOut,
+                                 float &axOut, float &ayOut) {
   uint8_t flags = 0;
 
   const float ex = tx - px;
@@ -81,22 +119,47 @@ inline uint8_t motionProfileStep(float px, float py, float vx, float vy,
     vdy = ey * scale;
   }
 
-  // Bound the change in the velocity VECTOR rather than each component. This
-  // is both what holds |a| <= aMax in every direction and what lets the law
-  // work from a moving start: dv corrects magnitude and heading together, so
-  // there is no assumption anywhere that the cart began at rest.
-  float dvx = vdx - vx;
-  float dvy = vdy - vy;
-  const float dvMag = sqrtf(dvx * dvx + dvy * dvy);
-  const float dvMax = aMax * dt;
-  if (dvMag > dvMax) {
-    const float s = dvMax / dvMag;
-    dvx *= s;
-    dvy *= s;
+  // Desired acceleration: proportional to the velocity error, NOT the error
+  // divided by dt. See MOTION_VEL_TAU_MULT — dividing by dt saturates and
+  // makes this a relay, which the jerk slew below then turns into a limit
+  // cycle. Magnitude-clipped, so the cap holds in every direction.
+  const float tau = MOTION_VEL_TAU_MULT * rampS;
+  float adx = (vdx - vx) / tau;
+  float ady = (vdy - vy) / tau;
+  const float adMag = sqrtf(adx * adx + ady * ady);
+  if (adMag > aMax) {
+    const float s = aMax / adMag;
+    adx *= s;
+    ady *= s;
     flags |= MOTION_LIMIT_ACCEL;
   }
 
-  vxOut = vx + dvx;
-  vyOut = vy + dvy;
+  // Slew the acceleration VECTOR toward that demand. Bounding the magnitude
+  // of the change rather than each component is what makes the jerk cap hold
+  // through a turn as well as along a straight line.
+  float dax = adx - ax;
+  float day = ady - ay;
+  const float daMag = sqrtf(dax * dax + day * day);
+  const float daMax = (aMax / rampS) * dt;
+  if (daMag > daMax) {
+    const float s = daMax / daMag;
+    dax *= s;
+    day *= s;
+    flags |= MOTION_LIMIT_JERK;
+  }
+  axOut = ax + dax;
+  ayOut = ay + day;
+
+  vxOut = vx + axOut * dt;
+  vyOut = vy + ayOut * dt;
+
+  // Backstop — see the guarantee above.
+  const float vMag = sqrtf(vxOut * vxOut + vyOut * vyOut);
+  if (vMag > vMax) {
+    const float s = vMax / vMag;
+    vxOut *= s;
+    vyOut *= s;
+    flags |= MOTION_LIMIT_SPEED;
+  }
   return flags;
 }
