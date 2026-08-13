@@ -552,6 +552,15 @@ int main(int argc, char *argv[]) {
         }
 
         // ── Accept TCP connections ──
+        //
+        // One client at a time, deliberately: two things steering the same
+        // paddle is not a state worth supporting. But a SECOND caller must be
+        // turned away out loud. This used to simply not accept while busy,
+        // which left the newcomer's connect() succeeding into the kernel
+        // backlog and then hanging forever, so the web UI quietly holding the
+        // slot presented downstream as "cdpr_master did not answer" — a
+        // timeout that reads like a wedged master and sends you looking at
+        // the wrong process entirely.
         if (client_fd < 0) {
             client_fd = accept(server_fd, NULL, NULL);
             if (client_fd >= 0) {
@@ -560,6 +569,18 @@ int main(int argc, char *argv[]) {
                 setsockopt(client_fd, IPPROTO_TCP, TCP_NODELAY, &flag, sizeof(flag));
                 tcp_len = 0;
                 logf("Client connected.\n");
+            }
+        } else {
+            int extra = accept(server_fd, NULL, NULL);
+            if (extra >= 0) {
+                static const char busy[] =
+                    "ERR busy: another client already holds this master "
+                    "(the web UI in Hardware mode is the usual one) — "
+                    "disconnect it first\n";
+                ssize_t ignored = write(extra, busy, sizeof(busy) - 1);
+                (void)ignored;
+                close(extra);
+                logf("Rejected a second client (already have one).\n");
             }
         }
 

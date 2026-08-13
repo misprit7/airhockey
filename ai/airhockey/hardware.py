@@ -47,6 +47,10 @@ class CDPRClient:
     # ENABLE is the exception: it drives the Teensy through tensioning and
     # START, and the master allows 10 s for those internally.
     ENABLE_TIMEOUT_S = 20.0
+    # LIMITS forwards TWO commands to the Teensy and the master waits up to
+    # 5 s for each, so it can legitimately take 10 s. The default 2 s was
+    # tighter than the thing it was measuring.
+    LIMITS_TIMEOUT_S = 12.0
 
     def __init__(self, host: str = "127.0.0.1", port: int = 8421):
         self.host = host
@@ -94,8 +98,13 @@ class CDPRClient:
             self._sock = None
             raise ConnectionError(
                 f"cdpr_master did not answer {cmd.split()[0]} within "
-                f"{timeout or self.RESPONSE_TIMEOUT_S:g}s; connection dropped "
-                f"(is it stopped? check for State: T in /proc/<pid>/status)"
+                f"{timeout or self.RESPONSE_TIMEOUT_S:g}s; connection dropped.\n"
+                f"  Most likely: something ELSE already holds the master — it "
+                f"serves one client at a time,\n"
+                f"  and the web UI in Hardware mode is the usual culprit. "
+                f"Check with:  ss -tnp | grep {self.port}\n"
+                f"  Less likely: the master is stopped (State: T in "
+                f"/proc/<pid>/status) or its Teensy link is down."
             ) from None
         return data.decode().strip()
 
@@ -152,7 +161,8 @@ class CDPRClient:
 
     def set_limits(self, speed_mm_s: float, accel_mm_s2: float) -> None:
         """Set the Teensy's trajectory speed and acceleration caps."""
-        resp = self._send(f"LIMITS {speed_mm_s:.2f} {accel_mm_s2:.2f}")
+        resp = self._send(f"LIMITS {speed_mm_s:.2f} {accel_mm_s2:.2f}",
+                          timeout=self.LIMITS_TIMEOUT_S)
         if not resp.startswith("OK"):
             raise RuntimeError(f"CDPR limits failed: {resp}")
 
