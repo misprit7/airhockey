@@ -166,6 +166,12 @@ class CDPRClient:
         if not resp.startswith("OK"):
             raise RuntimeError(f"CDPR limits failed: {resp}")
 
+    def set_ramp(self, ramp_ms: float) -> None:
+        """Set the Teensy's jerk-limit ramp (ms to slew accel 0 -> cap)."""
+        resp = self._send(f"RAMP {ramp_ms:.3f}", timeout=self.LIMITS_TIMEOUT_S)
+        if not resp.startswith("OK"):
+            raise RuntimeError(f"CDPR ramp failed: {resp}")
+
     def reset_peaks(self) -> None:
         """Zero the Teensy's peak usage trackers."""
         resp = self._send("RESETPEAK")

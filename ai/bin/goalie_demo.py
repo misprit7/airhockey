@@ -7,6 +7,11 @@
     # for real (needs sw/build/activate and sw/build/cdpr_master running)
     python ai/bin/goalie_demo.py
 
+This ENERGIZES the drives itself. It has to: cdpr_master serves one client at
+a time, so a process holding that slot cannot also ask the web UI to enable.
+Turn Hardware OFF in the web UI before running this, or the master will refuse
+the connection as busy.
+
 Glue only. The two halves worth keeping are elsewhere:
   vision/bin/puck_stream.py   tracking, survives the RL transition
   ai/airhockey/demo_goalie.py the policy, gets deleted at that point
@@ -31,6 +36,7 @@ sys.path.insert(0, str(ROOT / "vision" / "bin"))
 from airhockey.demo_goalie import Goalie, GoalieConfig  # noqa: E402
 from airhockey.hardware import CDPRClient  # noqa: E402
 from puck_stream import BlobStream, PuckTracker  # noqa: E402
+import track_mallet as tm  # noqa: E402
 
 _stop = False
 
@@ -58,6 +64,11 @@ def main():
                     help="jerk-limit ramp, ms")
     ap.add_argument("--cmd-hz", type=float, default=100.0,
                     help="command rate to the Teensy; tracking stays at --fps")
+    ap.add_argument("--no-enable", action="store_true",
+                    help="assume the drives are already energized. Only useful "
+                         "if something else enabled them, which cannot be the "
+                         "web UI — the master serves one client and this holds "
+                         "it")
     args = ap.parse_args()
 
     signal.signal(signal.SIGINT, _sig)
@@ -68,6 +79,18 @@ def main():
 
     client = None
     if not args.dry_run:
+        # Measure the paddle BEFORE opening the tracker: only one process can
+        # hold the Spinnaker device, and ENABLE needs this position — it is
+        # the reference every later cable length is measured from, so getting
+        # it wrong offsets the whole session.
+        print("measuring the paddle for the enable reference...")
+        try:
+            mx, my = tm.measure()[:2]
+        except Exception as e:      # noqa: BLE001
+            sys.exit(f"could not measure the paddle ({e}).\n"
+                     "  Is the camera free? Stop the tracker view in the web UI.")
+        print(f"  paddle at ({mx:.1f}, {my:.1f}) mm")
+
         client = CDPRClient()
         try:
             client.connect()
@@ -75,10 +98,22 @@ def main():
             sys.exit(f"cannot reach cdpr_master on 8421 ({e}) — is it running?\n"
                      "  sw/build/activate      (keep running)\n"
                      "  sw/build/cdpr_master")
+
+        if not args.no_enable:
+            # This ENERGIZES the drives and starts the control loop. It has to
+            # happen here rather than from the web UI: the master serves one
+            # client at a time and this process is holding it.
+            print("ENABLING the drives (they will hold position, not move)...")
+            try:
+                client.enable(mx, my)
+            except Exception as e:      # noqa: BLE001
+                sys.exit(f"enable failed: {e}")
+            print("  enabled")
+
         client.set_limits(args.speed, args.accel)
-        print(f"limits -> {args.speed:.0f} mm/s, {args.accel:.0f} mm/s^2")
-        print("NOTE: enable the drives from the web UI (or ENABLE over TCP) "
-              "before expecting motion.")
+        client.set_ramp(args.ramp)
+        print(f"limits -> {args.speed:.0f} mm/s, {args.accel:.0f} mm/s^2, "
+              f"ramp {args.ramp:.1f} ms")
 
     stream = BlobStream(fps=args.fps, exposure=args.exposure, gain=args.gain,
                         threshold=args.threshold)

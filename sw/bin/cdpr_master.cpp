@@ -376,6 +376,19 @@ static int handleCommand(const char *line, ClearPath &robot, int client_fd, int 
             snprintf(resp, sizeof(resp), "OK\n");
         }
 
+    } else if (strncmp(line, "RAMP", 4) == 0) {
+        // Jerk-limit ramp in ms. Lives in the Teensy; this only forwards it.
+        double ms;
+        if (sscanf(line, "RAMP %lf", &ms) != 1) {
+            snprintf(resp, sizeof(resp), "ERR RAMP needs milliseconds\n");
+        } else {
+            char c[64];
+            snprintf(c, sizeof(c), "RAMP %.3f\n", ms);
+            sendTeensy(teensy_fd, c);
+            waitTeensyOK(teensy_fd);
+            logf("  ramp -> %.2f ms\n", ms);
+            snprintf(resp, sizeof(resp), "OK RAMP\n");
+        }
     } else if (strncmp(line, "RESETPEAK", 9) == 0) {
         sendTeensy(teensy_fd, "RESETPEAK\n");
         waitTeensyOK(teensy_fd);
