@@ -49,7 +49,8 @@ WINDING_SIDE = [-1.0, 1.0, -1.0, 1.0]   # UNVERIFIED — see the header
 RETRACT_CW = [True, False, True, False]
 
 # ── Paddle cable attachment ──
-ATTACH_R_MM = 26.5
+ATTACH_R_MM = 31.5      # cable termination, CALIPERED
+ARM_MARKER_R_MM = 26.5  # side markers — optical only, NOT the attachment
 ATTACH_CHIRALITY = -1.0
 MALLET_THETA_RAD = 2.3561945   # 135 deg — see the header for why not 0
 

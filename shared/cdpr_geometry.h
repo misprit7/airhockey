@@ -210,40 +210,40 @@ constexpr bool RETRACT_CW[NUM_MOTORS] = {true, false, true, false};
 // cables constraining three planar DOF, so theta is determined rather than
 // free — but it is NOT constant, and cable length genuinely depends on it.
 //
-// 26.5 mm, CALIPERED 2026-08-16. Replaces 31.1, recorded as confirmed on
-// 2026-08-01 back when the attachment sat at 49 mm rather than 32.7.
+// 31.5 mm, CALIPERED 2026-08-16. This is where the CABLE terminates.
 //
-// WHY it differs is not established. The arms are NOT angled, so the height
-// change does not explain it geometrically — an earlier version of this
-// comment claimed it did, which was a guess dressed as a mechanism. Either
-// the 31.1 was wrong, or the hardware changed in some way beyond its height.
-// Recorded as two measurements and a date rather than a story, because a
-// wrong story here invites someone to DERIVE this number from the height
-// instead of measuring it, and it does not follow.
+// Do not confuse it with the arm MARKER radius, which is 26.5 mm — the two
+// are 5 mm apart and I confused them, which is why this constant briefly
+// carried 26.5 and made the rig worse rather than better. The markers are
+// inboard of the cable terminations; track_mallet reports the marker radius
+// as `arm_r`, and it is NOT this number.
 //
-// Measure it after anything touches the paddle. The cost of being wrong:
+// The long-standing 31.1 was therefore very nearly right (0.4 mm out), not
+// wrong by 5 mm as I claimed while chasing a shake.
 //
-// Four cables constrain three DOF, so a wrong radius does not merely
-// displace the paddle, it asks for a paddle that does not exist. At R off by
-// 5.65 mm the four commanded lengths disagree by 4.4-7.5 mm even AFTER the
-// paddle slides to its best fit — 12 to 20 motor counts that cannot be
-// relieved by moving, so they become tension. Worse, which two cables go
-// taut changes as it moves, and swapping constraint sets mid-move is exactly
-// the chatter this file warns about further down.
+// Why precision here matters. Four cables constrain three DOF, so a wrong
+// radius does not merely displace the paddle, it asks for a paddle that
+// cannot exist: the four commanded lengths then disagree by roughly the
+// radius error even AFTER the paddle settles into its best-fit pose, and
+// rotation cannot absorb it (a radius error is a radial scaling of the
+// attachment star, and no rotation mimics that). What is left has nowhere
+// to go but tension, and which cables end up taut changes as the paddle
+// moves — the constraint-set swapping this file warns about below.
 //
-// The optical arm-marker radius reads 25.54 mm here, about 0.96 mm INBOARD
-// of the calipered attachment — the marker is on the arm but not at the
-// cable termination, and they are 0.3 mm apart in height too (33.0 vs 32.7).
-// So track_mallet's arm_r is a good indicator that this constant has
-// drifted, and a poor substitute for measuring it: 1 mm of radius error is
-// ~1 mm of irreducible cable disagreement, and the cables have no way to
-// express that except as tension.
+//   error in R      irreducible disagreement      motor counts
+//      0.4 mm            ~0.4 mm                      ~1
+//      5.0 mm            ~5   mm                     ~13
 //
 // The old firmware encoded an axis-aligned square of side 21.21 mm — an
 // effective radius of 15.0 mm — left over from the prototype cart. If you
 // see that square anywhere, it is stale.
 
-constexpr float ATTACH_R_MM = 26.5f;
+// Radius of the two side MARKERS, for optical work only. Never the cable
+// attachment: see above. Calipered 26.5; track_mallet measures 25.5 here,
+// so the optical estimate runs about 1 mm short.
+constexpr float ARM_MARKER_R_MM = 26.5f;
+
+constexpr float ATTACH_R_MM = 31.5f;
 constexpr float ATTACH_CHIRALITY = -1.0f; // arms 0-3 clockwise from above
 
 // The orientation the paddle actually sits at, and therefore the one every
