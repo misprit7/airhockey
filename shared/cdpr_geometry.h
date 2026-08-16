@@ -231,11 +231,13 @@ constexpr bool RETRACT_CW[NUM_MOTORS] = {true, false, true, false};
 // taut changes as it moves, and swapping constraint sets mid-move is exactly
 // the chatter this file warns about further down.
 //
-// The optical arm-marker radius reads 25.45 mm here, about 1.05 mm INBOARD
-// of the calipered attachment. So track_mallet's arm_r is a good indicator
-// that this constant has drifted, but not a substitute for measuring it:
-// 1 mm of radius error is ~1 mm of irreducible cable disagreement, and the
-// cables have no way to express that except as tension.
+// The optical arm-marker radius reads 25.54 mm here, about 0.96 mm INBOARD
+// of the calipered attachment — the marker is on the arm but not at the
+// cable termination, and they are 0.3 mm apart in height too (33.0 vs 32.7).
+// So track_mallet's arm_r is a good indicator that this constant has
+// drifted, and a poor substitute for measuring it: 1 mm of radius error is
+// ~1 mm of irreducible cable disagreement, and the cables have no way to
+// express that except as tension.
 //
 // The old firmware encoded an axis-aligned square of side 21.21 mm — an
 // effective radius of 15.0 mm — left over from the prototype cart. If you

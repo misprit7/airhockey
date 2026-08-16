@@ -51,15 +51,22 @@ CALIB_DIR = Path(__file__).resolve().parent.parent / "calib"
 # back-projected onto its own, because an 18 mm height error skews the
 # result rather than merely displacing it.
 MALLET_Z_MM = 67.0      # centre marker, on top of the paddle
-# The arm markers ride on the cable attachment arms, so this height is the
-# attachment height. Lowered from 49.0 on 2026-08-16. Two consequences worth
-# knowing beyond the tracking fix:
-#   * the paddle tips at a = g*r/h, so the threshold went 8000 -> 12000 mm/s^2
-#     (0.82 g -> 1.22 g) — a 1.5x gain, and the only lever that moves it
-#   * the spool axes sit at 33.5, so the cables are now within 0.8 mm of
+# Height of the two side MARKERS, which is what back-projecting them needs.
+# Measured 2026-08-16 (was 49.0 before the arms were lowered).
+#
+# Not the same number as the cable ATTACHMENT height, which is 32.7 — the
+# markers sit 0.3 mm proud of it. Small, but they are distinct quantities and
+# an earlier version of this comment claimed they were the same: use 33.0 for
+# anything optical and 32.7 for anything about forces (the tipping threshold
+# in fw/include/motion_profile.h is the latter).
+#
+# Consequences of the arms coming down, beyond the tracking fix:
+#   * the paddle tips at a = g*r/h, so the threshold went 8000 -> 15120
+#     mm/s^2 (0.82 g -> 1.54 g); h is the only lever that moves it
+#   * the spool axes sit at 33.5, so the cables are now within ~1 mm of
 #     horizontal. The planar cable model's error from ignoring z drops from
 #     0.30 mm at a 400 mm span to under a micron.
-ARM_Z_MM = 32.7         # the two arm markers, on the attachment arms
+ARM_Z_MM = 33.0         # the two side markers
 SPOOL_MARKER_Z_MM = 33.5  # retroreflectors on the four spool axes
 ARM_SPAN_DEG = 90.0     # arms 0 and 3 are adjacent, so 90 deg apart
 CLUSTER_PX = 60.0       # paddle markers sit within this of each other
