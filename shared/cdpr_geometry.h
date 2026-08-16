@@ -210,12 +210,31 @@ constexpr bool RETRACT_CW[NUM_MOTORS] = {true, false, true, false};
 // cables constraining three planar DOF, so theta is determined rather than
 // free — but it is NOT constant, and cable length genuinely depends on it.
 //
-// 31.1 mm is CONFIRMED against the current paddle (2026-08-01). The old
-// firmware encoded an axis-aligned square of side 21.21 mm — an effective
-// radius of 15.0 mm, less than half — left over from the prototype cart.
-// If you see that square anywhere, it is stale.
+// 25.45 mm measured optically 2026-08-16 (arm-marker radius, spread 0.05 mm
+// over 6 frames), replacing 31.1 which was confirmed on 2026-08-01 when the
+// attachment sat at 49 mm. Lowering it to 32.7 mm pulled it 5.65 mm INWARD
+// — the arms are angled about 19 degrees off vertical, so height and radius
+// do not move independently. Changing one without the other is not a
+// refinement, it is a broken model:
+//
+// Four cables constrain three DOF, so a wrong radius does not merely
+// displace the paddle, it asks for a paddle that does not exist. At R off by
+// 5.65 mm the four commanded lengths disagree by 4.4-7.5 mm even AFTER the
+// paddle slides to its best fit — 12 to 20 motor counts that cannot be
+// relieved by moving, so they become tension. Worse, which two cables go
+// taut changes as it moves, and swapping constraint sets mid-move is exactly
+// the chatter this file warns about further down.
+//
+// This is the arm MARKER radius. It is the attachment radius only insofar as
+// the markers sit on the attachment points, which is how the 31.1 was taken
+// too — worth a caliper, since it is the difference between a rig that
+// shakes and one that does not.
+//
+// The old firmware encoded an axis-aligned square of side 21.21 mm — an
+// effective radius of 15.0 mm — left over from the prototype cart. If you
+// see that square anywhere, it is stale.
 
-constexpr float ATTACH_R_MM = 31.1f;
+constexpr float ATTACH_R_MM = 25.45f;
 constexpr float ATTACH_CHIRALITY = -1.0f; // arms 0-3 clockwise from above
 
 // The orientation the paddle actually sits at, and therefore the one every
