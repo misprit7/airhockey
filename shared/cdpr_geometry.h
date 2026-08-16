@@ -297,11 +297,34 @@ constexpr float WALL_MARGIN_MM = 10.0f;
 // what must stay inside the hull is where the cables attach, not the plastic.
 constexpr float HULL_CLEARANCE_MM = 104.3f;
 
-constexpr float WS_MIN_X =
+// Two candidate boxes. Switch by changing the four ACTIVE lines at the end;
+// nothing else needs touching, and HOME follows automatically.
+
+// WIDE — the wall-derived playing area (0.669 m^2).
+constexpr float WS_WIDE_MIN_X =
     (MOTOR_X[0] > MOTOR_X[3] ? MOTOR_X[0] : MOTOR_X[3]) + HULL_CLEARANCE_MM;
-constexpr float WS_MAX_X = RAIL_MAX_X - WALL_MARGIN_MM - MALLET_RADIUS_MM;
-constexpr float WS_MIN_Y = RAIL_MIN_Y + WALL_MARGIN_MM + MALLET_RADIUS_MM;
-constexpr float WS_MAX_Y = RAIL_MAX_Y - WALL_MARGIN_MM - MALLET_RADIUS_MM;
+constexpr float WS_WIDE_MAX_X = RAIL_MAX_X - WALL_MARGIN_MM - MALLET_RADIUS_MM;
+constexpr float WS_WIDE_MIN_Y = RAIL_MIN_Y + WALL_MARGIN_MM + MALLET_RADIUS_MM;
+constexpr float WS_WIDE_MAX_Y = RAIL_MAX_Y - WALL_MARGIN_MM - MALLET_RADIUS_MM;
+
+// BOX — the conservative middle-half used through bring-up (0.250 m^2).
+// Same numbers it had before 2026-08-16, to the millimetre, so reverting to
+// it is a true revert and not an approximation of one.
+constexpr float WS_BOX_MIN_X = 1258.0f;
+constexpr float WS_BOX_MAX_X = 1758.0f;
+constexpr float WS_BOX_MIN_Y = 233.0f;
+constexpr float WS_BOX_MAX_Y = 733.0f;
+
+// ACTIVE. Currently BOX: reverted 2026-08-16 to test whether widening the
+// area is what put unexpected slack in the cables. The wide box reaches
+// 58 mm nearer the anchor hull and out to the walls, both regions the cable
+// model has never been checked in, and it roughly tripled the area over
+// which the paddle's orientation is free to wander from the 135 deg the
+// model assumes.
+constexpr float WS_MIN_X = WS_BOX_MIN_X;
+constexpr float WS_MAX_X = WS_BOX_MAX_X;
+constexpr float WS_MIN_Y = WS_BOX_MIN_Y;
+constexpr float WS_MAX_Y = WS_BOX_MAX_Y;
 
 // Default calibration/home position: centre of the workspace.
 constexpr float HOME_X = (WS_MIN_X + WS_MAX_X) / 2.0f;  // 1584.0
