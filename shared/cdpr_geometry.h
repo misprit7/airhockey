@@ -210,11 +210,18 @@ constexpr bool RETRACT_CW[NUM_MOTORS] = {true, false, true, false};
 // cables constraining three planar DOF, so theta is determined rather than
 // free — but it is NOT constant, and cable length genuinely depends on it.
 //
-// 26.5 mm, CALIPERED 2026-08-16, replacing 31.1 which was confirmed on
-// 2026-08-01 when the attachment sat at 49 mm. Lowering it to 32.7 mm pulled
-// it 4.6 mm INWARD — the arms are angled about 16 degrees off vertical, so
-// height and radius do not move independently. Changing one without the
-// other is not a refinement, it is a broken model:
+// 26.5 mm, CALIPERED 2026-08-16. Replaces 31.1, recorded as confirmed on
+// 2026-08-01 back when the attachment sat at 49 mm rather than 32.7.
+//
+// WHY it differs is not established. The arms are NOT angled, so the height
+// change does not explain it geometrically — an earlier version of this
+// comment claimed it did, which was a guess dressed as a mechanism. Either
+// the 31.1 was wrong, or the hardware changed in some way beyond its height.
+// Recorded as two measurements and a date rather than a story, because a
+// wrong story here invites someone to DERIVE this number from the height
+// instead of measuring it, and it does not follow.
+//
+// Measure it after anything touches the paddle. The cost of being wrong:
 //
 // Four cables constrain three DOF, so a wrong radius does not merely
 // displace the paddle, it asks for a paddle that does not exist. At R off by
