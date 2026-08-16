@@ -21,10 +21,15 @@ GRID_X_MM = 79.0 * GRID_PITCH_MM     # 2006.6
 GRID_Y_MM = 38.0 * GRID_PITCH_MM     # 965.2
 CENTERLINE_X = 39.5 * GRID_PITCH_MM  # 1003.3
 
-RAIL_MIN_X = -6.7
-RAIL_MAX_X = 2013.3
-RAIL_MIN_Y = -19.9
-RAIL_MAX_Y = 985.1
+# Walls MEASURED 2026-08-12 with calipers via the sticker markers; the old
+# values assumed a 2020 x 1005 table with the grid centred on it, and it is
+# not centred. These are the INSCRIBED rectangle — each wall's closest
+# approach along its length — so anything derived from them is safe
+# everywhere rather than only where it was measured.
+RAIL_MIN_X = -3.8
+RAIL_MAX_X = 2017.9
+RAIL_MIN_Y = -19.0
+RAIL_MAX_Y = 984.9
 
 # ── Motor anchors ──
 # All four trilaterated from caliper distances to three air holes each,
@@ -53,13 +58,20 @@ MALLET_THETA_RAD = 2.3561945   # 135 deg — see the header for why not 0
 # Not the rails: cables pull only, so the paddle is holdable only inside the
 # anchor hull, and tension grows without bound near its boundary. See the
 # header for why the centreline itself is unreachable.
-WS_MIN_X = 1258.0
-WS_MAX_X = 1758.0
-WS_MIN_Y = 233.0
-WS_MAX_Y = 733.0
+# Three bounds are wall - margin - mallet radius. WS_MIN_X cannot be: the
+# human-end wall is ~1100 mm outside the anchor hull and unreachable at any
+# torque, so it comes from the hull instead. See the header.
+MALLET_RADIUS_MM = 40.0     # NOT MEASURED — from the simulator. See header.
+WALL_MARGIN_MM = 10.0
+HULL_CLEARANCE_MM = 104.3
 
-HOME_X = (WS_MIN_X + WS_MAX_X) / 2.0   # 1508.0
-HOME_Y = (WS_MIN_Y + WS_MAX_Y) / 2.0   # 483.0
+WS_MIN_X = max(MOTOR_X[0], MOTOR_X[3]) + HULL_CLEARANCE_MM
+WS_MAX_X = RAIL_MAX_X - WALL_MARGIN_MM - MALLET_RADIUS_MM
+WS_MIN_Y = RAIL_MIN_Y + WALL_MARGIN_MM + MALLET_RADIUS_MM
+WS_MAX_Y = RAIL_MAX_Y - WALL_MARGIN_MM - MALLET_RADIUS_MM
+
+HOME_X = (WS_MIN_X + WS_MAX_X) / 2.0
+HOME_Y = (WS_MIN_Y + WS_MAX_Y) / 2.0
 
 WRAP_REF_ANGLE = [-0.988161, -2.362197, 2.360737, 0.985013]
 

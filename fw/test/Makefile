@@ -11,7 +11,13 @@ BUILD    := build
 .PHONY: all test clean
 all: test
 
-$(BUILD)/test_motion_profile: test_motion_profile.cpp | $(BUILD)
+# Depend on the headers too. Without this the test silently keeps validating
+# against a stale copy of the geometry: change the workspace bounds, rerun,
+# and it cheerfully reports "All checks passed" for the workspace you no
+# longer have.
+HEADERS := ../include/motion_profile.h ../../shared/cdpr_geometry.h
+
+$(BUILD)/test_motion_profile: test_motion_profile.cpp $(HEADERS) | $(BUILD)
 	$(CXX) $(CXXFLAGS) -o $@ $< -lm
 
 $(BUILD):

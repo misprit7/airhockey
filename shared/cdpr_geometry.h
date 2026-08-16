@@ -63,11 +63,20 @@ constexpr float GRID_X_MM = 79.0f * GRID_PITCH_MM;    // 2006.6, robot-end hole
 constexpr float GRID_Y_MM = 38.0f * GRID_PITCH_MM;    // 965.2, far-rail hole
 constexpr float CENTERLINE_X = 39.5f * GRID_PITCH_MM; // 1003.3, between columns
 
-// Rail positions are APPROXIMATE in this frame (the grid is the truth):
-constexpr float RAIL_MIN_X = -6.7f;
-constexpr float RAIL_MAX_X = 2013.3f;
-constexpr float RAIL_MIN_Y = -19.9f;
-constexpr float RAIL_MAX_Y = 985.1f;
+// Wall positions, MEASURED 2026-08-12 with calipers via the sticker markers
+// (vision/bin/table_grid.py _WALL_OFFSETS), replacing the earlier nominal
+// values that assumed a 2020 x 1005 table with the grid centred on it. It is
+// not centred: the gap is 4.25 mm on the human side and 11.50 mm on the
+// robot side, so the grid sits 3.6 mm off centre.
+//
+// Each wall is slightly out of parallel with the grid, so these are the
+// INSCRIBED rectangle — the closest approach of each wall along its length.
+// A workspace derived from them is therefore safe everywhere, not just at
+// the point that happened to be measured.
+constexpr float RAIL_MIN_X = -3.8f;    // human end   (4.7 at the near rail)
+constexpr float RAIL_MAX_X = 2017.9f;  // robot end   (2018.3 at the near rail)
+constexpr float RAIL_MIN_Y = -19.0f;   // near rail   (19.4 at the robot end)
+constexpr float RAIL_MAX_Y = 984.9f;   // far rail    (parallel to 0.1 mm)
 
 // ── Motor anchor positions ──────────────────────────────────────────
 //
@@ -233,30 +242,45 @@ constexpr float MALLET_THETA_RAD = 2.3561945f; // 135 deg
 
 // ── Workspace bounds ────────────────────────────────────────────────
 //
-// The middle half of the robot half: same centre, half the span in each
-// axis. Deliberately conservative, and deliberately NOT the rails.
+// Three of the four bounds are the measured WALL less a clearance margin
+// less the mallet radius. The fourth cannot be: a cable pulls and cannot
+// push, so the paddle is only holdable while every cable stays in tension,
+// which is only true strictly inside the convex hull of the four anchors,
+// and the tension needed to resist a given disturbance grows without bound
+// as you approach it. The anchors span x = 1093..2095, so the human-end
+// wall at x = -3.8 is about 1100 mm outside the hull and is not reachable
+// at any torque. WS_MIN_X is set from the hull, not the wall.
 //
-// A cable pulls and cannot push, so the paddle is only holdable while every
-// cable stays in tension — which is only true strictly inside the convex
-// hull of the four anchors, and the tension needed to resist a given
-// disturbance grows without bound as you approach that hull. The anchors
-// span x = 1093..2095, so the region the CABLES control is much smaller
-// than the robot half of the TABLE; the centreline at x = 1003.3 is 90 mm
-// outside the hull and is not reachable at any torque. Staying near the
-// middle keeps the cables well spread and the tensions modest.
-//
-// These are hardcoded on purpose: they are a bring-up choice, not a derived
-// quantity. Widen them when the winding sign and the command-then-measure
-// residual are settled.
+// Pushing WS_MIN_X toward the hull buys very little: 160 mm of clearance
+// down to 60 mm adds 12% of area while heading straight at the edge where
+// tension diverges. The expansion is almost all in y and in WS_MAX_X, so
+// the clearance here stays generous.
 
-constexpr float WS_MIN_X = 1258.0f;
-constexpr float WS_MAX_X = 1758.0f;
-constexpr float WS_MIN_Y = 233.0f;
-constexpr float WS_MAX_Y = 733.0f;
+// Outer radius of the paddle, for keeping it off the walls.
+//
+// NOT MEASURED. Taken from the simulator's paddle_radius (80 mm diameter),
+// which is a modelling choice rather than a measurement of the real mallet.
+// Every bound below moves with it, so if the real one is a standard ~96 mm
+// air-hockey mallet this is 8 mm optimistic on all four sides — which is
+// spent walking the mallet into a wall. Measure it and correct this.
+constexpr float MALLET_RADIUS_MM = 40.0f;
+
+// Clearance from the wall to the paddle's RIM.
+constexpr float WALL_MARGIN_MM = 10.0f;
+
+// Clearance from the anchor hull to the paddle CENTRE. Not a rim clearance:
+// what must stay inside the hull is where the cables attach, not the plastic.
+constexpr float HULL_CLEARANCE_MM = 104.3f;
+
+constexpr float WS_MIN_X =
+    (MOTOR_X[0] > MOTOR_X[3] ? MOTOR_X[0] : MOTOR_X[3]) + HULL_CLEARANCE_MM;
+constexpr float WS_MAX_X = RAIL_MAX_X - WALL_MARGIN_MM - MALLET_RADIUS_MM;
+constexpr float WS_MIN_Y = RAIL_MIN_Y + WALL_MARGIN_MM + MALLET_RADIUS_MM;
+constexpr float WS_MAX_Y = RAIL_MAX_Y - WALL_MARGIN_MM - MALLET_RADIUS_MM;
 
 // Default calibration/home position: centre of the workspace.
-constexpr float HOME_X = (WS_MIN_X + WS_MAX_X) / 2.0f;  // 1508
-constexpr float HOME_Y = (WS_MIN_Y + WS_MAX_Y) / 2.0f;  // 483
+constexpr float HOME_X = (WS_MIN_X + WS_MAX_X) / 2.0f;  // 1584.0
+constexpr float HOME_Y = (WS_MIN_Y + WS_MAX_Y) / 2.0f;  // 483.0
 
 // Bearing from each anchor toward HOME. This is the zero reference for the
 // wrap angle: measuring psi relative to a fixed per-motor direction avoids

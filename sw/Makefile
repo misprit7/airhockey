@@ -40,12 +40,17 @@ $(BUILD_DIR):
 	mkdir -p $@
 
 # Standalone programs (single .cpp, no library)
-$(STANDALONE): $(BUILD_DIR)/%: $(SRC_DIR)/%.cpp $(SF_SO) | $(BUILD_DIR)
+# The shared geometry is a dependency of every binary that includes it, and
+# a silently stale cdpr_master is worse than a broken one: it would clamp
+# targets to a workspace the rest of the system no longer believes in.
+SHARED_HDRS := $(wildcard ../shared/*.h)
+
+$(STANDALONE): $(BUILD_DIR)/%: $(SRC_DIR)/%.cpp $(SHARED_HDRS) $(SF_SO) | $(BUILD_DIR)
 	$(CXX) $(CXXFLAGS) -o $@ $< $(LDFLAGS)
 
 # Programs that link against the lib (ClearPath enable/disable only —
 # all motion goes through the Teensy over step/dir)
-$(PROGRAMS): $(BUILD_DIR)/%: $(SRC_DIR)/%.cpp $(LIB_OBJS) $(SF_SO) | $(BUILD_DIR)
+$(PROGRAMS): $(BUILD_DIR)/%: $(SRC_DIR)/%.cpp $(LIB_OBJS) $(SHARED_HDRS) $(SF_SO) | $(BUILD_DIR)
 	$(CXX) $(CXXFLAGS) -o $@ $< $(LIB_OBJS) $(LDFLAGS)
 
 clean:
