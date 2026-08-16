@@ -61,7 +61,7 @@ MALLET_THETA_RAD = 2.3561945   # 135 deg — see the header for why not 0
 # Three bounds are wall - margin - mallet radius. WS_MIN_X cannot be: the
 # human-end wall is ~1100 mm outside the anchor hull and unreachable at any
 # torque, so it comes from the hull instead. See the header.
-MALLET_RADIUS_MM = 40.0     # NOT MEASURED — from the simulator. See header.
+MALLET_RADIUS_MM = 50.4     # MEASURED: 100.8 mm diameter
 WALL_MARGIN_MM = 10.0
 HULL_CLEARANCE_MM = 104.3
 

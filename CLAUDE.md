@@ -51,8 +51,8 @@ Robotic air hockey table that uses reinforcement learning trained in simulation,
     which ran 41% over both caps on a diagonal and bent the path badly when
     the axes were unequal (80 mm off a 500x150 move).
     Also JERK-LIMITED: acceleration slews over `RAMP` ms rather than
-    stepping on in one tick. The paddle is pulled 49 mm above the surface
-    over a ~40 mm base, so it tips at about g*r/h ~ 0.8 g, and an
+    stepping on in one tick. The paddle is pulled 32.7 mm above the surface
+    over a 50.4 mm radius, so it tips at about g*r/h ~ 1.5 g, and an
     instantaneous accel step both applies that moment impulsively and
     overshoots an elastic cable by up to 2x. Parameterised as a ramp TIME
     (jerk = aMax/ramp) so move shape survives a change of accel cap. Set at

@@ -51,7 +51,15 @@ CALIB_DIR = Path(__file__).resolve().parent.parent / "calib"
 # back-projected onto its own, because an 18 mm height error skews the
 # result rather than merely displacing it.
 MALLET_Z_MM = 67.0      # centre marker, on top of the paddle
-ARM_Z_MM = 49.0         # the two arm markers, lower down on the cross
+# The arm markers ride on the cable attachment arms, so this height is the
+# attachment height. Lowered from 49.0 on 2026-08-16. Two consequences worth
+# knowing beyond the tracking fix:
+#   * the paddle tips at a = g*r/h, so the threshold went 8000 -> 12000 mm/s^2
+#     (0.82 g -> 1.22 g) — a 1.5x gain, and the only lever that moves it
+#   * the spool axes sit at 33.5, so the cables are now within 0.8 mm of
+#     horizontal. The planar cable model's error from ignoring z drops from
+#     0.30 mm at a 400 mm span to under a micron.
+ARM_Z_MM = 32.7         # the two arm markers, on the attachment arms
 SPOOL_MARKER_Z_MM = 33.5  # retroreflectors on the four spool axes
 ARM_SPAN_DEG = 90.0     # arms 0 and 3 are adjacent, so 90 deg apart
 CLUSTER_PX = 60.0       # paddle markers sit within this of each other
@@ -181,10 +189,25 @@ def locate(img, K, dist, rvec, tvec, field):
 
     # Keep only the tight cluster: paddle markers are close together, stray
     # reflections are not.
+    #
+    # Picked by MUTUAL proximity, not by distance from the median of all
+    # candidates. The median approach worked while the paddle was the only
+    # loose reflector on the table; once a puck carrying its own marker
+    # arrived, the median sat between paddle and puck and the three nearest
+    # it could include the puck and drop a real arm — which surfaced as
+    # "paddle markers span 137px" rather than as anything about the puck.
+    #
+    # Each paddle marker has the other two within CLUSTER_PX; a puck alone
+    # has none. So take the candidate with the most close neighbours and
+    # keep it with them.
     pts = np.array([c[1] for c in cands])
     if len(cands) > 3:
-        centre = np.median(pts, axis=0)
-        keep = np.argsort(np.linalg.norm(pts - centre, axis=1))[:3]
+        d = np.linalg.norm(pts[:, None, :] - pts[None, :, :], axis=2)
+        near = d <= CLUSTER_PX
+        seed = int(near.sum(axis=1).argmax())
+        keep = list(np.flatnonzero(near[seed]))
+        if len(keep) > 3:      # keep the three tightest about the seed
+            keep = sorted(keep, key=lambda j: d[seed, j])[:3]
         cands = [cands[i] for i in sorted(keep)]
         pts = np.array([c[1] for c in cands])
 

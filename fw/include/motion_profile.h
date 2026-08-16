@@ -37,9 +37,11 @@ constexpr uint8_t MOTION_LIMIT_JERK = 1u << 2;
 // full acceleration on in ONE 20 us tick, which does two things to a
 // cable-driven rig: it applies the tipping moment impulsively, and it steps
 // an elastic system, which overshoots the steady-state tension by up to 2x.
-// The paddle is pulled 49 mm above the surface over a base of ~40 mm, so it
-// tips at about g*r/h ~ 0.8 g — the 2x overshoot is the difference between
-// tipping and not.
+// The paddle is pulled 32.7 mm above the surface over a 50.4 mm radius, so
+// it tips at about g*r/h ~ 1.5 g — the 2x overshoot is the difference between
+// tipping and not. (It was 0.8 g when the attachment sat at 49 mm and the
+// radius was assumed to be 40; lowering h is the only lever that moves this,
+// and it bought a factor of 1.5.)
 //
 // Parameterised as a RAMP TIME rather than an absolute jerk, so the shape of
 // the move does not change when the accel cap does: jerk = aMax / ramp. The

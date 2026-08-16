@@ -257,13 +257,10 @@ constexpr float MALLET_THETA_RAD = 2.3561945f; // 135 deg
 // the clearance here stays generous.
 
 // Outer radius of the paddle, for keeping it off the walls.
-//
-// NOT MEASURED. Taken from the simulator's paddle_radius (80 mm diameter),
-// which is a modelling choice rather than a measurement of the real mallet.
-// Every bound below moves with it, so if the real one is a standard ~96 mm
-// air-hockey mallet this is 8 mm optimistic on all four sides — which is
-// spent walking the mallet into a wall. Measure it and correct this.
-constexpr float MALLET_RADIUS_MM = 40.0f;
+// MEASURED 2026-08-16: 100.8 mm diameter. (Was 40.0 here, taken from the
+// simulator's paddle_radius, which was a modelling choice and 10.4 mm
+// optimistic on all four sides.)
+constexpr float MALLET_RADIUS_MM = 50.4f;
 
 // Clearance from the wall to the paddle's RIM.
 constexpr float WALL_MARGIN_MM = 10.0f;
