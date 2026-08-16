@@ -50,7 +50,20 @@ CALIB_DIR = Path(__file__).resolve().parent.parent / "calib"
 # Three retroreflectors on the paddle, on TWO different planes — each is
 # back-projected onto its own, because an 18 mm height error skews the
 # result rather than merely displacing it.
-MALLET_Z_MM = 67.0      # centre marker, on top of the paddle
+# Centre marker height. 65.0 is INFERRED optically, not calipered: with the
+# arms at their measured 33.0, the two arms' orientation estimates agree to
+# 0.10 deg here against 2.48 deg at the old 67.0, and arm_r lands within
+# 0.5 mm of the calipered 26.5. Both criteria put it at 64-65.
+#
+# It reads as an orientation problem rather than a height one, which is why
+# the UI complains about arms disagreeing: the centre and arm markers sit at
+# different heights, so a wrong height parallax-shifts them differently and
+# rotates the apparent cross. That sensitivity nearly doubled when the arms
+# came down from 49 to 33, since the gap to the centre marker grew.
+#
+# Worth a caliper — it also shifts the measured paddle POSITION by ~0.8 mm,
+# which is the reference every cable length is taken from at ENABLE.
+MALLET_Z_MM = 65.0      # centre marker, on top of the paddle
 # Height of the two side MARKERS, which is what back-projecting them needs.
 # Measured 2026-08-16 (was 49.0 before the arms were lowered).
 #
