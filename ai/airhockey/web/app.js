@@ -18,23 +18,31 @@ let offsetX = 0;
 let offsetY = 0;
 
 // Colors
+// Rink livery, matching style.css. The table used to be billiard green with
+// a centre line at 8% white — nearly invisible, which is a strange thing to
+// do to the one marking the game is organised around. Here it is ice under
+// floodlight with the centre line in the table's red, which is also what the
+// physical table is painted like.
+//
+// Keep these in step with the tokens in style.css; they are the same palette
+// either side of the canvas boundary.
 const COLORS = {
-    table: "#1b3a2a",
-    tableBorder: "#2a5a3e",
-    centerLine: "rgba(255,255,255,0.08)",
-    centerCircle: "rgba(255,255,255,0.06)",
-    wall: "#3a7a5a",
-    goal: "#c0392b",
-    goalGlow: "rgba(192, 57, 43, 0.3)",
-    puck: "#e8e8f0",
-    puckGlow: "rgba(232, 232, 240, 0.4)",
-    puckTrail: "rgba(232, 232, 240, 0.08)",
-    agent: "#4a9eff",
-    agentGlow: "rgba(74, 158, 255, 0.35)",
-    agentRing: "rgba(74, 158, 255, 0.15)",
-    opponent: "#ff5a6a",
-    opponentGlow: "rgba(255, 90, 106, 0.35)",
-    opponentRing: "rgba(255, 90, 106, 0.15)",
+    table: "#16202B",                         // --ice, lifted to read as a surface
+    tableBorder: "#3A5064",
+    centerLine: "rgba(232, 33, 63, 0.62)",    // --red: the defining marking
+    centerCircle: "rgba(232, 33, 63, 0.34)",
+    wall: "#46617A",
+    goal: "#E8213F",
+    goalGlow: "rgba(232, 33, 63, 0.28)",
+    puck: "#EAF0F6",
+    puckGlow: "rgba(234, 240, 246, 0.38)",
+    puckTrail: "rgba(234, 240, 246, 0.10)",
+    agent: "#4FA3F7",
+    agentGlow: "rgba(79, 163, 247, 0.35)",
+    agentRing: "rgba(79, 163, 247, 0.16)",
+    opponent: "#E8213F",
+    opponentGlow: "rgba(232, 33, 63, 0.35)",
+    opponentRing: "rgba(232, 33, 63, 0.16)",
 };
 
 // Hardware overlay state
@@ -356,8 +364,11 @@ function connect() {
         } else if (msg.type === "hardware_mode") {
             document.getElementById("btn-hardware").textContent =
                 msg.enabled ? "Hardware: ON" : "Hardware: Off";
-            document.getElementById("btn-hardware").style.backgroundColor =
-                msg.enabled ? "#2a7a3a" : "";
+            // State lives in a class, not an inline colour. Inline styles
+            // beat the stylesheet, so the old hardcoded green survived every
+            // restyle and sat there looking like the previous design.
+            document.getElementById("btn-hardware")
+                .classList.toggle("active", !!msg.enabled);
             const toggle = document.getElementById("hw-overlay-toggle");
             if (msg.enabled) {
                 toggle.classList.remove("hidden");
@@ -462,7 +473,7 @@ function setControlMode(next) {
     controlMode = next;
     const btn = document.getElementById("btn-control");
     btn.textContent = next === "follow" ? "Control: Follow" : "Control: Click";
-    btn.style.backgroundColor = next === "click" ? "#3a4a7a" : "";
+    btn.classList.toggle("active", next === "click");
     canvas.style.cursor = next === "click" ? "pointer" : "crosshair";
 }
 

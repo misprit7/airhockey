@@ -1,3 +1,34 @@
+/* ── Dark rink ─────────────────────────────────────────────────────────
+   The table's own livery on a dark ground: red centre line, blue puck,
+   ice under floodlight rather than paper white. Scoreboard typography —
+   heavy tabular numerals, uppercase labels on wide tracking, hard rules,
+   almost no corner radius.
+
+   Red is the ACCENT (active state, centre line, peak markers) and blue is
+   the VALUE colour, which is the same division the table itself uses.
+   Everything is a token so the next restyle is this block, not 650 lines. */
+:root {
+    --ice:       #0B1016;   /* page ground, cold and blue-biased */
+    --board:     #151E27;   /* sidebar and panels — the boards round a rink */
+    --surface:   #1B2732;   /* controls at rest */
+    --surface-hi:#24333F;   /* hover */
+    --line:      #2E404F;
+    --line-hi:   #40596C;
+
+    --ink:       #EAF0F6;
+    --ink-2:     #B4C2CE;
+    --ink-3:     #7F8F9D;
+    --ink-4:     #55646F;
+
+    --red:       #E8213F;   /* centre line, active mode, peak marker */
+    --red-soft:  rgba(232,33,63,.16);
+    --blue:      #4FA3F7;   /* values, agent, speed */
+    --amber:     #F2A93B;   /* accel */
+    --green:     #57C98B;
+
+    --r:         2px;       /* scoreboards are not rounded */
+}
+
 * {
     margin: 0;
     padding: 0;
@@ -5,8 +36,8 @@
 }
 
 body {
-    background: #0a0a0f;
-    color: #e0e0e8;
+    background: var(--ice);
+    color: var(--ink);
     font-family: 'Inter', -apple-system, BlinkMacSystemFont, 'Segoe UI', system-ui, sans-serif;
     overflow: hidden;
     height: 100vh;
@@ -30,9 +61,9 @@ body {
 /* --- Sidebar (desktop) --- */
 #sidebar {
     width: 260px;
-    padding: 28px 22px;
-    background: #12121a;
-    border-right: 1px solid #1e1e2e;
+    padding: 26px 20px;
+    background: var(--board);
+    border-right: 1px solid var(--line);
     display: flex;
     flex-direction: column;
     gap: 24px;
@@ -40,11 +71,16 @@ body {
     z-index: 10;
 }
 
+/* Masthead, not a page title: uppercase on wide tracking over a red rule,
+   the way a rink board or a scoreboard header is set. */
 h1 {
-    font-size: 20px;
-    font-weight: 600;
-    letter-spacing: 0.5px;
-    color: #f0f0f8;
+    font-size: 15px;
+    font-weight: 800;
+    letter-spacing: 0.16em;
+    text-transform: uppercase;
+    color: var(--ink);
+    padding-bottom: 9px;
+    border-bottom: 3px solid var(--red);
 }
 
 #scoreboard {
@@ -53,9 +89,9 @@ h1 {
     justify-content: center;
     gap: 12px;
     padding: 16px;
-    background: #1a1a26;
-    border-radius: 12px;
-    border: 1px solid #2a2a3a;
+    background: var(--surface);
+    border-radius: var(--r);
+    border: 1px solid var(--line);
 }
 
 .score-row {
@@ -66,32 +102,33 @@ h1 {
 }
 
 .score-label {
-    font-size: 11px;
-    font-weight: 500;
+    font-size: 9.5px;
+    font-weight: 800;
     text-transform: uppercase;
-    letter-spacing: 1px;
+    letter-spacing: 0.14em;
 }
 
-.agent-color { color: #4a9eff; }
-.opponent-color { color: #ff5a6a; }
+.agent-color { color: var(--blue); }
+.opponent-color { color: var(--red); }
 
 .score-value {
-    font-size: 36px;
-    font-weight: 700;
+    font-size: 38px;
+    font-weight: 800;
+    letter-spacing: -0.02em;
     font-variant-numeric: tabular-nums;
 }
 
 .score-divider {
     font-size: 28px;
     font-weight: 300;
-    color: #555;
+    color: var(--ink-4);
     padding-bottom: 6px;
 }
 
 #timer {
     text-align: center;
     font-size: 14px;
-    color: #888;
+    color: var(--ink-3);
     font-variant-numeric: tabular-nums;
 }
 
@@ -105,33 +142,33 @@ h1 {
 #reward-display {
     font-size: 12px;
     font-variant-numeric: tabular-nums;
-    color: #888;
+    color: var(--ink-3);
 }
 
 #reward-value {
     font-weight: 600;
 }
 
-#reward-value.positive { color: #4aff8a; }
-#reward-value.negative { color: #ff5a6a; }
+#reward-value.positive { color: var(--green); }
+#reward-value.negative { color: var(--red); }
 
 #sidebar-reward {
     font-size: 14px;
-    color: #888;
+    color: var(--ink-3);
     font-variant-numeric: tabular-nums;
     text-align: center;
     padding: 8px;
-    background: #1a1a26;
-    border-radius: 8px;
-    border: 1px solid #2a2a3a;
+    background: var(--surface);
+    border-radius: var(--r);
+    border: 1px solid var(--line);
 }
 
 #reward-value-desktop {
     font-weight: 600;
 }
 
-#reward-value-desktop.positive { color: #4aff8a; }
-#reward-value-desktop.negative { color: #ff5a6a; }
+#reward-value-desktop.positive { color: var(--green); }
+#reward-value-desktop.negative { color: var(--red); }
 
 #controls {
     display: flex;
@@ -140,20 +177,33 @@ h1 {
 }
 
 button {
-    padding: 10px 16px;
-    border: 1px solid #2a2a3a;
-    border-radius: 8px;
-    background: #1a1a26;
-    color: #ccc;
-    font-size: 13px;
+    padding: 9px 12px;
+    border: 1.5px solid var(--line);
+    border-radius: var(--r);
+    background: transparent;
+    color: var(--ink-2);
+    font-size: 11px;
+    font-weight: 700;
+    letter-spacing: 0.06em;
+    text-transform: uppercase;
+    text-align: left;
     cursor: pointer;
-    transition: all 0.15s;
+    transition: background .12s, border-color .12s, color .12s;
 }
 
 button:hover {
-    background: #22222e;
-    border-color: #3a3a4a;
-    color: #fff;
+    background: var(--surface-hi);
+    border-color: var(--line-hi);
+    color: var(--ink);
+}
+
+/* An engaged control reads as filled, the way a lit segment does — the
+   old style only shifted it a shade and hardware-on looked like
+   hardware-off in daylight. */
+button.active, button[aria-pressed="true"] {
+    background: var(--ink);
+    border-color: var(--ink);
+    color: var(--ice);
 }
 
 button:active {
@@ -176,38 +226,47 @@ button:active {
     align-items: center;
     gap: 6px;
     font-size: 12px;
-    color: #aaa;
+    color: var(--ink-2);
     padding: 4px 0;
     cursor: pointer;
 }
 
 #hw-overlay-toggle input[type="checkbox"] {
-    accent-color: #4a9eff;
+    accent-color: var(--blue);
 }
 
 #mode-select {
     display: flex;
-    gap: 4px;
-    background: #1a1a26;
-    border-radius: 8px;
-    padding: 3px;
-    border: 1px solid #2a2a3a;
+    background: transparent;
+    border-radius: var(--r);
+    padding: 0;
+    border: 1.5px solid var(--line);
+    overflow: hidden;
 }
 
 .mode-btn {
     flex: 1;
     text-align: center;
-    padding: 7px 12px;
+    padding: 7px 4px;
     border: none;
-    border-radius: 6px;
-    font-size: 12px;
-    font-weight: 500;
+    border-right: 1.5px solid var(--line);
+    border-radius: 0;
+    font-size: 10.5px;
+    font-weight: 800;
+    letter-spacing: 0.07em;
+    text-transform: uppercase;
+    color: var(--ink-3);
 }
+.mode-btn:last-child { border-right: none; }
 
+/* Red for the live mode: it is the table's own accent, and it separates
+   "which mode" from "which toggles are on", which the filled buttons say. */
 .mode-btn.active {
-    background: #2a2a3a;
-    color: #fff;
+    background: var(--red);
+    border-color: var(--red);
+    color: var(--ink);
 }
+.mode-btn.active:hover { background: var(--red); color: var(--ink); }
 
 #replay-panel {
     display: flex;
@@ -216,9 +275,11 @@ button:active {
 }
 
 #replay-panel h3 {
-    font-size: 13px;
-    font-weight: 500;
-    color: #999;
+    font-size: 10px;
+    font-weight: 800;
+    letter-spacing: 0.14em;
+    text-transform: uppercase;
+    color: var(--ink-3);
 }
 
 #recording-list {
@@ -232,8 +293,8 @@ button:active {
 
 #recording-list li {
     padding: 8px 10px;
-    background: #1a1a26;
-    border-radius: 6px;
+    background: var(--surface);
+    border-radius: var(--r);
     font-size: 12px;
     cursor: pointer;
     border: 1px solid transparent;
@@ -241,13 +302,13 @@ button:active {
 }
 
 #recording-list li:hover {
-    border-color: #3a3a4a;
-    background: #22222e;
+    border-color: var(--line-hi);
+    background: var(--surface-hi);
 }
 
 #recording-list li.active {
-    border-color: #4a9eff;
-    color: #fff;
+    border-color: var(--blue);
+    color: var(--ink);
 }
 
 #replay-controls {
@@ -258,17 +319,17 @@ button:active {
 
 #stage-info {
     font-size: 12px;
-    color: #aaa;
+    color: var(--ink-2);
     padding: 6px 10px;
-    background: #1a1a26;
-    border-radius: 6px;
-    border: 1px solid #2a2a3a;
+    background: var(--surface);
+    border-radius: var(--r);
+    border: 1px solid var(--line);
     text-align: center;
 }
 
 #replay-slider {
     width: 100%;
-    accent-color: #4a9eff;
+    accent-color: var(--blue);
 }
 
 #replay-buttons {
@@ -284,14 +345,14 @@ button:active {
 
 #replay-controls label {
     font-size: 12px;
-    color: #888;
+    color: var(--ink-3);
 }
 
 #replay-controls select {
-    background: #1a1a26;
-    border: 1px solid #2a2a3a;
-    color: #ccc;
-    border-radius: 4px;
+    background: var(--surface);
+    border: 1px solid var(--line);
+    color: var(--ink-2);
+    border-radius: var(--r);
     padding: 3px 6px;
     font-size: 12px;
 }
@@ -299,8 +360,11 @@ button:active {
 .hidden { display: none !important; }
 
 #status {
-    font-size: 11px;
-    color: #555;
+    font-size: 9.5px;
+    font-weight: 800;
+    letter-spacing: 0.1em;
+    text-transform: uppercase;
+    color: var(--green);
     margin-top: auto;
 }
 
@@ -314,7 +378,7 @@ button:active {
 }
 
 canvas {
-    border-radius: 16px;
+    border-radius: 3px;
     cursor: crosshair;
 }
 
@@ -329,8 +393,8 @@ canvas {
         align-items: center;
         justify-content: space-between;
         padding: 8px 12px;
-        background: #12121a;
-        border-bottom: 1px solid #1e1e2e;
+        background: var(--board);
+        border-bottom: 1px solid var(--line);
         flex-shrink: 0;
         gap: 8px;
     }
@@ -375,7 +439,7 @@ canvas {
         height: 100dvh;
         padding: 20px 18px;
         border-right: none;
-        border-left: 1px solid #1e1e2e;
+        border-left: 1px solid var(--line);
         transition: right 0.25s ease;
         overflow-y: auto;
     }
@@ -395,7 +459,7 @@ canvas {
     }
 
     canvas {
-        border-radius: 10px;
+        border-radius: var(--r);
         touch-action: none;
     }
 }
@@ -462,7 +526,7 @@ canvas {
 
 #btn-camera-collapse, #btn-state-collapse {
     display: none;
-    background: none; border: none; color: #888;
+    background: none; border: none; color: var(--ink-3);
     font-size: 13px; cursor: pointer; padding: 4px 8px;
 }
 
@@ -481,7 +545,7 @@ canvas {
     min-height: 0;
     display: flex;
     overflow: hidden;
-    border-radius: 10px;
+    border-radius: var(--r);
     background: #000;
     /* Plain cursor: clicking does nothing here, so zoom-in was a promise the
        view does not keep. It becomes a grab hand once zoomed, where dragging
@@ -507,8 +571,8 @@ canvas {
     min-height: 0;
     width: 100%;
     display: block;
-    border-radius: 10px;
-    background: #0a0a12;
+    border-radius: var(--r);
+    background: var(--ice);
     cursor: default;
     touch-action: none;
     user-select: none;
@@ -521,7 +585,7 @@ canvas {
     flex-shrink: 0;
     text-align: center;
 }
-#camera-status.bad, #state-readout.bad { color: #ff8080; }
+#camera-status.bad, #state-readout.bad { color: var(--red); }
 #camera-status, #state-readout {
     white-space: pre;
     line-height: 1.5;
@@ -541,8 +605,8 @@ canvas {
         flex: 0 0 auto;
         max-height: 58vh;
         padding: 8px 12px 10px;
-        border-top: 1px solid #1e1e2e;
-        background: #12121a;
+        border-top: 1px solid var(--line);
+        background: var(--board);
     }
 
     #camera-img, #state-canvas { min-height: 200px; }
@@ -561,23 +625,29 @@ canvas {
     flex-direction: column;
     gap: 6px;
 }
-#limits-panel h3 { font-size: 13px; font-weight: 500; color: #999; }
+#limits-panel h3 {
+    font-size: 10px; font-weight: 800; letter-spacing: 0.14em;
+    text-transform: uppercase; color: var(--ink-3);
+}
 #limits-panel label {
     display: flex;
     align-items: center;
     justify-content: space-between;
     gap: 6px;
     font-size: 12px;
-    color: #aaa;
+    color: var(--ink-2);
 }
 #limits-panel input {
     width: 72px;
-    background: #1a1a26;
-    border: 1px solid #2a2a3a;
-    border-radius: 4px;
-    color: #ccc;
+    background: var(--ice);
+    border: 1.5px solid var(--line);
+    border-radius: var(--r);
+    color: var(--blue);
+    font-weight: 700;
     padding: 4px 6px;
-    font: 12px ui-monospace, Menlo, monospace;
+    font-size: 12px;
+    font-variant-numeric: tabular-nums;
+    text-align: right;
 }
 #limits-panel button { padding: 6px 10px; font-size: 12px; }
 /* Two gauges rather than a sentence: which cap is saturated, and how close
@@ -586,18 +656,24 @@ canvas {
 .limit-gauge {
     display: flex;
     align-items: center;
-    gap: 6px;
-    font: 11px ui-monospace, Menlo, monospace;
-    color: #888;
+    gap: 7px;
+    font-size: 9.5px;
+    font-weight: 800;
+    letter-spacing: 0.1em;
+    text-transform: uppercase;
+    color: var(--ink-3);
 }
 .gauge-label { width: 34px; flex-shrink: 0; }
-.gauge-pct { width: 34px; flex-shrink: 0; text-align: right; }
+.gauge-pct {
+    width: 34px; flex-shrink: 0; text-align: right;
+    color: var(--blue); font-variant-numeric: tabular-nums;
+}
 .gauge-track {
     position: relative;
     flex: 1;
-    height: 10px;
-    background: #1a1a26;
-    border: 1px solid #2a2a3a;
+    height: 11px;
+    background: var(--ice);
+    border: 1.5px solid var(--line-hi);
     border-radius: 3px;
     overflow: hidden;
 }
@@ -610,15 +686,15 @@ canvas {
 }
 /* Blue speed, amber accel — the same colours the state view uses for
    camera and controller, so the palette means one thing throughout. */
-.gauge-fill.speed { background: #4a9eff; }
-.gauge-fill.accel { background: #ffb040; }
+.gauge-fill.speed { background: var(--blue); }
+.gauge-fill.accel { background: var(--amber); }
 .gauge-peak {
     position: absolute;
-    top: -1px;
-    bottom: -1px;
+    top: -2px;
+    bottom: -2px;
     width: 2px;
-    background: #fff;
-    opacity: 0.85;
+    background: var(--red);
+    opacity: 1;
     left: 0;
     display: none;
 }
@@ -629,10 +705,10 @@ canvas {
     align-items: center;
     gap: 4px;
     font: 11px ui-monospace, Menlo, monospace;
-    color: #aaa;
+    color: var(--ink-2);
 }
 .limit-row .lim-name { width: 34px; flex-shrink: 0; }
-.limit-row .lim-unit { width: 42px; flex-shrink: 0; color: #777; }
+.limit-row .lim-unit { width: 42px; flex-shrink: 0; color: var(--ink-4); }
 .limit-row input { flex: 1; min-width: 0; }
 .lim-scale {
     padding: 3px 6px;
@@ -644,8 +720,8 @@ canvas {
     font: 11px ui-monospace, Menlo, monospace;
     text-align: center;
     min-height: 14px;
-    color: #7ac97a;
+    color: var(--green);
 }
 /* A rejected limit has to LOOK rejected. Silently clamping is how you end
    up believing the machine is slower than it is. */
-#limit-msg.bad { color: #ff8080; }
+#limit-msg.bad { color: var(--red); }
