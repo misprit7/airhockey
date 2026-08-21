@@ -57,11 +57,15 @@ def main():
     ap.add_argument("--exposure", type=float, default=300.0)
     ap.add_argument("--gain", type=float, default=12.0)
     ap.add_argument("--threshold", type=int, default=90)
-    ap.add_argument("--speed", type=float, default=2000.0,
-                    help="paddle speed cap mm/s")
-    ap.add_argument("--accel", type=float, default=6000.0,
-                    help="paddle accel cap mm/s^2. The paddle tips at about "
-                         "0.8 g (~8000); this leaves a margin.")
+    ap.add_argument("--speed", type=float, default=8000.0,
+                    help="paddle speed cap mm/s. 8000 of the firmware's 12000; "
+                         "the motors bind at 12968 of cable")
+    ap.add_argument("--accel", type=float, default=24000.0,
+                    help="paddle accel cap mm/s^2. NOTE this is ABOVE the "
+                         "~15120 at which the paddle tips (g*r/h, r=50.4, "
+                         "h=32.7) and above the ~17400 the cables can make "
+                         "near the centreline edge of the workspace. Asked "
+                         "for deliberately; drop it if the paddle hops.")
     ap.add_argument("--ramp", type=float, default=3.0,
                     help="jerk-limit ramp, ms")
     ap.add_argument("--cmd-hz", type=float, default=100.0,
