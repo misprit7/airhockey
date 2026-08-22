@@ -45,7 +45,23 @@ bool ClearPath::connect() {
 }
 
 bool ClearPath::enable() {
-  if (!connected_) return false;
+  // Every failure path here says WHY, on stdout, before returning false.
+  // It used to be possible for this to refuse silently -- the !connected_
+  // branch printed nothing, and the caller's only reply was "ERR motor
+  // enable failed" down a TCP socket to whoever asked. Watching the master's
+  // console you saw "ENABLE" and then nothing at all, which is the least
+  // useful thing a machine can do when it declines to energize.
+  //
+  // stdout rather than stderr so it lands in logs/cdpr_master.log with
+  // everything else; a diagnosis that is only ever on someone's screen is
+  // gone the moment the terminal scrolls.
+  if (!connected_) {
+    printf("ENABLE refused: not connected to the SC-Hub. The drives are "
+           "found over USB at startup, so this means the link dropped "
+           "since then.\n");
+    fflush(stdout);
+    return false;
+  }
   if (enabled_) return true;
 
   try {
@@ -60,16 +76,39 @@ bool ClearPath::enable() {
       double timeout = mgr_->TimeStampMsec() + 5000;
       while (!node.Motion.IsReady()) {
         if (mgr_->TimeStampMsec() > timeout) {
-          fprintf(stderr, "ClearPath: Motor %d timed out enabling\n", i);
+          // Say what the drive itself thinks is wrong. Nearly always either
+          // no bus voltage (the hub enumerates over USB and reports the node
+          // happily with the 24-75 V supply off) or a latched shutdown --
+          // and an RMS overload will not clear until its thermal model has
+          // cooled, so retrying straight away just re-trips it.
+          printf("ENABLE refused: motor %d did not become ready within 5 s.\n", i);
+          try {
+            node.Status.Alerts.Refresh();
+            alertReg a = node.Status.Alerts.Value();
+            if (a.isInAlert()) {
+              char buf[512];
+              a.StateStr(buf, sizeof(buf));
+              printf("  motor %d alert: %s\n", i, buf);
+            } else {
+              printf("  motor %d reports NO alert, which points at bus "
+                     "voltage rather than a fault -- check the 24-75 V "
+                     "supply is on.\n", i);
+            }
+          } catch (mnErr &e2) {
+            printf("  motor %d alert unreadable (0x%08x)\n", i, e2.ErrorCode);
+          }
+          fflush(stdout);
           return false;
         }
       }
     }
     enabled_ = true;
+    printf("All four motors energized.\n");
+    fflush(stdout);
     return true;
   } catch (mnErr &err) {
-    fprintf(stderr, "ClearPath enable error: 0x%08x %s\n", err.ErrorCode,
-            err.ErrorMsg);
+    printf("ENABLE refused: 0x%08x %s\n", err.ErrorCode, err.ErrorMsg);
+    fflush(stdout);
     return false;
   }
 }
