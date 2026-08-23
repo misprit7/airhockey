@@ -315,20 +315,29 @@ constexpr float WS_BOX_MAX_X = 1758.0f;
 constexpr float WS_BOX_MIN_Y = 233.0f;
 constexpr float WS_BOX_MAX_Y = 733.0f;
 
-// ACTIVE. Currently BOX: reverted 2026-08-16 to test whether widening the
-// area is what put unexpected slack in the cables. The wide box reaches
-// 58 mm nearer the anchor hull and out to the walls, both regions the cable
-// model has never been checked in, and it roughly tripled the area over
-// which the paddle's orientation is free to wander from the 135 deg the
-// model assumes.
-constexpr float WS_MIN_X = WS_BOX_MIN_X;
-constexpr float WS_MAX_X = WS_BOX_MAX_X;
-constexpr float WS_MIN_Y = WS_BOX_MIN_Y;
-constexpr float WS_MAX_Y = WS_BOX_MAX_Y;
+// ACTIVE. Currently WIDE, restored 2026-08-23.
+//
+// It was BOX from 2026-08-16 while we tested whether widening the area was
+// what put unexpected slack in the cables. That test did not convict it:
+// the slack was still there in the small box. So the revert bought no
+// diagnosis and cost 62% of the playing area, and the remaining suspects
+// (the 3 ms jerk ramp against the cable's own ringing period, and the
+// fixed-theta assumption below) are both testable inside either box.
+//
+// What was true when we narrowed it is still true, and is now a thing to
+// WATCH rather than a reason to stay small: the wide box reaches 58 mm
+// nearer the anchor hull and out to the walls, regions the cable model has
+// never been checked in, and it roughly triples the area over which the
+// paddle's orientation is free to wander from the 135 deg the model
+// assumes. Expect the model to be at its worst in the far corners.
+constexpr float WS_MIN_X = WS_WIDE_MIN_X;
+constexpr float WS_MAX_X = WS_WIDE_MAX_X;
+constexpr float WS_MIN_Y = WS_WIDE_MIN_Y;
+constexpr float WS_MAX_Y = WS_WIDE_MAX_Y;
 
 // Default calibration/home position: centre of the workspace.
-constexpr float HOME_X = (WS_MIN_X + WS_MAX_X) / 2.0f;  // 1584.0
-constexpr float HOME_Y = (WS_MIN_Y + WS_MAX_Y) / 2.0f;  // 483.0
+constexpr float HOME_X = (WS_MIN_X + WS_MAX_X) / 2.0f;  // 1578.75
+constexpr float HOME_Y = (WS_MIN_Y + WS_MAX_Y) / 2.0f;  // 482.95
 
 // Bearing from each anchor toward HOME. This is the zero reference for the
 // wrap angle: measuring psi relative to a fixed per-motor direction avoids

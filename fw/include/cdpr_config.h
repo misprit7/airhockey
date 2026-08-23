@@ -70,10 +70,11 @@ constexpr float MAX_VELOCITY_MM_S = 12000.0f;
 // which is 2.19 N.m over a 48 mm spool) against ~270 g of effective mass
 // — paddle plus rotor and spool inertia reflected through the cables:
 //
-// NOTE: these were solved for the OLD 500x500 workspace (x 1258..1758,
-// y 233..733). The workspace is now 768x904 and reaches nearer both the
-// walls and the anchor hull, so the corner figures are OPTIMISTIC for the
-// region now reachable — WS_MIN_X moved from 162 mm of hull clearance to
+// NOTE: these were solved for the 500x500 BOX workspace (x 1258..1758,
+// y 233..733), which was active 2026-08-16..08-23. The workspace is WIDE
+// again as of 2026-08-23 — 758 x 883, reaching nearer both the walls and
+// the anchor hull — so the corner figures below are OPTIMISTIC for the
+// region now reachable: WS_MIN_X moved from 162 mm of hull clearance to
 // 104 mm, and that is the direction in which tension diverges. Re-solve
 // before trusting a corner number.
 //
