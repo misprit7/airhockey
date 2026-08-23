@@ -76,11 +76,12 @@ WS_WIDE_MAX_Y = RAIL_MAX_Y - WALL_MARGIN_MM - MALLET_RADIUS_MM
 WS_BOX_MIN_X, WS_BOX_MAX_X = 1258.0, 1758.0
 WS_BOX_MIN_Y, WS_BOX_MAX_Y = 233.0, 733.0
 
-# ACTIVE — BOX again, reverted 2026-08-23 (out of sync, slack + overcurrent
-# on small moves). Note HOME is DERIVED from these, so widening also moved
-# the CAL fallback 71 mm; see the header for why that matters more.
-WS_MIN_X, WS_MAX_X = WS_BOX_MIN_X, WS_BOX_MAX_X
-WS_MIN_Y, WS_MAX_Y = WS_BOX_MIN_Y, WS_BOX_MAX_Y
+# ACTIVE — WIDE, reinstated 2026-08-23 after the slack/overcurrent that got
+# it reverted twice turned out to be drive 2 knocked out of step/dir mode,
+# not the bounds. Note HOME is DERIVED from these, so switching moves the
+# CAL fallback 71 mm; see the header.
+WS_MIN_X, WS_MAX_X = WS_WIDE_MIN_X, WS_WIDE_MAX_X
+WS_MIN_Y, WS_MAX_Y = WS_WIDE_MIN_Y, WS_WIDE_MAX_Y
 
 HOME_X = (WS_MIN_X + WS_MAX_X) / 2.0
 HOME_Y = (WS_MIN_Y + WS_MAX_Y) / 2.0

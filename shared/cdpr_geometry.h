@@ -315,37 +315,46 @@ constexpr float WS_BOX_MAX_X = 1758.0f;
 constexpr float WS_BOX_MIN_Y = 233.0f;
 constexpr float WS_BOX_MAX_Y = 733.0f;
 
-// ACTIVE. BOX again, reverted 2026-08-23 within hours of going WIDE:
-// motors out of sync, and slack plus overcurrent on even small moves.
+// ACTIVE. WIDE, and this time it stays.
 //
-// This is the SECOND revert, and unlike the 2026-08-16 one it has a
-// symptom attached. Two mechanisms fit, and they are not the same thing:
+// These bounds were reverted TWICE, on 2026-08-16 and again on 08-23, both
+// times because the rig went out of sync with slack and overcurrent. The
+// cause was neither of them: drive 2 had been knocked out of step/dir mode
+// during a calibration session and was silently not moving at all, so
+// three cables dragged the paddle away from anchor 2 and the fourth went
+// taut on its own. Found 2026-08-23 by bracketing the pretension step with
+// the drives' own encoders -- motor 2 read 0.00 mm of travel at near-zero
+// torque while the other three read the commanded 1.51 mm.
 //
-//  1. The bounds. WIDE reaches 58 mm nearer the anchor hull (162 -> 104 mm
-//     of clearance), and tension for a given force diverges as you
-//     approach it. The accel figures in fw/include/cdpr_config.h were
-//     solved for BOX and are optimistic there by construction.
+// Recorded because the workspace was a plausible-looking suspect twice
+// over and cost most of a day both times. The lesson is not about these
+// four numbers: an electrical fault that stops a motor moving presents as
+// a kinematics problem, and no amount of reasoning about geometry finds
+// it. Measure what the motors DID before theorising about what they were
+// asked to do.
 //
-//  2. HOME. It is DERIVED from these bounds, so widening moved it 71 mm in
-//     x, 1508 -> 1578.75. cdpr_master falls back to HOME as the CAL
-//     reference when ENABLE arrives without a measured pose, so the
-//     Teensy would then believe the mallet sits 71 mm from where it does.
-//     Every cable delta after that is computed from the wrong origin,
-//     which is precisely "out of sync, some cables slack and others
-//     overcurrent" -- and it would happen on the SMALLEST move, which
-//     bounds-related tension trouble would not.
-//
-// The small-move symptom points at 2. Reverting fixes either, because
-// HOME follows the bounds; so this revert does NOT convict the bounds.
-// Decoupling HOME from the workspace would separate them.
-constexpr float WS_MIN_X = WS_BOX_MIN_X;
-constexpr float WS_MAX_X = WS_BOX_MAX_X;
-constexpr float WS_MIN_Y = WS_BOX_MIN_Y;
-constexpr float WS_MAX_Y = WS_BOX_MAX_Y;
+// Two things about WIDE remain true and are worth WATCHING rather than
+// fearing. It reaches 58 mm nearer the anchor hull (162 -> 104 mm of
+// clearance), where the tension needed for a given force diverges, so the
+// accel figures in fw/include/cdpr_config.h -- solved for the old BOX --
+// are optimistic in the corners. And it roughly triples the area over
+// which the paddle's orientation can wander from the 135 deg the model
+// assumes, so expect the model to be at its worst in the far corners.
+constexpr float WS_MIN_X = WS_WIDE_MIN_X;
+constexpr float WS_MAX_X = WS_WIDE_MAX_X;
+constexpr float WS_MIN_Y = WS_WIDE_MIN_Y;
+constexpr float WS_MAX_Y = WS_WIDE_MAX_Y;
 
 // Default calibration/home position: centre of the workspace.
-constexpr float HOME_X = (WS_MIN_X + WS_MAX_X) / 2.0f;  // 1508.0
-constexpr float HOME_Y = (WS_MIN_Y + WS_MAX_Y) / 2.0f;  // 483.0
+//
+// NOTE this is DERIVED, so changing the bounds above moves it -- 71 mm in
+// x between BOX and WIDE. cdpr_master falls back to HOME as the CAL
+// reference when ENABLE arrives without a measured pose, so a workspace
+// edit silently relocates the calibration origin. That is a sharp edge
+// (it was my first theory for the 08-23 fault, and wrong), not a bug
+// today: pass a measured pose and it never applies.
+constexpr float HOME_X = (WS_MIN_X + WS_MAX_X) / 2.0f;  // 1578.75
+constexpr float HOME_Y = (WS_MIN_Y + WS_MAX_Y) / 2.0f;  // 482.95
 
 // Bearing from each anchor toward HOME. This is the zero reference for the
 // wrap angle: measuring psi relative to a fixed per-motor direction avoids
