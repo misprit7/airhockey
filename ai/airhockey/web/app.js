@@ -47,6 +47,11 @@ const COLORS = {
 
 // Hardware overlay state
 let hwPosition = null; // {x, y} in physics coords, or null if not active
+// Reachable box in the SAME coords, straight from the server. The mallet
+// stops at this edge, not at the table edge, and without drawing it a
+// mallet parked on a software limit is indistinguishable from one against
+// the wall.
+let hwWorkspace = null;
 let showHwOverlay = true;
 
 // Trail buffer
@@ -242,6 +247,19 @@ function drawPaddle(x, y, color, glowColor, ringColor) {
     ctx.fill();
 }
 
+// The robot's reachable box. Dashed because it is a software limit rather
+// than a physical edge -- the mallet stopping here means "cannot go further",
+// not "hit something".
+function drawReachable(ws) {
+    ctx.save();
+    ctx.strokeStyle = COLORS.hwRing || "rgba(232,33,63,0.45)";
+    ctx.lineWidth = Math.max(1, ts(0.003));
+    ctx.setLineDash([ts(0.018), ts(0.014)]);
+    ctx.strokeRect(tx(ws.min_x), ty(ws.max_y),
+                   ts(ws.max_x - ws.min_x), ts(ws.max_y - ws.min_y));
+    ctx.restore();
+}
+
 function drawHwPaddle(x, y) {
     const px = tx(x);
     const py = ty(y);
@@ -313,6 +331,7 @@ function render() {
         }
         drawPaddle(frame.agent_x, frame.agent_y, COLORS.agent, COLORS.agentGlow, COLORS.agentRing);
         if (hwPosition && showHwOverlay) {
+            if (hwWorkspace) drawReachable(hwWorkspace);
             drawHwPaddle(hwPosition.x, hwPosition.y);
         }
     }
@@ -345,6 +364,7 @@ function connect() {
             frame = msg;
             if (msg.hw_x !== undefined && msg.hw_y !== undefined) {
                 hwPosition = { x: msg.hw_x, y: msg.hw_y };
+                if (msg.hw_ws) hwWorkspace = msg.hw_ws;
             } else {
                 hwPosition = null;
             }

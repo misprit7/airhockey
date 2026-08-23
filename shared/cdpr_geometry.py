@@ -63,25 +63,39 @@ MALLET_THETA_RAD = 2.3561945   # 135 deg — see the header for why not 0
 # human-end wall is ~1100 mm outside the anchor hull and unreachable at any
 # torque, so it comes from the hull instead. See the header.
 MALLET_RADIUS_MM = 50.4     # MEASURED: 100.8 mm diameter
-WALL_MARGIN_MM = 10.0
+WALL_MARGIN_MM = 50.0       # collision only; force closure binds on 3 sides
 HULL_CLEARANCE_MM = 104.3
 
-# WIDE — wall-derived playing area (0.669 m^2)
+# Static HOLDING cost, not collision, is what actually bounds this rig.
+# 4 cables / 3 DOF -> a 1-D internal-force null space n; every cable must
+# stay taut, so max(n)/min(n) is the tension amplification, and it diverges
+# at the hull. Parts of WIDE are outside force closure entirely. Threshold
+# 7.8 is empirical: the old BOX measured 7.72 and never tripped. See header.
+WS_FC_MIN_X, WS_FC_MAX_X = 1350.0, 1917.5
+WS_FC_MIN_Y, WS_FC_MAX_Y = 142.9, 823.0
+MAX_HOLD_AMPLIFICATION = 7.8
+
+# WIDE — wall-derived. REFERENCE ONLY; not safe to make active.
 WS_WIDE_MIN_X = max(MOTOR_X[0], MOTOR_X[3]) + HULL_CLEARANCE_MM
 WS_WIDE_MAX_X = RAIL_MAX_X - WALL_MARGIN_MM - MALLET_RADIUS_MM
 WS_WIDE_MIN_Y = RAIL_MIN_Y + WALL_MARGIN_MM + MALLET_RADIUS_MM
 WS_WIDE_MAX_Y = RAIL_MAX_Y - WALL_MARGIN_MM - MALLET_RADIUS_MM
 
+# SAFE — tighter of collision and force closure, per side. 0.386 m^2.
+WS_SAFE_MIN_X = max(WS_WIDE_MIN_X, WS_FC_MIN_X)
+WS_SAFE_MAX_X = min(WS_WIDE_MAX_X, WS_FC_MAX_X)
+WS_SAFE_MIN_Y = max(WS_WIDE_MIN_Y, WS_FC_MIN_Y)
+WS_SAFE_MAX_Y = min(WS_WIDE_MAX_Y, WS_FC_MAX_Y)
+
 # BOX — the conservative middle-half used through bring-up (0.250 m^2)
 WS_BOX_MIN_X, WS_BOX_MAX_X = 1258.0, 1758.0
 WS_BOX_MIN_Y, WS_BOX_MAX_Y = 233.0, 733.0
 
-# ACTIVE — WIDE, reinstated 2026-08-23 after the slack/overcurrent that got
-# it reverted twice turned out to be drive 2 knocked out of step/dir mode,
-# not the bounds. Note HOME is DERIVED from these, so switching moves the
-# CAL fallback 71 mm; see the header.
-WS_MIN_X, WS_MAX_X = WS_WIDE_MIN_X, WS_WIDE_MAX_X
-WS_MIN_Y, WS_MAX_Y = WS_WIDE_MIN_Y, WS_WIDE_MAX_Y
+# ACTIVE — SAFE. WIDE went live 2026-08-23 and immediately tripped
+# RMSOverloadShutdown just HOLDING the mallet near an edge: parts of it are
+# outside force closure. See the header for the mechanism.
+WS_MIN_X, WS_MAX_X = WS_SAFE_MIN_X, WS_SAFE_MAX_X
+WS_MIN_Y, WS_MAX_Y = WS_SAFE_MIN_Y, WS_SAFE_MAX_Y
 
 HOME_X = (WS_MIN_X + WS_MAX_X) / 2.0
 HOME_Y = (WS_MIN_Y + WS_MAX_Y) / 2.0

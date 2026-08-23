@@ -290,22 +290,77 @@ constexpr float MALLET_THETA_RAD = 2.3561945f; // 135 deg
 // optimistic on all four sides.)
 constexpr float MALLET_RADIUS_MM = 50.4f;
 
-// Clearance from the wall to the paddle's RIM.
-constexpr float WALL_MARGIN_MM = 10.0f;
+// Clearance from the wall to the paddle's RIM. Collision only — this is
+// the one margin that is about not hitting things, and on three sides it
+// is NOT what binds; see the force-closure block below.
+constexpr float WALL_MARGIN_MM = 50.0f;
 
 // Clearance from the anchor hull to the paddle CENTRE. Not a rim clearance:
 // what must stay inside the hull is where the cables attach, not the plastic.
 constexpr float HULL_CLEARANCE_MM = 104.3f;
 
+// ── The constraint that actually binds: static HOLDING cost ─────────
+//
+// Being inside the hull is necessary but nowhere near sufficient, and the
+// wall-derived box (WIDE, below) is not merely aggressive — parts of it are
+// outside force closure entirely, where the paddle cannot be held at any
+// torque. That is not a tuning failure; it is geometry.
+//
+// Four cables and three DOF make the wrench matrix 3x4, so its null space
+// is ONE-dimensional: exactly one way to change tensions while producing no
+// net force and no moment. Every static hold is t = particular + lambda*n,
+// and since cables only pull, every cable must stay taut — so lambda is set
+// by the SMALLEST component of n while the heat is set by the LARGEST:
+//
+//     amplification = max(n) / min(n)
+//
+// Deep inside the hull n is near-uniform and this is ~1.1: holding costs
+// each cable about the minimum. Approaching a hull edge one component goes
+// to zero and it diverges. The paddle is not moving and no net force is
+// being made; the cables simply pull against each other, which is heat with
+// no work — RMSOverloadShutdown with the rig standing still. This is what
+// happened on 2026-08-23 when WIDE went live.
+//
+// NOTE it is a STATIC quantity. Acceleration capability stays fine right up
+// to the boundary (the peak-force LP shows >45000 mm/s^2 everywhere in
+// WIDE), which is exactly why an accel-based limit does not catch this.
+//
+// The bounds below are the largest axis-aligned box with amplification
+// <= 7.8, subject to the wall margin. The threshold is EMPIRICAL: the old
+// bring-up BOX measured 7.72 and ran for weeks without a thermal trip, so
+// 7.8 is "no worse than the thing that demonstrably worked". It is not
+// derived from a torque rating — the continuous:peak ratio for these drives
+// has never been measured, and the amplification ratio has the virtue of
+// being pure geometry with no such assumption in it.
+//
+// Recompute with shared/check_geometry.py, which fails if these drift.
+constexpr float WS_FC_MIN_X = 1350.0f;   // hull clearance 254.3 mm to centre
+constexpr float WS_FC_MAX_X = 1917.5f;   // wall margin binds here, not FC
+constexpr float WS_FC_MIN_Y = 142.9f;
+constexpr float WS_FC_MAX_Y = 823.0f;
+constexpr float MAX_HOLD_AMPLIFICATION = 7.8f;
+
 // Two candidate boxes. Switch by changing the four ACTIVE lines at the end;
 // nothing else needs touching, and HOME follows automatically.
 
-// WIDE — the wall-derived playing area (0.669 m^2).
+// WIDE — the wall-derived playing area. RETAINED ONLY AS A REFERENCE: it
+// is not safe to make active, for the reason above.
 constexpr float WS_WIDE_MIN_X =
     (MOTOR_X[0] > MOTOR_X[3] ? MOTOR_X[0] : MOTOR_X[3]) + HULL_CLEARANCE_MM;
 constexpr float WS_WIDE_MAX_X = RAIL_MAX_X - WALL_MARGIN_MM - MALLET_RADIUS_MM;
 constexpr float WS_WIDE_MIN_Y = RAIL_MIN_Y + WALL_MARGIN_MM + MALLET_RADIUS_MM;
 constexpr float WS_WIDE_MAX_Y = RAIL_MAX_Y - WALL_MARGIN_MM - MALLET_RADIUS_MM;
+
+// SAFE — the tighter of collision and force closure, per side. This is the
+// one to use. 0.386 m^2, 54% more area than BOX at the same holding cost.
+constexpr float WS_SAFE_MIN_X =
+    (WS_WIDE_MIN_X > WS_FC_MIN_X ? WS_WIDE_MIN_X : WS_FC_MIN_X);
+constexpr float WS_SAFE_MAX_X =
+    (WS_WIDE_MAX_X < WS_FC_MAX_X ? WS_WIDE_MAX_X : WS_FC_MAX_X);
+constexpr float WS_SAFE_MIN_Y =
+    (WS_WIDE_MIN_Y > WS_FC_MIN_Y ? WS_WIDE_MIN_Y : WS_FC_MIN_Y);
+constexpr float WS_SAFE_MAX_Y =
+    (WS_WIDE_MAX_Y < WS_FC_MAX_Y ? WS_WIDE_MAX_Y : WS_FC_MAX_Y);
 
 // BOX — the conservative middle-half used through bring-up (0.250 m^2).
 // Same numbers it had before 2026-08-16, to the millimetre, so reverting to
@@ -340,10 +395,10 @@ constexpr float WS_BOX_MAX_Y = 733.0f;
 // are optimistic in the corners. And it roughly triples the area over
 // which the paddle's orientation can wander from the 135 deg the model
 // assumes, so expect the model to be at its worst in the far corners.
-constexpr float WS_MIN_X = WS_WIDE_MIN_X;
-constexpr float WS_MAX_X = WS_WIDE_MAX_X;
-constexpr float WS_MIN_Y = WS_WIDE_MIN_Y;
-constexpr float WS_MAX_Y = WS_WIDE_MAX_Y;
+constexpr float WS_MIN_X = WS_SAFE_MIN_X;
+constexpr float WS_MAX_X = WS_SAFE_MAX_X;
+constexpr float WS_MIN_Y = WS_SAFE_MIN_Y;
+constexpr float WS_MAX_Y = WS_SAFE_MAX_Y;
 
 // Default calibration/home position: centre of the workspace.
 //

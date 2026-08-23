@@ -367,6 +367,7 @@ async def live_game(ws: WebSocket):
                     frame_msg["hw_x_mm"] = round(hx, 1)
                     frame_msg["hw_y_mm"] = round(hy, 1)
                     frame_msg["hw"] = hardware_dynamics.hw_state()
+                    frame_msg["hw_ws"] = hardware_dynamics.workspace_in_sim()
                 await ws.send_json(frame_msg)
                 await asyncio.sleep(1 / 60)
                 continue
@@ -398,6 +399,7 @@ async def live_game(ws: WebSocket):
                 frame_msg["hw_x_mm"] = round(hw_x_mm, 1)
                 frame_msg["hw_y_mm"] = round(hw_y_mm, 1)
                 frame_msg["hw"] = hardware_dynamics.hw_state()
+                frame_msg["hw_ws"] = hardware_dynamics.workspace_in_sim()
             await ws.send_json(frame_msg)
 
             if terminated or truncated:

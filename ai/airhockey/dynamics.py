@@ -367,6 +367,29 @@ class HardwareDynamics(MotorDynamics):
             **{k: v for k, v in self._usage.items() if v is not None},
         }
 
+    # ── Sim <-> table, NOT sim <-> workspace ────────────────────────────
+    #
+    # These used to map the sim's whole agent half onto the WORKSPACE
+    # rectangle, which is a silent rescale — 1.0 x 1.0 m of sim onto
+    # whatever the reachable box happens to be. Three things were wrong
+    # with it, and they compound:
+    #
+    #   1. The scale factor changed whenever the workspace did. Editing
+    #      WS_* rescaled the meaning of every sim coordinate in the system.
+    #   2. Paddle SPEED was rescaled with it, so a policy trained at
+    #      4 m/s in sim produced something else entirely on hardware.
+    #   3. The mallet rendered at the corner of the drawn table whenever it
+    #      was at the corner of its reachable box, which is mid-table. The
+    #      display said "at the wall" when the truth was "at the software
+    #      limit", and there was no way to tell those apart by looking.
+    #
+    # The frame is now the TABLE, which is a physical fact and does not
+    # move when a limit is retuned. The workspace re-enters only as a
+    # clamp, so an unreachable request stops at the boundary and RENDERS
+    # there, in its true place on the table.
+    #
+    # sim y 0..1  ->  grid x RAIL_MAX_X..CENTERLINE_X  (robot end -> centre)
+    # sim x 0..1  ->  grid y RAIL_MIN_Y..RAIL_MAX_Y
     def _sim_to_mm(self, sx: float, sy: float):
         """Sim metres -> grid-frame mm, clamped into the workspace."""
         g = self.geom
@@ -374,16 +397,28 @@ class HardwareDynamics(MotorDynamics):
         fy = min(max(sy / self.sim_half_height, 0.0), 1.0)
         if self.SIM_X_FLIP:
             fx = 1.0 - fx
-        mm_x = g.WS_MAX_X - fy * (g.WS_MAX_X - g.WS_MIN_X)
-        mm_y = g.WS_MIN_Y + fx * (g.WS_MAX_Y - g.WS_MIN_Y)
+        mm_x = g.RAIL_MAX_X - fy * (g.RAIL_MAX_X - g.CENTERLINE_X)
+        mm_y = g.RAIL_MIN_Y + fx * (g.RAIL_MAX_Y - g.RAIL_MIN_Y)
         # Clamp here rather than letting the firmware do it silently.
         return g.clamp_to_workspace(mm_x, mm_y)
 
     def _mm_to_sim(self, mm_x: float, mm_y: float):
         g = self.geom
-        fy = (g.WS_MAX_X - mm_x) / (g.WS_MAX_X - g.WS_MIN_X)
-        fx = (mm_y - g.WS_MIN_Y) / (g.WS_MAX_Y - g.WS_MIN_Y)
+        fy = (g.RAIL_MAX_X - mm_x) / (g.RAIL_MAX_X - g.CENTERLINE_X)
+        fx = (mm_y - g.RAIL_MIN_Y) / (g.RAIL_MAX_Y - g.RAIL_MIN_Y)
         if self.SIM_X_FLIP:
             fx = 1.0 - fx
         return fx * self.sim_width, fy * self.sim_half_height
+
+    def workspace_in_sim(self):
+        """The reachable box in sim coordinates, for the UI to draw.
+
+        Sent to the browser rather than recomputed there: the front end
+        should not own a second copy of this mapping, which is how the two
+        coordinate systems got out of step in the first place.
+        """
+        x0, y0 = self._mm_to_sim(self.geom.WS_MIN_X, self.geom.WS_MIN_Y)
+        x1, y1 = self._mm_to_sim(self.geom.WS_MAX_X, self.geom.WS_MAX_Y)
+        return {"min_x": min(x0, x1), "max_x": max(x0, x1),
+                "min_y": min(y0, y1), "max_y": max(y0, y1)}
 
