@@ -44,6 +44,23 @@ bool ClearPath::connect() {
   }
 }
 
+// EStopped is bit 28 of bits[0] of the alert register.
+//
+// It is NOT a fault. The SDK latches it as a safety interlock and
+// deliberately refuses to drop it on AlertsClear -- "to prevent unintended
+// motion", in its own words -- so it is precisely what a drive that was shut
+// down CLEANLY looks like on the next launch. All four report it, every run.
+//
+// Reporting that in the same voice as an RMS overload puts four alarming
+// lines on every single startup, and a warning that always fires is a
+// warning nobody reads. It has to be quieter than the thing it would
+// otherwise hide.
+static constexpr uint32_t ALERT_ESTOPPED = 1u << 28;
+
+static bool isRoutineEStop(const alertReg &a) {
+  return a.bits[0] == ALERT_ESTOPPED && a.bits[1] == 0 && a.bits[2] == 0;
+}
+
 int ClearPath::clearFaults() {
   if (!connected_ || !port_) {
     printf("clearFaults: not connected to the SC-Hub.\n");
@@ -51,7 +68,7 @@ int ClearPath::clearFaults() {
     return -1;
   }
 
-  int stuck = 0, found = 0;
+  int stuck = 0, found = 0, estopped = 0;
   for (int i = 0; i < 4; i++) {
     try {
       INode &node = port_->Nodes(i);
@@ -59,9 +76,11 @@ int ClearPath::clearFaults() {
 
       node.Status.Alerts.Refresh();
       alertReg before = node.Status.Alerts.Value();
-      if (before.isInAlert()) {
+      if (isRoutineEStop(before)) {
+        estopped++;
+      } else if (before.isInAlert()) {
         before.StateStr(buf, sizeof(buf));
-        printf("  motor %d fault at startup: %s\n", i, buf);
+        printf("  motor %d FAULT AT STARTUP: %s\n", i, buf);
         found++;
       }
 
@@ -87,10 +106,17 @@ int ClearPath::clearFaults() {
     }
   }
 
-  if (found == 0 && stuck == 0) {
+  // The routine case gets one quiet line naming itself as routine, so the
+  // startup banner stays the same shape every run and a real fault above it
+  // is the thing that stands out.
+  if (estopped > 0 && found == 0 && stuck == 0) {
+    printf("%d drive(s) E-stopped from the last shutdown (routine); "
+           "cleared.\n", estopped);
+  } else if (found == 0 && stuck == 0) {
     printf("No drive faults at startup.\n");
   } else if (stuck == 0) {
-    printf("Cleared faults on %d motor(s).\n", found);
+    printf("Cleared REAL faults on %d motor(s) -- see above; they describe "
+           "the PREVIOUS run.\n", found);
   } else {
     printf("WARNING: %d motor(s) still in alert. An RMS overload will not "
            "clear until the drive's thermal model cools -- wait rather than "
