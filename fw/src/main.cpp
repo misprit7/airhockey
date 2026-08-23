@@ -116,6 +116,28 @@ static void processCommand(char *line) {
     while (*args == ' ' || *args == '\t') args++;
   }
 
+  // FLASH — latency probe. Drives the LED HIGH for `ms` and replies, and
+  // MOVES NOTHING. The point is to put a sharp optical event on the table at
+  // a known point in the command path, so the camera can time it.
+  //
+  // The reply is sent AFTER the LED goes high, so a host that stamps the
+  // send and the reply brackets the round trip: everything outside those two
+  // stamps is host and USB, everything inside is this firmware. The camera
+  // then sees the LED some further time later, and that difference is the
+  // sensing half — exposure, transfer, centroiding — which is the part no
+  // amount of reasoning about the control path can give you.
+  if (strcasecmp(cmd, "FLASH") == 0) {
+    int ms = 40;
+    sscanf(args, "%d", &ms);
+    if (ms < 1) ms = 1;
+    if (ms > 1000) ms = 1000;
+    digitalWriteFast(LED_BUILTIN, HIGH);
+    Serial.printf("OK FLASH %d %lu\n", ms, (unsigned long)micros());
+    delay(ms);
+    digitalWriteFast(LED_BUILTIN, LOW);
+    return;
+  }
+
   if (strcasecmp(cmd, "SPEED") == 0) {
     float v;
     if (sscanf(args, "%f", &v) != 1) {
