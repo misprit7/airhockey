@@ -351,16 +351,25 @@ void CDPR::tick() {
   const float ty = targetY_;
 
   // ── One profile along the direction of travel ──
+  //
+  // Law AND integration together, in the shared header, so the simulator
+  // advances the cart through this exact code rather than a second copy of
+  // it. The parking rule moved in there with the Euler step; it is part of
+  // the law, not bookkeeping.
+  // Through locals because the members are volatile (the ISR touches them)
+  // and a volatile lvalue will not bind to a float&. Copy in, advance, copy
+  // out — the members are only ever written here, so there is no window a
+  // reader could see a half-updated cart.
   const float vx0 = velX_, vy0 = velY_;
-  float nvx, nvy, nax, nay;
-  limitFlags_ = motionProfileStep(cartX_, cartY_, velX_, velY_,
-                                  accX_, accY_, tx, ty,
-                                  velLimit_, accelLimit_, accelRamp_, dt_,
-                                  nvx, nvy, nax, nay);
-  velX_ = nvx;
-  velY_ = nvy;
-  accX_ = nax;
-  accY_ = nay;
+  float px = cartX_, py = cartY_;
+  float pvx = velX_, pvy = velY_;
+  float pax = accX_, pay = accY_;
+  limitFlags_ = motionProfileAdvance(px, py, pvx, pvy, pax, pay, tx, ty,
+                                     velLimit_, accelLimit_, accelRamp_, dt_);
+  velX_ = pvx;
+  velY_ = pvy;
+  accX_ = pax;
+  accY_ = pay;
 
   // Magnitudes, not worst-axis. The per-axis version read 100% on each axis
   // during a diagonal while the cart was really at 141% of both caps, so the
@@ -374,28 +383,11 @@ void CDPR::tick() {
   if (sf > peakSpeedFrac_) peakSpeedFrac_ = sf;
   if (af > peakAccelFrac_) peakAccelFrac_ = af;
 
-  // ── Advance theoretical cart position ──
-  //
-  // Park on the target only when close AND slow, and park both axes at once.
-  // Zeroing one axis' velocity the moment the cart crossed the target's x —
-  // which the per-axis version did, mid-flight, while y was still running —
-  // is what put a kink in the end of every diagonal move.
-  const float rx = tx - cartX_;
-  const float ry = ty - cartY_;
-  const float distSq = rx * rx + ry * ry;
-  const float speedSq = velX_ * velX_ + velY_ * velY_;
-  if (distSq < MOTION_POS_EPS_MM * MOTION_POS_EPS_MM &&
-      speedSq < MOTION_VEL_EPS_MM_S * MOTION_VEL_EPS_MM_S) {
-    cartX_ = tx;
-    cartY_ = ty;
-    velX_ = 0;
-    velY_ = 0;
-    accX_ = 0;   // parked: drop the slew state too, or the next move starts
-    accY_ = 0;   // by unwinding a stale acceleration
-  } else {
-    cartX_ += velX_ * dt_;
-    cartY_ += velY_ * dt_;
-  }
+  // Position and the parking rule are handled inside motionProfileAdvance
+  // above — they used to be open-coded here, which is exactly the split that
+  // forced anyone reproducing this motion to re-implement half of it.
+  cartX_ = px;
+  cartY_ = py;
 
   // ── Convert to motor counts and step atomically ──
   //

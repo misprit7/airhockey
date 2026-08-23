@@ -165,3 +165,49 @@ inline uint8_t motionProfileStep(float px, float py, float vx, float vy,
   }
   return flags;
 }
+
+// Advance the whole cart state — velocity, acceleration AND position — one
+// tick toward `t`. Everything above is the velocity law; this is the law
+// plus the integration, which is the thing a caller actually wants.
+//
+// It exists because the integration used to live in CDPR::tick() while the
+// law lived here, so anything else wanting to reproduce the cart's motion —
+// the simulator, notably — had to re-implement the parking rule and the
+// Euler step. That is a second copy of a control law, created by choice, and
+// the two would drift the moment either was touched. The firmware and the
+// simulator now advance identical state through identical code, so a policy
+// trained in sim is trained against the controller that will actually run.
+//
+// The parking rule is part of the law, not bookkeeping: park only when close
+// AND slow, and park BOTH axes together. Zeroing one axis the moment the
+// cart crossed the target's x — mid-flight, while y was still running — is
+// what used to put a kink in the end of every diagonal move.
+inline uint8_t motionProfileAdvance(float &px, float &py, float &vx, float &vy,
+                                    float &ax, float &ay, float tx, float ty,
+                                    float vMax, float aMax, float rampS,
+                                    float dt) {
+  float nvx, nvy, nax, nay;
+  const uint8_t flags = motionProfileStep(px, py, vx, vy, ax, ay, tx, ty,
+                                          vMax, aMax, rampS, dt,
+                                          nvx, nvy, nax, nay);
+  vx = nvx;
+  vy = nvy;
+  ax = nax;
+  ay = nay;
+
+  const float rx = tx - px;
+  const float ry = ty - py;
+  if (rx * rx + ry * ry < MOTION_POS_EPS_MM * MOTION_POS_EPS_MM &&
+      vx * vx + vy * vy < MOTION_VEL_EPS_MM_S * MOTION_VEL_EPS_MM_S) {
+    px = tx;
+    py = ty;
+    vx = 0.0f;
+    vy = 0.0f;
+    ax = 0.0f;   // parked: drop the slew state too, or the next move starts
+    ay = 0.0f;   // by unwinding a stale acceleration
+  } else {
+    px += vx * dt;
+    py += vy * dt;
+  }
+  return flags;
+}
