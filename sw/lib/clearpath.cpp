@@ -44,6 +44,62 @@ bool ClearPath::connect() {
   }
 }
 
+int ClearPath::clearFaults() {
+  if (!connected_ || !port_) {
+    printf("clearFaults: not connected to the SC-Hub.\n");
+    fflush(stdout);
+    return -1;
+  }
+
+  int stuck = 0, found = 0;
+  for (int i = 0; i < 4; i++) {
+    try {
+      INode &node = port_->Nodes(i);
+      char buf[512];
+
+      node.Status.Alerts.Refresh();
+      alertReg before = node.Status.Alerts.Value();
+      if (before.isInAlert()) {
+        before.StateStr(buf, sizeof(buf));
+        printf("  motor %d fault at startup: %s\n", i, buf);
+        found++;
+      }
+
+      // NodeStopClear as well as AlertsClear: a node stop is latched
+      // separately from the alert register, and a drive left stopped by the
+      // previous session's shutdown will take the enable and then refuse to
+      // move, which looks like a dead axis rather than a cleared fault.
+      node.Status.AlertsClear();
+      node.Motion.NodeStopClear();
+      mgr_->Delay(50);
+
+      node.Status.Alerts.Refresh();
+      alertReg after = node.Status.Alerts.Value();
+      if (after.isInAlert()) {
+        after.StateStr(buf, sizeof(buf));
+        printf("  motor %d STILL IN ALERT after clear: %s\n", i, buf);
+        stuck++;
+      }
+    } catch (mnErr &e) {
+      printf("  motor %d fault clear failed: 0x%08x %s\n", i, e.ErrorCode,
+             e.ErrorMsg);
+      stuck++;
+    }
+  }
+
+  if (found == 0 && stuck == 0) {
+    printf("No drive faults at startup.\n");
+  } else if (stuck == 0) {
+    printf("Cleared faults on %d motor(s).\n", found);
+  } else {
+    printf("WARNING: %d motor(s) still in alert. An RMS overload will not "
+           "clear until the drive's thermal model cools -- wait rather than "
+           "retry.\n", stuck);
+  }
+  fflush(stdout);
+  return stuck;
+}
+
 bool ClearPath::enable() {
   // Every failure path here says WHY, on stdout, before returning false.
   // It used to be possible for this to refuse silently -- the !connected_

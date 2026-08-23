@@ -18,6 +18,20 @@ public:
   // Find the SC hub, open the port, verify all four nodes are present.
   bool connect();
 
+  // Clear latched drive faults, and SAY what was cleared.
+  //
+  // A ClearPath latches its shutdowns: an RMS overload or a tracking error
+  // survives the process exiting, survives the drive being de-energized,
+  // and comes back on the next launch still set, refusing to enable. So
+  // the fault you have to clear is nearly always evidence about the run
+  // BEFORE this one, and clearing it silently throws that evidence away.
+  // This prints every alert it finds before dropping it.
+  //
+  // Returns the number of nodes still in alert afterwards. Not everything
+  // clears on command: an RMS overload will not until the drive's thermal
+  // model has cooled, so a nonzero return means wait, not retry.
+  int clearFaults();
+
   // Energize all four motors and wait for them to report ready.
   bool enable();
 

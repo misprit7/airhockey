@@ -508,6 +508,14 @@ int main(int argc, char *argv[]) {
     }
     logf("Motors connected (not yet enabled).\n");
 
+    // Clear latched faults NOW rather than at ENABLE. A shutdown survives
+    // the process exiting, so the drives can come up already refusing to
+    // energize, and finding that out only when someone presses enable puts
+    // the report at the wrong end of the session -- the fault belongs to
+    // the PREVIOUS run and reads as evidence about it. Not fatal if some
+    // will not clear: they are reported and enable can still be attempted.
+    robot.clearFaults();
+
     robot.reportTorqueLimits();
 
     // ── TCP server ──

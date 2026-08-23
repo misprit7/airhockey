@@ -315,29 +315,37 @@ constexpr float WS_BOX_MAX_X = 1758.0f;
 constexpr float WS_BOX_MIN_Y = 233.0f;
 constexpr float WS_BOX_MAX_Y = 733.0f;
 
-// ACTIVE. Currently WIDE, restored 2026-08-23.
+// ACTIVE. BOX again, reverted 2026-08-23 within hours of going WIDE:
+// motors out of sync, and slack plus overcurrent on even small moves.
 //
-// It was BOX from 2026-08-16 while we tested whether widening the area was
-// what put unexpected slack in the cables. That test did not convict it:
-// the slack was still there in the small box. So the revert bought no
-// diagnosis and cost 62% of the playing area, and the remaining suspects
-// (the 3 ms jerk ramp against the cable's own ringing period, and the
-// fixed-theta assumption below) are both testable inside either box.
+// This is the SECOND revert, and unlike the 2026-08-16 one it has a
+// symptom attached. Two mechanisms fit, and they are not the same thing:
 //
-// What was true when we narrowed it is still true, and is now a thing to
-// WATCH rather than a reason to stay small: the wide box reaches 58 mm
-// nearer the anchor hull and out to the walls, regions the cable model has
-// never been checked in, and it roughly triples the area over which the
-// paddle's orientation is free to wander from the 135 deg the model
-// assumes. Expect the model to be at its worst in the far corners.
-constexpr float WS_MIN_X = WS_WIDE_MIN_X;
-constexpr float WS_MAX_X = WS_WIDE_MAX_X;
-constexpr float WS_MIN_Y = WS_WIDE_MIN_Y;
-constexpr float WS_MAX_Y = WS_WIDE_MAX_Y;
+//  1. The bounds. WIDE reaches 58 mm nearer the anchor hull (162 -> 104 mm
+//     of clearance), and tension for a given force diverges as you
+//     approach it. The accel figures in fw/include/cdpr_config.h were
+//     solved for BOX and are optimistic there by construction.
+//
+//  2. HOME. It is DERIVED from these bounds, so widening moved it 71 mm in
+//     x, 1508 -> 1578.75. cdpr_master falls back to HOME as the CAL
+//     reference when ENABLE arrives without a measured pose, so the
+//     Teensy would then believe the mallet sits 71 mm from where it does.
+//     Every cable delta after that is computed from the wrong origin,
+//     which is precisely "out of sync, some cables slack and others
+//     overcurrent" -- and it would happen on the SMALLEST move, which
+//     bounds-related tension trouble would not.
+//
+// The small-move symptom points at 2. Reverting fixes either, because
+// HOME follows the bounds; so this revert does NOT convict the bounds.
+// Decoupling HOME from the workspace would separate them.
+constexpr float WS_MIN_X = WS_BOX_MIN_X;
+constexpr float WS_MAX_X = WS_BOX_MAX_X;
+constexpr float WS_MIN_Y = WS_BOX_MIN_Y;
+constexpr float WS_MAX_Y = WS_BOX_MAX_Y;
 
 // Default calibration/home position: centre of the workspace.
-constexpr float HOME_X = (WS_MIN_X + WS_MAX_X) / 2.0f;  // 1578.75
-constexpr float HOME_Y = (WS_MIN_Y + WS_MAX_Y) / 2.0f;  // 482.95
+constexpr float HOME_X = (WS_MIN_X + WS_MAX_X) / 2.0f;  // 1508.0
+constexpr float HOME_Y = (WS_MIN_Y + WS_MAX_Y) / 2.0f;  // 483.0
 
 // Bearing from each anchor toward HOME. This is the zero reference for the
 // wrap angle: measuring psi relative to a fixed per-motor direction avoids
