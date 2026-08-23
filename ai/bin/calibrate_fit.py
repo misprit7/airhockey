@@ -36,13 +36,18 @@ from scipy.optimize import least_squares
 
 sys.path.insert(0, str(Path(__file__).resolve().parents[2] / "shared"))
 import cdpr_geometry as geom  # noqa: E402
+from cable_model import (  # noqa: E402
+    CHIRALITY as CHIRALITY_CONFIRMED,
+    RETRACT_SIGN,
+    cable_lengths,
+    measured_lengths,
+    wrap_reference,
+)
 
 SPOOL_R_MM = geom.SPOOL_RADIUS_MM
 SPOOL_CIRC_MM = 2.0 * np.pi * SPOOL_R_MM
 ATTACH_R_MM = geom.ATTACH_R_MM
-RETRACT_SIGN = np.array([-1.0, 1.0, -1.0, 1.0])  # API count sign that retracts
 SIDES = np.array(geom.WINDING_SIDE)              # winding side — still unverified
-CHIRALITY_CONFIRMED = -1  # arms 0-3 run CLOCKWISE around the mallet (hardware)
 
 # Initial anchor guess — pulled from shared/cdpr_geometry.py, which is the
 # one Python copy of the header. Measured 2026-08-02 from retroreflectors
@@ -64,35 +69,11 @@ REF = WS_CENTER[None, :] - ANCHOR_GUESS
 REF = REF / np.linalg.norm(REF, axis=1, keepdims=True)
 
 
-def measured_lengths(counts, cpr):
-    """Relative wire lengths (mm) from raw encoder counts, per pose x motor."""
-    mm_per_count = SPOOL_CIRC_MM / cpr
-    return -RETRACT_SIGN[None, :] * counts * mm_per_count[None, :]
-
-
-def model_lengths(anchors, centers, thetas, chirality):
-    """Encoder-equivalent wire length u per (pose, motor), up to a constant."""
-    phi = thetas[:, None] + chirality * (np.pi / 2) * np.arange(4)[None, :]
-    attach = centers[:, None, :] + ATTACH_R_MM * np.stack(
-        [np.cos(phi), np.sin(phi)], axis=-1)              # (P, 4, 2)
-    delta = attach - anchors[None, :, :]
-    d = np.maximum(np.linalg.norm(delta, axis=-1), SPOOL_R_MM + 1e-6)
-    dp = np.sqrt(d * d - SPOOL_R_MM ** 2)
-    u_hat = delta / d[..., None]
-    n_hat = np.stack([-u_hat[..., 1], u_hat[..., 0]], axis=-1)
-    tdir = (SPOOL_R_MM / d)[..., None] * u_hat \
-        + SIDES[None, :, None] * (dp / d)[..., None] * n_hat  # unit M->T
-    cross = REF[None, :, 0] * tdir[..., 1] - REF[None, :, 1] * tdir[..., 0]
-    dot = REF[None, :, 0] * tdir[..., 0] + REF[None, :, 1] * tdir[..., 1]
-    psi = np.arctan2(cross, dot)
-    return dp - SIDES[None, :] * SPOOL_R_MM * psi
-
-
 def residuals(params, centers, lmeas, chirality):
     anchors = params[:8].reshape(4, 2)
     offsets = params[8:12]
     thetas = params[12:]
-    model = model_lengths(anchors, centers, thetas, chirality)
+    model = cable_lengths(anchors, centers, thetas, chirality=chirality, ref=REF)
     return (model - (lmeas + offsets[None, :])).ravel()
 
 
@@ -101,7 +82,7 @@ def pose_models(centers, chirality, grid):
     n_poses, n_grid = len(centers), len(grid)
     cen = np.repeat(centers, n_grid, axis=0)
     ths = np.tile(grid, n_poses)
-    return model_lengths(ANCHOR_GUESS, cen, ths, chirality).reshape(
+    return cable_lengths(ANCHOR_GUESS, cen, ths, chirality=chirality, ref=REF).reshape(
         n_poses, n_grid, 4)
 
 
@@ -126,7 +107,7 @@ def init_thetas(centers, lmeas, chirality):
 
 
 def make_params(centers, lmeas, chirality, thetas0):
-    model = model_lengths(ANCHOR_GUESS, centers, thetas0, chirality)
+    model = cable_lengths(ANCHOR_GUESS, centers, thetas0, chirality=chirality, ref=REF)
     offsets0 = (model - lmeas).mean(axis=0)            # per-motor, over poses
     return np.concatenate([ANCHOR_GUESS.ravel(), offsets0, thetas0])
 
@@ -225,7 +206,7 @@ def selftest():
         [1580.6, 921.8],
     ])
     thetas = rng.uniform(0, 2 * np.pi, len(centers))
-    u_true = model_lengths(true_anchors, centers, thetas, chirality)
+    u_true = cable_lengths(true_anchors, centers, thetas, chirality=chirality, ref=REF)
     lmeas = u_true - true_offsets[None, :]
     lmeas += rng.normal(0, 0.05, lmeas.shape)  # ~encoder/seating noise
 

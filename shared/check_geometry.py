@@ -2,7 +2,7 @@
 """Do the C++ and Python cable models agree?
 
 shared/cdpr_geometry.h is the canonical forward model used by the firmware.
-ai/bin/calibrate_fit.py reimplements the same model in NumPy, because Python
+shared/cable_model.py reimplements the same model in NumPy, because Python
 cannot include a C header. Two implementations of one model is exactly the
 kind of duplication that drifts silently, so this compares them numerically.
 
@@ -21,10 +21,13 @@ from pathlib import Path
 import numpy as np
 
 ROOT = Path(__file__).resolve().parent.parent
-sys.path.insert(0, str(ROOT / "ai" / "bin"))
 sys.path.insert(0, str(ROOT / "shared"))
-import calibrate_fit as cf  # noqa: E402
+import cable_model as cm  # noqa: E402
 import cdpr_geometry as pg  # noqa: E402
+
+# The as-built machine, from the mirror this file is checking.
+ANCHORS = np.array(list(zip(pg.MOTOR_X, pg.MOTOR_Y)))
+REF = cm.wrap_reference(ANCHORS, np.array([pg.HOME_X, pg.HOME_Y]))
 
 HARNESS = r"""
 #include <cstdint>
@@ -96,7 +99,7 @@ def main():
     check_constants()
     rng = np.random.default_rng(0)
     n = 24
-    xs = rng.uniform(cf.ANCHOR_GUESS[:, 0].min() + 60, 1900, n)
+    xs = rng.uniform(ANCHORS[:, 0].min() + 60, 1900, n)
     ys = rng.uniform(60, 880, n)
     ths = rng.uniform(-np.pi, np.pi, n)
 
@@ -117,8 +120,8 @@ def main():
     cpp = np.array([[float(v) for v in ln.split()]
                     for ln in out.strip().splitlines()])
 
-    py = cf.model_lengths(cf.ANCHOR_GUESS, np.stack([xs, ys], axis=1), ths,
-                          cf.CHIRALITY_CONFIRMED)
+    py = cm.cable_lengths(ANCHORS, np.stack([xs, ys], axis=1), ths,
+                          chirality=cm.CHIRALITY, ref=REF)
 
     # Both are defined up to a per-motor constant: compare deltas vs pose 0.
     dc = cpp - cpp[0]
@@ -140,7 +143,7 @@ def main():
 
     if worst > 0.01:
         sys.exit(f"\nFAIL — the two implementations disagree by {worst:.4f} mm. "
-                 "One of shared/cdpr_geometry.h or ai/bin/calibrate_fit.py has "
+                 "One of shared/cdpr_geometry.h or shared/cable_model.py has "
                  "drifted;\nthey must encode the same forward model.")
     print("\nOK — C++ and Python cable models agree")
 
