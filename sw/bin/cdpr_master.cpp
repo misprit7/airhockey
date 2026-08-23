@@ -258,6 +258,22 @@ static int handleCommand(const char *line, ClearPath &robot, int client_fd, int 
         // modelling error into cables fighting each other. Start loose and
         // raise it only once the cable model is trusted.
         if (g_tension_mm > 0.0) {
+            // Bracket the retraction with the drives' OWN encoders.
+            //
+            // Tensioning is the one moment every motor is commanded exactly
+            // the same distance, which makes it the cleanest per-motor test
+            // the rig ever performs: all four should report the same travel,
+            // so any motor that does not stands out without needing to know
+            // anything about the kinematics. The Teensy cannot see this --
+            // it counts the pulses it emitted, which is its intent, not the
+            // outcome. A drive that never got the pulses and a spool
+            // slipping on its shaft look identical from there, and opposite
+            // from here: the first shows no encoder travel, the second shows
+            // full travel with no cable moving.
+            double p0[4], p1[4], trq0[4], trq1[4];
+            unsigned res0[4], res1[4];
+            bool have0 = robot.readEncoders(p0, res0, trq0);
+
             char tcmd[64];
             snprintf(tcmd, sizeof(tcmd), "TENSION %.2f\n", g_tension_mm);
             sendTeensy(teensy_fd, tcmd);
@@ -265,6 +281,26 @@ static int handleCommand(const char *line, ClearPath &robot, int client_fd, int 
                 snprintf(resp, sizeof(resp), "ERR teensy TENSION failed\n");
                 write(client_fd, resp, strlen(resp));
                 return 1;
+            }
+
+            if (have0 && robot.readEncoders(p1, res1, trq1)) {
+                logf("  pretension %.2f mm — per-motor encoder travel:\n",
+                     g_tension_mm);
+                for (int m = 0; m < 4; m++) {
+                    if (!res1[m]) {
+                        logf("    motor %d: resolution unknown\n", m);
+                        continue;
+                    }
+                    double mm = (p1[m] - p0[m]) / res1[m]
+                              * SPOOL_CIRCUMFERENCE_MM;
+                    // Sign is raw drive-positive and differs per spool, so
+                    // compare MAGNITUDES; the alarming case is a zero next
+                    // to three non-zeros.
+                    logf("    motor %d: %+7.2f mm  torque %5.1f -> %5.1f %%%s\n",
+                         m, mm, trq0[m], trq1[m],
+                         fabs(mm) < 0.25 * g_tension_mm ? "   <-- DID NOT MOVE"
+                                                        : "");
+                }
             }
         } else {
             logf("  pretension disabled (cables left slack)\n");
