@@ -333,7 +333,28 @@ constexpr float HULL_CLEARANCE_MM = 104.3f;
 // has never been measured, and the amplification ratio has the virtue of
 // being pure geometry with no such assumption in it.
 //
-// Recompute with shared/check_geometry.py, which fails if these drift.
+// !! THE DERIVATION ABOVE IS RETRACTED, 2026-08-23. The numbers below are
+// kept because they are the box the rig is currently running, NOT because
+// the reasoning holds.
+//
+// max(n)/min(n) diverges when the DENOMINATOR vanishes, and a vanishing
+// component means that cable carries no tension — it goes SLACK. It does
+// not mean another cable overloads. Checked at (1326, 630), inside the old
+// BOX that ran for weeks without a trip: n = [+0.475 +0.537 -0.024 +0.697],
+// stable across step sizes 1e-1..1e-5, wrap angles nowhere near the atan2
+// branch cut. So the computation was right and the reading of it was wrong,
+// in both the straight-line and true-Jacobian versions.
+//
+// The spring rate confirms it: at k = 2.10 N/mm (12 lbf/in) the worst
+// "corner" carries 4.4 N against a ~15 N continuous rating. That and
+// "unholdable" cannot both be true.
+//
+// So what actually causes the overload is UNKNOWN. What is solid: there is
+// only ~5 mm of retraction headroom before the continuous limit, so the
+// question is what adds a few mm near the edges. SPOOL_RADIUS_MM is the
+// prime suspect — unverified, the largest scale factor here, and its error
+// grows with distance from the CAL point. Measure per-cable torque against
+// position before trusting any contour, including this one.
 constexpr float WS_FC_MIN_X = 1350.0f;   // hull clearance 254.3 mm to centre
 constexpr float WS_FC_MAX_X = 1917.5f;   // wall margin binds here, not FC
 constexpr float WS_FC_MIN_Y = 142.9f;
@@ -351,16 +372,25 @@ constexpr float WS_WIDE_MAX_X = RAIL_MAX_X - WALL_MARGIN_MM - MALLET_RADIUS_MM;
 constexpr float WS_WIDE_MIN_Y = RAIL_MIN_Y + WALL_MARGIN_MM + MALLET_RADIUS_MM;
 constexpr float WS_WIDE_MAX_Y = RAIL_MAX_Y - WALL_MARGIN_MM - MALLET_RADIUS_MM;
 
-// SAFE — the tighter of collision and force closure, per side. This is the
-// one to use. 0.386 m^2, 54% more area than BOX at the same holding cost.
+// Extra trim on y, EMPIRICAL. RMSOverloadShutdown was still happening near
+// the y extremes after the bounds above went in, so this pulls both y
+// limits in by hand. It is not derived from anything and is not claimed to
+// be: it is "the last box minus 3 cm of y", set 2026-08-23 to stop the
+// trips while the real cause is parked.
+constexpr float WS_Y_TRIM_MM = 30.0f;
+
+// SAFE — the tighter of collision and force closure, per side, less the y
+// trim. 0.352 m^2.
 constexpr float WS_SAFE_MIN_X =
     (WS_WIDE_MIN_X > WS_FC_MIN_X ? WS_WIDE_MIN_X : WS_FC_MIN_X);
 constexpr float WS_SAFE_MAX_X =
     (WS_WIDE_MAX_X < WS_FC_MAX_X ? WS_WIDE_MAX_X : WS_FC_MAX_X);
 constexpr float WS_SAFE_MIN_Y =
-    (WS_WIDE_MIN_Y > WS_FC_MIN_Y ? WS_WIDE_MIN_Y : WS_FC_MIN_Y);
+    (WS_WIDE_MIN_Y > WS_FC_MIN_Y ? WS_WIDE_MIN_Y : WS_FC_MIN_Y)
+    + WS_Y_TRIM_MM;
 constexpr float WS_SAFE_MAX_Y =
-    (WS_WIDE_MAX_Y < WS_FC_MAX_Y ? WS_WIDE_MAX_Y : WS_FC_MAX_Y);
+    (WS_WIDE_MAX_Y < WS_FC_MAX_Y ? WS_WIDE_MAX_Y : WS_FC_MAX_Y)
+    - WS_Y_TRIM_MM;
 
 // BOX — the conservative middle-half used through bring-up (0.250 m^2).
 // Same numbers it had before 2026-08-16, to the millimetre, so reverting to

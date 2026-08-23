@@ -81,11 +81,15 @@ WS_WIDE_MAX_X = RAIL_MAX_X - WALL_MARGIN_MM - MALLET_RADIUS_MM
 WS_WIDE_MIN_Y = RAIL_MIN_Y + WALL_MARGIN_MM + MALLET_RADIUS_MM
 WS_WIDE_MAX_Y = RAIL_MAX_Y - WALL_MARGIN_MM - MALLET_RADIUS_MM
 
-# SAFE — tighter of collision and force closure, per side. 0.386 m^2.
+# Extra y trim, EMPIRICAL — overloads persisted near the y extremes, so both
+# y limits come in by hand. Not derived from anything; see header.
+WS_Y_TRIM_MM = 30.0
+
+# SAFE — tighter of collision and force closure, per side, less the y trim.
 WS_SAFE_MIN_X = max(WS_WIDE_MIN_X, WS_FC_MIN_X)
 WS_SAFE_MAX_X = min(WS_WIDE_MAX_X, WS_FC_MAX_X)
-WS_SAFE_MIN_Y = max(WS_WIDE_MIN_Y, WS_FC_MIN_Y)
-WS_SAFE_MAX_Y = min(WS_WIDE_MAX_Y, WS_FC_MAX_Y)
+WS_SAFE_MIN_Y = max(WS_WIDE_MIN_Y, WS_FC_MIN_Y) + WS_Y_TRIM_MM
+WS_SAFE_MAX_Y = min(WS_WIDE_MAX_Y, WS_FC_MAX_Y) - WS_Y_TRIM_MM
 
 # BOX — the conservative middle-half used through bring-up (0.250 m^2)
 WS_BOX_MIN_X, WS_BOX_MAX_X = 1258.0, 1758.0
