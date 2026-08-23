@@ -11,6 +11,37 @@ from dataclasses import dataclass
 import numpy as np
 
 
+# ── The robot's operating limits. ONE definition. ───────────────────────
+#
+# Sim units are metres, so these are the mm/s figures over 1000. Everything
+# that needs a cap imports these rather than carrying its own: before
+# 2026-08-23 the same two numbers appeared in six places with THREE
+# different values (4.0/40.0 here and in batch_env, 3.0/30.0 in both
+# training scripts, and a randomisation range of 2.0-4.5 that did not even
+# contain the others), so which cap you got depended on the entry point,
+# and raising one was never the one that was binding.
+#
+# These are SIM limits and are deliberately not the firmware's. The Teensy
+# ceiling is 12000 mm/s / 120000 mm/s^2 and clamps independently; that stays
+# the single authority for what the hardware will actually do.
+MAX_SPEED_M_S = 15.0     # 15000 mm/s
+MAX_ACCEL_M_S2 = 200.0   # 200000 mm/s^2
+
+# Both are ABOVE what the hardware will presently do, deliberately or not —
+# worth stating so a transfer failure is not mysterious. The firmware clamps
+# speed at 12000 mm/s and accel at 120000 mm/s^2, so the Teensy will simply
+# refuse the top of this range. And cdpr_config.h's own solved figures for
+# what the cables can make put the centre near 114000 mm/s^2 and the worst
+# corner at 9000. A policy trained to 200000 everywhere will plan strikes
+# the rig cannot execute, most severely near the edges, where the shortfall
+# is largest.
+
+# Domain-randomisation spread, as a FRACTION of the nominal above, so the
+# range tracks the nominal instead of silently excluding it. The old
+# absolute range would not have contained a 15 m/s nominal at all.
+DR_CAP_RANGE = (0.5, 1.125)
+
+
 class MotorDynamics:
     """Base interface for motor dynamics models."""
 
@@ -50,12 +81,25 @@ class DelayedDynamics(MotorDynamics):
     - Response has a time constant (smoothing / lag)
     """
 
+    # SET 2026-08-23 from the real machine. The previous 4.0 / 40.0 predate
+    # the table existing and were placeholders, not measurements — and they
+    # were wrong in the dangerous direction: the sim was HALF the real top
+    # speed but nearly TWICE the real acceleration, so a policy trained on it
+    # would lean on direction changes the rig cannot make while never
+    # learning to use the speed it has.
+    #
+    # NOTE 15 m/s is above what the hardware can currently deliver: the
+    # firmware caps cable speed at 12000 mm/s and the slower of the two motor
+    # models binds at 2580 rpm x 301.6 mm spool = 12968 mm/s. Left as asked,
+    # but a policy trained here can plan sprints the robot cannot execute —
+    # see the note in MotorDynamics about which direction of mismatch is
+    # safe.
     x: float = 0.0
     y: float = 0.0
     vx: float = 0.0
     vy: float = 0.0
-    max_speed: float = 4.0  # m/s
-    max_accel: float = 40.0  # m/s^2
+    max_speed: float = MAX_SPEED_M_S
+    max_accel: float = MAX_ACCEL_M_S2
     time_constant: float = 0.02  # seconds (lower = more responsive)
 
     def reset(self, x: float, y: float) -> None:

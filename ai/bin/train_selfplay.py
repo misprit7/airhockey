@@ -46,10 +46,10 @@ torch.set_float32_matmul_precision('high')
 
 
 def make_selfplay_env(use_dynamics=True):
-    dynamics = DelayedDynamics(max_speed=3.0, max_accel=30.0) if use_dynamics else IdealDynamics()
+    dynamics = DelayedDynamics() if use_dynamics else IdealDynamics()
     inner = AirHockeyEnv(
         agent_dynamics=dynamics,
-        opponent_dynamics=DelayedDynamics(max_speed=3.0, max_accel=30.0) if use_dynamics else IdealDynamics(),
+        opponent_dynamics=DelayedDynamics() if use_dynamics else IdealDynamics(),
         opponent_policy="external",
         record=False,
         action_dt=1 / 60,
@@ -63,8 +63,8 @@ def make_selfplay_env(use_dynamics=True):
 def record_game(agent, opponent, step, recordings_dir, run_name, use_dynamics=True):
     """Record a self-play game for the web UI."""
     inner = AirHockeyEnv(
-        agent_dynamics=DelayedDynamics(max_speed=3.0, max_accel=30.0),
-        opponent_dynamics=DelayedDynamics(max_speed=3.0, max_accel=30.0),
+        agent_dynamics=DelayedDynamics(),
+        opponent_dynamics=DelayedDynamics(),
         opponent_policy="external",
         record=True,
         action_dt=1 / 60,

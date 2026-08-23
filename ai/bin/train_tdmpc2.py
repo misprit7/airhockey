@@ -54,7 +54,7 @@ class AirHockeyTDMPC2Wrapper:
     """Wraps our air hockey env for TD-MPC2 compatibility."""
 
     def __init__(self, use_dynamics: bool = True, stage: int = STAGE_SCORING, frame_stack: int = 1):
-        dynamics = DelayedDynamics(max_speed=3.0, max_accel=30.0) if use_dynamics else None
+        dynamics = DelayedDynamics() if use_dynamics else None
         from airhockey.dynamics import IdealDynamics
         if dynamics is None:
             dynamics = IdealDynamics()
@@ -152,7 +152,7 @@ def record_game(agent, env_factory, step, recordings_dir, run_name, stage=STAGE_
     if opponent_policy == "external":
         opponent_policy = "idle"  # can't use external agent for recording
     inner_env = AirHockeyEnv(
-        agent_dynamics=DelayedDynamics(max_speed=3.0, max_accel=30.0),
+        agent_dynamics=DelayedDynamics(),
         opponent_policy=opponent_policy,
         record=True,
         action_dt=1 / 60,
@@ -328,8 +328,6 @@ def main():
         action_dt=1 / 60,
         max_episode_time=30.0,
         max_score=7,
-        dynamics_max_speed=3.0,
-        dynamics_max_accel=30.0,
         frame_stack=frame_stack,
     )
     reward_shaper = BatchRewardShaper(n_envs, stage=stage, frame_stack=frame_stack)

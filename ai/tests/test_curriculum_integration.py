@@ -17,6 +17,7 @@ import numpy as np
 import pytest
 
 from airhockey.batch_env import BatchAirHockeyEnv
+from airhockey.dynamics import DR_CAP_RANGE, MAX_ACCEL_M_S2, MAX_SPEED_M_S
 from airhockey.curriculum import CurriculumLRScheduler, PlateauDetector, STAGE_LR
 from airhockey.recorder import FrameData, Recorder
 from airhockey.rewards import (
@@ -293,9 +294,15 @@ class TestDomainRandomization:
         assert not np.all(accels == accels[0]), "max_accel should vary across envs"
         assert not np.all(tcs == tcs[0]), "time_constant should vary across envs"
 
-        # Check ranges
-        assert np.all((speeds >= 2.0) & (speeds <= 4.5))
-        assert np.all((accels >= 20.0) & (accels <= 45.0))
+        # Check ranges. Derived from the nominal caps rather than hardcoded:
+        # this assertion was the seventh copy of those two numbers and would
+        # have had to be edited every time the robot's limits were revised,
+        # which is how a test ends up pinning a value nobody believes.
+        lo, hi = DR_CAP_RANGE
+        assert np.all((speeds >= lo * MAX_SPEED_M_S)
+                      & (speeds <= hi * MAX_SPEED_M_S))
+        assert np.all((accels >= lo * MAX_ACCEL_M_S2)
+                      & (accels <= hi * MAX_ACCEL_M_S2))
         assert np.all((tcs >= 0.01) & (tcs <= 0.04))
 
     def test_no_randomization_default(self):

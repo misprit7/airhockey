@@ -11,6 +11,7 @@ from typing import Any
 import numpy as np
 
 from airhockey.batch_physics import BatchPhysicsEngine
+from airhockey.dynamics import DR_CAP_RANGE, MAX_ACCEL_M_S2, MAX_SPEED_M_S
 from airhockey.physics import TableConfig
 
 # Per-env opponent policy IDs
@@ -65,8 +66,8 @@ class BatchAirHockeyEnv:
         frame_stack: int = 1,  # kept for API compat, must be 1
         score_handicap: bool = False,
         # DelayedDynamics parameters
-        dynamics_max_speed: float = 4.0,
-        dynamics_max_accel: float = 40.0,
+        dynamics_max_speed: float = MAX_SPEED_M_S,
+        dynamics_max_accel: float = MAX_ACCEL_M_S2,
         dynamics_time_constant: float = 0.02,
     ):
         self.n_envs = n_envs
@@ -224,8 +225,11 @@ class BatchAirHockeyEnv:
         # Domain randomization: per-env motor dynamics
         if self.domain_randomize:
             for dyn in (self._agent_dyn, self._opp_dyn):
-                dyn["max_speed"][idx] = self._rng.uniform(2.0, 4.5, size=n)
-                dyn["max_accel"][idx] = self._rng.uniform(20.0, 45.0, size=n)
+                lo, hi = DR_CAP_RANGE
+                dyn["max_speed"][idx] = self._rng.uniform(
+                    lo * MAX_SPEED_M_S, hi * MAX_SPEED_M_S, size=n)
+                dyn["max_accel"][idx] = self._rng.uniform(
+                    lo * MAX_ACCEL_M_S2, hi * MAX_ACCEL_M_S2, size=n)
                 dyn["time_constant"][idx] = self._rng.uniform(0.01, 0.04, size=n)
 
         self._agent_dyn["x"][idx] = self.engine.paddle_agent_x[idx]
