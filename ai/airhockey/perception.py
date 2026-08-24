@@ -30,6 +30,38 @@ from __future__ import annotations
 
 import numpy as np
 
+# ── Loop latency, MEASURED 2026-08-23 ──────────────────────────────────
+#
+# vision/bin/measure_latency.py, external LED on Teensy A9, 50 trials:
+#
+#   command path (host -> USB -> Teensy)   0.11 ms one way, very repeatable
+#   sensing path (LED lit -> Python)       see below
+#
+# The first run reported sensing as 9.8 ms with a spread of only 1.1 ms, which
+# looked like a clean deterministic pipeline. It was an artefact. The measuring
+# loop flashed immediately after reading a frame, so the flash always landed at
+# the same point in the frame cycle -- and specifically at the WORST point,
+# having just missed a capture, so it waited a full interval every time.
+#
+# Re-running with the phase deliberately randomised:
+#
+#   phase-locked      median 9.81  mean 9.78  spread 1.07 ms
+#   phase randomised  median 7.40  mean 7.72  spread 5.13 ms   <- reality
+#
+# The 5.13 ms spread is one frame interval, which is what quantisation should
+# produce and is the confirmation that this is the right reading. A puck moves
+# at a uniformly random phase relative to the camera clock, so the second row
+# is the one to simulate. Taking the first would have overstated the delay by
+# 28%.
+MEASURED_LOOP_MEAN_S = 0.0077
+CAMERA_DELAY_RANGE_S = (0.0051, 0.0103)   # measured min .. max
+
+# Kept because the pipeline floor is a real property: 5.14 ms is the fastest
+# the camera path ever delivered, i.e. capture + transfer + centroiding with
+# no waiting for the next frame.
+PIPELINE_FLOOR_S = 0.0051
+FRAME_INTERVAL_S = 1.0 / 200.0
+
 # Matches PuckTracker's least-squares window in vision/bin/puck_stream.py.
 # Changing it here without changing it there reintroduces exactly the
 # sim/real mismatch this module exists to remove.

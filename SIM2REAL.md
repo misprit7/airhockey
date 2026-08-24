@@ -37,7 +37,27 @@ you at the table for about an hour total.
 
 ---
 
-## ⚠️ YOUR PART — three measurements, ~1 hour total
+## Measured so far
+
+**Loop latency — DONE 2026-08-23.** `command 0.11 ms one way`, `sensing 7.7 ms
+mean over [5.1, 10.3]`. Wired into `perception.py` as
+`CAMERA_DELAY_RANGE_S`.
+
+Worth knowing how it nearly went wrong: the first reading was 9.8 ms with a
+suspiciously tight 1.1 ms spread. That was the measuring loop flashing
+immediately after a frame read, pinning the phase at its worst point.
+Randomising the phase gave 7.7 ms with a 5.13 ms spread — one frame interval,
+which is what quantisation should produce and the confirmation it's right.
+The tool now randomises phase by default.
+
+**Consequence for the sim: raise the control rate.** At 60 Hz one action step
+is 16.7 ms, longer than the entire loop latency, so the delay can't be
+represented at all. 100 Hz makes it exactly one step. 200 Hz matches the
+camera and resolves the jitter too.
+
+---
+
+## ⚠️ YOUR PART — two measurements left, ~25 min
 
 Nothing here energises a motor. Do them in any order.
 
@@ -63,7 +83,7 @@ what to put in the sim, and warns you if the data is too thin.
 This replaces `puck_friction = 0.01`, `wall_restitution = 0.85`,
 `paddle_restitution = 0.9` — all invented.
 
-### 2. End-to-end latency (~10 min)
+### ~~2. End-to-end latency~~ — DONE
 
 ```bash
 # cdpr_master must NOT be running (it holds the Teensy port)

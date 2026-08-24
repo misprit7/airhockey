@@ -99,7 +99,7 @@ class AirHockeyEnv(gym.Env):
 
         # Camera delay buffer
         self._obs_buffer: deque[np.ndarray] = deque()
-        self._delay_steps = max(0, int(camera_delay / action_dt))
+        self._delay_steps = max(0, int(round(camera_delay / action_dt)))
 
         # Recording
         self.recorder = Recorder() if record else None

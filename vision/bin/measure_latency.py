@@ -87,6 +87,9 @@ def main() -> int:
     ap.add_argument("--max-area", type=float, default=4000,
                     help="raise this if a close, bright LED is "
                          "being discarded as too large")
+    ap.add_argument("--phase-locked", action="store_true",
+                    help="do NOT randomise phase; overstates the "
+                         "delay, kept only for comparison")
     ap.add_argument("--led-px", default=None,
                     help="skip the search: LED pixel as X,Y")
     args = ap.parse_args()
@@ -217,6 +220,7 @@ def main() -> int:
     # Reading every iteration keeps the backlog at roughly one frame, so the
     # moment a read returns is the moment that frame arrived, and the flash
     # is injected between two reads rather than into a queue.
+    rng = np.random.default_rng()
     cmd_ms, see_ms = [], []
     COOLDOWN_FRAMES = int(args.fps * (args.flash_ms / 1000.0 + 0.10))
 
@@ -237,6 +241,13 @@ def main() -> int:
         if not armed:
             if lit:
                 continue                      # wait for it to actually go dark
+            # Randomise the phase against the frame clock. Without this the
+            # flash always lands just after a capture -- the worst phase --
+            # and the result overstates the delay by most of a frame interval
+            # while looking deceptively repeatable (spread 1.1 ms instead of
+            # the 5.1 ms that quantisation actually produces).
+            if not args.phase_locked:
+                time.sleep(rng.uniform(0.0, 1.0 / args.fps))
             ser.reset_input_buffer()
             t0 = time.perf_counter()
             ser.write(f"FLASH {args.flash_ms}\n".encode())

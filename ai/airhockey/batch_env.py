@@ -133,12 +133,16 @@ class BatchAirHockeyEnv:
         # camera_delay: float (uniform) or (min, max) tuple (per-env randomized).
         self._obs_dim = self.OBS_DIM
         if isinstance(camera_delay, tuple):
+            # ROUND, not truncate. The measured 9.9 ms loop against a
+            # 10 ms step is 0.99 steps, and int() would call that zero --
+            # discarding 99% of a delay that was measured precisely so it
+            # would not have to be guessed.
             self._delay_range = (
-                max(0, int(camera_delay[0] / action_dt)),
-                max(0, int(camera_delay[1] / action_dt)),
+                max(0, int(round(camera_delay[0] / action_dt))),
+                max(0, int(round(camera_delay[1] / action_dt))),
             )
         else:
-            d = max(0, int(camera_delay / action_dt))
+            d = max(0, int(round(camera_delay / action_dt)))
             self._delay_range = (d, d)
         self._max_delay = self._delay_range[1]
         # Per-env delay in steps [N]
