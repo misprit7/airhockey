@@ -57,6 +57,7 @@ class BatchPhysicsEngine:
         self,
         rng: np.random.Generator | None = None,
         mask: np.ndarray | None = None,
+        still: bool = False,
     ) -> None:
         """Reset environments. If mask is provided, only reset those indices."""
         cfg = self.config
@@ -93,6 +94,15 @@ class BatchPhysicsEngine:
             idx = slice(None)
         else:
             idx = mask
+
+        # `still`: a human is at the controls, not a training run. The
+        # randomised moving start exists to keep reward signal flowing
+        # during training and is wrong when someone is watching to see
+        # what the machine does when told to move.
+        if still:
+            px = np.full(n, cfg.width / 2)
+            py = np.full(n, cfg.height / 2)
+            speed = np.zeros(n)
 
         self.puck_x[idx] = px
         self.puck_y[idx] = py

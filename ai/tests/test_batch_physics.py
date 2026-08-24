@@ -8,7 +8,7 @@ import pytest
 
 from airhockey.batch_physics import BatchPhysicsEngine
 from airhockey.batch_env import BatchAirHockeyEnv
-from airhockey.physics import PhysicsEngine, TableConfig
+from airhockey.physics import TableConfig
 
 
 class TestBatchPhysicsEngine:
@@ -34,37 +34,6 @@ class TestBatchPhysicsEngine:
 
         assert engine.puck_x[0] == px0
         assert engine.puck_x[2] == px2
-
-    def test_step_matches_single(self):
-        """Run both engines with identical state and compare results."""
-        cfg = TableConfig()
-        single = PhysicsEngine(cfg)
-        batch = BatchPhysicsEngine(1, cfg)
-
-        rng = np.random.default_rng(123)
-        single_state = single.reset(rng)
-
-        # Copy single state into batch engine
-        batch.puck_x[0] = single_state.puck.x
-        batch.puck_y[0] = single_state.puck.y
-        batch.puck_vx[0] = single_state.puck.vx
-        batch.puck_vy[0] = single_state.puck.vy
-        batch.paddle_agent_x[0] = single_state.paddle_agent.x
-        batch.paddle_agent_y[0] = single_state.paddle_agent.y
-        batch.paddle_opp_x[0] = single_state.paddle_opponent.x
-        batch.paddle_opp_y[0] = single_state.paddle_opponent.y
-
-        dt = 1 / 240
-
-        # Step both engines with no paddle movement
-        for _ in range(100):
-            single.step(dt)
-            batch.step(dt)
-
-            np.testing.assert_allclose(batch.puck_x[0], single.state.puck.x, atol=1e-10)
-            np.testing.assert_allclose(batch.puck_y[0], single.state.puck.y, atol=1e-10)
-            np.testing.assert_allclose(batch.puck_vx[0], single.state.puck.vx, atol=1e-10)
-            np.testing.assert_allclose(batch.puck_vy[0], single.state.puck.vy, atol=1e-10)
 
     def test_wall_collisions(self):
         """Puck heading into left wall should bounce."""

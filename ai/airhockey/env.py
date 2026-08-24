@@ -10,7 +10,8 @@ import numpy as np
 from gymnasium import spaces
 
 from airhockey.dynamics import DelayedDynamics, IdealDynamics, MotorDynamics
-from airhockey.physics import PhysicsEngine, PhysicsState, TableConfig
+from airhockey.physics import PhysicsState, TableConfig
+from airhockey.scalar_engine import ScalarPhysicsEngine
 from airhockey.recorder import FrameData, Recorder
 
 
@@ -71,7 +72,7 @@ class AirHockeyEnv(gym.Env):
         self.frame_stack = 1  # always 1; velocities replace stacking
         self._step_count = 0
 
-        self.engine = PhysicsEngine(self.table_config)
+        self.engine = ScalarPhysicsEngine(self.table_config)
 
         # Observation and action spaces
         cfg = self.table_config
