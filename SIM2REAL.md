@@ -70,10 +70,14 @@ This replaces `puck_friction = 0.01`, `wall_restitution = 0.85`,
 python vision/bin/measure_latency.py --n 50
 ```
 
-**Physical setup:** the Teensy's on-board LED must be visible to the camera —
-taping it to the table pointing up is fine, it doesn't need to be in focus.
-Take the **puck off the table** and leave the mallet still so nothing else
-changes. Normal tracking lighting.
+**Physical setup:** the external LED on **A9** must be in the camera's view.
+The table does *not* need to be clear — the LED is located by differencing
+frames, so permanent markers and IR glare are fine.
+
+```bash
+python vision/bin/locate_led.py                    # finds the pixel
+python vision/bin/measure_latency.py --n 50 --led-px X,Y
+```
 
 Splits the loop into the command half (host→USB→Teensy, via serial round
 trip) and the sensing half (LED lit→camera→Python). You need both: a puck at

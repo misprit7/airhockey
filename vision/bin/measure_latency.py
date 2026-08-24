@@ -83,6 +83,12 @@ def main() -> int:
     ap.add_argument("--threshold", type=int, default=90)
     ap.add_argument("--tol", type=float, default=12.0,
                     help="px radius for matching the LED blob")
+    ap.add_argument("--min-area", type=float, default=4)
+    ap.add_argument("--max-area", type=float, default=4000,
+                    help="raise this if a close, bright LED is "
+                         "being discarded as too large")
+    ap.add_argument("--led-px", default=None,
+                    help="skip the search: LED pixel as X,Y")
     args = ap.parse_args()
 
     if serial is None:
@@ -97,7 +103,9 @@ def main() -> int:
     ser.reset_input_buffer()
 
     stream = BlobStream(fps=args.fps, exposure=args.exposure,
-                        gain=args.gain, threshold=args.threshold)
+                        gain=args.gain, threshold=args.threshold,
+                        min_area=args.min_area,
+                        max_area=args.max_area)
     print(f"blobtrack {stream.width}x{stream.height}")
     frames = iter(stream)
 
@@ -119,54 +127,79 @@ def main() -> int:
         _seq, _t, b = next(frames)
         return b[:, :2] if len(b) else np.empty((0, 2))
 
-    # ── Find the LED, rather than counting blobs ─────────────────────────
+    # ── Find the LED ────────────────────────────────────────────────────
     #
-    # The table is not empty and should not have to be: the field markers,
-    # the spool retroreflectors and the IR ring's glare are all permanently
-    # visible, which is why the baseline was 14 blobs. Counting them and
-    # waiting for 15 triggers on the first frame that happens to be noisy.
-    #
-    # So locate the LED once: flash it, and take the blob that is present
-    # while lit and absent while dark. Then every trial looks for THAT
-    # position and nothing else.
-    print("locating the A9 LED...")
-    dark = []
-    for _ in range(30):
-        dark.append(blobs_now())
-    dark_pts = np.vstack([d for d in dark if len(d)]) if any(
-        len(d) for d in dark) else np.empty((0, 2))
-
-    led_px = None
-    for attempt in range(6):
+    # By OCCUPANCY, not by "a new blob appeared". The table is never empty --
+    # field markers, spool retroreflectors and the IR ring's glare are all
+    # permanently visible -- and the LED may well sit ON one of them, since
+    # the natural place to put it is in the playing area under the camera,
+    # which is exactly where the ring's reflection is. A position that is
+    # occupied 100% of the time while lit and 0% while dark is the LED even
+    # if something else is nearby; "new blob" is not, because a blob 5 px from
+    # a glare blob looks like the glare blob.
+    def sample(n, lit):
+        """Blob positions and areas over n frames, LED held lit or dark."""
+        pts, areas = [], []
+        if lit:
+            ser.write(b"FLASH 900\n")
+            ser.flush()
+            ser.readline()
+            time.sleep(0.05)
         drain()
-        ser.write(b"FLASH 400\n")
-        ser.flush()
-        ser.readline()
-        time.sleep(0.10)                     # well inside the 400 ms flash
-        lit = blobs_now()
-        if len(lit) == 0:
-            continue
-        if len(dark_pts):
-            d = np.linalg.norm(lit[:, None, :] - dark_pts[None, :, :],
-                               axis=2).min(axis=1)
-            new = lit[d > args.tol]
-        else:
-            new = lit
-        time.sleep(0.45)                     # let it go out
-        if len(new) == 1:
-            led_px = new[0]
-            break
-        if len(new) > 1:
-            print(f"  attempt {attempt}: {len(new)} new blobs, ambiguous")
+        for _ in range(n):
+            _seq, _t, b = next(frames)
+            if len(b):
+                pts.append(b[:, :2])
+                areas.append(b[:, 2])
+        if lit:
+            time.sleep(0.95)
+        return (np.vstack(pts) if pts else np.empty((0, 2)),
+                np.concatenate(areas) if areas else np.empty(0),
+                n)
 
-    if led_px is None:
-        print("\nCould not identify the LED.")
-        print("  - is the A9 LED in the camera's field of view?")
-        print(f"  - is it brighter than threshold {args.threshold}?")
-        print("  - try: python vision/bin/measure_latency.py --threshold 60")
-        stream.close(); ser.close()
-        return 1
-    print(f"LED at pixel ({led_px[0]:.0f}, {led_px[1]:.0f})\n")
+    if args.led_px:
+        led_px = np.array([float(v) for v in args.led_px.split(",")])
+        print(f"LED position given: ({led_px[0]:.0f}, {led_px[1]:.0f})\n")
+    else:
+        print("locating the A9 LED...")
+        NF = 25
+        dark_pts, dark_area, _ = sample(NF, lit=False)
+        lit_pts, lit_area, _ = sample(NF, lit=True)
+
+        # Occupancy of each candidate position, lit vs dark.
+        led_px, best = None, 0.0
+        for cand in lit_pts:
+            lit_hits = (np.linalg.norm(lit_pts - cand, axis=1) < args.tol).sum()
+            dark_hits = (np.linalg.norm(dark_pts - cand, axis=1) < args.tol).sum()
+            score = (lit_hits - dark_hits) / NF
+            if score > best:
+                best, led_px = score, cand
+
+        if led_px is None or best < 0.5:
+            print("\nCould not identify the LED.\n")
+            print(f"  blobs per frame   dark {len(dark_pts)/NF:5.1f}   "
+                  f"lit {len(lit_pts)/NF:5.1f}")
+            if len(lit_area):
+                print(f"  blob area         dark max {dark_area.max() if len(dark_area) else 0:6.0f}"
+                      f"   lit max {lit_area.max():6.0f}")
+            print(f"  best candidate scored {best:.2f} (need > 0.50)\n")
+            if abs(len(lit_pts) - len(dark_pts)) / max(NF, 1) < 0.5:
+                print("  Lit and dark look the SAME, so the LED is not making")
+                print("  a blob at all. Either it is below the threshold, or it")
+                print("  is so bright and close that it exceeds blobtrack's area")
+                print("  cap and is discarded. Try both:")
+                print("     --threshold 50")
+                print("     --max-area 40000")
+            else:
+                print("  The blob count does change, but no single position is")
+                print("  cleanly lit-only -- most likely the LED overlaps the IR")
+                print("  ring's glare. Move it off centre by ~10 cm, or pass the")
+                print("  pixel directly with --led-px X,Y")
+            print("\n  To see the raw blobs:  vision/build/blobtrack --threshold 50")
+            stream.close(); ser.close()
+            return 1
+        print(f"LED at pixel ({led_px[0]:.0f}, {led_px[1]:.0f}), "
+              f"occupancy score {best:.2f}\n")
 
     cmd_ms, see_ms = [], []
     for i in range(args.n):
