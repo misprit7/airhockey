@@ -29,6 +29,11 @@ you at the table for about an hour total.
 | ✅ | **Replay harness** — `ai/bin/replay_gap.py`, self-validated both ways (reproduces its own output to 0.0000 mm; detects a 20% accel error as 63.9 mm peak). |
 | ✅ | **Hardware logger** — `ai/bin/log_hardware.py`. Commands nothing; reads `cdpr_master` STATUS and the camera. |
 | ✅ | Dead code removed (`profile_gpu.py`, `ai/training/index.html`); an 8th copy of the speed/accel caps removed from `server.py`. |
+| ✅ | **One physics implementation.** Scalar `PhysicsEngine` deleted; `scalar_engine.py` presents its interface over `BatchPhysicsEngine(n_envs=1)`. **−1123 lines**, including ~900 of parity tests. |
+| ✅ | **Real profile wired into the env** as a `profile` dynamics type (`ideal` / `delayed` / `profile`). |
+| ✅ | **Realistic perception** — `perception.py`: 6-frame slope estimator, back-projection noise, and the IR blind spot as a structured dropout with coasting. Off by default. |
+| ✅ | **Mallet from the blob stream** — `vision/bin/mallet_stream.py`, back-projecting at the 33 mm arm height. |
+| ✅ | **Latency LED moved to A9** (external, on the playing surface) per your note; firmware flashed. |
 
 ---
 
@@ -97,23 +102,6 @@ calibration point.
 ## Software remaining (mine)
 
 In dependency order. Nothing here needs the robot.
-
-### A0. Mallet position from the blob stream ← *next, and it blocks D*
-`log_hardware.py` currently logs the commanded target and what the *Teensy
-believes*, but not where the paddle actually **was** — so `replay_gap.py`
-has no ground truth to score against yet.
-
-`track_mallet.locate()` can't be reused: it takes a full image, while
-`blobtrack` streams coordinates. Needs its own pass — find the 3-blob cluster
-(the mallet carries three retroreflectors; the puck carries one, which is how
-`PuckTracker` already separates them) and back-project at the **arm height of
-33 mm**, not the puck's 8 mm. Getting that height wrong is a parallax error
-proportional to radial distance from the camera nadir.
-
-### A1. Wire the profile into the env
-`motion.py` exists and is fast, but `batch_env` still steps `DelayedDynamics`.
-Swapping it is mechanical; it's sequenced after B so it only has to be done
-once.
 
 ### B. Collapse the duplicated physics
 `physics.py`+`env.py` (scalar) and `batch_physics.py`+`batch_env.py` (batch)

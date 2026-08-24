@@ -23,12 +23,12 @@ WHAT IT SEPARATES
     whatever the policy itself costs.
 
 SETUP — THE ONE PHYSICAL THING YOU MUST DO
-    The Teensy's on-board LED has to be visible to the camera. It does not
-    need to be on the playing surface or in focus; it needs to be bright
-    enough to cross the blob threshold and be the ONLY thing that changes.
-    So:
-      - put the Teensy where the camera can see the LED (tape it to the
-        table surface pointing up is fine)
+    The external LED on A9 (to ground) has to be visible to the camera. Not
+    the on-board one: the board sits wherever it is mounted, while this needs
+    to be on the playing surface where the camera is looking. It does not need
+    to be in focus; it needs to be bright enough to cross the blob threshold
+    and be the ONLY thing that changes. So:
+      - put the A9 LED on the table where the camera sees it
       - take the PUCK off the table, and leave the mallet still, so nothing
         else appears or moves
       - lights as they normally are for tracking

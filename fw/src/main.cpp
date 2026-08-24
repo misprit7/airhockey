@@ -59,6 +59,14 @@ static void armSquareTest();
 
 constexpr int RESET_PIN = 33;
 
+// ── Latency probe LED ───────────────────────────────────────────────
+//
+// An external LED on A9 to ground, added 2026-08-23, NOT the on-board one.
+// The camera has to see this, and the built-in LED is on the board wherever
+// the Teensy happens to be mounted rather than on the playing surface.
+// Driven only by the FLASH command; it cannot cause motion.
+constexpr int LATENCY_LED_PIN = A9;
+
 static void checkReset() {
   if (digitalReadFast(RESET_PIN) == LOW) {
     delay(50);
@@ -131,10 +139,12 @@ static void processCommand(char *line) {
     sscanf(args, "%d", &ms);
     if (ms < 1) ms = 1;
     if (ms > 1000) ms = 1000;
-    digitalWriteFast(LED_BUILTIN, HIGH);
+    digitalWriteFast(LATENCY_LED_PIN, HIGH);
+    // Reply AFTER raising the LED, so a host stamping send and reply brackets
+    // the command path with the optical event strictly inside it.
     Serial.printf("OK FLASH %d %lu\n", ms, (unsigned long)micros());
     delay(ms);
-    digitalWriteFast(LED_BUILTIN, LOW);
+    digitalWriteFast(LATENCY_LED_PIN, LOW);
     return;
   }
 
@@ -587,6 +597,8 @@ void setup() {
   Serial.begin(115200);
   while (!Serial && millis() < 3000) {}
   pinMode(LED_BUILTIN, OUTPUT);
+  pinMode(LATENCY_LED_PIN, OUTPUT);
+  digitalWriteFast(LATENCY_LED_PIN, LOW);
   pinMode(RESET_PIN, INPUT_PULLUP);
 
   if (START_MODE == MODE_SQUARE) {
