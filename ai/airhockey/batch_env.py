@@ -12,6 +12,7 @@ import numpy as np
 
 from airhockey.batch_physics import BatchPhysicsEngine
 from airhockey.dynamics import DR_CAP_RANGE, MAX_ACCEL_M_S2, MAX_SPEED_M_S
+from airhockey.motion import DEFAULT_SIM_DT, CartState, advance
 from airhockey.physics import TableConfig
 
 # Per-env opponent policy IDs
@@ -171,11 +172,33 @@ class BatchAirHockeyEnv:
         self._puck_slow_count = np.zeros(n_envs, dtype=np.int32)
 
     @staticmethod
+    def _clear_profile_accel(dyn: dict[str, Any], idx) -> None:
+        """Drop the jerk slew state on reset.
+
+        Position and velocity are already zeroed above, but the firmware law
+        carries ACCELERATION too, and it is not derived from them -- an
+        episode starting with a stale acceleration would spend its first
+        milliseconds unwinding a manoeuvre from the previous one. Same reason
+        CDPR::tick zeroes accX_/accY_ when it parks.
+        """
+        cart = dyn.get("cart")
+        if cart is not None:
+            cart.ax[idx] = 0.0
+            cart.ay[idx] = 0.0
+
+    @staticmethod
     def _make_dynamics_state(
         dyn_type: str, n: int, max_speed: float, max_accel: float, tc: float
     ) -> dict[str, Any]:
         """Create vectorized dynamics state arrays."""
+        # "profile" carries a CartState as well, because the firmware law has
+        # ACCELERATION as state -- it slews it to bound jerk, so the same
+        # command produces different motion depending on what the
+        # acceleration was. The other two types are memoryless in that
+        # respect and do not need it.
+        extra = {"cart": CartState(n)} if dyn_type == "profile" else {}
         return {
+            **extra,
             "type": dyn_type,
             "x": np.zeros(n),
             "y": np.zeros(n),
@@ -184,6 +207,8 @@ class BatchAirHockeyEnv:
             "max_speed": np.full(n, max_speed),
             "max_accel": np.full(n, max_accel),
             "time_constant": np.full(n, tc),
+            # Jerk ramp, seconds. Matches MOTION_ACCEL_RAMP_S in the firmware.
+            "ramp_s": 0.003,
         }
 
     def reset(
@@ -236,6 +261,7 @@ class BatchAirHockeyEnv:
         self._agent_dyn["y"][idx] = self.engine.paddle_agent_y[idx]
         self._agent_dyn["vx"][idx] = 0.0
         self._agent_dyn["vy"][idx] = 0.0
+        self._clear_profile_accel(self._agent_dyn, idx)
 
         # Override opponent position for stationary policies (per-env)
         cfg = self.table_config
@@ -261,6 +287,7 @@ class BatchAirHockeyEnv:
         self._opp_dyn["y"][idx] = self.engine.paddle_opp_y[idx]
         self._opp_dyn["vx"][idx] = 0.0
         self._opp_dyn["vy"][idx] = 0.0
+        self._clear_profile_accel(self._opp_dyn, idx)
 
         # Init previous positions (zero velocity at start)
         self._prev_agent_x[idx] = self.engine.paddle_agent_x[idx]
@@ -503,6 +530,28 @@ class BatchAirHockeyEnv:
         dt: float,
     ) -> tuple[np.ndarray, np.ndarray]:
         """Vectorized dynamics update. Returns new (x, y) arrays."""
+        if dyn["type"] == "profile":
+            # The real firmware control law, via fw/host. Millimetres, because
+            # that is what the Teensy works in -- the law itself is
+            # scale-agnostic, so sim metres * 1000 keeps position and caps
+            # consistent without needing the grid frame here.
+            cart = dyn["cart"]
+            cart.x[:] = dyn["x"] * 1000.0
+            cart.y[:] = dyn["y"] * 1000.0
+            cart.vx[:] = dyn["vx"] * 1000.0
+            cart.vy[:] = dyn["vy"] * 1000.0
+            substeps = max(1, int(round(dt / DEFAULT_SIM_DT)))
+            advance(cart,
+                    (target_x * 1000.0).astype(np.float32),
+                    (target_y * 1000.0).astype(np.float32),
+                    dyn["max_speed"] * 1000.0, dyn["max_accel"] * 1000.0,
+                    dyn["ramp_s"], dt / substeps, substeps)
+            dyn["x"] = cart.x.astype(np.float64) / 1000.0
+            dyn["y"] = cart.y.astype(np.float64) / 1000.0
+            dyn["vx"] = cart.vx.astype(np.float64) / 1000.0
+            dyn["vy"] = cart.vy.astype(np.float64) / 1000.0
+            return dyn["x"].copy(), dyn["y"].copy()
+
         if dyn["type"] == "ideal":
             dyn["x"] = target_x.copy()
             dyn["y"] = target_y.copy()
