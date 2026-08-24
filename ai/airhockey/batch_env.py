@@ -13,6 +13,7 @@ import numpy as np
 from airhockey.batch_physics import BatchPhysicsEngine
 from airhockey.dynamics import DR_CAP_RANGE, MAX_ACCEL_M_S2, MAX_SPEED_M_S
 from airhockey.motion import DEFAULT_SIM_DT, CartState, advance
+from airhockey.perception import PuckPerception
 from airhockey.physics import TableConfig
 
 # Per-env opponent policy IDs
@@ -70,6 +71,10 @@ class BatchAirHockeyEnv:
         dynamics_max_speed: float = MAX_SPEED_M_S,
         dynamics_max_accel: float = MAX_ACCEL_M_S2,
         dynamics_time_constant: float = 0.02,
+        # Observe the puck through a model of the real tracker rather
+        # than reading the engine: finite-difference velocity over noisy
+        # positions, plus the IR ring's blind spot at table centre.
+        realistic_perception: bool = False,
     ):
         self.n_envs = n_envs
         self.table_config = table_config or TableConfig()
@@ -157,6 +162,10 @@ class BatchAirHockeyEnv:
                                                    dynamics_time_constant)
 
         self._rng = np.random.default_rng()
+        self._perception = (
+            PuckPerception(n_envs, cfg.width, cfg.height, action_dt,
+                           self._rng)
+            if realistic_perception else None)
 
         # External opponent targets (for "external" policy)
         self._ext_opp_target_x = np.full(n_envs, cfg.width / 2)
@@ -290,6 +299,9 @@ class BatchAirHockeyEnv:
         self._clear_profile_accel(self._opp_dyn, idx)
 
         # Init previous positions (zero velocity at start)
+        if self._perception is not None:
+            self._perception.reset(self.engine.puck_x, self.engine.puck_y, idx)
+
         self._prev_agent_x[idx] = self.engine.paddle_agent_x[idx]
         self._prev_agent_y[idx] = self.engine.paddle_agent_y[idx]
         self._prev_opp_x[idx] = self.engine.paddle_opp_x[idx]
@@ -660,8 +672,13 @@ class BatchAirHockeyEnv:
         self._prev_opp_x[:] = e.paddle_opp_x
         self._prev_opp_y[:] = e.paddle_opp_y
 
+        if self._perception is not None:
+            px, py, pvx, pvy = self._perception.update(e.puck_x, e.puck_y)
+        else:
+            px, py, pvx, pvy = e.puck_x, e.puck_y, e.puck_vx, e.puck_vy
+
         return np.column_stack([
-            e.puck_x, e.puck_y, e.puck_vx, e.puck_vy,
+            px, py, pvx, pvy,
             e.paddle_agent_x, e.paddle_agent_y, agent_vx, agent_vy,
             e.paddle_opp_x, e.paddle_opp_y, opp_vx, opp_vy,
         ]).astype(np.float32)
