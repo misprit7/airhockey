@@ -62,8 +62,8 @@ def main() -> int:
     ap.add_argument("--threshold", type=int, default=90)
     args = ap.parse_args()
 
+    from mallet_stream import MalletTracker  # noqa: E402
     from puck_stream import BlobStream, PuckTracker  # noqa: E402
-    import track_mallet  # noqa: E402,F401  (mallet geometry lives here)
 
     out = Path(args.output) if args.output else (
         Path("logs") / f"hw_{time.strftime('%Y%m%d_%H%M%S')}.jsonl")
@@ -90,6 +90,7 @@ def main() -> int:
     signal.signal(signal.SIGINT, stop)
 
     tracker = PuckTracker()
+    mallet = MalletTracker(tracker)   # shares the scene rejection
     stream = BlobStream(fps=args.fps, exposure=args.exposure,
                         gain=args.gain, threshold=args.threshold)
 
@@ -130,6 +131,15 @@ def main() -> int:
                         if k in status:
                             rec[k] = status[k]
 
+                # x/y are the CAMERA-measured paddle position and are what
+                # replay_gap scores against. Named plainly, unlike
+                # teensy_x/teensy_y above, which are the controller's own
+                # integrated command and are not a measurement of anything.
+                m = mallet.update(blobs)
+                if m is not None:
+                    rec["x"], rec["y"], rec["n_markers"] = (
+                        round(m[0], 2), round(m[1], 2), m[2])
+
                 p = tracker.update(t, blobs)
                 if p is not None:
                     px, py, pvx, pvy = p
@@ -152,10 +162,7 @@ def main() -> int:
                 pass
 
     print(f"\n\nwrote {n} samples to {out}")
-    print("\nNOTE this log has no camera-measured PADDLE position yet -- the")
-    print("mallet tracker needs its own pass over the blobs. replay_gap needs")
-    print("x/y as ground truth; until that lands, use teensy_x/teensy_y only")
-    print("to check the command path, not to score the simulator.")
+    print(f"\nnext:  python ai/bin/replay_gap.py {out}")
     return 0
 
 

@@ -50,14 +50,30 @@ MOTOR_STEP_MM = 0.377
 TRACKING_ERR_MM = 4.0
 
 
+NEED = ("t", "cmd_x", "cmd_y", "x", "y")
+
+
 def load(path):
-    rows = [json.loads(ln) for ln in Path(path).read_text().splitlines() if ln]
+    """Keep only samples that carry everything needed to score a step.
+
+    A real log has holes by construction: the mallet is not always resolvable
+    from the blobs, and cdpr_master's STATUS is sampled at 50 Hz against a
+    200 Hz camera. Dropping incomplete rows rather than interpolating them --
+    an interpolated command is a command that was never issued, and replaying
+    one would score the simulator against fiction.
+    """
+    raw = [json.loads(ln) for ln in Path(path).read_text().splitlines() if ln]
+    rows = [r for r in raw
+            if all(r.get(k) is not None for k in NEED)]
     if len(rows) < 10:
-        sys.exit(f"{path}: need at least 10 samples, found {len(rows)}")
-    need = ("t", "cmd_x", "cmd_y", "x", "y")
-    missing = [k for k in need if k not in rows[0]]
-    if missing:
-        sys.exit(f"{path}: missing field(s) {missing}")
+        have = {k: sum(r.get(k) is not None for r in raw) for k in NEED}
+        sys.exit(f"{path}: only {len(rows)} complete samples of {len(raw)}.\n"
+                 f"per-field counts: {have}\n"
+                 "cmd_* needs cdpr_master attached; x/y need the mallet "
+                 "visible to the camera.")
+    if len(rows) < len(raw):
+        print(f"using {len(rows)} complete samples of {len(raw)} "
+              f"({100 * (1 - len(rows) / len(raw)):.0f}% incomplete, dropped)")
     return rows
 
 
