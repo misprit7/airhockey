@@ -69,6 +69,22 @@ SKIP = 4
 MIN_GLIDE = 15          # frames; shorter segments do not constrain a slope
 MIN_SPEED = 200.0       # mm/s; below this the tracker's noise dominates
 
+# A free puck can only SLOW DOWN. Any frame where speed rises by more than
+# tracking noise means something pushed it -- a hand, almost always. The
+# original detector only cut on heading change, so a straight-line push went
+# straight through and its segment was fitted as if it were a glide. That is
+# what produced a 3700 mm/s^2 "deceleration" at 1 m/s and dragged the whole
+# friction fit with it.
+#
+# Generous against the tracker's ~2 mm/s velocity noise, so only real pushes
+# are cut.
+ACCEL_TOL_MM_S = 25.0
+
+# Nothing on an air cushion decelerates faster than this. A backstop for
+# segments that survive everything else; a puck at 1 m/s losing 3.7 m/s^2
+# would stop dead in a quarter second, which is not friction.
+MAX_DECEL_MM_S2 = 2000.0
+
 
 # A contact counts as puck-on-mallet if the two centres are about this far
 # apart. Puck radius + mallet radius is the contact distance; generous
@@ -100,7 +116,9 @@ def segment(d):
     turn = np.minimum(turn, 2 * np.pi - turn)          # wrap
     gap = np.diff(d["seq"]) != 1
     moving = speed[:-1] > MIN_SPEED
-    contact = ((turn > np.radians(TURN_DEG)) & moving) | gap
+    # Speeding up is a contact, whatever direction it happened in.
+    pushed = np.diff(speed) > ACCEL_TOL_MM_S
+    contact = (((turn > np.radians(TURN_DEG)) & moving) | pushed | gap)
 
     cuts = np.flatnonzero(contact)
     bounds, start = [], 0
@@ -131,8 +149,13 @@ def fit_friction(d, bounds):
         v = np.hypot(d["vx"][a + SKIP:b - SKIP], d["vy"][a + SKIP:b - SKIP])
         if v.min() < MIN_SPEED:
             continue
+        # Reject anything that sped up inside the window even slightly --
+        # segment() cuts at the push, but a residual frame either side can
+        # still carry it.
+        if np.diff(v).max() > ACCEL_TOL_MM_S:
+            continue
         slope = np.polyfit(t - t[0], v, 1)[0]           # mm/s per s
-        if slope < 0:                                   # decelerating
+        if slope < 0 and -slope < MAX_DECEL_MM_S2:
             rows.append((-slope, len(t), v.mean()))
     if not rows:
         return None
@@ -144,12 +167,26 @@ def fit_friction(d, bounds):
            "mu": mean / G_MM_S2,
            "spread": (float(np.percentile(dec, 25)),
                       float(np.percentile(dec, 75))),
-           "speeds": speeds}
+           "speeds": speeds,
+           # The accepted segments themselves, so plotting shows what was
+           # FITTED rather than re-deriving it and disagreeing. The plot was
+           # drawing points the fitter had rejected, which made a clean fit
+           # look outlier-ridden.
+           "decels": dec, "weights": np.array([r[1] for r in rows])}
     # decel = a + b*v^2, in mm units. Fit only if the speeds actually span a
     # range; otherwise the quadratic term is unconstrained and will fit noise.
     if len(rows) >= 8 and speeds.max() > 3 * max(speeds.min(), 1e-9):
         A = np.column_stack([np.ones_like(speeds), speeds ** 2])
-        coef, *_ = np.linalg.lstsq(A, dec, rcond=None)
+        # Iteratively reweighted least squares (Huber). Plain least squares
+        # squares the residual, so one bad segment at 10x the error carries
+        # 100x the weight -- which is precisely how a single point at
+        # (1 m/s, 3700 mm/s^2) bent the whole curve.
+        w = np.ones_like(dec)
+        for _ in range(12):
+            coef, *_ = np.linalg.lstsq(A * w[:, None], dec * w, rcond=None)
+            r = dec - A @ coef
+            sigma = 1.4826 * np.median(np.abs(r - np.median(r))) + 1e-9
+            w = np.clip(1.345 * sigma / np.maximum(np.abs(r), 1e-9), 0, 1)
         resid = dec - A @ coef
         out["drag"] = {"a": float(coef[0]), "b": float(coef[1]),
                        "rms": float(np.sqrt((resid ** 2).mean())),

@@ -31,15 +31,16 @@ class TableConfig:
     paddle_radius: float = 0.04  # 80mm diameter paddle
     puck_mass: float = 0.015  # 15g puck
     paddle_mass: float = 0.17  # 170g paddle
-    # MEASURED 2026-08-23 from 64 glides (vision/bin/fit_puck.py). The 0.01
-    # here was a guess predating the table and is 2.9x too low.
+    # MEASURED 2026-08-23 from 78 free glides (vision/bin/fit_puck.py).
     #
-    # This is the CONSTANT-model equivalent. The real deceleration is
-    # speed-dependent -- 230 mm/s^2 rolling plus 1.85e-5 * v^2 of aerodynamic
-    # drag -- which at 6 m/s is roughly three times the rolling term. A single
-    # coefficient is therefore too high for a drifting puck and too low for a
-    # struck one, and struck is the regime that matters. See PUCK_DRAG_B.
-    puck_friction: float = 0.0288
+    # This is the CONSTANT-model equivalent and is not a good model. The real
+    # deceleration is overwhelmingly AERODYNAMIC: only 22 mm/s^2 of rolling
+    # (mu 0.0022, which is what an air cushion should give) plus 3.71e-5 * v^2
+    # of drag. At 1 m/s that is 59 mm/s^2 and at 6 m/s it is 1358 -- a factor
+    # of 23 across the range a policy will see. A single coefficient cannot
+    # span that, and a struck puck is the regime that matters. See
+    # PUCK_DRAG_B; the quadratic halves the residual (215 vs 350 rms).
+    puck_friction: float = 0.0162
     # MEASURED 2026-08-23 from 53 wall contacts, all four rails agreeing
     # (0.756 / 0.777 / 0.756 / 0.811) once goal-mouth events were excluded --
     # a puck arriving at the 380 mm goal does not bounce, and mixing those in
@@ -48,7 +49,7 @@ class TableConfig:
     #
     # Also speed-dependent: -0.039 per m/s over the 0.7-7.3 m/s measured, so
     # ~0.79 for a drifting puck and ~0.53 for a hard shot. Not yet modelled.
-    wall_restitution: float = 0.768
+    wall_restitution: float = 0.785
     paddle_restitution: float = 0.9  # energy retained on paddle hit
     # MEASURED 380 mm, centred on each end rail. Derived from the canonical
     # geometry rather than restated, since it is a fact about the table. The
@@ -64,7 +65,7 @@ class TableConfig:
 
     # Aerodynamic drag, decel = puck_friction*g + PUCK_DRAG_B * v^2, in SI.
     # Measured b = 1.853e-5 per mm; * 1000 for metres.
-    PUCK_DRAG_B: float = 1.853e-2
+    PUCK_DRAG_B: float = 3.710e-2
 
 
 @dataclass
