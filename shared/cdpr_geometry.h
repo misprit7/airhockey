@@ -78,6 +78,17 @@ constexpr float RAIL_MAX_X = 2017.9f;  // robot end   (2018.3 at the near rail)
 constexpr float RAIL_MIN_Y = -19.0f;   // near rail   (19.4 at the robot end)
 constexpr float RAIL_MAX_Y = 984.9f;   // far rail    (parallel to 0.1 mm)
 
+// Goal mouth, centred on each end rail. A property of the TABLE, so it lives
+// here rather than in the simulator's TableConfig, which had it at 250 mm --
+// a guess from before the table existed, and 34% narrow.
+constexpr float GOAL_WIDTH_MM = 380.0f;
+
+// Puck, MEASURED 2026-08-23: 81.4 mm diameter. Was 25 mm RADIUS in the
+// simulator and 31.5 in demo_goalie -- two different wrong answers, and
+// both too small, so every collision the sim computed happened later than
+// it should and every intercept the goalie planned was cut fine.
+constexpr float PUCK_RADIUS_MM = 40.7f;
+
 // ── Motor anchor positions ──────────────────────────────────────────
 //
 // MEASURED 2026-08-10, after the 78x38 -> 80x39 grid fix and against the

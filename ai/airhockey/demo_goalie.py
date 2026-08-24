@@ -47,7 +47,7 @@ class GoalieConfig:
 
     # Puck radius: bounces reflect the CENTRE off a line one radius in from
     # the wall, not off the wall.
-    puck_radius_mm: float = 31.5
+    puck_radius_mm: float = geom.PUCK_RADIUS_MM   # MEASURED 81.4 dia
 
     # Below this closing speed the puck is drifting, not shot. Chasing drift
     # makes the rig twitch continuously and wear itself out for nothing.

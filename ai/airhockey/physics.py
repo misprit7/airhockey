@@ -9,7 +9,13 @@ from __future__ import annotations
 from dataclasses import dataclass, field
 from typing import Protocol
 
+import sys
+from pathlib import Path
+
 import numpy as np
+
+sys.path.insert(0, str(Path(__file__).resolve().parents[2] / "shared"))
+import cdpr_geometry as _geom  # noqa: E402
 
 
 @dataclass
@@ -18,14 +24,26 @@ class TableConfig:
 
     width: float = 1.0  # meters
     height: float = 2.0  # meters
-    puck_radius: float = 0.025  # 50mm diameter puck
+    # MEASURED 81.4 mm diameter; from the canonical geometry, not
+    # restated. Sim units are metres and the sim table is ~1 m wide,
+    # so mm/1000 is the right conversion here.
+    puck_radius: float = _geom.PUCK_RADIUS_MM / 1000.0
     paddle_radius: float = 0.04  # 80mm diameter paddle
     puck_mass: float = 0.015  # 15g puck
     paddle_mass: float = 0.17  # 170g paddle
     puck_friction: float = 0.01  # kinetic friction coefficient on air cushion
     wall_restitution: float = 0.85  # energy retained on wall bounce
     paddle_restitution: float = 0.9  # energy retained on paddle hit
-    goal_width: float = 0.25  # goal opening width (centered on x-axis)
+    # MEASURED 380 mm, centred on each end rail. Derived from the canonical
+    # geometry rather than restated, since it is a fact about the table. The
+    # 0.25 that was here predates the table existing and was 34% narrow --
+    # which changes how often a shot goes in, and so what the policy learns
+    # a shot is worth.
+    #
+    # Scaled by the real table's width so the fraction of the end rail that
+    # is goal matches, which is what actually governs whether a shot scores.
+    goal_width: float = (_geom.GOAL_WIDTH_MM
+                         / (_geom.RAIL_MAX_Y - _geom.RAIL_MIN_Y))
     max_puck_speed: float = 5.0  # m/s, clamp for stability
 
 

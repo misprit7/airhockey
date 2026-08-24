@@ -31,6 +31,14 @@ RAIL_MAX_X = 2017.9
 RAIL_MIN_Y = -19.0
 RAIL_MAX_Y = 984.9
 
+# Goal mouth, centred on each end rail. A table fact, not a sim
+# parameter; TableConfig had 250 mm, which predates the table.
+GOAL_WIDTH_MM = 380.0
+
+# Puck MEASURED 2026-08-23: 81.4 mm diameter. The sim had 25 mm radius and
+# demo_goalie 31.5 -- two different wrong answers, both too small.
+PUCK_RADIUS_MM = 40.7
+
 # ── Motor anchors ──
 # All four trilaterated from caliper distances to three air holes each,
 # rms 0.01-0.51 mm. See the header for the measurements, the symmetry

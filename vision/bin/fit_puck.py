@@ -64,12 +64,25 @@ MIN_GLIDE = 15          # frames; shorter segments do not constrain a slope
 MIN_SPEED = 200.0       # mm/s; below this the tracker's noise dominates
 
 
+# A contact counts as puck-on-mallet if the two centres are about this far
+# apart. Puck radius + mallet radius is the contact distance; generous
+# because both are tracked, so the error is the sum of two tracking errors.
+CONTACT_MM = geom.PUCK_RADIUS_MM + geom.MALLET_RADIUS_MM + 25.0
+
+
 def load(path):
     rows = [json.loads(ln) for ln in Path(path).read_text().splitlines() if ln]
     if not rows:
         sys.exit(f"{path} is empty")
     d = {k: np.array([r[k] for r in rows], dtype=float) for k in
          ("seq", "t", "x", "y", "vx", "vy")}
+    # Mallet columns are optional -- present only when the mallet was
+    # resolvable that frame -- so they are read separately and padded with
+    # NaN. Omitting them here is what made the paddle fit report "no mallet
+    # positions" on recordings that plainly had them.
+    if any("mx" in r for r in rows):
+        d["mx"] = np.array([r.get("mx", np.nan) for r in rows], dtype=float)
+        d["my"] = np.array([r.get("my", np.nan) for r in rows], dtype=float)
     return d
 
 
@@ -158,6 +171,66 @@ def fit_bounces(d, cuts):
     return walls, others
 
 
+def fit_paddle(d, cuts):
+    """Restitution against the mallet, using RELATIVE normal velocity.
+
+    A wall does not move, so |v_out| / |v_in| is the coefficient. A mallet
+    does -- it recoils, and on this rig the interesting question is how much.
+    Restitution is therefore defined on the relative normal velocity:
+
+        e = -(v_puck_out - v_mallet_out).n / (v_puck_in - v_mallet_in).n
+
+    with n the line of centres. Ignoring the recoil would fold the mallet's
+    effective mass into the coefficient and give a number that is only valid
+    for the mass it was measured at.
+
+    The recoil is the other half of the point: if the mallet kicks back like
+    a free ~170 g plastic disc, then over the ~1 ms of contact the 2.10 N/mm
+    springs (28 ms period) and the servo (10s of ms) are far too slow to
+    participate, and the robot's mallet is mechanically the same target as a
+    hand-held one. If it barely moves, they are not, and the simulator needs
+    two coefficients rather than the one it has.
+    """
+    if "mx" not in d:
+        return None
+    hits, n = [], len(d["t"])
+    for c in cuts:
+        i, j = c - SKIP, c + 1 + SKIP
+        if i < 0 or j >= n or d["seq"][j] - d["seq"][i] > 2 * SKIP + 4:
+            continue
+        if np.isnan(d["mx"][c]):
+            continue
+        sep = np.hypot(d["x"][c] - d["mx"][c], d["y"][c] - d["my"][c])
+        if sep > CONTACT_MM:
+            continue
+        nrm = np.array([d["x"][c] - d["mx"][c], d["y"][c] - d["my"][c]])
+        ln = np.linalg.norm(nrm)
+        if ln < 1e-6:
+            continue
+        nrm /= ln
+
+        vin = np.array([d["vx"][i], d["vy"][i]])
+        vout = np.array([d["vx"][j], d["vy"][j]])
+        if np.hypot(*vin) < MIN_SPEED:
+            continue
+        # Mallet velocity by finite difference across the same bracket.
+        dt_i = d["t"][c] - d["t"][i]
+        dt_o = d["t"][j] - d["t"][c]
+        mv_in = np.array([(d["mx"][c] - d["mx"][i]) / dt_i,
+                          (d["my"][c] - d["my"][i]) / dt_i]) if dt_i > 0 else np.zeros(2)
+        mv_out = np.array([(d["mx"][j] - d["mx"][c]) / dt_o,
+                           (d["my"][j] - d["my"][c]) / dt_o]) if dt_o > 0 else np.zeros(2)
+
+        rel_in = (vin - mv_in) @ nrm
+        rel_out = (vout - mv_out) @ nrm
+        if rel_in >= 0 or rel_out <= 0:
+            continue
+        hits.append({"e": float(-rel_out / rel_in),
+                     "speed_in": float(np.hypot(*vin)),
+                     "recoil": float(np.hypot(*(mv_out - mv_in)))})
+    return hits
+
+
 def main() -> int:
     ap = argparse.ArgumentParser(
         description=__doc__,
@@ -239,6 +312,42 @@ def main() -> int:
                   "  SPIN. The simulator has no puck orientation state at "
                   "all, so every bank shot it plans will be\n"
                   "  systematically off. Worth knowing before training.")
+    print("\n── PADDLE (MALLET) RESTITUTION " + "─" * 36)
+    pad = fit_paddle(d, cuts)
+    if pad is None:
+        print("  no mallet positions in this recording -- re-record with a "
+              "current record_puck.py to get them")
+    elif not pad:
+        print("  no puck-mallet contacts found. Shoot the puck at the mallet "
+              "a few times, at a few speeds.")
+    else:
+        e = np.array([h["e"] for h in pad])
+        rc = np.array([h["recoil"] for h in pad])
+        print(f"  {len(pad)} contacts")
+        print(f"  e (relative normal)  {e.mean():.3f}   "
+              f"spread {e.min():.2f}-{e.max():.2f}   "
+              f"<- sim currently uses 0.90")
+        print(f"  mallet recoil        {rc.mean():6.0f} mm/s mean, "
+              f"{rc.max():6.0f} max")
+        print()
+        # A free 170 g mallet struck by a ~30 g puck should pick up roughly
+        # (2 m /(m + M)) * v_in ~= 0.3 * v_in. Much less means the cables are
+        # resisting on the impact timescale, which the timescale argument says
+        # they should not.
+        sp = np.array([h["speed_in"] for h in pad])
+        frac = (rc / np.maximum(sp, 1e-9)).mean()
+        print(f"  recoil / impact speed  {frac:.2f}")
+        if frac > 0.15:
+            print("  -> the mallet moves roughly like a free mass, so the "
+                  "springs and motors are\n     too slow to matter during "
+                  "contact and ONE paddle_restitution covers both\n     the "
+                  "robot's mallet and a hand-held one.")
+        else:
+            print("  -> the mallet barely recoils, so the cables ARE resisting "
+                  "on the impact\n     timescale. The robot's mallet is a "
+                  "different target from a hand-held one\n     and the "
+                  "simulator needs two coefficients, not one.")
+
     return 0
 
 

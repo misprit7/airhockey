@@ -15,9 +15,17 @@ WHAT YOU DO
          - long straight glides, no wall contact   -> friction
          - square-on hits into each cushion        -> restitution
          - glancing hits at 20-40 degrees          -> tangential / spin
+         - shots INTO THE ROBOT MALLET             -> paddle restitution
        Vary the SPEED. Restitution is usually speed-dependent and a single
        speed cannot show that; twenty glides at one speed constrain a point.
     3. Ctrl-C, then run vision/bin/fit_puck.py on what it wrote.
+
+    Leave the robot mallet on the table -- PuckTracker separates the two
+    structurally (mallet = a 3-blob cluster, puck = the lone blob), and its
+    position is recorded so puck-mallet contacts can be identified. Shooting
+    at it deliberately is worth doing: the robot mallet and a hand-held one
+    are different impedances and the simulator wrongly uses one coefficient
+    for both.
 
     Five varied minutes beats twenty repetitive ones.
 
@@ -47,6 +55,7 @@ import time
 from pathlib import Path
 
 sys.path.insert(0, str(Path(__file__).resolve().parent))
+from mallet_stream import MalletTracker  # noqa: E402
 from puck_stream import BlobStream, PuckTracker  # noqa: E402
 
 
@@ -75,6 +84,7 @@ def main() -> int:
     signal.signal(signal.SIGINT, stop)
 
     tracker = PuckTracker()
+    mallet = MalletTracker(tracker)
     stream = BlobStream(fps=args.fps, exposure=args.exposure,
                         gain=args.gain, threshold=args.threshold)
 
@@ -103,12 +113,20 @@ def main() -> int:
 
                 x, y, vx, vy = p
                 first_t = t if first_t is None else first_t
+                # The mallet too, so a puck-mallet contact can be told from a
+                # wall contact by WHERE it happened, and so the mallet's
+                # recoil separates restitution from effective mass. A human
+                # mallet and the robot's are different impedances -- the
+                # robot's carries reflected rotor inertia and 2.10 N/mm
+                # springs -- so they cannot share one coefficient.
+                m = mallet.update(blobs)
                 last_t = t
-                fh.write(json.dumps({
-                    "seq": seq, "t": round(t, 6),
-                    "x": round(x, 2), "y": round(y, 2),
-                    "vx": round(vx, 1), "vy": round(vy, 1),
-                }) + "\n")
+                row = {"seq": seq, "t": round(t, 6),
+                       "x": round(x, 2), "y": round(y, 2),
+                       "vx": round(vx, 1), "vy": round(vy, 1)}
+                if m is not None:
+                    row["mx"], row["my"] = round(m[0], 2), round(m[1], 2)
+                fh.write(json.dumps(row) + "\n")
                 kept += 1
 
                 now = time.monotonic()
