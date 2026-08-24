@@ -24,21 +24,29 @@ import numpy as np
 # These are SIM limits and are deliberately not the firmware's. The Teensy
 # ceiling is 12000 mm/s / 120000 mm/s^2 and clamps independently; that stays
 # the single authority for what the hardware will actually do.
-MAX_SPEED_M_S = 15.0     # 15000 mm/s
-MAX_ACCEL_M_S2 = 200.0   # 200000 mm/s^2
+MAX_SPEED_M_S = 12.0    # 12000 mm/s
+MAX_ACCEL_M_S2 = 20.0   # 20000 mm/s^2
 
-# Both are ABOVE what the hardware will presently do, deliberately or not —
-# worth stating so a transfer failure is not mysterious. The firmware clamps
-# speed at 12000 mm/s and accel at 120000 mm/s^2, so the Teensy will simply
-# refuse the top of this range. And cdpr_config.h's own solved figures for
-# what the cables can make put the centre near 114000 mm/s^2 and the worst
-# corner at 9000. A policy trained to 200000 everywhere will plan strikes
-# the rig cannot execute, most severely near the edges, where the shortfall
-# is largest.
+# How these sit against the machine, so a transfer failure is not mysterious:
+#
+#   SPEED  exactly the firmware clamp (MAX_VELOCITY_MM_S = 12000), and 93% of
+#          the motors' own 12968 mm/s of cable (2580 rpm -- the slower of the
+#          two drive models -- over a 301.6 mm circumference). On a CDPR every
+#          cable moves together, so the system takes the worse of the two
+#          models. Nothing here can ask for more than the Teensy will pass.
+#
+#   ACCEL  well under the firmware ceiling of 120000, and under what the
+#          cables can make across most of the workspace: cdpr_config.h's solve
+#          puts the centre near 114000. It IS above that solve's worst corner
+#          of 9000. But that figure was computed for the old BOX bounds and is
+#          order-of-magnitude at best, so read it as "the corners have less
+#          than the middle" rather than as a number -- and expect the corners
+#          to be where a trained policy first asks for something the rig
+#          cannot deliver.
 
 # Domain-randomisation spread, as a FRACTION of the nominal above, so the
 # range tracks the nominal instead of silently excluding it. The old
-# absolute range would not have contained a 15 m/s nominal at all.
+# absolute range would not have contained a 12 m/s nominal at all.
 DR_CAP_RANGE = (0.5, 1.125)
 
 
@@ -81,19 +89,9 @@ class DelayedDynamics(MotorDynamics):
     - Response has a time constant (smoothing / lag)
     """
 
-    # SET 2026-08-23 from the real machine. The previous 4.0 / 40.0 predate
-    # the table existing and were placeholders, not measurements — and they
-    # were wrong in the dangerous direction: the sim was HALF the real top
-    # speed but nearly TWICE the real acceleration, so a policy trained on it
-    # would lean on direction changes the rig cannot make while never
-    # learning to use the speed it has.
-    #
-    # NOTE 15 m/s is above what the hardware can currently deliver: the
-    # firmware caps cable speed at 12000 mm/s and the slower of the two motor
-    # models binds at 2580 rpm x 301.6 mm spool = 12968 mm/s. Left as asked,
-    # but a policy trained here can plan sprints the robot cannot execute —
-    # see the note in MotorDynamics about which direction of mismatch is
-    # safe.
+    # Caps come from MAX_SPEED_M_S / MAX_ACCEL_M_S2 at the top of this
+    # file, which is the single definition; see the note there for how
+    # they sit against the firmware clamp and the cables.
     x: float = 0.0
     y: float = 0.0
     vx: float = 0.0
@@ -182,8 +180,12 @@ class HardwareDynamics(MotorDynamics):
       SWAP, and sim y also runs opposite to grid x — sim y=0 is the agent's
       own goal line, which is the robot end of the table (high grid x).
 
-        sim y 0 .. 1   ->  grid x WS_MAX_X .. WS_MIN_X   (robot end -> centre)
-        sim x 0 .. 1   ->  grid y WS_MIN_Y .. WS_MAX_Y
+        sim y 0 .. 1   ->  grid x RAIL_MAX_X .. CENTERLINE_X (robot -> centre)
+        sim x 0 .. 1   ->  grid y RAIL_MIN_Y .. RAIL_MAX_Y
+
+      Against the TABLE, not the workspace. Mapping onto the workspace made
+      the scale change whenever a limit was retuned and silently rescaled
+      paddle speed with it; the workspace now enters only as a clamp.
 
     The previous version mapped sim x -> mm x with no swap into a 606x730
     box, which was the prototype's own local frame and is meaningless on
