@@ -194,7 +194,7 @@ async def live_game(ws: WebSocket):
     use_hardware = False
     ui_mode = "control"     # "control" | "sim"; replay never reaches here
     hardware_dynamics = None
-    agent_dynamics = DelayedDynamics(max_speed=5.0, max_accel=60.0, time_constant=0.01)
+    agent_dynamics = DelayedDynamics(time_constant=0.01)
     env = AirHockeyEnv(
         agent_dynamics=agent_dynamics,
         opponent_policy="follow",
@@ -240,7 +240,7 @@ async def live_game(ws: WebSocket):
                         if use_instant:
                             env.agent_dynamics = IdealDynamics()
                         else:
-                            env.agent_dynamics = DelayedDynamics(max_speed=5.0, max_accel=60.0, time_constant=0.01)
+                            env.agent_dynamics = DelayedDynamics(time_constant=0.01)
                         env.agent_dynamics.reset(
                             env.engine.state.paddle_agent.x,
                             env.engine.state.paddle_agent.y,
@@ -307,7 +307,7 @@ async def live_game(ws: WebSocket):
                                 except Exception:
                                     pass
                                 hardware_dynamics = None
-                            env.agent_dynamics = DelayedDynamics(max_speed=5.0, max_accel=60.0, time_constant=0.01)
+                            env.agent_dynamics = DelayedDynamics(time_constant=0.01)
                             env.agent_dynamics.reset(
                                 env.engine.state.paddle_agent.x,
                                 env.engine.state.paddle_agent.y,

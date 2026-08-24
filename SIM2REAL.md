@@ -24,6 +24,11 @@ you at the table for about an hour total.
 | ✅ | **Cable model moved to `shared/`.** `shared/check_geometry.py` used to reach into `ai/bin/` to import the model it validates. |
 | ✅ | **Puck recorder + fitter** — `vision/bin/record_puck.py`, `vision/bin/fit_puck.py`. Validated against synthetic data: recovers μ=0.0042 from truth 0.0042, e=0.718 from truth 0.72. |
 | ✅ | **Latency probe** — `FLASH` command in firmware (flashed), `vision/bin/measure_latency.py`. Moves nothing. |
+| ✅ | **Sim runs the firmware's real motion profile.** `motionProfileAdvance()` in the shared header (law + integration + parking, previously split), built as a host library by `fw/host`, bound via `ai/airhockey/motion.py`. One implementation, no mirror. 4.3M env-steps/s at 4096 envs. |
+| ✅ | **Sim tick chosen by measurement.** `ai/tests/test_motion_fidelity.py`. Reasoning said 1 ms; measurement said that diverges **1.32 mm on diagonals**, 3.5× the motor step. Settled on 0.2 ms (worst 0.252 mm). |
+| ✅ | **Replay harness** — `ai/bin/replay_gap.py`, self-validated both ways (reproduces its own output to 0.0000 mm; detects a 20% accel error as 63.9 mm peak). |
+| ✅ | **Hardware logger** — `ai/bin/log_hardware.py`. Commands nothing; reads `cdpr_master` STATUS and the camera. |
+| ✅ | Dead code removed (`profile_gpu.py`, `ai/training/index.html`); an 8th copy of the speed/accel caps removed from `server.py`. |
 
 ---
 
@@ -93,17 +98,22 @@ calibration point.
 
 In dependency order. Nothing here needs the robot.
 
-### A. Real motion profile in the sim ← *next*
-The sim's `DelayedDynamics` is a first-order filter with the same bang-bang
-relay bug we removed from the firmware. It is not what your robot runs.
+### A0. Mallet position from the blob stream ← *next, and it blocks D*
+`log_hardware.py` currently logs the commanded target and what the *Teensy
+believes*, but not where the paddle actually **was** — so `replay_gap.py`
+has no ground truth to score against yet.
 
-Plan: `motionProfileAdvance()` in `fw/include/motion_profile.h` (step +
-integrate, so `cdpr.cpp` and the sim share one implementation), a batched C
-wrapper with its own build target, ctypes binding, and a **tick-divergence
-test** to choose the sim's timestep. The firmware ticks at 20 µs for step-rate
-reasons the sim doesn't have; the sim's tick should come from the profile's
-own timescales (3 ms jerk ramp, 6 ms velocity loop) — probably ~1 ms, 250×
-less work, but measured rather than assumed.
+`track_mallet.locate()` can't be reused: it takes a full image, while
+`blobtrack` streams coordinates. Needs its own pass — find the 3-blob cluster
+(the mallet carries three retroreflectors; the puck carries one, which is how
+`PuckTracker` already separates them) and back-project at the **arm height of
+33 mm**, not the puck's 8 mm. Getting that height wrong is a parallax error
+proportional to radial distance from the camera nadir.
+
+### A1. Wire the profile into the env
+`motion.py` exists and is fast, but `batch_env` still steps `DelayedDynamics`.
+Swapping it is mechanical; it's sequenced after B so it only has to be done
+once.
 
 ### B. Collapse the duplicated physics
 `physics.py`+`env.py` (scalar) and `batch_physics.py`+`batch_env.py` (batch)
@@ -111,6 +121,12 @@ are parallel implementations kept in sync by 1087 lines of parity tests. Those
 tests pass, which is the proof one is redundant. Plan: batch becomes the only
 engine, `AirHockeyEnv` becomes a thin Gymnasium adapter over `n_envs=1`,
 parity tests deleted. Removes ~1800 lines and a whole class of bug.
+
+**Not started, deliberately.** `server.py` reaches deep into the scalar env's
+internals — `env.engine.state.paddle_agent.x`, `env._action_low`, hot-swapping
+`env.agent_dynamics` to `HardwareDynamics` mid-session. Half-doing this would
+leave the web UI broken while you're away from it, so it wants one
+uninterrupted pass, not a partial one.
 
 ### C. Feed the sim the real estimator
 Right now the policy gets ground-truth puck velocity in sim and a 6-frame
@@ -120,10 +136,15 @@ centre, up to 150 ms of coasting — as a structured dropout, because Gaussian
 noise does not describe it and it sits in the highest-traffic part of the
 table.
 
-### D. Replay harness — the gap metric
-Same recorded command sequence into sim and real from the same initial state;
-measure divergence at 0.5/1/2 s. **This is the number that makes every other
-claim falsifiable.** Without it, "the sim is good now" is an opinion.
+### D. Replay harness — BUILT, blocked on A0
+`ai/bin/replay_gap.py` is done and self-validated: it reproduces the
+simulator's own output to 0.0000 mm, and catches a deliberately-detuned 20%
+accel cap as a 63.9 mm peak divergence (so it is not blind). It reports
+against two existing yardsticks — one motor step (0.377 mm) and mallet
+tracking error (~4 mm) — and classifies the growth shape, since linear growth
+implicates a scale error while quadratic implicates acceleration.
+
+It needs camera-measured paddle position to score against, which is A0.
 
 ### E. Then, and only then: domain randomisation and training
 Ranges set by measurement uncertainty, not guessed. Tight where measured,
