@@ -31,8 +31,24 @@ class TableConfig:
     paddle_radius: float = 0.04  # 80mm diameter paddle
     puck_mass: float = 0.015  # 15g puck
     paddle_mass: float = 0.17  # 170g paddle
-    puck_friction: float = 0.01  # kinetic friction coefficient on air cushion
-    wall_restitution: float = 0.85  # energy retained on wall bounce
+    # MEASURED 2026-08-23 from 64 glides (vision/bin/fit_puck.py). The 0.01
+    # here was a guess predating the table and is 2.9x too low.
+    #
+    # This is the CONSTANT-model equivalent. The real deceleration is
+    # speed-dependent -- 230 mm/s^2 rolling plus 1.85e-5 * v^2 of aerodynamic
+    # drag -- which at 6 m/s is roughly three times the rolling term. A single
+    # coefficient is therefore too high for a drifting puck and too low for a
+    # struck one, and struck is the regime that matters. See PUCK_DRAG_B.
+    puck_friction: float = 0.0288
+    # MEASURED 2026-08-23 from 53 wall contacts, all four rails agreeing
+    # (0.756 / 0.777 / 0.756 / 0.811) once goal-mouth events were excluded --
+    # a puck arriving at the 380 mm goal does not bounce, and mixing those in
+    # had dragged the end rails to ~0.45 with an impossible negative
+    # tangential ratio.
+    #
+    # Also speed-dependent: -0.039 per m/s over the 0.7-7.3 m/s measured, so
+    # ~0.79 for a drifting puck and ~0.53 for a hard shot. Not yet modelled.
+    wall_restitution: float = 0.768
     paddle_restitution: float = 0.9  # energy retained on paddle hit
     # MEASURED 380 mm, centred on each end rail. Derived from the canonical
     # geometry rather than restated, since it is a fact about the table. The
@@ -44,7 +60,11 @@ class TableConfig:
     # is goal matches, which is what actually governs whether a shot scores.
     goal_width: float = (_geom.GOAL_WIDTH_MM
                          / (_geom.RAIL_MAX_Y - _geom.RAIL_MIN_Y))
-    max_puck_speed: float = 5.0  # m/s, clamp for stability
+    max_puck_speed: float = 9.0  # m/s; measured glides reached 8.7
+
+    # Aerodynamic drag, decel = puck_friction*g + PUCK_DRAG_B * v^2, in SI.
+    # Measured b = 1.853e-5 per mm; * 1000 for metres.
+    PUCK_DRAG_B: float = 1.853e-2
 
 
 @dataclass

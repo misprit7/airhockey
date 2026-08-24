@@ -47,10 +47,16 @@ import cdpr_geometry as geom  # noqa: E402
 
 G_MM_S2 = 9806.65
 
-# A puck radius from the rail counts as "at the wall". Slightly generous so a
-# contact is not missed by tracking noise; contacts land within a millimetre
-# or two of this in practice.
-WALL_BAND_MM = 45.0
+# How far the puck CENTRE sits from a rail at the moment of contact: one puck
+# radius, plus slack for tracking error and for the rails being stored as the
+# INSCRIBED rectangle (so the true wall is a few mm further out in places).
+#
+# This was a hardcoded 45.0, set when the puck radius was believed to be 31.5.
+# It is 40.7, so the band barely reached the contact point and most wall hits
+# were being classified as "away from a rail" -- 147 of 175 contacts in the
+# first real recording, with the surviving handful producing impossible
+# results like a negative tangential ratio.
+WALL_BAND_MM = geom.PUCK_RADIUS_MM + 18.0
 
 # Heading change per frame that means a collision. At 200 Hz a gliding puck
 # turns by essentially zero; friction is anti-parallel to velocity and cannot
@@ -108,7 +114,15 @@ def segment(d):
 
 
 def fit_friction(d, bounds):
-    """Least-squares deceleration per glide, weighted by segment length."""
+    """Deceleration per glide, as a constant AND as a + b*v^2.
+
+    A single coefficient cannot describe this surface. On an air cushion the
+    Coulomb term is tiny and AERODYNAMIC DRAG dominates at speed, so
+    deceleration rises with v^2 -- which is exactly what an eightfold IQR
+    across glides from 0.4 to 8.7 m/s means. Reporting only the mean would
+    hand the simulator a number that is far too high for a slow puck and far
+    too low for a struck one, and striking is the regime that matters.
+    """
     rows = []
     for a, b in bounds:
         t = d["t"][a + SKIP:b - SKIP]
@@ -125,23 +139,45 @@ def fit_friction(d, bounds):
     dec = np.array([r[0] for r in rows])
     w = np.array([r[1] for r in rows], dtype=float)
     mean = float((dec * w).sum() / w.sum())
-    return {"n": len(rows), "decel_mm_s2": mean,
-            "mu": mean / G_MM_S2,
-            "spread": (float(np.percentile(dec, 25)),
-                       float(np.percentile(dec, 75))),
-            "speeds": np.array([r[2] for r in rows])}
+    speeds = np.array([r[2] for r in rows])
+    out = {"n": len(rows), "decel_mm_s2": mean,
+           "mu": mean / G_MM_S2,
+           "spread": (float(np.percentile(dec, 25)),
+                      float(np.percentile(dec, 75))),
+           "speeds": speeds}
+    # decel = a + b*v^2, in mm units. Fit only if the speeds actually span a
+    # range; otherwise the quadratic term is unconstrained and will fit noise.
+    if len(rows) >= 8 and speeds.max() > 3 * max(speeds.min(), 1e-9):
+        A = np.column_stack([np.ones_like(speeds), speeds ** 2])
+        coef, *_ = np.linalg.lstsq(A, dec, rcond=None)
+        resid = dec - A @ coef
+        out["drag"] = {"a": float(coef[0]), "b": float(coef[1]),
+                       "rms": float(np.sqrt((resid ** 2).mean())),
+                       "rms_const": float(np.sqrt(((dec - mean) ** 2).mean()))}
+    return out
 
 
 def wall_of(x, y):
-    """Which cushion is this point against, if any."""
+    """Which cushion is this point against, if any.
+
+    The END rails are not continuous cushion: each has a 380 mm goal mouth
+    centred on it. A puck arriving there does not bounce -- it goes in, or
+    clips the goal edge -- so those contacts are not restitution measurements
+    and mixing them in is what dragged the two end rails down to e ~ 0.45
+    with an impossible tangential ratio of -5, while the two continuous side
+    rails agreed with each other at 0.756 and 0.777.
+    """
+    y_mid = (geom.RAIL_MIN_Y + geom.RAIL_MAX_Y) / 2.0
+    in_goal = abs(y - y_mid) < geom.GOAL_WIDTH_MM / 2.0
+
     if y - geom.RAIL_MIN_Y < WALL_BAND_MM:
         return "near(-y)", np.array([0.0, 1.0])
     if geom.RAIL_MAX_Y - y < WALL_BAND_MM:
         return "far(+y)", np.array([0.0, -1.0])
     if x - geom.RAIL_MIN_X < WALL_BAND_MM:
-        return "human(-x)", np.array([1.0, 0.0])
+        return (None, None) if in_goal else ("human(-x)", np.array([1.0, 0.0]))
     if geom.RAIL_MAX_X - x < WALL_BAND_MM:
-        return "robot(+x)", np.array([-1.0, 0.0])
+        return (None, None) if in_goal else ("robot(+x)", np.array([-1.0, 0.0]))
     return None, None
 
 
@@ -163,6 +199,11 @@ def fit_bounces(d, cuts):
         tan = np.array([-nrm[1], nrm[0]])
         vin_n, vout_n = vin @ nrm, vout @ nrm
         if vin_n >= 0 or vout_n <= 0:        # not actually approaching/leaving
+            continue
+        # A cushion cannot return more normal speed than it received. A
+        # ratio above 1 means something pushed -- a hand still in contact --
+        # and those were producing the impossible tangential ratios.
+        if -vout_n / vin_n > 1.0:
             continue
         walls.append({"wall": name, "speed_in": float(np.hypot(*vin)),
                       "e_normal": float(-vout_n / vin_n),
@@ -255,7 +296,21 @@ def main() -> int:
         print(f"  deceleration  {fr['decel_mm_s2']:8.1f} mm/s^2   "
               f"(IQR {lo:.0f}-{hi:.0f})")
         print(f"  puck_friction {fr['mu']:8.4f}   "
-              f"<- sim currently uses 0.0100")
+              f"<- sim currently uses 0.0100 (constant-model equivalent)")
+        if "drag" in fr:
+            g = fr["drag"]
+            print(f"\n  speed-dependent fit  decel = a + b*v^2")
+            print(f"    a (rolling)  {g['a']:8.1f} mm/s^2   "
+                  f"= mu {g['a'] / G_MM_S2:.5f}")
+            print(f"    b (drag)     {g['b']:.3e} 1/mm")
+            print(f"    residual rms {g['rms']:7.1f} vs {g['rms_const']:7.1f} "
+                  f"for a single constant")
+            if g["rms"] < 0.7 * g["rms_const"]:
+                print("    -> the quadratic model is clearly better; the "
+                      "spread is DRAG, not noise.")
+                for v in (1000, 3000, 6000):
+                    print(f"       at {v/1000:.0f} m/s: "
+                          f"{g['a'] + g['b'] * v * v:7.1f} mm/s^2")
         if fr["mu"] > 0 and abs(fr["mu"] - 0.01) / 0.01 > 0.25:
             print(f"     that is {fr['mu'] / 0.01:.1f}x the placeholder")
         if hi > 2.5 * max(lo, 1e-9):
