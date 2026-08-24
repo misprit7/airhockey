@@ -29,8 +29,10 @@ SETUP — THE ONE PHYSICAL THING YOU MUST DO
     to be in focus; it needs to be bright enough to cross the blob threshold
     and be the ONLY thing that changes. So:
       - put the A9 LED on the table where the camera sees it
-      - take the PUCK off the table, and leave the mallet still, so nothing
-        else appears or moves
+      - the table does NOT need to be clear. The script locates the LED
+        first by flashing it and taking the blob that appears only while
+        lit, so the field markers, spool reflectors and IR glare are all
+        fine to leave exactly as they are
       - lights as they normally are for tracking
 
     Nothing is energised and nothing moves. The drives can be off entirely;
@@ -46,6 +48,7 @@ USAGE
 from __future__ import annotations
 
 import argparse
+import select
 import sys
 import time
 from pathlib import Path
@@ -78,6 +81,8 @@ def main() -> int:
     ap.add_argument("--exposure", type=float, default=300.0)
     ap.add_argument("--gain", type=float, default=12.0)
     ap.add_argument("--threshold", type=int, default=90)
+    ap.add_argument("--tol", type=float, default=12.0,
+                    help="px radius for matching the LED blob")
     args = ap.parse_args()
 
     if serial is None:
@@ -96,23 +101,76 @@ def main() -> int:
     print(f"blobtrack {stream.width}x{stream.height}")
     frames = iter(stream)
 
-    # Baseline: what does the scene look like with the LED off? Anything
-    # present now is furniture and must not be mistaken for the flash.
-    base = []
-    for _ in range(60):
-        _seq, _t, blobs = next(frames)
-        base.append(len(blobs))
-    baseline = int(np.median(base))
-    print(f"baseline {baseline} blob(s) with the LED off\n")
-    if baseline > 2:
-        print("NOTE: several blobs already visible. Take the puck off the "
-              "table and keep the mallet still, or the flash may not be\n"
-              "      separable from what is already there.\n")
+    def drain():
+        """Discard every frame already queued, so the next read is fresh.
+
+        blobtrack free-runs and the pipe buffers. Without this the first frame
+        read after a command can predate the command, which makes the measured
+        latency arbitrarily small -- the first version of this script reported
+        0.05 ms against a 5 ms frame interval, which is the signature of
+        exactly that.
+        """
+        fd = stream.p.stdout
+        while select.select([fd], [], [], 0.0)[0]:
+            if not fd.readline():
+                break
+
+    def blobs_now():
+        _seq, _t, b = next(frames)
+        return b[:, :2] if len(b) else np.empty((0, 2))
+
+    # ── Find the LED, rather than counting blobs ─────────────────────────
+    #
+    # The table is not empty and should not have to be: the field markers,
+    # the spool retroreflectors and the IR ring's glare are all permanently
+    # visible, which is why the baseline was 14 blobs. Counting them and
+    # waiting for 15 triggers on the first frame that happens to be noisy.
+    #
+    # So locate the LED once: flash it, and take the blob that is present
+    # while lit and absent while dark. Then every trial looks for THAT
+    # position and nothing else.
+    print("locating the A9 LED...")
+    dark = []
+    for _ in range(30):
+        dark.append(blobs_now())
+    dark_pts = np.vstack([d for d in dark if len(d)]) if any(
+        len(d) for d in dark) else np.empty((0, 2))
+
+    led_px = None
+    for attempt in range(6):
+        drain()
+        ser.write(b"FLASH 400\n")
+        ser.flush()
+        ser.readline()
+        time.sleep(0.10)                     # well inside the 400 ms flash
+        lit = blobs_now()
+        if len(lit) == 0:
+            continue
+        if len(dark_pts):
+            d = np.linalg.norm(lit[:, None, :] - dark_pts[None, :, :],
+                               axis=2).min(axis=1)
+            new = lit[d > args.tol]
+        else:
+            new = lit
+        time.sleep(0.45)                     # let it go out
+        if len(new) == 1:
+            led_px = new[0]
+            break
+        if len(new) > 1:
+            print(f"  attempt {attempt}: {len(new)} new blobs, ambiguous")
+
+    if led_px is None:
+        print("\nCould not identify the LED.")
+        print("  - is the A9 LED in the camera's field of view?")
+        print(f"  - is it brighter than threshold {args.threshold}?")
+        print("  - try: python vision/bin/measure_latency.py --threshold 60")
+        stream.close(); ser.close()
+        return 1
+    print(f"LED at pixel ({led_px[0]:.0f}, {led_px[1]:.0f})\n")
 
     cmd_ms, see_ms = [], []
     for i in range(args.n):
-        # Drain anything the camera queued while we were between trials, so
-        # the first frame we look at is genuinely after the command.
+        drain()
         ser.reset_input_buffer()
         t0 = time.perf_counter()
         ser.write(f"FLASH {args.flash_ms}\n".encode())
@@ -120,29 +178,25 @@ def main() -> int:
         reply = ser.readline().decode(errors="replace").strip()
         t1 = time.perf_counter()
         if not reply.startswith("OK FLASH"):
-            print(f"  trial {i}: unexpected reply {reply!r} — is the firmware "
-                  "current? FLASH was added 2026-08-23")
+            print(f"  trial {i}: unexpected reply {reply!r}")
             continue
-        rt = (t1 - t0) * 1e3
 
         seen = None
         deadline = time.perf_counter() + 0.5
         while time.perf_counter() < deadline:
-            _seq, _t, blobs = next(frames)
-            if len(blobs) > baseline:
+            b = blobs_now()
+            if len(b) and np.linalg.norm(b - led_px, axis=1).min() < args.tol:
                 seen = (time.perf_counter() - t1) * 1e3
                 break
         if seen is None:
-            print(f"  trial {i}: LED never seen — is it in frame and above "
-                  f"threshold {args.threshold}?")
+            print(f"  trial {i}: LED not seen at its known pixel")
             continue
 
-        cmd_ms.append(rt)
+        cmd_ms.append(rt := (t1 - t0) * 1e3)
         see_ms.append(seen)
         print(f"\r  {len(cmd_ms):3d}/{args.n}  round trip {rt:6.2f} ms   "
               f"LED seen +{seen:6.2f} ms", end="", flush=True)
 
-        # Let the LED go out and the camera settle before the next trial.
         time.sleep(args.flash_ms / 1000.0 + 0.05)
 
     stream.close()
@@ -168,10 +222,20 @@ def main() -> int:
     print(f"At 5 m/s the puck moves {total * 5:.0f} mm in that time.\n")
 
     frame_ms = 1000.0 / args.fps
-    print(f"Frame interval is {frame_ms:.1f} ms, so the sensing figure "
-          f"carries at least +/-{frame_ms/2:.1f} ms of quantisation;")
-    print("the median over many trials averages that out, the individual "
-          "readings do not.")
+    print(f"Frame interval is {frame_ms:.1f} ms, so each sensing reading "
+          f"carries up to {frame_ms:.1f} ms of quantisation (the LED can come "
+          f"on\njust after a frame was taken). The MEDIAN over many trials "
+          "averages that out; individual readings do not.")
+
+    # A sanity floor. A sensing figure below half a frame interval is not a
+    # fast camera, it is a bug -- the first version of this script reported
+    # 0.05 ms because it triggered on a noisy blob COUNT and read frames that
+    # predated the command.
+    if np.median(s) < frame_ms / 2:
+        print(f"\nWARNING: median sensing {np.median(s):.2f} ms is below half "
+              f"a frame interval ({frame_ms/2:.1f} ms).")
+        print("That is not physically possible -- treat this run as invalid "
+              "and check the LED was really being found.")
     print("\nPut the total into the sim as observation delay — see "
           "camera_delay in the env config.")
     return 0
