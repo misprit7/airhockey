@@ -201,36 +201,67 @@ def main() -> int:
         print(f"LED at pixel ({led_px[0]:.0f}, {led_px[1]:.0f}), "
               f"occupancy score {best:.2f}\n")
 
+    # ── Trials ──────────────────────────────────────────────────────────
+    #
+    # The frame loop NEVER stops. That is the whole design, and the previous
+    # version's bug: it slept between trials, blobtrack kept producing, and
+    # the pipe backed up. Then "the next frame" was one captured seconds ago,
+    # still showing the PREVIOUS flash, so the LED was detected instantly and
+    # the script reported 0.11 ms against a 5 ms frame interval.
+    #
+    # Draining with select() cannot fix that, because BlobStream opens the
+    # pipe with text=True and bufsize=1 -- select reports the OS pipe while
+    # readline serves from Python's own buffer, so select says "empty" with
+    # thousands of lines still queued.
+    #
+    # Reading every iteration keeps the backlog at roughly one frame, so the
+    # moment a read returns is the moment that frame arrived, and the flash
+    # is injected between two reads rather than into a queue.
     cmd_ms, see_ms = [], []
-    for i in range(args.n):
-        drain()
-        ser.reset_input_buffer()
-        t0 = time.perf_counter()
-        ser.write(f"FLASH {args.flash_ms}\n".encode())
-        ser.flush()
-        reply = ser.readline().decode(errors="replace").strip()
-        t1 = time.perf_counter()
-        if not reply.startswith("OK FLASH"):
-            print(f"  trial {i}: unexpected reply {reply!r}")
+    COOLDOWN_FRAMES = int(args.fps * (args.flash_ms / 1000.0 + 0.10))
+
+    armed = False
+    t_reply = 0.0
+    cooldown = int(args.fps * 0.2)
+    rt = 0.0
+
+    while len(cmd_ms) < args.n:
+        b = blobs_now()                       # blocks ~1 frame: stays current
+        lit = (len(b) and
+               np.linalg.norm(b - led_px, axis=1).min() < args.tol)
+
+        if cooldown > 0:
+            cooldown -= 1
             continue
 
-        seen = None
-        deadline = time.perf_counter() + 0.5
-        while time.perf_counter() < deadline:
-            b = blobs_now()
-            if len(b) and np.linalg.norm(b - led_px, axis=1).min() < args.tol:
-                seen = (time.perf_counter() - t1) * 1e3
-                break
-        if seen is None:
-            print(f"  trial {i}: LED not seen at its known pixel")
+        if not armed:
+            if lit:
+                continue                      # wait for it to actually go dark
+            ser.reset_input_buffer()
+            t0 = time.perf_counter()
+            ser.write(f"FLASH {args.flash_ms}\n".encode())
+            ser.flush()
+            reply = ser.readline().decode(errors="replace").strip()
+            t_reply = time.perf_counter()
+            if not reply.startswith("OK FLASH"):
+                print(f"  unexpected reply {reply!r}")
+                continue
+            rt = (t_reply - t0) * 1e3
+            armed = True
             continue
 
-        cmd_ms.append(rt := (t1 - t0) * 1e3)
-        see_ms.append(seen)
-        print(f"\r  {len(cmd_ms):3d}/{args.n}  round trip {rt:6.2f} ms   "
-              f"LED seen +{seen:6.2f} ms", end="", flush=True)
-
-        time.sleep(args.flash_ms / 1000.0 + 0.05)
+        if lit:
+            cmd_ms.append(rt)
+            see_ms.append((time.perf_counter() - t_reply) * 1e3)
+            armed = False
+            cooldown = COOLDOWN_FRAMES
+            print(f"\r  {len(cmd_ms):3d}/{args.n}  round trip {rt:6.2f} ms   "
+                  f"LED seen +{see_ms[-1]:6.2f} ms", end="", flush=True)
+        elif time.perf_counter() - t_reply > 0.5:
+            print(f"\n  timeout: LED not seen at ({led_px[0]:.0f},"
+                  f"{led_px[1]:.0f}) — has it moved?")
+            armed = False
+            cooldown = COOLDOWN_FRAMES
 
     stream.close()
     ser.close()
