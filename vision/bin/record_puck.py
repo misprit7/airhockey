@@ -20,12 +20,15 @@ WHAT YOU DO
        speed cannot show that; twenty glides at one speed constrain a point.
     3. Ctrl-C, then run vision/bin/fit_puck.py on what it wrote.
 
-    Leave the robot mallet on the table -- PuckTracker separates the two
-    structurally (mallet = a 3-blob cluster, puck = the lone blob), and its
-    position is recorded so puck-mallet contacts can be identified. Shooting
-    at it deliberately is worth doing: the robot mallet and a hand-held one
-    are different impedances and the simulator wrongly uses one coefficient
-    for both.
+    MARKERS ON A HAND-HELD MALLET, if you want paddle restitution: it needs
+    THREE dots in a cluster, not one. The puck is identified as the blob with
+    no near neighbours, so a single dot gives two isolated blobs and no way to
+    tell which is which -- the tracker would swap between them as they move,
+    which is worse than losing the puck because it still looks like data.
+    Three within 90 mm of each other, 2 of 3 visible is enough. Then pass
+    --mallet-z with their height above the surface; the default is the robot
+    mallet's 33 mm and using the wrong height is a parallax error that grows
+    with distance from the camera nadir.
 
     Five varied minutes beats twenty repetitive ones.
 
@@ -69,6 +72,10 @@ def main() -> int:
     ap.add_argument("--exposure", type=float, default=300.0)
     ap.add_argument("--gain", type=float, default=12.0)
     ap.add_argument("--threshold", type=int, default=90)
+    ap.add_argument("--mallet-z", type=float, default=None,
+                    help="height of the mallet's marker cluster above "
+                         "the surface, mm. Default is the robot "
+                         "mallet's 33.0; measure it for any other.")
     args = ap.parse_args()
 
     out = Path(args.output) if args.output else (
@@ -84,7 +91,8 @@ def main() -> int:
     signal.signal(signal.SIGINT, stop)
 
     tracker = PuckTracker()
-    mallet = MalletTracker(tracker)
+    mallet = (MalletTracker(tracker, args.mallet_z) if args.mallet_z
+              else MalletTracker(tracker))
     stream = BlobStream(fps=args.fps, exposure=args.exposure,
                         gain=args.gain, threshold=args.threshold)
 

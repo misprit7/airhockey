@@ -56,8 +56,19 @@ class MalletTracker:
     would mean two places to update when the table changes.
     """
 
-    def __init__(self, tracker: PuckTracker | None = None):
+    def __init__(self, tracker: PuckTracker | None = None,
+                 marker_z_mm: float = ARM_Z_MM):
+        """`marker_z_mm` is the HEIGHT of the marker cluster above the surface.
+
+        Configurable because a hand-held mallet's markers sit at a different
+        height from the robot's 33 mm arm markers, and getting it wrong is a
+        parallax error proportional to radial distance from the camera nadir:
+        zero under the lens, millimetres at the edges, always radial. That is
+        the same lever that put 4.2 mm of error into the optical anchor
+        measurements, so it is worth passing rather than assuming.
+        """
         self.t = tracker or PuckTracker()
+        self.z = marker_z_mm
 
     def update(self, blobs):
         """Return (x, y, n_markers) in table mm, or None if not found."""
@@ -67,7 +78,7 @@ class MalletTracker:
 
         # Back-project at the ARM height, not the puck's. Same pixels, a
         # different plane, and the difference is the whole point of this file.
-        world = self.t._to_table(kept[:, :2], ARM_Z_MM)
+        world = self.t._to_table(kept[:, :2], self.z)
 
         # Seed on the blob with the most neighbours within CLUSTER_MM. Using
         # the median of all candidates instead breaks as soon as the puck is
@@ -100,6 +111,7 @@ def _selftest() -> int:
 
     m = MalletTracker.__new__(MalletTracker)
     m.t = FakeTracker()
+    m.z = ARM_Z_MM
 
     mallet = np.array([[1000.0, 500.0], [1026.5, 500.0], [1013.0, 526.5]])
     puck = np.array([[400.0, 200.0]])
