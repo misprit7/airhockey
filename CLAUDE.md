@@ -146,6 +146,19 @@ tracking underneath it is the part that survives.
 - **Observation space**: Puck (pos + vel), own paddle (pos + vel), opponent paddle (pos + vel) — all in 2D. Camera delay is applied to observations to simulate real sensing latency.
 - **Action space**: Target (x, y) position for the paddle. Motor dynamics model converts this to actual paddle movement.
 - **Web UI**: Real-time visualization over WebSocket for debugging. Binds to 0.0.0.0 for access over Tailscale. Not used during training. Defaults to replay mode showing most recent recording. Has instant/realistic physics toggle for manual play.
+  - **Camera view** (`vision_service.py`) identifies three things and labels
+    each in the overlay: the ROBOT paddle (3-marker cluster), the PUCK (its
+    four-corner square, drawn at the true 40.7 mm radius with a spoke to each
+    claimed corner) and the PLAYER's mallet (a lone blob). All three come out
+    of ONE pass of thresholding and connected components — `track_mallet.
+    locate()` takes a `cands=` argument so the frame is only labelled once.
+  - In **control** mode the canvas draws the camera puck and player mallet
+    (`cam_puck_*` / `cam_player_*` in the frame message, sim coordinates via
+    `dynamics.table_mm_to_sim`). Deliberately never in sim mode: two pucks on
+    one canvas with no way to tell which one the game believes in.
+  - The camera is never started automatically — one process at a time can
+    hold the Spinnaker device, so the UI holding it would break
+    `record_puck.py`, `blobtrack`, and every other vision tool.
 - **Recording**: Save game trajectories at intervals during training for later visual replay. Columnar JSON format for ~78% size reduction. Includes per-frame reward and cumulative reward.
 
 ## Commands

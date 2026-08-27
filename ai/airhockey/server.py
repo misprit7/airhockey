@@ -13,7 +13,8 @@ from fastapi.responses import StreamingResponse
 from fastapi import FastAPI, WebSocket, WebSocketDisconnect
 from fastapi.responses import HTMLResponse
 
-from airhockey.dynamics import DelayedDynamics, HardwareDynamics, IdealDynamics
+from airhockey.dynamics import (DelayedDynamics, HardwareDynamics,
+                                IdealDynamics, table_mm_to_sim)
 from airhockey.env import AirHockeyEnv
 from airhockey.recorder import Recorder
 from airhockey.vision_service import SERVICE as VISION
@@ -183,6 +184,36 @@ async def camera_stream():
             await asyncio.sleep(1.0 / 15)
     return StreamingResponse(frames(),
                              media_type="multipart/x-mixed-replace; boundary=f")
+
+
+def _camera_objects():
+    """The real puck and the player's mallet, in SIM coordinates.
+
+    Under `cam_` names so they can never be mistaken for the simulated puck.
+    Only sent in CONTROL mode, where no world is being simulated and there is
+    therefore nothing for them to contradict — drawing a camera puck next to a
+    physics puck in sim mode would be two pucks and no way to tell which one
+    the game believes in.
+
+    Empty when the camera is not running. The camera is never started
+    automatically: only one process can hold the Spinnaker device, so grabbing
+    it unasked would break record_puck.py and every other vision tool.
+    """
+    if not VISION.running:
+        return {}
+    out = {}
+    p = VISION.latest_puck()
+    if p:
+        sx, sy = table_mm_to_sim(p["x"], p["y"])
+        out["cam_puck_x"] = round(sx, 4)
+        out["cam_puck_y"] = round(sy, 4)
+        out["cam_puck_n"] = p["n"]
+    q = VISION.latest_player()
+    if q:
+        sx, sy = table_mm_to_sim(q["x"], q["y"])
+        out["cam_player_x"] = round(sx, 4)
+        out["cam_player_y"] = round(sy, 4)
+    return out
 
 
 @app.websocket("/ws/live")
@@ -368,6 +399,7 @@ async def live_game(ws: WebSocket):
                     frame_msg["hw_y_mm"] = round(hy, 1)
                     frame_msg["hw"] = hardware_dynamics.hw_state()
                     frame_msg["hw_ws"] = hardware_dynamics.workspace_in_sim()
+                frame_msg.update(_camera_objects())
                 await ws.send_json(frame_msg)
                 await asyncio.sleep(1 / 60)
                 continue

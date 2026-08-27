@@ -27,6 +27,34 @@ import numpy as np
 MAX_SPEED_M_S = 12.0    # 12000 mm/s
 MAX_ACCEL_M_S2 = 20.0   # 20000 mm/s^2
 
+
+def table_mm_to_sim(mm_x: float, mm_y: float, sim_width: float = 1.0,
+                    sim_half_height: float = 1.0, flip: bool = False):
+    """Grid-frame mm -> sim metres.
+
+    A free function, not only a HardwareDynamics method, because the mapping
+    is a property of the TABLE and of the sim's chosen dimensions — nothing
+    about it involves a motor. The camera needs it with no drives connected
+    at all: a puck the robot is not touching still has to render in the right
+    place.
+
+    UNCLAMPED, unlike the sim -> mm direction. That is deliberate: the
+    workspace is a limit on where the PADDLE may go, and applying it here
+    would drag a puck sitting on the human half onto the robot's boundary.
+    Grid x below the centreline simply maps to sim y past sim_half_height,
+    which is exactly the opponent's half.
+    """
+    import sys as _sys
+    from pathlib import Path as _Path
+    _sys.path.insert(0, str(_Path(__file__).resolve().parents[2] / "shared"))
+    import cdpr_geometry as g
+
+    fy = (g.RAIL_MAX_X - mm_x) / (g.RAIL_MAX_X - g.CENTERLINE_X)
+    fx = (mm_y - g.RAIL_MIN_Y) / (g.RAIL_MAX_Y - g.RAIL_MIN_Y)
+    if flip:
+        fx = 1.0 - fx
+    return fx * sim_width, fy * sim_half_height
+
 # How these sit against the machine, so a transfer failure is not mysterious:
 #
 #   SPEED  exactly the firmware clamp (MAX_VELOCITY_MM_S = 12000), and 93% of
@@ -449,12 +477,8 @@ class HardwareDynamics(MotorDynamics):
         return g.clamp_to_workspace(mm_x, mm_y)
 
     def _mm_to_sim(self, mm_x: float, mm_y: float):
-        g = self.geom
-        fy = (g.RAIL_MAX_X - mm_x) / (g.RAIL_MAX_X - g.CENTERLINE_X)
-        fx = (mm_y - g.RAIL_MIN_Y) / (g.RAIL_MAX_Y - g.RAIL_MIN_Y)
-        if self.SIM_X_FLIP:
-            fx = 1.0 - fx
-        return fx * self.sim_width, fy * self.sim_half_height
+        return table_mm_to_sim(mm_x, mm_y, self.sim_width,
+                               self.sim_half_height, self.SIM_X_FLIP)
 
     def workspace_in_sim(self):
         """The reachable box in sim coordinates, for the UI to draw.

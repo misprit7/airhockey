@@ -321,13 +321,22 @@ function render() {
     drawTable();
 
     if (frame) {
-        // Control mode draws only your paddle: there is no puck and no
-        // opponent until they are actually tracked, and drawing a simulated
-        // one next to a real machine invites reading it as real.
+        // Control mode simulates no world, so a SIMULATED puck must not be
+        // drawn next to a real machine — it invites reading it as real. A
+        // CAMERA puck is the opposite case: it is the only thing on the
+        // canvas that is measured, so it is drawn whenever the camera is on.
+        // The cam_ prefix is what keeps the two apart; they never coexist.
         if (mode !== "control" && frame.puck_x !== undefined) {
             drawPuck(frame.puck_x, frame.puck_y);
             drawPaddle(frame.opponent_x, frame.opponent_y, COLORS.opponent,
                        COLORS.opponentGlow, COLORS.opponentRing);
+        } else if (frame.cam_puck_x !== undefined) {
+            drawPuck(frame.cam_puck_x, frame.cam_puck_y);
+        }
+        if (frame.cam_player_x !== undefined) {
+            drawPaddle(frame.cam_player_x, frame.cam_player_y,
+                       COLORS.opponent, COLORS.opponentGlow,
+                       COLORS.opponentRing);
         }
         drawPaddle(frame.agent_x, frame.agent_y, COLORS.agent, COLORS.agentGlow, COLORS.agentRing);
         if (hwPosition && showHwOverlay) {
@@ -1076,11 +1085,26 @@ const cursorLine = (mm, suffix) => (mm === null
         }
         status.classList.remove('bad');
         const p = s.pose;
+        // The puck's corner count is on the line for a reason: it is the one
+        // number that says whether a recording is worth making. Two corners
+        // resolves to a position by leaning on the previous frame, so its
+        // errors correlate instead of averaging out — visible here, invisible
+        // in the fitted result.
+        const puck = s.puck
+            ? `\npuck     ${s.puck.x.toFixed(1)}, ${s.puck.y.toFixed(1)} mm`
+              + `   ${inches([s.puck.x, s.puck.y])}`
+              + `   ${s.puck.corners}/4 dots   θ ${s.puck.theta_deg.toFixed(1)}°`
+            : '';
+        const player = s.player
+            ? `\nplayer   ${s.player.x.toFixed(1)}, ${s.player.y.toFixed(1)} mm`
+              + `   ${inches([s.player.x, s.player.y])}`
+            : '';
         status.textContent = (p
             ? `paddle   ${p.x.toFixed(1)}, ${p.y.toFixed(1)} mm   `
               + `${inches([p.x, p.y])}   θ ${p.theta_deg.toFixed(1)}°`
             : (s.note ? s.note : 'searching for the paddle…'))
             + `   ${s.fps} fps` + zoomLabel(zoom)
+            + puck + player
             + '\n' + cursorLine(cursorMm, '  (table surface)');
     };
 

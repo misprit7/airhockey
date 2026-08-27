@@ -67,6 +67,69 @@ C_GRID = (150, 150, 150)      # projected field border
 C_STRIPE = (200, 90, 200)     # projected centreline — lands on the painted stripe
 C_WS = (110, 110, 110)        # workspace limit
 C_MOTOR = (90, 230, 230)      # measured motor anchors
+C_PUCK = (255, 170, 60)       # the puck's four-corner marker square
+C_PLAYER = (150, 255, 130)    # the player's hand-held mallet, one dot
+
+# Height of the dot on the PLAYER's mallet. An assumption, not a measurement:
+# it is whatever mallet the human picked up. 67 mm is a dot sitting on top of
+# a mallet the same height as the robot's. Being wrong here is a parallax
+# error that grows radially from the camera nadir — a few mm at the edges,
+# nothing at the centre — which is tolerable for a display and would not be
+# for identification, so record_puck.py asks for --mallet-z instead of
+# assuming this.
+PLAYER_DOT_Z_MM = geom.MALLET_Z_MM
+
+# A lone blob this close to the paddle is one of the paddle's own markers
+# with its siblings unresolved, not a second mallet.
+PADDLE_EXCLUDE_MM = 70.0
+
+
+def _detect_loose(cands, K, dist, rvec, tvec, paddle_xy):
+    """The two things on the table that are neither bolted down nor the robot.
+
+    Returns (puck, player) from the SAME candidate list the paddle came from.
+
+    The puck is the group of blobs that SOLVES its four-corner marker square;
+    the player's mallet is a blob with nothing near it, which no marker on the
+    robot paddle can be, since those sit within 53 mm of each other. See
+    vision/bin/puck_markers.py for why the square is solved rather than
+    averaged — the short version is that averaging three corners invents
+    7.3 mm of displacement pointing at the corner that dropped out.
+    """
+    from camera import backproject_pixels
+    from puck_markers import LINK_MM, find_puck
+
+    if not cands:
+        return None, None
+    px = np.array([c[1] for c in cands], float)
+    world = backproject_pixels(px, K, dist, rvec, tvec, geom.PUCK_MARKER_Z_MM)
+
+    puck, used = None, set()
+    got = find_puck(world)
+    if got is not None:
+        c, theta, members, _rms = got
+        used = {int(i) for i in members}
+        puck = {"x": float(c[0]), "y": float(c[1]),
+                "theta": float(theta), "n": len(members)}
+
+    free = [i for i in range(len(world)) if i not in used]
+    if not free:
+        return puck, None
+    w = world[free]
+    d = np.linalg.norm(w[:, None, :] - w[None, :, :], axis=2)
+    alone = [free[k] for k in np.flatnonzero((d <= LINK_MM).sum(axis=1) == 1)]
+    if paddle_xy is not None:
+        p = np.asarray(paddle_xy, float)
+        alone = [i for i in alone
+                 if np.hypot(*(world[i] - p)) > PADDLE_EXCLUDE_MM]
+    if not alone:
+        return puck, None
+    # cands arrives brightest first, so the first survivor is the biggest
+    # blob — the same tie-break the puck tracker used back when the puck was
+    # the lone dot.
+    i = alone[0]
+    q = backproject_pixels(px[[i]], K, dist, rvec, tvec, PLAYER_DOT_Z_MM)[0]
+    return puck, {"x": float(q[0]), "y": float(q[1])}
 
 # Inch/hole coordinates are quoted from the first hole RIGHT of the centre
 # stripe. On the 80-column grid the stripe sits between columns 39 and 40,
@@ -120,6 +183,8 @@ class VisionService:
         self._lock = threading.Lock()
         self._jpeg: bytes | None = None
         self._pose: tuple[float, float, float] | None = None
+        self._puck: dict | None = None
+        self._player: dict | None = None
         self._note: str | None = None
         self._fps = 0.0
         self._thread: threading.Thread | None = None
@@ -156,6 +221,18 @@ class VisionService:
         with self._lock:
             return self._pose
 
+    def latest_puck(self):
+        """{'x','y','theta','n'} in grid mm, or None. `n` is how many of the
+        four corners were visible, which is worth surfacing: a persistent 2
+        means the dots want more gain before anyone trusts a recording."""
+        with self._lock:
+            return self._puck
+
+    def latest_player(self):
+        """{'x','y'} in grid mm for the human's mallet, or None."""
+        with self._lock:
+            return self._player
+
     def frame_jpeg(self) -> bytes | None:
         with self._lock:
             return self._jpeg
@@ -163,6 +240,7 @@ class VisionService:
     def status(self) -> dict:
         with self._lock:
             pose, note, fps = self._pose, self._note, self._fps
+            puck, player = self._puck, self._player
         return {
             "running": self.running,
             "error": self._error,
@@ -172,6 +250,16 @@ class VisionService:
                 "x": round(pose[0], 1),
                 "y": round(pose[1], 1),
                 "theta_deg": round(math.degrees(pose[2]), 2),
+            },
+            "puck": None if puck is None else {
+                "x": round(puck["x"], 1),
+                "y": round(puck["y"], 1),
+                "theta_deg": round(math.degrees(puck["theta"]), 1),
+                "corners": puck["n"],
+            },
+            "player": None if player is None else {
+                "x": round(player["x"], 1),
+                "y": round(player["y"], 1),
             },
         }
 
@@ -198,12 +286,22 @@ class VisionService:
                 dt = now - last
                 last = now
 
-                pose, note = tm.locate(img, K, dist, rvec, tvec, field)
+                # Threshold and label the blobs ONCE. locate() would happily
+                # redo it, but the puck and the player's mallet come out of
+                # the same list and a second pass over 1440x1080 buys nothing.
+                cands = tm.find_candidates(img, known_px)
+                pose, note = tm.locate(img, K, dist, rvec, tvec, field,
+                                       cands=cands)
+                paddle_xy = None if pose is None else pose["centre"]
+                puck, player = _detect_loose(cands, K, dist, rvec, tvec,
+                                             paddle_xy)
                 jpeg = self._annotate(img, known_px, pose, note, tm,
-                                      K, dist, rvec, tvec)
+                                      K, dist, rvec, tvec, puck, player)
                 with self._lock:
                     self._jpeg = jpeg
                     self._note = note
+                    self._puck = puck
+                    self._player = player
                     self._fps = 0.85 * self._fps + 0.15 / max(dt, 1e-6)
                     if pose is not None and pose.get("theta") is not None:
                         self._pose = (float(pose["centre"][0]),
@@ -223,7 +321,8 @@ class VisionService:
                 pass
 
     # ── drawing ──────────────────────────────────────────────────────
-    def _annotate(self, img, known_px, pose, note, tm, K, dist, rvec, tvec):
+    def _annotate(self, img, known_px, pose, note, tm, K, dist, rvec, tvec,
+                  puck=None, player=None):
         """Draw in DISPLAY space, not sensor space.
 
         The view is rotated 180 so +x reads right and the origin is bottom
@@ -347,6 +446,37 @@ class VisionService:
                         (c[0] + 32, c[1] - 22),
                         cv2.FONT_HERSHEY_SIMPLEX, 0.45, C_PADDLE, 1,
                         cv2.LINE_AA)
+
+        # The puck, drawn at its TRUE radius rather than as a dot. The ring is
+        # the check worth having: it should sit on the puck's edge in the raw
+        # frame, and if it does not, the square solved on something else.
+        if puck is not None:
+            pc = project((puck["x"], puck["y"]), geom.PUCK_MARKER_Z_MM)
+            polyline([(puck["x"] + geom.PUCK_RADIUS_MM * math.cos(i * math.tau / 32),
+                       puck["y"] + geom.PUCK_RADIUS_MM * math.sin(i * math.tau / 32))
+                      for i in range(33)], C_PUCK, geom.PUCK_MARKER_Z_MM, 2)
+            cv2.drawMarker(vis, pc, C_PUCK, cv2.MARKER_CROSS, 14, 1)
+            # One spoke to each corner the square is CLAIMING, so a bad fit
+            # is visible as spokes that miss the actual dots.
+            for k in range(4):
+                a = puck["theta"] + k * math.pi / 2
+                cv2.line(vis, pc,
+                         project((puck["x"] + geom.PUCK_MARKER_R_MM * math.cos(a),
+                                  puck["y"] + geom.PUCK_MARKER_R_MM * math.sin(a)),
+                                 geom.PUCK_MARKER_Z_MM), C_PUCK, 1, cv2.LINE_AA)
+            cv2.putText(vis, f"puck {puck['n']}/4  ({puck['x']:.0f}, "
+                             f"{puck['y']:.0f}) mm", (pc[0] + 34, pc[1] - 6),
+                        cv2.FONT_HERSHEY_SIMPLEX, 0.5, C_PUCK, 1, cv2.LINE_AA)
+
+        if player is not None:
+            qc = project((player["x"], player["y"]), PLAYER_DOT_Z_MM)
+            polyline([(player["x"] + geom.MALLET_RADIUS_MM * math.cos(i * math.tau / 32),
+                       player["y"] + geom.MALLET_RADIUS_MM * math.sin(i * math.tau / 32))
+                      for i in range(33)], C_PLAYER, PLAYER_DOT_Z_MM, 1)
+            cv2.drawMarker(vis, qc, C_PLAYER, cv2.MARKER_CROSS, 14, 1)
+            cv2.putText(vis, f"player ({player['x']:.0f}, {player['y']:.0f}) mm",
+                        (qc[0] + 34, qc[1] - 6), cv2.FONT_HERSHEY_SIMPLEX,
+                        0.5, C_PLAYER, 1, cv2.LINE_AA)
 
         msg = note or ("paddle not found" if pose is None else None)
         if msg:

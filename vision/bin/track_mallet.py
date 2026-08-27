@@ -218,13 +218,20 @@ def _drop_puck(cands, K, dist, rvec, tvec):
     return rest if len(rest) >= 3 else cands
 
 
-def locate(img, K, dist, rvec, tvec, field):
+def locate(img, K, dist, rvec, tvec, field, cands=None):
     """Paddle pose in the grid frame, or None if it cannot be resolved.
 
     Returns (pose, note); pose is a dict with centre/theta, note flags
-    anything the caller should not trust."""
-    known = field_marker_pixels(K, dist, rvec, tvec, field)
-    cands = find_candidates(img, known)
+    anything the caller should not trust.
+
+    `cands` lets a caller that wants MORE than the paddle out of one frame --
+    the live view labels the puck and the player's mallet too -- run the
+    thresholding and connected components once and pass the result in, rather
+    than paying for a second pass over 1440x1080 to find the same blobs.
+    """
+    if cands is None:
+        known = field_marker_pixels(K, dist, rvec, tvec, field)
+        cands = find_candidates(img, known)
     if not cands:
         return None, "no paddle markers found — is it in frame and lit?"
 
