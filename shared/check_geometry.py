@@ -53,6 +53,8 @@ int main() {
     printf("MOTOR_X%d %.6f\nMOTOR_Y%d %.6f\nWINDING_SIDE%d %.6f\n"
            "WRAP_REF_ANGLE%d %.6f\n", m, MOTOR_X[m], m, MOTOR_Y[m],
            m, WINDING_SIDE[m], m, WRAP_REF_ANGLE[m]);
+  printf("PUCK_RADIUS_MM %.6f\nPUCK_MARKER_R_MM %.6f\nGOAL_WIDTH_MM %.6f\n",
+         PUCK_RADIUS_MM, PUCK_MARKER_R_MM, GOAL_WIDTH_MM);
   printf("SPOOL_RADIUS_MM %.6f\nATTACH_R_MM %.6f\nATTACH_CHIRALITY %.6f\n"
          "WS_MIN_X %.6f\nWS_MAX_X %.6f\nWS_MIN_Y %.6f\nWS_MAX_Y %.6f\n"
          "HOME_X %.6f\nHOME_Y %.6f\n"

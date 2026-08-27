@@ -10,10 +10,25 @@ problem.
 This part is expected to OUTLIVE the hardcoded goalie — an RL policy needs
 exactly the same puck stream. Keep it free of anything policy-shaped.
 
+WHICH BLOB IS THE PUCK
+    The puck carries FOUR retroreflectors in a square and the mallet carries
+    ONE, so the puck is the group of blobs whose spacings SOLVE that square.
+    A model-based test, not a brightness or size heuristic -- every marker on
+    this table is the same tape, and the mallet is the same distance from the
+    lens as the puck.
+
+    The cluster is on the puck and the lone dot on the mallet, which is the
+    inverse of the original scheme: a player's hand wraps the mallet and hides
+    whatever is stuck to it, while nothing ever touches the puck.
+
 Standalone, for checking the tracker sees what you think it sees:
 
     python vision/bin/puck_stream.py            # live puck position
     python vision/bin/puck_stream.py --raw      # every surviving blob
+    python vision/bin/puck_stream.py --selftest # synthetic puck, no camera
+
+The square itself is solved in puck_markers.py, which is pure geometry and
+carries its own selftest.
 """
 
 from __future__ import annotations
@@ -35,6 +50,7 @@ sys.path.insert(0, str(Path(__file__).resolve().parents[2] / "shared"))
 import cdpr_geometry as geom  # noqa: E402
 from calibrate_extrinsics import CALIB_DIR, load_intrinsics  # noqa: E402
 from camera import backproject_undistorted  # noqa: E402
+from puck_markers import find_puck  # noqa: E402
 from table_grid import GRID_X_MM, GRID_Y_MM  # noqa: E402
 from track_mallet import MARKER_Z_MM, SPOOL_MARKER_Z_MM, load_pose  # noqa: E402
 
@@ -46,17 +62,8 @@ BLOBTRACK = Path(__file__).resolve().parent.parent / "build" / "blobtrack"
 # rises from 2 to 5, because the scene is dark by construction. Gain is the
 # cheap axis here; exposure is not.
 
-# The marker rides on top of the puck, so it is not on the playing surface.
-# The camera is ~1506 mm up and the puck reaches ~1000 mm off axis, so
-# back-projecting at z=0 instead of the true height would put it ~5 mm out at
-# the edges, and the error would grow with distance from centre — i.e. exactly
-# where a goalie needs the prediction to be good.
-PUCK_Z_MM = 8.0
-
 # A blob within this of a projected permanent marker IS that marker.
 MARKER_REJECT_PX = 16.0
-# Paddle retroreflectors sit in a tight cluster; the puck marker is alone.
-CLUSTER_PX = 60.0
 # Off the playing surface by more than this and it is a rail reflection.
 OUTSIDE_MM = 40.0
 
@@ -100,6 +107,18 @@ class BlobStream:
             self.p.kill()
 
 
+def _lsq_slope(t, y):
+    """Least-squares slope of y against t. Zero if there is nothing to fit."""
+    t, y = np.asarray(t, float), np.asarray(y, float)
+    if len(t) < 3:
+        return 0.0
+    tm = t.mean()
+    den = ((t - tm) ** 2).sum()
+    if den <= 0:
+        return 0.0
+    return float(((t - tm) * (y - y.mean())).sum() / den)
+
+
 class PuckTracker:
     """Turns blobs into a puck position in table millimetres.
 
@@ -133,6 +152,13 @@ class PuckTracker:
             self.glare = None
 
         self._hist: deque = deque(maxlen=6)
+        # Orientation is tracked separately from position because it survives
+        # a different set of dropouts: two adjacent corners fix the angle
+        # exactly but leave the centre ambiguous.
+        self._spin: deque = deque(maxlen=6)
+        self.theta = float("nan")   # radians, UNWRAPPED (see _track_spin)
+        self.omega = 0.0            # rad/s about the puck's own axis
+        self.n_markers = 0          # corners used for the last fix
 
     # ── blob -> table ────────────────────────────────────────────────────
     def _to_table(self, px_xy, z):
@@ -157,7 +183,7 @@ class PuckTracker:
         if not keep.any():
             return np.empty((0, 3)), np.empty((0, 2))
         px = px[keep]
-        world = self._to_table(px, PUCK_Z_MM)
+        world = self._to_table(px, geom.PUCK_MARKER_Z_MM)
         on = ((world[:, 0] > -OUTSIDE_MM) & (world[:, 0] < GRID_X_MM + OUTSIDE_MM) &
               (world[:, 1] > -OUTSIDE_MM) & (world[:, 1] < GRID_Y_MM + OUTSIDE_MM))
         return blobs[keep][on], world[on]
@@ -165,46 +191,63 @@ class PuckTracker:
     def update(self, t, blobs):
         """Return (x, y, vx, vy) in mm and mm/s, or None if the puck is lost.
 
-        The paddle carries THREE retroreflectors in a tight cluster and the
-        puck carries one, so 'the blob with no near neighbours' separates them
-        without needing either to be a particular brightness — which matters
-        because both are the same tape.
+        The puck is the group of blobs that SOLVES the known marker square;
+        see find_puck. Spin and corner count land in self.theta / self.omega /
+        self.n_markers rather than in the return value, so callers that only
+        want position keep their four-tuple.
         """
-        kept, world = self.candidates(blobs)
+        _kept, world = self.candidates(blobs)
         if len(world) == 0:
             return self._coast(t)
 
-        lone = []
-        for i, w in enumerate(world):
-            near = np.linalg.norm(kept[:, :2] - kept[i, :2], axis=1)
-            if (near < CLUSTER_PX).sum() == 1:      # only itself
-                lone.append(i)
-        if not lone:
+        prev = (self._hist[-1][1], self._hist[-1][2]) if self._hist else None
+        got = find_puck(world, prev)
+        if got is None:
+            # One visible corner is not a fix: the centre is 21.85 mm away in
+            # an unknown direction, and reporting that as a position is worse
+            # than coasting because it still looks like a measurement.
             return self._coast(t)
 
-        # If several survive, believe the one nearest the last known puck;
-        # on the first frame, the largest.
-        if self._hist and len(lone) > 1:
-            lx, ly = self._hist[-1][1], self._hist[-1][2]
-            i = min(lone, key=lambda j: (world[j][0] - lx) ** 2
-                    + (world[j][1] - ly) ** 2)
-        else:
-            i = max(lone, key=lambda j: kept[j][2])
-
-        x, y = float(world[i][0]), float(world[i][1])
+        c, theta, members, _rms = got
+        x, y = float(c[0]), float(c[1])
+        self.n_markers = len(members)
+        self._track_spin(t, theta)
         self._hist.append((t, x, y))
         return (x, y) + self._velocity()
 
     def _coast(self, t):
         """Puck not visible this frame — most often the centre blind spot."""
+        self.n_markers = 0
         if not self._hist:
             return None
         t0, x0, y0 = self._hist[-1]
         if t - t0 > 0.15:            # 30 frames: it is genuinely gone
             self._hist.clear()
+            self._spin.clear()
             return None
         vx, vy = self._velocity()
         return (x0 + vx * (t - t0), y0 + vy * (t - t0), vx, vy)
+
+    def _track_spin(self, t, theta):
+        """Unwrap the mod-90-degree orientation and fit a rotation rate.
+
+        The square only reports its angle modulo a quarter turn, so successive
+        frames are stitched by taking the smallest consistent step. That is
+        unambiguous up to 45 degrees per frame — 25 rev/s at 200 Hz, far above
+        anything a struck puck does — and self.theta accumulates rather than
+        wrapping so that differencing it is safe.
+        """
+        q = math.pi / 2
+        if self._spin:
+            t0, last = self._spin[-1]
+            if t - t0 > 0.05:        # too long a gap to stitch across
+                self._spin.clear()
+            else:
+                theta = last + (theta - last + q / 2) % q - q / 2
+        self._spin.append((t, theta))
+        self.theta = theta
+        s = np.array(self._spin)
+        self.omega = _lsq_slope(s[:, 0], s[:, 1])
 
     def _velocity(self):
         """Least-squares slope over the recent history.
@@ -217,14 +260,67 @@ class PuckTracker:
         if len(self._hist) < 3:
             return 0.0, 0.0
         a = np.array(self._hist)
-        t = a[:, 0] - a[0, 0]
-        tm = t.mean()
-        den = ((t - tm) ** 2).sum()
-        if den <= 0:
-            return 0.0, 0.0
-        vx = ((t - tm) * (a[:, 1] - a[:, 1].mean())).sum() / den
-        vy = ((t - tm) * (a[:, 2] - a[:, 2].mean())).sum() / den
-        return float(vx), float(vy)
+        return _lsq_slope(a[:, 0], a[:, 1]), _lsq_slope(a[:, 0], a[:, 2])
+
+
+def _selftest() -> int:
+    """A synthetic puck through the REAL camera pose. No camera, no blobtrack.
+
+    puck_markers already tests the square solver on clean coordinates; this
+    tests the part that only exists once the calibration is involved —
+    projecting corners to pixels, undistorting, back-projecting at the marker
+    height, and getting velocity and spin back out.
+
+    The case worth watching is the dropout one. A centroid of three corners
+    would put the centre 7.3 mm out in a direction that changes as the puck
+    rotates, so the position error would jump every time a corner came and
+    went. It has to stay flat across the three rows.
+    """
+    tr = PuckTracker()
+    r = geom.PUCK_MARKER_R_MM
+    v = np.array([2400.0, -900.0])          # mm/s
+    omega = math.radians(720.0)             # 2 rev/s
+    p0 = np.array([1400.0, 700.0])
+    dt = 1.0 / 200.0
+    rng = np.random.default_rng(1)
+
+    def blobs_at(c, th, drop):
+        a = th + np.arange(4) * (math.pi / 2)
+        obj = np.stack([c[0] + r * np.cos(a), c[1] + r * np.sin(a),
+                        np.full(4, geom.PUCK_MARKER_Z_MM)], 1)
+        obj = np.delete(obj, list(drop), axis=0)
+        px, _ = cv2.projectPoints(obj.astype(float), tr.rvec, tr.tvec,
+                                  tr.K, tr.dist)
+        px = px.reshape(-1, 2) + rng.normal(0, 0.15, (len(obj), 2))
+        return np.hstack([px, np.full((len(px), 1), 30.0)])
+
+    cases = [("all four corners", lambda k: ()),
+             ("one corner dropped", lambda k: (k % 4,)),
+             ("two opposite dropped", lambda k: (k % 2, k % 2 + 2))]
+    for label, drops in cases:
+        tr._hist.clear()
+        tr._spin.clear()
+        pe, ve, we = [], [], []
+        for k in range(60):
+            t = k * dt
+            p = p0 + v * t
+            out = tr.update(t, blobs_at(p, omega * t, drops(k)))
+            if out is None or k < 8:        # let the slope fits fill
+                continue
+            pe.append(math.hypot(out[0] - p[0], out[1] - p[1]))
+            ve.append(math.hypot(out[2] - v[0], out[3] - v[1]))
+            we.append(tr.omega)
+        assert pe, f"{label}: puck never resolved"
+        spin = math.degrees(float(np.mean(we)))
+        print(f"  {label:22s} pos err max {max(pe):5.2f} mm   "
+              f"|v| err max {max(ve):6.1f} mm/s   spin {spin:7.1f} deg/s")
+        assert max(pe) < 2.0, f"{label}: {max(pe):.2f} mm"
+        assert max(ve) < 60.0, f"{label}: {max(ve):.1f} mm/s"
+        assert abs(spin - 720.0) < 30.0, f"{label}: {spin:.1f} deg/s"
+
+    print("selftest PASSED — dropouts cost nothing, which is the whole point "
+          "of solving the square rather than averaging it")
+    return 0
 
 
 def main():
@@ -235,7 +331,12 @@ def main():
     ap.add_argument("--threshold", type=int, default=90)
     ap.add_argument("--raw", action="store_true",
                     help="print every surviving blob, not just the puck")
+    ap.add_argument("--selftest", action="store_true",
+                    help="synthetic puck through the real pose, no camera")
     args = ap.parse_args()
+
+    if args.selftest:
+        return _selftest()
 
     tr = PuckTracker()
     st = BlobStream(fps=args.fps, exposure=args.exposure, gain=args.gain,
@@ -261,12 +362,15 @@ def main():
                     x, y, vx, vy = p
                     print(f"[{t:7.3f}] {rate:5.1f} Hz   puck ({x:7.1f},{y:6.1f}) mm"
                           f"   v ({vx:8.1f},{vy:7.1f}) mm/s"
-                          f"   |v| {math.hypot(vx, vy):7.1f}")
+                          f"   |v| {math.hypot(vx, vy):7.1f}"
+                          f"   {tr.n_markers}/4 dots"
+                          f"   spin {math.degrees(tr.omega):8.1f} deg/s")
     except KeyboardInterrupt:
         pass
     finally:
         st.close()
+    return 0
 
 
 if __name__ == "__main__":
-    main()
+    raise SystemExit(main())

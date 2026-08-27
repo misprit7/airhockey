@@ -105,6 +105,11 @@ def load(path):
     if any("mx" in r for r in rows):
         d["mx"] = np.array([r.get("mx", np.nan) for r in rows], dtype=float)
         d["my"] = np.array([r.get("my", np.nan) for r in rows], dtype=float)
+    # Corner count and spin, present only since the puck went to four
+    # markers. Read the same way so old recordings still load.
+    for k in ("n", "th", "w"):
+        if any(k in r for r in rows):
+            d[k] = np.array([r.get(k, np.nan) for r in rows], dtype=float)
     return d
 
 

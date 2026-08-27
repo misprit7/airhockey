@@ -32,7 +32,9 @@ you at the table for about an hour total.
 | ✅ | **One physics implementation.** Scalar `PhysicsEngine` deleted; `scalar_engine.py` presents its interface over `BatchPhysicsEngine(n_envs=1)`. **−1123 lines**, including ~900 of parity tests. |
 | ✅ | **Real profile wired into the env** as a `profile` dynamics type (`ideal` / `delayed` / `profile`). |
 | ✅ | **Realistic perception** — `perception.py`: 6-frame slope estimator, back-projection noise, and the IR blind spot as a structured dropout with coasting. Off by default. |
-| ✅ | **Mallet from the blob stream** — `vision/bin/mallet_stream.py`, back-projecting at the 33 mm arm height. |
+| ✅ | **Mallet from the blob stream** — `vision/bin/mallet_stream.py`, back-projecting at the marker height (33 mm for the robot's arms, 67 mm for a dot on top). |
+| ✅ | **Marker convention inverted, 2026-08-26** — four dots on the PUCK, one on the mallet, because a hand covers the mallet and nothing covers the puck. `vision/bin/puck_markers.py` solves the square; three corners still fix the centre exactly. Verified end to end through the real camera pose: ~1 mm regardless of how many corners survive. |
+| ✅ | **Spin is now measured, not inferred** — four corners give orientation, so `record_puck.py` logs `th`/`w` per frame. |
 | ✅ | **Latency LED moved to A9** (external, on the playing surface) per your note; firmware flashed. |
 
 ---
@@ -63,17 +65,37 @@ Nothing here energises a motor. Do them in any order.
 
 ### 1. Puck friction and restitution (~20 min at the table)
 
+**First, 30 seconds, before recording anything.** The puck now carries four
+dots and they have to come through as four separate blobs:
+
+```bash
+python vision/bin/puck_stream.py       # look at the "n/4 dots" column
+```
+
+Four for most frames is what you want. If it mostly says 2 or 3, the dots are
+either too dim (raise `--gain`, or lower `--threshold`) or they are merging
+into one blob (they project ~19 px apart at table centre, so anything under
+about 15 mm across stays separate). A two-corner fix leans on the previous
+frame to disambiguate, so its errors correlate rather than average out — which
+is the one kind of error a friction fit cannot see through. `record_puck.py`
+prints the same histogram at the end and warns below 60%.
+
 ```bash
 python vision/bin/record_puck.py
 # push the puck around, then Ctrl-C
 python vision/bin/fit_puck.py logs/puck_<timestamp>.jsonl
 ```
 
-Drives can be off. What to push:
+Drives can be off. If you want paddle restitution too, one dot on the mallet
+you are holding is now the right marking — pass `--mallet-z <height of that
+dot above the surface>`. What to push:
 
 - **long straight glides**, no wall contact → friction
 - **square-on hits into each of the four cushions** → restitution
-- **glancing hits, 20–40°** → whether the puck picks up spin
+- **glancing hits, 20–40°** → whether the puck picks up spin. The last
+  recording showed bounces returning 0.64 of their tangential velocity but
+  could not say where that momentum went; with four corners the recording now
+  carries orientation, so this run settles it
 - **vary the speed** — gentle to hard. Restitution is usually speed-dependent
   and one speed can't show that.
 

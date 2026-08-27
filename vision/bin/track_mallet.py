@@ -197,6 +197,27 @@ def solve_pose(cands, K, dist, rvec, tvec):
     return best
 
 
+def _drop_puck(cands, K, dist, rvec, tvec):
+    """Remove the puck's four marker corners from a candidate list.
+
+    Back-projects at the PUCK's marker height rather than the paddle's,
+    because that is the plane the square is actually in and the tolerance the
+    solver applies is only 5 mm. Returns the list unchanged when no square
+    solves, so a table with no puck on it behaves exactly as before.
+    """
+    from puck_markers import find_puck        # pure geometry, no camera
+
+    pts = np.array([c[1] for c in cands], float)
+    world = backproject_pixels(pts, K, dist, rvec, tvec,
+                               geom.PUCK_MARKER_Z_MM)
+    got = find_puck(world)
+    if got is None:
+        return cands
+    drop = set(int(i) for i in got[2])
+    rest = [c for i, c in enumerate(cands) if i not in drop]
+    return rest if len(rest) >= 3 else cands
+
+
 def locate(img, K, dist, rvec, tvec, field):
     """Paddle pose in the grid frame, or None if it cannot be resolved.
 
@@ -206,6 +227,14 @@ def locate(img, K, dist, rvec, tvec, field):
     cands = find_candidates(img, known)
     if not cands:
         return None, "no paddle markers found — is it in frame and lit?"
+
+    # Drop the PUCK before anything else. It used to carry a single marker and
+    # so could never win a "most close neighbours" contest; it now carries
+    # four in a square about 19 px on a side, which is comfortably inside
+    # CLUSTER_PX and would beat the paddle's three. Identified by solving the
+    # square rather than by size, and only removed when it actually solves.
+    if len(cands) > 4:
+        cands = _drop_puck(cands, K, dist, rvec, tvec)
 
     # Keep only the tight cluster: paddle markers are close together, stray
     # reflections are not.

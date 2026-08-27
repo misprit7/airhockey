@@ -89,6 +89,28 @@ constexpr float GOAL_WIDTH_MM = 380.0f;
 // it should and every intercept the goalie planned was cut fine.
 constexpr float PUCK_RADIUS_MM = 40.7f;
 
+// Retroreflectors on the puck, MEASURED 2026-08-26: FOUR in a square, each
+// 21.85 mm from the puck centre (43.7 mm across the diagonal, 30.9 mm along
+// a side). The firmware never sees a camera, but this is a physical fact
+// about a physical object and splitting the puck's dimensions across two
+// files is how they drift.
+//
+// WHY FOUR AND NOT ONE. The player's hand wraps the mallet and hides its
+// markers; nothing ever touches the puck. So the cluster goes on the puck
+// and the lone dot on the mallet -- the inverse of the original scheme.
+// Three consequences, all good: a dropout no longer loses the puck, the
+// centroid of a symmetric set is the centre exactly rather than wherever
+// one sticker was placed, and four corners give ORIENTATION, so spin is
+// measured instead of inferred from tangential momentum loss.
+//
+// The dropout case is the one that bites. Averaging 3 of the 4 corners puts
+// the "centre" 21.85/3 = 7.3 mm out, and at 200 Hz a 7.3 mm step reads as
+// 1460 mm/s of velocity that never happened. Recovering the centre from the
+// DIAGONAL PAIR instead is exact for any 3 corners, which is why the tracker
+// solves the square rather than taking a mean.
+constexpr float PUCK_MARKER_R_MM = 21.85f;
+constexpr int PUCK_MARKER_N = 4;
+
 // ── Motor anchor positions ──────────────────────────────────────────
 //
 // MEASURED 2026-08-10, after the 78x38 -> 80x39 grid fix and against the

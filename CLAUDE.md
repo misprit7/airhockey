@@ -84,7 +84,10 @@ Robotic air hockey table that uses reinforcement learning trained in simulation,
     spool top faces at an assumed height), `measure_motors.py`,
     `track_mallet.py` (mallet position at z=67mm),
     `calib_report.py`, `table_grid.py`, `gen_targets.py`, `snap.cpp`,
-    `blobtrack.cpp` + `puck_stream.py` (200 Hz puck tracking — see below)
+    `blobtrack.cpp` + `puck_stream.py` (200 Hz puck tracking — see below),
+    `puck_markers.py` (the puck's four-corner marker square; pure geometry,
+    no camera, `--selftest`), `mallet_stream.py`, `record_puck.py` +
+    `fit_puck.py` + `plot_puck_fit.py` (puck system identification)
   - `calib/` - Solved intrinsics, extrinsics, marker and motor-anchor JSON
   - `Makefile` - Builds sFoundation library and control programs
 
@@ -106,6 +109,29 @@ only goes 2 -> 5, because the scene is dark by construction. Defaults are
 
 Known blind spot: the IR ring's own reflection is ~92 x 103 mm at table
 centre. The tracker coasts on the last velocity for up to 150 ms across it.
+
+**Marker convention (changed 2026-08-26).** The PUCK carries FOUR
+retroreflectors in a square 21.85 mm from its centre; a hand-held mallet
+carries ONE dot. It used to be the other way round, and the reason for the
+swap is that a player's hand wraps the mallet and hides whatever is stuck to
+it, while nothing ever touches the puck. Three consequences: a dropout no
+longer loses the puck, the reported centre is the centre rather than wherever
+one sticker was placed, and four corners give ORIENTATION, so `record_puck.py`
+now logs spin instead of leaving it to be inferred.
+
+The puck is found by SOLVING the square (`puck_markers.py`), never by
+averaging the corners: the mean of three sits 21.85/3 = 7.3 mm toward the
+missing one, and at 200 Hz that step reads as 1460 mm/s of velocity that never
+happened — appearing exactly when a corner drops out, i.e. correlated with
+glare and with speed. Any three corners have an exact answer instead, because
+the widest pair is the diagonal and a diagonal's midpoint is the centre.
+Verified end to end through the real camera pose: position error stays at
+~1 mm whether 4, 3 or 2 corners are visible (`puck_stream.py --selftest`).
+
+The ROBOT mallet still carries its three markers (a centre plus two at 26.5 mm
+radius) and is still found as a cluster — `MalletTracker(markers=3)`, which is
+the default. Its 53 mm span is what keeps it from passing the square test, so
+`SQUARE_TOL_MM` cannot be loosened much past 5 mm.
 
 ### Hardcoded goalie (DEMO — delete when a policy lands)
 `airhockey/demo_goalie.py` + `bin/goalie_demo.py` + `tests/test_demo_goalie.py`.

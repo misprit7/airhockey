@@ -20,23 +20,30 @@ WHAT YOU DO
        speed cannot show that; twenty glides at one speed constrain a point.
     3. Ctrl-C, then run vision/bin/fit_puck.py on what it wrote.
 
-    MARKERS ON A HAND-HELD MALLET, if you want paddle restitution: it needs
-    THREE dots in a cluster, not one. The puck is identified as the blob with
-    no near neighbours, so a single dot gives two isolated blobs and no way to
-    tell which is which -- the tracker would swap between them as they move,
-    which is worse than losing the puck because it still looks like data.
-    Three within 90 mm of each other, 2 of 3 visible is enough. Then pass
-    --mallet-z with their height above the surface; the default is the robot
-    mallet's 33 mm and using the wrong height is a parallax error that grows
-    with distance from the camera nadir.
+    MARKERS. The PUCK carries four retroreflectors in a square, 21.85 mm from
+    its centre; a hand-held mallet carries ONE dot. That way round because a
+    player's hand wraps the mallet and hides whatever is stuck to it, while
+    nothing ever touches the puck. Pass --mallet-z with the dot's height above
+    the surface -- the default assumes a dot on top of a mallet at 67 mm, and
+    the wrong height is a parallax error that grows with distance from the
+    camera nadir. If you are instead recording with the ROBOT mallet in play,
+    pass --mallet-markers 3.
 
     Five varied minutes beats twenty repetitive ones.
 
 WHAT IT WRITES
     JSON Lines, one object per frame where the puck was actually SEEN:
-        {"seq":..., "t":<s>, "x":..., "y":..., "vx":..., "vy":...}
+        {"seq":..., "t":<s>, "x":..., "y":..., "vx":..., "vy":...,
+         "n":<corners seen>, "th":<rad>, "w":<rad/s>}
     Position in table-grid mm, velocity mm/s from the tracker's
     least-squares slope.
+
+    `th` is the marker square's orientation and `w` its rotation rate, both
+    from the four corners. They are recorded because they are free once the
+    puck is a square and they settle a question the last dataset could only
+    infer: bounces came back with 0.64 of their tangential velocity, and
+    whether that momentum went into SPIN or into the cushion is not something
+    a position-only recording can say.
 
     Coasted samples are DROPPED, not recorded. PuckTracker extrapolates on
     the last velocity when it loses the puck -- necessary for control, poison
@@ -52,6 +59,7 @@ from __future__ import annotations
 
 import argparse
 import json
+import math
 import signal
 import sys
 import time
@@ -72,10 +80,14 @@ def main() -> int:
     ap.add_argument("--exposure", type=float, default=300.0)
     ap.add_argument("--gain", type=float, default=12.0)
     ap.add_argument("--threshold", type=int, default=90)
+    ap.add_argument("--mallet-markers", type=int, default=1, choices=(1, 3),
+                    help="1 for a hand-held mallet's single dot (default), "
+                         "3 for the robot mallet's cluster")
     ap.add_argument("--mallet-z", type=float, default=None,
-                    help="height of the mallet's marker cluster above "
-                         "the surface, mm. Default is the robot "
-                         "mallet's 33.0; measure it for any other.")
+                    help="height of the mallet's marker(s) above the "
+                         "surface, mm. Defaults follow --mallet-markers "
+                         "(67 for a dot on top, 33 for the robot's arms); "
+                         "measure your own.")
     args = ap.parse_args()
 
     out = Path(args.output) if args.output else (
@@ -91,12 +103,16 @@ def main() -> int:
     signal.signal(signal.SIGINT, stop)
 
     tracker = PuckTracker()
-    mallet = (MalletTracker(tracker, args.mallet_z) if args.mallet_z
-              else MalletTracker(tracker))
+    mallet = MalletTracker(tracker, args.mallet_z,
+                           markers=args.mallet_markers)
     stream = BlobStream(fps=args.fps, exposure=args.exposure,
                         gain=args.gain, threshold=args.threshold)
 
     kept = coasted = 0
+    # How many of the four corners were visible, per frame. A run that mostly
+    # sees two is a run to redo with more gain or bigger dots: two corners
+    # need last frame's position to disambiguate, so the errors correlate.
+    corners = {0: 0, 1: 0, 2: 0, 3: 0, 4: 0}
     first_t = last_t = None
     last_report = time.monotonic()
     print(f"blobtrack {stream.width}x{stream.height} -> {out}")
@@ -131,11 +147,15 @@ def main() -> int:
                 last_t = t
                 row = {"seq": seq, "t": round(t, 6),
                        "x": round(x, 2), "y": round(y, 2),
-                       "vx": round(vx, 1), "vy": round(vy, 1)}
+                       "vx": round(vx, 1), "vy": round(vy, 1),
+                       "n": tracker.n_markers,
+                       "th": round(tracker.theta, 5),
+                       "w": round(tracker.omega, 3)}
                 if m is not None:
                     row["mx"], row["my"] = round(m[0], 2), round(m[1], 2)
                 fh.write(json.dumps(row) + "\n")
                 kept += 1
+                corners[tracker.n_markers] += 1
 
                 now = time.monotonic()
                 if now - last_report >= 1.0:
@@ -143,7 +163,9 @@ def main() -> int:
                     speed = (vx * vx + vy * vy) ** 0.5
                     print(f"\r{kept:7d} kept  {coasted:6d} coasted  "
                           f"{t - first_t:6.1f} s   puck ({x:7.1f},{y:6.1f}) "
-                          f"{speed:6.0f} mm/s   ", end="", flush=True)
+                          f"{speed:6.0f} mm/s  {tracker.n_markers}/4 dots  "
+                          f"spin {math.degrees(tracker.omega):7.0f} deg/s  ",
+                          end="", flush=True)
     finally:
         stream.close()
 
@@ -151,6 +173,15 @@ def main() -> int:
     print(f"\n\nwrote {kept} measured samples over {span:.1f} s to {out}")
     print(f"dropped {coasted} coasted samples (tracker extrapolating, "
           f"mostly the IR blind spot)")
+    if kept:
+        hist = "  ".join(f"{n}:{100.0 * corners[n] / kept:.0f}%"
+                         for n in (4, 3, 2))
+        print(f"corners visible — {hist}")
+        if corners[4] < 0.6 * kept:
+            print("  fewer than 60% of frames saw all four dots. More gain "
+                  "or bigger dots would tighten every fit downstream:\n"
+                  "  a two-corner fix leans on the previous frame, so its "
+                  "errors correlate rather than average out.")
     if kept < 2000:
         print("\nthin dataset -- another run with more variety would help "
               "before fitting")

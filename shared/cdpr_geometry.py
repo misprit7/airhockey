@@ -39,6 +39,16 @@ GOAL_WIDTH_MM = 380.0
 # demo_goalie 31.5 -- two different wrong answers, both too small.
 PUCK_RADIUS_MM = 40.7
 
+# Puck retroreflectors MEASURED 2026-08-26: FOUR in a square, each 21.85 mm
+# from the centre -- 43.7 mm diagonal, 30.9 mm side. The cluster is on the
+# PUCK and the lone dot on the mallet, the inverse of the original scheme,
+# because a hand covers mallet markers and nothing covers the puck. See the
+# header for why the tracker solves the square instead of averaging corners.
+PUCK_MARKER_R_MM = 21.85
+PUCK_MARKER_N = 4
+PUCK_MARKER_SIDE_MM = PUCK_MARKER_R_MM * math.sqrt(2.0)   # 30.90
+PUCK_MARKER_DIAG_MM = PUCK_MARKER_R_MM * 2.0              # 43.70
+
 # ── Motor anchors ──
 # All four trilaterated from caliper distances to three air holes each,
 # rms 0.01-0.51 mm. See the header for the measurements, the symmetry
@@ -117,6 +127,13 @@ WRAP_REF_ANGLE = [-0.988161, -2.362197, 2.360737, 0.985013]
 # ── Heights above the playing surface ──
 MARKER_Z_MM = 3.3    # field markers, on 3D-printed mounts
 MALLET_Z_MM = 67.0   # retroreflector on top of the mallet
+
+# The puck's markers ride on TOP of the puck, so they are not on the playing
+# surface. The camera is ~1506 mm up and the puck reaches ~1000 mm off axis,
+# so back-projecting at z=0 instead would put it ~5 mm out at the edges, with
+# the error growing radially — i.e. worst exactly where a goalie needs the
+# prediction to be good.
+PUCK_MARKER_Z_MM = 8.0
 
 
 def in_workspace(x, y):
