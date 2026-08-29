@@ -127,11 +127,18 @@ def main() -> int:
                 # Ask the tracker whether it can SEE the puck this frame,
                 # rather than accepting whatever update() returns -- update()
                 # will happily hand back an extrapolation.
-                surviving, _world = tracker.candidates(blobs)
                 p = tracker.update(t, blobs)
                 if p is None:
                     continue
-                if len(surviving) == 0:
+                # Did the tracker SEE the puck this frame, or extrapolate?
+                # This used to ask whether any blob survived scene rejection,
+                # which was the right question when the puck was the only
+                # loose marker: no blobs meant no puck. It is the wrong
+                # question now -- the mallet's dot survives while the puck is
+                # blind, so coasted samples were being written as
+                # measurements. 2.4% of the 2026-08-29 recording, every one
+                # of them the constant-velocity model predicting itself.
+                if tracker.n_markers == 0:
                     coasted += 1
                     continue
 

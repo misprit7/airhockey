@@ -63,9 +63,20 @@ WALL_BAND_MM = geom.PUCK_RADIUS_MM + 18.0
 # steer. 12 degrees is far above noise and far below a real bounce.
 TURN_DEG = 12.0
 
-# Frames to skip either side of a contact before trusting a velocity. The
-# tracker's slope spans 6 frames, so anything closer mixes pre- and post-.
-SKIP = 4
+# Frames to skip either side of a contact before trusting a velocity.
+#
+# PuckTracker's velocity at frame k is a least-squares slope over frames
+# k-5..k (deque maxlen 6). A contact detected at cut index c happens BETWEEN
+# c and c+1, so the first outgoing frame is c+1 and the first velocity built
+# only from outgoing frames is at c+1+(SLOPE_FRAMES-1) = c+6.
+#
+# SKIP was 4, giving an outgoing sample at c+5 whose window still reached
+# back to c -- one pre-impact frame inside every post-impact velocity. The
+# synthetic check put a number on it: e_normal came back 0.749 against a
+# truth of 0.800 and e_tangential 0.475 against 0.700, a 32% error that
+# looked exactly like a physical result about cushions taking spin.
+SLOPE_FRAMES = 6
+SKIP = SLOPE_FRAMES - 1
 MIN_GLIDE = 15          # frames; shorter segments do not constrain a slope
 MIN_SPEED = 200.0       # mm/s; below this the tracker's noise dominates
 
@@ -110,6 +121,18 @@ def load(path):
     for k in ("n", "th", "w"):
         if any(k in r for r in rows):
             d[k] = np.array([r.get(k, np.nan) for r in rows], dtype=float)
+    # n == 0 means the tracker COASTED that frame: the position is its own
+    # constant-velocity extrapolation, not a measurement. Fitting friction to
+    # those recovers "friction = 0" from the estimator rather than from the
+    # table. record_puck drops them at capture now; recordings made before
+    # that fix still carry them, so drop them here too. Removing rows leaves
+    # a seq gap, which segment() already cuts on.
+    if "n" in d:
+        keep = d["n"] > 0
+        if not keep.all():
+            print(f"  dropped {int((~keep).sum())} coasted samples "
+                  f"({100 * (~keep).mean():.1f}%) -- tracker extrapolating")
+            d = {k: v[keep] for k, v in d.items()}
     return d
 
 
@@ -193,10 +216,63 @@ def fit_friction(d, bounds):
             sigma = 1.4826 * np.median(np.abs(r - np.median(r))) + 1e-9
             w = np.clip(1.345 * sigma / np.maximum(np.abs(r), 1e-9), 0, 1)
         resid = dec - A @ coef
+        # Standard errors, because the two terms are NOT equally determined.
+        # Above about 800 mm/s the v^2 term is an order of magnitude larger
+        # than the rolling one, so `a` is an intercept extrapolated from data
+        # that mostly sits far from v=0 -- and the synthetic check confirms
+        # it: b comes back to 0.5%, while `a` lands anywhere from -1 to +16
+        # against a truth of 22. Reporting `a` as a measurement without its
+        # error invites reading noise as a friction coefficient.
+        Aw = A * w[:, None]
+        try:
+            cov = sigma ** 2 * np.linalg.pinv(Aw.T @ Aw)
+            se = np.sqrt(np.abs(np.diag(cov)))
+        except np.linalg.LinAlgError:
+            se = np.array([np.nan, np.nan])
         out["drag"] = {"a": float(coef[0]), "b": float(coef[1]),
+                       "se_a": float(se[0]), "se_b": float(se[1]),
                        "rms": float(np.sqrt((resid ** 2).mean())),
                        "rms_const": float(np.sqrt(((dec - mean) ** 2).mean()))}
     return out
+
+
+# Window of raw POSITION samples used to reconstruct a velocity either side of
+# a contact.
+BRACKET = 10
+
+
+def velocity_at(d, k0, k1, t_at):
+    """Velocity at time `t_at` from a quadratic fit to RAW POSITIONS.
+
+    Deliberately not the recording's vx/vy. Those are PuckTracker's own
+    6-frame least-squares slope, so within 6 frames of an impact every one of
+    them is a blend of before and after -- the estimator has memory and the
+    positions do not. Bracketing further out to escape the blend then trades
+    one bias for another, because the puck decelerates over the gap.
+
+    A quadratic in position solves both at once: it is fitted on clean frames
+    outside the smear and EVALUATED at the contact instant, so the drag
+    curvature over the bracket is modelled rather than suffered. Returns
+    (velocity, rms residual in mm); the residual is the guard -- a window that
+    straddles the impact cannot be fitted by one quadratic and says so.
+    """
+    if k0 < 0 or k1 >= len(d["t"]) or k1 - k0 < 3:
+        return None, np.inf
+    if d["seq"][k1] - d["seq"][k0] != k1 - k0:      # a gap inside the window
+        return None, np.inf
+    tt = d["t"][k0:k1 + 1] - t_at
+    A = np.stack([np.ones_like(tt), tt, 0.5 * tt ** 2], axis=1)
+    v, res = np.zeros(2), 0.0
+    for a, key in enumerate(("x", "y")):
+        c, *_ = np.linalg.lstsq(A, d[key][k0:k1 + 1], rcond=None)
+        v[a] = c[1]
+        res += float(((A @ c - d[key][k0:k1 + 1]) ** 2).sum())
+    return v, float(np.sqrt(res / (2 * len(tt))))
+
+
+# A straight-line-plus-drag fit to clean frames should sit on the positions to
+# within centroid noise. Well above that means the window straddles the impact.
+BRACKET_RMS_MM = 1.2
 
 
 def wall_of(x, y):
@@ -223,16 +299,56 @@ def wall_of(x, y):
     return None, None
 
 
-def fit_bounces(d, cuts):
+def contact_events(cuts):
+    """Group per-frame cuts into ONE event per physical contact.
+
+    A bounce does not produce a single cut. The tracker's velocity is a slope
+    over 6 frames, so it swings round over ~6 frames and the per-frame heading
+    change clears TURN_DEG for several of them in a row. Treating each as its
+    own contact measures the same bounce repeatedly, and every repeat but one
+    brackets it wrongly -- the synthetic check showed 1222 "contacts" for
+    about 150 real bounces, and e_tangential coming back 0.475 against a truth
+    of 0.700.
+
+    Returns (first, last) index pairs; the caller brackets OUTSIDE the whole
+    event rather than around one arbitrary frame inside it.
+    """
+    events = []
+    for c in cuts:
+        if events and c - events[-1][1] <= SLOPE_FRAMES:
+            events[-1][1] = int(c)
+        else:
+            events.append([int(c), int(c)])
+    return [(a, b) for a, b in events]
+
+
+def fit_bounces(d, events):
     walls, others = [], 0
     n = len(d["t"])
-    for c in cuts:
-        i, j = c - SKIP, c + 1 + SKIP
-        if i < 0 or j >= n or d["seq"][j] - d["seq"][i] > 2 * SKIP + 4:
+    for lo, hi in events:
+        i, j = lo - SKIP, hi + 1 + SKIP
+        if i < 0 or j >= n or d["seq"][j] - d["seq"][i] > (j - i) + 4:
             continue
+        # Classify on the frame that actually touched the cushion: the one
+        # CLOSEST TO A RAIL, not the middle of the event. The middle sits 2-3
+        # frames after contact, and at 2.4 m/s outgoing that is already 36 mm
+        # off the cushion -- outside WALL_BAND_MM, so every clean bounce was
+        # being classified "away from a rail" and counted as a mallet hit.
+        span = np.arange(max(0, lo - 1), min(hi + 2, n))
+        near = np.minimum(
+            np.minimum(d["x"][span] - geom.RAIL_MIN_X,
+                       geom.RAIL_MAX_X - d["x"][span]),
+            np.minimum(d["y"][span] - geom.RAIL_MIN_Y,
+                       geom.RAIL_MAX_Y - d["y"][span]))
+        c = int(span[int(np.argmin(near))])
         name, nrm = wall_of(d["x"][c], d["y"][c])
-        vin = np.array([d["vx"][i], d["vy"][i]])
-        vout = np.array([d["vx"][j], d["vy"][j]])
+        t_c = 0.5 * (d["t"][lo] + d["t"][min(hi + 1, n - 1)])
+        vin, r_in = velocity_at(d, lo - BRACKET, lo - 1, t_c)
+        vout, r_out = velocity_at(d, hi + 1, hi + BRACKET, t_c)
+        if vin is None or vout is None:
+            continue
+        if max(r_in, r_out) > BRACKET_RMS_MM:
+            continue
         if np.hypot(*vin) < MIN_SPEED:
             continue
         if name is None:
@@ -254,7 +370,77 @@ def fit_bounces(d, cuts):
     return walls, others
 
 
-def fit_paddle(d, cuts):
+
+def fit_spin(d, events):
+    """Does the tangential momentum lost at a cushion turn into SPIN?
+
+    Until the puck carried four markers this could only be inferred. It now
+    has an orientation, so the question is a measurement.
+
+    For a uniform disc, a tangential impulse J at the rim changes both terms:
+
+        dv_t = J/m           dw = -J*R/I,   I = m*R^2/2
+
+    so dw = -2*dv_t/R. Fitting dw against dv_t and comparing the slope to
+    -2/R = -0.0491 rad/s per mm/s separates two very different worlds:
+
+      slope ~ -2/R   the cushion GRIPS. Momentum went into spin, the puck
+                     leaves rotating, and a sim with no orientation state
+                     will misplace every bank shot.
+      slope ~ 0      the cushion RUBS. Momentum went into heat, the puck
+                     leaves barely spinning, and a plain tangential
+                     coefficient is the whole model.
+    """
+    if "w" not in d:
+        return None
+    n, rows = len(d["t"]), []
+    for lo, hi in events:
+        i, j = lo - BRACKET, hi + BRACKET
+        if i < 0 or j >= n or d["seq"][j] - d["seq"][i] != j - i:
+            continue
+        span = np.arange(max(0, lo - 1), min(hi + 2, n))
+        near = np.minimum(
+            np.minimum(d["x"][span] - geom.RAIL_MIN_X,
+                       geom.RAIL_MAX_X - d["x"][span]),
+            np.minimum(d["y"][span] - geom.RAIL_MIN_Y,
+                       geom.RAIL_MAX_Y - d["y"][span]))
+        c = int(span[int(np.argmin(near))])
+        name, nrm = wall_of(d["x"][c], d["y"][c])
+        if name is None:
+            continue
+        t_c = d["t"][c]
+        vin, r_in = velocity_at(d, lo - BRACKET, lo - 1, t_c)
+        vout, r_out = velocity_at(d, hi + 1, hi + BRACKET, t_c)
+        if vin is None or vout is None or max(r_in, r_out) > BRACKET_RMS_MM:
+            continue
+        if vin @ nrm >= 0 or vout @ nrm <= 0:
+            continue
+        tan = np.array([-nrm[1], nrm[0]])
+        # Spin either side, averaged over the same clean frames. w is already
+        # a 6-frame slope of the unwrapped angle, so it smears exactly like
+        # the velocity does and needs the same standoff.
+        w_in = float(np.nanmean(d["w"][lo - BRACKET:lo]))
+        w_out = float(np.nanmean(d["w"][hi + 1:hi + 1 + BRACKET]))
+        if not (np.isfinite(w_in) and np.isfinite(w_out)):
+            continue
+        rows.append({"dvt": float((vout - vin) @ tan),
+                     "dw": w_out - w_in,
+                     "vt_in": float(vin @ tan),
+                     "speed_in": float(np.hypot(*vin))})
+    if len(rows) < 6:
+        return {"n": len(rows), "rows": rows}
+    dvt = np.array([r["dvt"] for r in rows])
+    dw = np.array([r["dw"] for r in rows])
+    slope = float((dvt * dw).sum() / (dvt * dvt).sum())     # through origin
+    pred = -2.0 / geom.PUCK_RADIUS_MM
+    resid = dw - slope * dvt
+    ss = float(((dw - dw.mean()) ** 2).sum())
+    return {"n": len(rows), "rows": rows, "slope": slope, "predicted": pred,
+            "grip": slope / pred,
+            "r2": float(1.0 - (resid ** 2).sum() / ss) if ss > 0 else 0.0}
+
+
+def fit_paddle(d, events):
     """Restitution against the mallet, using RELATIVE normal velocity.
 
     A wall does not move, so |v_out| / |v_in| is the coefficient. A mallet
@@ -277,13 +463,21 @@ def fit_paddle(d, cuts):
     if "mx" not in d:
         return None
     hits, n = [], len(d["t"])
-    for c in cuts:
-        i, j = c - SKIP, c + 1 + SKIP
-        if i < 0 or j >= n or d["seq"][j] - d["seq"][i] > 2 * SKIP + 4:
+    for lo, hi in events:
+        i, j = lo - SKIP, hi + 1 + SKIP
+        if i < 0 or j >= n or d["seq"][j] - d["seq"][i] > (j - i) + 4:
             continue
-        if np.isnan(d["mx"][c]):
+        # The line of centres at CLOSEST APPROACH, not at an arbitrary frame
+        # of the event. The two are still closing at the first frame and
+        # already separating at the last, so either end tilts the normal and
+        # feeds a wrong direction straight into e.
+        span = np.arange(lo, hi + 1)
+        seps = np.hypot(d["x"][span] - d["mx"][span],
+                        d["y"][span] - d["my"][span])
+        if np.all(np.isnan(seps)):
             continue
-        sep = np.hypot(d["x"][c] - d["mx"][c], d["y"][c] - d["my"][c])
+        c = int(span[int(np.nanargmin(seps))])
+        sep = float(np.nanmin(seps))
         if sep > CONTACT_MM:
             continue
         nrm = np.array([d["x"][c] - d["mx"][c], d["y"][c] - d["my"][c]])
@@ -292,17 +486,25 @@ def fit_paddle(d, cuts):
             continue
         nrm /= ln
 
-        vin = np.array([d["vx"][i], d["vy"][i]])
-        vout = np.array([d["vx"][j], d["vy"][j]])
+        t_c = d["t"][c]
+        vin, r_in = velocity_at(d, lo - BRACKET, lo - 1, t_c)
+        vout, r_out = velocity_at(d, hi + 1, hi + BRACKET, t_c)
+        if vin is None or vout is None or max(r_in, r_out) > BRACKET_RMS_MM:
+            continue
         if np.hypot(*vin) < MIN_SPEED:
             continue
-        # Mallet velocity by finite difference across the same bracket.
-        dt_i = d["t"][c] - d["t"][i]
-        dt_o = d["t"][j] - d["t"][c]
-        mv_in = np.array([(d["mx"][c] - d["mx"][i]) / dt_i,
-                          (d["my"][c] - d["my"][i]) / dt_i]) if dt_i > 0 else np.zeros(2)
-        mv_out = np.array([(d["mx"][j] - d["mx"][c]) / dt_o,
-                           (d["my"][j] - d["my"][c]) / dt_o]) if dt_o > 0 else np.zeros(2)
+        # The MALLET either side, the same way and over the same windows. A
+        # hand-swung mallet accelerates throughout, so a finite difference
+        # across the bracket returns its average speed over 50 ms rather than
+        # its speed at contact, and that error goes straight into the
+        # relative normal velocity that defines e.
+        md = {"t": d["t"], "seq": d["seq"], "x": d["mx"], "y": d["my"]}
+        mv_in, _ = velocity_at(md, lo - BRACKET, lo - 1, t_c)
+        mv_out, _ = velocity_at(md, hi + 1, hi + BRACKET, t_c)
+        if mv_in is None or mv_out is None:
+            continue
+        if not (np.all(np.isfinite(mv_in)) and np.all(np.isfinite(mv_out))):
+            continue
 
         rel_in = (vin - mv_in) @ nrm
         rel_out = (vout - mv_out) @ nrm
@@ -314,12 +516,201 @@ def fit_paddle(d, cuts):
     return hits
 
 
+# ── Synthetic validation ─────────────────────────────────────────────────
+# A fitter that has never been run against a known answer is a number
+# generator. This builds recordings whose constants ARE known and checks the
+# fits come back with them.
+#
+# The generator feeds the fitter TRACKER-SHAPED data, not truth: positions
+# carry centroid noise and the velocities are the same 6-frame least-squares
+# slope PuckTracker uses. That is the whole point. Handing over exact
+# velocities would skip the one effect SKIP exists to handle -- the slope
+# window smearing across an impact -- and would validate a fitter that does
+# not exist.
+TRUE_A = 22.0          # mm/s^2 rolling
+TRUE_B = 3.5e-5        # 1/mm quadratic drag
+TRUE_EN = 0.80         # wall, normal
+TRUE_ET = 0.70         # wall, tangential
+TRUE_EP = 0.75         # paddle, on RELATIVE normal velocity
+MASS_RATIO = 2.0       # mallet / puck
+POS_NOISE_MM = 0.35
+
+
+def _advance(p, v, dt, sub=10):
+    """Integrate one frame of drag, substepped."""
+    h = dt / sub
+    for _ in range(sub):
+        s = float(np.hypot(*v))
+        if s > 1e-9:
+            v = v - (TRUE_A + TRUE_B * s * s) * h * (v / s)
+        p = p + v * h
+    return p, v
+
+
+def _bounce_walls(p, v):
+    """Reflect off the rails, losing e_n normally and e_t tangentially."""
+    r = geom.PUCK_RADIUS_MM
+    lo_x, hi_x = geom.RAIL_MIN_X + r, geom.RAIL_MAX_X - r
+    lo_y, hi_y = geom.RAIL_MIN_Y + r, geom.RAIL_MAX_Y - r
+    if p[0] < lo_x and v[0] < 0:
+        p[0] = 2 * lo_x - p[0]; v[0] *= -TRUE_EN; v[1] *= TRUE_ET
+    elif p[0] > hi_x and v[0] > 0:
+        p[0] = 2 * hi_x - p[0]; v[0] *= -TRUE_EN; v[1] *= TRUE_ET
+    if p[1] < lo_y and v[1] < 0:
+        p[1] = 2 * lo_y - p[1]; v[1] *= -TRUE_EN; v[0] *= TRUE_ET
+    elif p[1] > hi_y and v[1] > 0:
+        p[1] = 2 * hi_y - p[1]; v[1] *= -TRUE_EN; v[0] *= TRUE_ET
+    return p, v
+
+
+def _impulse(pp, vp, pm, vm):
+    """One elastic-with-loss impulse along the line of centres.
+
+    Applied ONCE per approach, not on every overlapping frame: re-applying it
+    while the two still overlap injects energy and turns a 0.75 collision into
+    whatever the frame rate says.
+    """
+    n = pp - pm
+    ln = float(np.hypot(*n))
+    if ln < 1e-9:
+        return vp, vm
+    n = n / ln
+    rel = float((vp - vm) @ n)
+    if rel >= 0:                      # already separating
+        return vp, vm
+    j = -(1.0 + TRUE_EP) * rel / (1.0 + 1.0 / MASS_RATIO)
+    return vp + j * n, vm - (j / MASS_RATIO) * n
+
+
+def _emit(rows, seq0, xs, ys, mxs, mys, rng, dt):
+    """Positions -> a record_puck-shaped block, via the tracker's estimator."""
+    from puck_stream import _lsq_slope        # the real slope, not a copy
+    xs = np.asarray(xs) + rng.normal(0, POS_NOISE_MM, len(xs))
+    ys = np.asarray(ys) + rng.normal(0, POS_NOISE_MM, len(ys))
+    ts = np.arange(len(xs)) * dt
+    for k in range(len(xs)):
+        lo = max(0, k - 5)
+        vx = _lsq_slope(ts[lo:k + 1], xs[lo:k + 1])
+        vy = _lsq_slope(ts[lo:k + 1], ys[lo:k + 1])
+        rows.append({"seq": seq0 + k, "t": float(ts[k]) + seq0 * dt,
+                     "x": float(xs[k]), "y": float(ys[k]),
+                     "vx": float(vx), "vy": float(vy), "n": 4,
+                     "mx": float(mxs[k]), "my": float(mys[k])})
+    return seq0 + len(xs) + 50            # a seq gap ends the segment
+
+
+def _simulate(rng, dt=1 / 200.0):
+    """Glides, wall bounces and mallet impacts with known coefficients."""
+    rows, seq = [], 0
+    far = (geom.RAIL_MIN_X - 500.0, geom.RAIL_MIN_Y - 500.0)   # mallet parked
+
+    # 1. Free glides across open table, no wall, no mallet.
+    for _ in range(40):
+        p = np.array([rng.uniform(500, 1500), rng.uniform(250, 700)])
+        ang = rng.uniform(0, 2 * np.pi)
+        v = np.array([np.cos(ang), np.sin(ang)]) * rng.uniform(250, 6000)
+        xs, ys = [], []
+        for _k in range(rng.integers(45, 90)):
+            xs.append(p[0]); ys.append(p[1])
+            p, v = _advance(p, v, dt)
+            if not (100 < p[0] < 1900 and 100 < p[1] < 880):
+                break
+        if len(xs) > MIN_GLIDE + 2 * SKIP:
+            seq = _emit(rows, seq, xs, ys, [far[0]] * len(xs),
+                        [far[1]] * len(xs), rng, dt)
+
+    # 2. Shots into a rail, entering at a spread of angles and speeds.
+    for _ in range(40):
+        p = np.array([rng.uniform(700, 1300), rng.uniform(350, 600)])
+        ang = rng.uniform(0, 2 * np.pi)
+        v = np.array([np.cos(ang), np.sin(ang)]) * rng.uniform(1500, 7000)
+        xs, ys = [], []
+        for _k in range(150):
+            xs.append(p[0]); ys.append(p[1])
+            p, v = _advance(p, v, dt)
+            p, v = _bounce_walls(p, v)
+        seq = _emit(rows, seq, xs, ys, [far[0]] * len(xs),
+                    [far[1]] * len(xs), rng, dt)
+
+    # 3. Mallet impacts. The mallet SWINGS -- a stationary one would let a
+    #    fitter that ignores recoil pass, which is the bug being guarded.
+    for _ in range(90):
+        p = np.array([rng.uniform(600, 1400), rng.uniform(300, 650)])
+        ang = rng.uniform(0, 2 * np.pi)
+        v = np.array([np.cos(ang), np.sin(ang)]) * rng.uniform(800, 4000)
+        contact = geom.PUCK_RADIUS_MM + geom.MALLET_RADIUS_MM
+        # Put the mallet ahead of the puck, closing.
+        pm = p + v / np.hypot(*v) * rng.uniform(260.0, 340.0)
+        off = rng.uniform(-0.35, 0.35)                 # glancing, not head-on
+        c, s = np.cos(off), np.sin(off)
+        vm = -np.array([c * v[0] - s * v[1], s * v[0] + c * v[1]])
+        vm = vm / np.hypot(*vm) * rng.uniform(200, 2500)
+        xs, ys, mxs, mys, hit = [], [], [], [], False
+        for _k in range(70):
+            xs.append(p[0]); ys.append(p[1])
+            mxs.append(pm[0]); mys.append(pm[1])
+            p, v = _advance(p, v, dt)
+            pm = pm + vm * dt
+            if not hit and np.hypot(*(p - pm)) <= contact:
+                v, vm = _impulse(p, v, pm, vm)
+                hit = True
+        if hit:
+            seq = _emit(rows, seq, xs, ys, mxs, mys, rng, dt)
+    return rows
+
+
+def selftest() -> int:
+    rng = np.random.default_rng(7)
+    rows = _simulate(rng)
+    d = {k: np.array([r[k] for r in rows], float)
+         for k in ("seq", "t", "x", "y", "vx", "vy", "n", "mx", "my")}
+    bounds, cuts, _gaps = segment(d)
+    print(f"synthetic: {len(rows)} samples, {len(bounds)} segments, "
+          f"{len(cuts)} contacts")
+
+    fr = fit_friction(d, bounds)
+    g = fr.get("drag", {})
+    print(f"\nFRICTION   truth a={TRUE_A:.1f} b={TRUE_B:.3e}")
+    print(f"           fit   a={g.get('a', float('nan')):.1f} "
+          f"b={g.get('b', float('nan')):.3e}   ({len(fr['speeds'])} glides)")
+    assert abs(g["b"] - TRUE_B) < 0.15 * TRUE_B, f"drag b {g['b']:.3e}"
+    # `a` is only required to be CONSISTENT with truth, not close to it. It is
+    # genuinely weakly identified here, and a test that demanded accuracy
+    # would either fail forever or be silently loosened until it passed.
+    assert abs(g["a"] - TRUE_A) < 2.5 * g["se_a"] + 5.0, (
+        f"rolling a {g['a']:.1f} +- {g['se_a']:.1f} vs truth {TRUE_A}")
+
+    walls, _others = fit_bounces(d, contact_events(cuts))
+    en = float(np.mean([w["e_normal"] for w in walls]))
+    et = float(np.nanmean([w["e_tangential"] for w in walls]))
+    print(f"\nWALL       truth e_n={TRUE_EN:.3f} e_t={TRUE_ET:.3f}")
+    print(f"           fit   e_n={en:.3f} e_t={et:.3f}   ({len(walls)} contacts)")
+    assert abs(en - TRUE_EN) < 0.05, f"e_normal {en:.3f}"
+    assert abs(et - TRUE_ET) < 0.08, f"e_tangential {et:.3f}"
+
+    hits = fit_paddle(d, contact_events(cuts))
+    ep = float(np.median([h["e"] for h in hits])) if hits else float("nan")
+    print(f"\nPADDLE     truth e={TRUE_EP:.3f}  (mallet/puck mass {MASS_RATIO})")
+    print(f"           fit   e={ep:.3f}   ({len(hits) if hits else 0} contacts)")
+    assert hits and len(hits) >= 20, f"only {len(hits) if hits else 0} contacts"
+    assert abs(ep - TRUE_EP) < 0.08, f"paddle e {ep:.3f} vs {TRUE_EP}"
+
+    print("\nselftest PASSED — all three fits recover their truth")
+    return 0
+
+
 def main() -> int:
     ap = argparse.ArgumentParser(
         description=__doc__,
         formatter_class=argparse.RawDescriptionHelpFormatter)
-    ap.add_argument("recording")
+    ap.add_argument("recording", nargs="?")
+    ap.add_argument("--selftest", action="store_true",
+                    help="fit synthetic data with known constants")
     args = ap.parse_args()
+    if args.selftest:
+        return selftest()
+    if not args.recording:
+        ap.error("a recording is required (or --selftest)")
 
     d = load(args.recording)
     bounds, cuts, gaps = segment(d)
@@ -342,9 +733,16 @@ def main() -> int:
         if "drag" in fr:
             g = fr["drag"]
             print(f"\n  speed-dependent fit  decel = a + b*v^2")
-            print(f"    a (rolling)  {g['a']:8.1f} mm/s^2   "
-                  f"= mu {g['a'] / G_MM_S2:.5f}")
-            print(f"    b (drag)     {g['b']:.3e} 1/mm")
+            print(f"    a (rolling)  {g['a']:8.1f} +- {g.get('se_a', float('nan')):.1f}"
+                  f" mm/s^2   = mu {g['a'] / G_MM_S2:.5f}")
+            print(f"    b (drag)     {g['b']:.3e} +- {g.get('se_b', float('nan')):.1e} 1/mm")
+            if abs(g["a"]) < 2 * g.get("se_a", np.inf):
+                print("    NOTE: `a` is consistent with ZERO at 2 sigma -- it is an")
+                print("          intercept extrapolated from glides that are mostly fast,")
+                print("          where b*v^2 dwarfs it. Do not quote it as a measured")
+                print("          rolling coefficient. To pin it down, record long SLOW")
+                print("          glides (200-600 mm/s); that is the only regime where")
+                print("          the two terms are comparable.")
             print(f"    residual rms {g['rms']:7.1f} vs {g['rms_const']:7.1f} "
                   f"for a single constant")
             if g["rms"] < 0.7 * g["rms_const"]:
@@ -365,7 +763,7 @@ def main() -> int:
                   f"fastest ~{s[order][-3:].mean():.0f} mm/s")
 
     print("\n── WALL RESTITUTION " + "─" * 47)
-    walls, others = fit_bounces(d, cuts)
+    walls, others = fit_bounces(d, contact_events(cuts))
     if not walls:
         print("  no clean wall contacts found. Hit each cushion square-on a "
               "few times, at a few speeds.")
@@ -404,13 +802,35 @@ def main() -> int:
         et = np.array([w["e_tangential"] for w in walls])
         et = et[~np.isnan(et)]
         if len(et) >= 5 and et.mean() < 0.9:
-            print(f"\n  TANGENTIAL ratio {et.mean():.3f} < 1: the cushion is "
-                  "taking tangential momentum, i.e. the puck is picking up\n"
-                  "  SPIN. The simulator has no puck orientation state at "
-                  "all, so every bank shot it plans will be\n"
-                  "  systematically off. Worth knowing before training.")
+            print(f"\n  TANGENTIAL ratio {et.mean():.3f} < 1: the cushion "
+                  "takes tangential momentum. WHERE it goes -- into spin, or\n"
+                  "  into heat -- this number cannot say, and the two want "
+                  "different simulators. See the spin\n"
+                  "  section below, which measures it directly now that the "
+                  "puck has an orientation.")
+    sp = fit_spin(d, contact_events(cuts))
+    if sp is not None:
+        print("\n── SPIN AT THE CUSHION " + "─" * 44)
+        if sp["n"] < 6:
+            print(f"  only {sp['n']} clean wall contacts carry spin -- too few "
+                  f"to separate grip from rub.")
+        else:
+            print(f"  {sp['n']} contacts.  dw vs dv_t slope "
+                  f"{sp['slope']:+.4f} rad/s per mm/s")
+            print(f"  a gripping cushion predicts -2/R = {sp['predicted']:+.4f}"
+                  f"  ->  {100 * sp['grip']:.0f}% of it   (r2 {sp['r2']:.2f})")
+            if sp["grip"] > 0.5:
+                print("  -> the cushion GRIPS: the tangential loss really is going into")
+                print("     spin, and the sim needs a puck orientation state.")
+            elif sp["grip"] < 0.2:
+                print("  -> the cushion RUBS: tangential momentum goes to friction, NOT")
+                print("     into spin. A tangential coefficient is the whole model and")
+                print("     the sim does NOT need orientation to get bounces right.")
+            else:
+                print("  -> partial: some of the tangential loss becomes spin.")
+
     print("\n── PADDLE (MALLET) RESTITUTION " + "─" * 36)
-    pad = fit_paddle(d, cuts)
+    pad = fit_paddle(d, contact_events(cuts))
     if pad is None:
         print("  no mallet positions in this recording -- re-record with a "
               "current record_puck.py to get them")
