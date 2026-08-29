@@ -265,6 +265,11 @@ class BatchAirHockeyEnv:
             "max_speed": np.full(n, max_speed),
             "max_accel": np.full(n, max_accel),
             "time_constant": np.full(n, tc),
+            # The caps this side is NOMINALLY built with, kept as scalars so
+            # domain randomisation can scale each side by its own limits.
+            # The arrays above get overwritten on every randomised reset.
+            "nominal_speed": max_speed,
+            "nominal_accel": max_accel,
             # Jerk ramp, seconds. Matches MOTION_ACCEL_RAMP_S in the firmware.
             "ramp_s": 0.003,
         }
@@ -305,15 +310,23 @@ class BatchAirHockeyEnv:
             if n == 0:
                 return self._make_obs_direct()
 
-        # Domain randomization: per-env motor dynamics
+        # Domain randomization: per-env motor dynamics.
+        #
+        # Scaled by EACH SIDE'S OWN nominal caps, not by the robot's. Using
+        # MAX_SPEED_M_S for both -- as this did -- silently deleted the
+        # asymmetry: the opponent is built at 15 m/s / 80 m/s^2 to stand in
+        # for a human, and the first randomised reset overwrote that with
+        # 6-12 m/s and 10-22.5 m/s^2, i.e. a second robot that is on average
+        # SLOWER than the one it is sparring with.
         if self.domain_randomize:
             for dyn in (self._agent_dyn, self._opp_dyn):
                 slo, shi = DR_SPEED_RANGE
                 alo, ahi = DR_ACCEL_RANGE
+                speed, accel = dyn["nominal_speed"], dyn["nominal_accel"]
                 dyn["max_speed"][idx] = self._rng.uniform(
-                    slo * MAX_SPEED_M_S, shi * MAX_SPEED_M_S, size=n)
+                    slo * speed, shi * speed, size=n)
                 dyn["max_accel"][idx] = self._rng.uniform(
-                    alo * MAX_ACCEL_M_S2, ahi * MAX_ACCEL_M_S2, size=n)
+                    alo * accel, ahi * accel, size=n)
                 dyn["time_constant"][idx] = self._rng.uniform(0.01, 0.04, size=n)
 
         self._agent_dyn["x"][idx] = self.engine.paddle_agent_x[idx]

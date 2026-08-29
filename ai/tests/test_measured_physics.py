@@ -269,16 +269,44 @@ def test_domain_randomised_speed_never_exceeds_the_firmware_clamp():
     Sampling above it trains intercepts the machine physically cannot make,
     and the firmware clamps silently rather than failing. The shared cap range
     used to reach 1.125x nominal, i.e. 13.5 m/s against a 12.0 clamp.
+
+    Scoped to the AGENT. The opponent stands in for a human and is not behind
+    the Teensy, so the clamp is not a fact about it -- it is allowed, and
+    expected, to sample faster than the robot can move.
     """
     from airhockey.batch_env import BatchAirHockeyEnv
     from airhockey.dynamics import MAX_SPEED_M_S
     e = BatchAirHockeyEnv(n_envs=4000, domain_randomize=True)
     e.reset(seed=11)
-    for dyn in (e._agent_dyn, e._opp_dyn):
-        assert dyn["max_speed"].max() <= MAX_SPEED_M_S + 1e-9, (
-            f"sampled {dyn['max_speed'].max():.2f} m/s above the "
-            f"{MAX_SPEED_M_S} clamp")
-        assert dyn["max_speed"].min() < MAX_SPEED_M_S, "not randomised at all"
+    dyn = e._agent_dyn
+    assert dyn["max_speed"].max() <= MAX_SPEED_M_S + 1e-9, (
+        f"sampled {dyn['max_speed'].max():.2f} m/s above the "
+        f"{MAX_SPEED_M_S} clamp")
+    assert dyn["max_speed"].min() < MAX_SPEED_M_S, "not randomised at all"
+
+
+def test_randomisation_does_not_erase_the_side_asymmetry():
+    """DR must scale each side by ITS OWN caps.
+
+    Scaling both by the robot's -- which it did -- meant the opponent was
+    built at 15 m/s / 80 m/s^2 and then overwritten on the first randomised
+    reset with 6-12 and 10-22.5, making the human sparring partner strictly
+    slower and far gentler than the machine it is meant to stretch.
+    """
+    from airhockey.batch_env import BatchAirHockeyEnv
+    from airhockey.dynamics import (OPPONENT_MAX_ACCEL_M_S2,
+                                    OPPONENT_MAX_SPEED_M_S)
+    e = BatchAirHockeyEnv(n_envs=4000, domain_randomize=True)
+    e.reset(seed=11)
+    opp, agent = e._opp_dyn, e._agent_dyn
+
+    assert opp["max_speed"].mean() > agent["max_speed"].mean(), (
+        "randomised opponent is slower on average than the robot")
+    assert opp["max_accel"].mean() > agent["max_accel"].mean(), (
+        "randomised opponent accelerates less than the robot")
+    # Each side stays inside its own band.
+    assert opp["max_speed"].max() <= OPPONENT_MAX_SPEED_M_S + 1e-9
+    assert opp["max_accel"].max() <= 1.125 * OPPONENT_MAX_ACCEL_M_S2 + 1e-9
 
 
 def test_scalar_env_and_batch_env_agree_on_the_reachable_box():
