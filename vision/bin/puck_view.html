@@ -1,0 +1,565 @@
+<title>Puck recording — trajectory and fits</title>
+<style>
+/* Light palette is the base; dark redefines only tokens, twice, so the
+   un-stamped (system) state and the explicit toggle both resolve. */
+:root{
+  --bg:#f4f5f7; --panel:#ffffff; --line:#dfe3e8; --ink:#171a1f; --dim:#5c6672;
+  --faint:#8a94a0; --accent:#0b6fb8;
+  --rink:#0d1014; --rink-line:#2a323c; --rink-edge:#3d4854;
+  --puck:#3caaff; --mallet:#5fd98a; --wall:#f0a13a; --skip:#e0574f;
+  --glide:#6f7f90; --spin:#b98cf0;
+  --shadow:0 1px 2px rgba(16,24,32,.06),0 4px 14px rgba(16,24,32,.05);
+}
+@media (prefers-color-scheme:dark){
+  :root:not([data-theme="light"]){
+    --bg:#0e1116; --panel:#151a21; --line:#242c36; --ink:#e6eaef; --dim:#9aa5b1;
+    --faint:#6b7683; --accent:#5fb8f5;
+    --rink:#080a0d; --rink-line:#232b34; --rink-edge:#39434f;
+    --shadow:0 1px 2px rgba(0,0,0,.4),0 4px 18px rgba(0,0,0,.35);
+  }
+}
+:root[data-theme="dark"]{
+  --bg:#0e1116; --panel:#151a21; --line:#242c36; --ink:#e6eaef; --dim:#9aa5b1;
+  --faint:#6b7683; --accent:#5fb8f5;
+  --rink:#080a0d; --rink-line:#232b34; --rink-edge:#39434f;
+  --shadow:0 1px 2px rgba(0,0,0,.4),0 4px 18px rgba(0,0,0,.35);
+}
+*{box-sizing:border-box}
+body{
+  margin:0; background:var(--bg); color:var(--ink);
+  font:15px/1.5 ui-sans-serif,system-ui,-apple-system,"Segoe UI",Roboto,sans-serif;
+  -webkit-font-smoothing:antialiased;
+}
+.mono{font-family:ui-monospace,SFMono-Regular,"SF Mono",Menlo,Consolas,monospace;
+  font-variant-numeric:tabular-nums}
+.wrap{max-width:1240px;margin:0 auto;padding:28px 20px 64px}
+header{display:flex;flex-wrap:wrap;gap:16px;align-items:baseline;
+  justify-content:space-between;margin-bottom:6px}
+h1{font-size:20px;font-weight:620;letter-spacing:-.01em;margin:0}
+h2{font-size:13px;font-weight:640;letter-spacing:.07em;text-transform:uppercase;
+  color:var(--dim);margin:0 0 10px}
+.sub{color:var(--dim);font-size:13px}
+.stats{display:grid;grid-template-columns:repeat(auto-fit,minmax(128px,1fr));
+  gap:1px;background:var(--line);border:1px solid var(--line);border-radius:10px;
+  overflow:hidden;margin:18px 0 22px}
+.stat{background:var(--panel);padding:11px 13px}
+.stat b{display:block;font-size:19px;font-weight:620;letter-spacing:-.02em}
+.stat span{display:block;font-size:11px;color:var(--faint);letter-spacing:.04em;
+  text-transform:uppercase;margin-top:2px}
+.card{background:var(--panel);border:1px solid var(--line);border-radius:12px;
+  padding:16px;box-shadow:var(--shadow);margin-bottom:18px}
+#rink{width:100%;height:auto;display:block;border-radius:8px;background:var(--rink)}
+.controls{display:flex;flex-wrap:wrap;gap:10px;align-items:center;margin-top:12px}
+button{font:inherit;font-size:13px;padding:6px 13px;border-radius:7px;
+  border:1px solid var(--line);background:var(--panel);color:var(--ink);cursor:pointer}
+button:hover{border-color:var(--accent);color:var(--accent)}
+button.on{background:var(--accent);border-color:var(--accent);color:#fff}
+button:focus-visible,input:focus-visible{outline:2px solid var(--accent);outline-offset:2px}
+input[type=range]{accent-color:var(--accent)}
+#scrub{flex:1 1 260px;min-width:200px}
+label.chk{display:inline-flex;gap:6px;align-items:center;font-size:13px;color:var(--dim);
+  cursor:pointer}
+#timeline{width:100%;height:46px;display:block;margin-top:8px;cursor:pointer}
+.cols{display:grid;grid-template-columns:minmax(0,1fr) minmax(0,340px);gap:18px}
+@media (max-width:900px){.cols{grid-template-columns:minmax(0,1fr)}}
+.plots{display:grid;grid-template-columns:repeat(auto-fit,minmax(270px,1fr));gap:14px}
+.plot canvas{width:100%;height:auto;display:block}
+.plot p{margin:6px 2px 0;font-size:12px;color:var(--faint);line-height:1.45}
+#events{max-height:520px;overflow-y:auto;border:1px solid var(--line);border-radius:8px}
+.ev{display:grid;grid-template-columns:52px 1fr auto;gap:8px;align-items:baseline;
+  padding:7px 10px;border-bottom:1px solid var(--line);cursor:pointer;font-size:12.5px}
+.ev:last-child{border-bottom:none}
+.ev:hover{background:color-mix(in srgb,var(--accent) 9%,transparent)}
+.ev.sel{background:color-mix(in srgb,var(--accent) 17%,transparent)}
+.ev .k{font-weight:620}
+.ev .n{color:var(--faint);font-size:11.5px}
+.dot{width:8px;height:8px;border-radius:50%;display:inline-block;margin-right:5px;
+  vertical-align:1px}
+.legend{display:flex;flex-wrap:wrap;gap:14px;font-size:12px;color:var(--dim);margin-top:10px}
+.readout{display:grid;grid-template-columns:repeat(auto-fit,minmax(96px,1fr));gap:8px;
+  margin-top:12px;font-size:12.5px}
+.readout div span{display:block;color:var(--faint);font-size:10.5px;
+  text-transform:uppercase;letter-spacing:.04em}
+.note{font-size:12.5px;color:var(--dim);line-height:1.6;margin:10px 2px 0}
+.scrollx{overflow-x:auto}
+</style>
+
+<div class="wrap">
+<header>
+  <div>
+    <h1>Puck recording — trajectory and fits</h1>
+    <div class="sub mono" id="fname"></div>
+  </div>
+  <button id="theme" title="Toggle theme">◐ theme</button>
+</header>
+
+<div class="stats" id="stats"></div>
+
+<div class="card">
+  <canvas id="rink" width="1400" height="700"></canvas>
+  <div class="controls">
+    <button id="play">▶ play</button>
+    <input type="range" id="scrub" min="0" max="100" value="0" step="1">
+    <span class="mono" id="clock" style="min-width:120px"></span>
+    <select id="speed" style="font:inherit;font-size:13px;padding:5px 8px;
+      border-radius:7px;border:1px solid var(--line);background:var(--panel);color:var(--ink)">
+      <option value="0.1">0.1×</option><option value="0.25">0.25×</option>
+      <option value="1" selected>1×</option><option value="3">3×</option>
+    </select>
+    <label class="chk"><input type="checkbox" id="showAll" checked> full path</label>
+    <label class="chk"><input type="checkbox" id="showMallet" checked> mallet</label>
+    <label class="chk"><input type="checkbox" id="showBand"> wall band</label>
+  </div>
+  <canvas id="timeline" width="1400" height="92"></canvas>
+  <div class="legend" id="legend"></div>
+  <div class="readout mono" id="readout"></div>
+</div>
+
+<div class="cols">
+  <div>
+    <div class="card">
+      <h2>Fits</h2>
+      <div class="plots" id="plots">
+        <div class="plot"><canvas id="p1" width="620" height="420"></canvas>
+          <p id="c1"></p></div>
+        <div class="plot"><canvas id="p2" width="620" height="420"></canvas>
+          <p id="c2"></p></div>
+        <div class="plot"><canvas id="p3" width="620" height="420"></canvas>
+          <p id="c3"></p></div>
+        <div class="plot"><canvas id="p4" width="620" height="420"></canvas>
+          <p id="c4"></p></div>
+      </div>
+      <p class="note" id="fitnote"></p>
+    </div>
+  </div>
+  <div>
+    <div class="card">
+      <h2>Contacts</h2>
+      <div id="events"></div>
+      <p class="note">Click any contact to jump the playhead to it. Points in
+        the plots are clickable too — they carry the frame they were measured
+        from.</p>
+    </div>
+  </div>
+</div>
+</div>
+
+<script>
+const D = __PUCK_DATA__;
+const $ = s => document.querySelector(s);
+const G = D.geom, N = D.t.length;
+const COL = k => getComputedStyle(document.documentElement).getPropertyValue(k).trim();
+
+/* ── theme ─────────────────────────────────────────────────────────── */
+$("#theme").onclick = () => {
+  const cur = document.documentElement.getAttribute("data-theme");
+  const dark = cur ? cur === "dark"
+    : matchMedia("(prefers-color-scheme: dark)").matches;
+  document.documentElement.setAttribute("data-theme", dark ? "light" : "dark");
+  drawAll();
+};
+
+/* ── per-frame classification, computed once ───────────────────────── */
+// 0 = nothing, 1 = glide used by the friction fit, 2 = glide rejected,
+// 3+ = inside a contact event (index into D.events + 3).
+const cls = new Int32Array(N);
+for (const s of D.segments)
+  for (let i = s.a; i < s.b; i++) cls[i] = s.fitted ? 1 : 2;
+D.events.forEach((e, k) => {
+  for (let i = Math.max(0, e.lo - 1); i <= Math.min(N - 1, e.hi + 1); i++)
+    cls[i] = 3 + k;
+});
+const kindColor = k => ({
+  wall: COL("--wall"), mallet: COL("--mallet"), "wall-skipped": COL("--skip"),
+  goal: COL("--spin"), open: COL("--faint")
+}[k] || COL("--faint"));
+
+/* ── rink geometry ─────────────────────────────────────────────────── */
+const [RX0, RX1, RY0, RY1] = G.rail;
+const PAD = 26;
+function rinkMap(cv) {
+  const w = cv.width - 2 * PAD, h = cv.height - 2 * PAD;
+  const sx = w / (RX1 - RX0), sy = h / (RY1 - RY0), s = Math.min(sx, sy);
+  const ox = PAD + (w - s * (RX1 - RX0)) / 2, oy = PAD + (h - s * (RY1 - RY0)) / 2;
+  // grid x runs left→right; grid y up the screen (flip so +y is up)
+  return { X: x => ox + (x - RX0) * s, Y: y => oy + (RY1 - y) * s, s };
+}
+
+let frame = 0, playing = false, lastT = 0, sel = -1;
+
+function drawRink() {
+  const cv = $("#rink"), g = cv.getContext("2d"), m = rinkMap(cv);
+  g.fillStyle = COL("--rink"); g.fillRect(0, 0, cv.width, cv.height);
+
+  // rails + centre stripe + goals — the model, drawn so the trail can be
+  // read against where the table actually is
+  g.strokeStyle = COL("--rink-edge"); g.lineWidth = 2;
+  g.strokeRect(m.X(RX0), m.Y(RY1), (RX1 - RX0) * m.s, (RY1 - RY0) * m.s);
+  g.strokeStyle = COL("--rink-line"); g.lineWidth = 1;
+  g.beginPath(); g.moveTo(m.X(G.centerline), m.Y(RY1));
+  g.lineTo(m.X(G.centerline), m.Y(RY0)); g.stroke();
+  const ymid = (RY0 + RY1) / 2, gh = G.goal / 2;
+  g.strokeStyle = COL("--spin"); g.lineWidth = 3;
+  for (const gx of [RX0, RX1]) {
+    g.beginPath(); g.moveTo(m.X(gx), m.Y(ymid - gh));
+    g.lineTo(m.X(gx), m.Y(ymid + gh)); g.stroke();
+  }
+  if ($("#showBand").checked) {
+    g.strokeStyle = COL("--wall"); g.setLineDash([4, 5]); g.lineWidth = 1;
+    g.globalAlpha = .5;
+    g.strokeRect(m.X(RX0 + G.band), m.Y(RY1 - G.band),
+      (RX1 - RX0 - 2 * G.band) * m.s, (RY1 - RY0 - 2 * G.band) * m.s);
+    g.setLineDash([]); g.globalAlpha = 1;
+  }
+
+  // full path, faint, so the session's shape is visible at a glance
+  if ($("#showAll").checked) {
+    g.globalAlpha = .30; g.lineWidth = 1;
+    let prev = -2;
+    g.beginPath();
+    for (let i = 0; i < N; i++) {
+      if (i - prev !== 1) g.moveTo(m.X(D.x[i]), m.Y(D.y[i]));
+      else g.lineTo(m.X(D.x[i]), m.Y(D.y[i]));
+      prev = i;
+    }
+    g.strokeStyle = COL("--glide"); g.stroke(); g.globalAlpha = 1;
+  }
+
+  // contact marks
+  for (let k = 0; k < D.events.length; k++) {
+    const e = D.events[k];
+    g.beginPath(); g.arc(m.X(e.x), m.Y(e.y), k === sel ? 9 : 4.5, 0, 7);
+    g.fillStyle = kindColor(e.kind);
+    g.globalAlpha = k === sel ? 1 : (e.kind === "open" ? .35 : .8);
+    g.fill(); g.globalAlpha = 1;
+    if (k === sel) { g.strokeStyle = COL("--ink"); g.lineWidth = 1.5; g.stroke(); }
+  }
+
+  // the recent trail, coloured by what the fitter thinks it is
+  const TRAIL = 90;
+  for (let i = Math.max(1, frame - TRAIL); i <= frame; i++) {
+    const a = 1 - (frame - i) / TRAIL;
+    const c = cls[i];
+    g.strokeStyle = c === 1 ? COL("--puck") : c >= 3 ? kindColor(D.events[c - 3].kind)
+      : COL("--glide");
+    g.globalAlpha = .18 + .82 * a; g.lineWidth = 1 + 2.4 * a;
+    g.beginPath(); g.moveTo(m.X(D.x[i - 1]), m.Y(D.y[i - 1]));
+    g.lineTo(m.X(D.x[i]), m.Y(D.y[i])); g.stroke();
+  }
+  g.globalAlpha = 1;
+
+  // puck at true radius, with its marker square at the measured orientation
+  const px = m.X(D.x[frame]), py = m.Y(D.y[frame]);
+  g.beginPath(); g.arc(px, py, G.puck_r * m.s, 0, 7);
+  g.fillStyle = COL("--puck"); g.globalAlpha = .16; g.fill(); g.globalAlpha = 1;
+  g.strokeStyle = COL("--puck"); g.lineWidth = 2; g.stroke();
+  if (D.th && D.th[frame] != null) {
+    g.fillStyle = COL("--puck");
+    for (let q = 0; q < 4; q++) {
+      const a = D.th[frame] + q * Math.PI / 2;
+      g.beginPath();
+      g.arc(px + Math.cos(a) * G.marker_r * m.s,
+            py - Math.sin(a) * G.marker_r * m.s, 2.4, 0, 7);
+      g.fill();
+    }
+  }
+  if ($("#showMallet").checked && D.mx && D.mx[frame] != null) {
+    const qx = m.X(D.mx[frame]), qy = m.Y(D.my[frame]);
+    g.beginPath(); g.arc(qx, qy, G.mallet_r * m.s, 0, 7);
+    g.strokeStyle = COL("--mallet"); g.lineWidth = 2; g.stroke();
+    g.globalAlpha = .12; g.fillStyle = COL("--mallet"); g.fill(); g.globalAlpha = 1;
+  }
+}
+
+/* ── timeline: speed over the session, with contacts ticked ────────── */
+function drawTimeline() {
+  const cv = $("#timeline"), g = cv.getContext("2d");
+  const W = cv.width, H = cv.height;
+  g.clearRect(0, 0, W, H);
+  const sp = new Float64Array(N);
+  let vmax = 1;
+  for (let i = 0; i < N; i++) {
+    sp[i] = Math.hypot(D.vx[i] || 0, D.vy[i] || 0);
+    if (sp[i] > vmax) vmax = sp[i];
+  }
+  g.strokeStyle = COL("--glide"); g.globalAlpha = .75; g.lineWidth = 1;
+  g.beginPath();
+  for (let i = 0; i < N; i++) {
+    const X = i / (N - 1) * W, Y = H - 14 - (sp[i] / vmax) * (H - 22);
+    i ? g.lineTo(X, Y) : g.moveTo(X, Y);
+  }
+  g.stroke(); g.globalAlpha = 1;
+  D.events.forEach((e, k) => {
+    const X = e.c / (N - 1) * W;
+    g.strokeStyle = kindColor(e.kind);
+    g.globalAlpha = e.kind === "open" ? .32 : .9;
+    g.lineWidth = k === sel ? 2.5 : 1.2;
+    g.beginPath(); g.moveTo(X, H - 12); g.lineTo(X, H - 2); g.stroke();
+  });
+  g.globalAlpha = 1;
+  const PX = frame / (N - 1) * W;
+  g.strokeStyle = COL("--accent"); g.lineWidth = 2;
+  g.beginPath(); g.moveTo(PX, 0); g.lineTo(PX, H); g.stroke();
+}
+
+/* ── plots ─────────────────────────────────────────────────────────── */
+function axes(g, W, H, xr, yr, xl, yl) {
+  const L = 52, B = 34, T = 12, R = 12;
+  g.strokeStyle = COL("--line"); g.lineWidth = 1;
+  g.beginPath(); g.moveTo(L, T); g.lineTo(L, H - B); g.lineTo(W - R, H - B); g.stroke();
+  g.fillStyle = COL("--faint");
+  g.font = "11px ui-monospace,monospace"; g.textAlign = "center";
+  for (let i = 0; i <= 4; i++) {
+    const v = xr[0] + (xr[1] - xr[0]) * i / 4, X = L + (W - L - R) * i / 4;
+    g.fillText(v.toFixed(Math.abs(v) < 10 ? 1 : 0), X, H - B + 15);
+  }
+  g.textAlign = "right";
+  for (let i = 0; i <= 4; i++) {
+    const v = yr[0] + (yr[1] - yr[0]) * i / 4, Y = H - B - (H - B - T) * i / 4;
+    g.fillText(v.toFixed(Math.abs(v) < 10 ? 2 : 0), L - 7, Y + 4);
+  }
+  g.textAlign = "center"; g.fillStyle = COL("--dim"); g.font = "11px system-ui";
+  g.fillText(xl, (L + W - R) / 2, H - 6);
+  g.save(); g.translate(13, (T + H - B) / 2); g.rotate(-Math.PI / 2);
+  g.fillText(yl, 0, 0); g.restore();
+  const px = v => L + (v - xr[0]) / (xr[1] - xr[0]) * (W - L - R);
+  const py = v => H - B - (v - yr[0]) / (yr[1] - yr[0]) * (H - B - T);
+  return { px, py, L, B, T, R };
+}
+const hit = [[], [], [], []];   // clickable points per plot: {x,y,frame}
+
+function plotFriction() {
+  const cv = $("#p1"), g = cv.getContext("2d"), W = cv.width, H = cv.height;
+  g.clearRect(0, 0, W, H); hit[0] = [];
+  const f = D.friction;
+  if (!f || !f.speeds) { $("#c1").textContent = "no glides fitted"; return; }
+  const sp = f.speeds.map(v => v / 1000), de = f.decels;
+  const xr = [0, Math.max(...sp) * 1.06], yr = [0, Math.max(...de) * 1.06];
+  const A = axes(g, W, H, xr, yr, "glide mean speed (m/s)", "deceleration (mm/s²)");
+  if (f.drag) {
+    g.strokeStyle = COL("--accent"); g.lineWidth = 2; g.beginPath();
+    for (let i = 0; i <= 60; i++) {
+      const v = xr[1] * i / 60 * 1000, y = f.drag.a + f.drag.b * v * v;
+      i ? g.lineTo(A.px(v / 1000), A.py(y)) : g.moveTo(A.px(v / 1000), A.py(y));
+    }
+    g.stroke();
+    g.strokeStyle = COL("--skip"); g.setLineDash([5, 4]); g.beginPath();
+    g.moveTo(A.px(xr[0]), A.py(f.decel_mm_s2)); g.lineTo(A.px(xr[1]), A.py(f.decel_mm_s2));
+    g.stroke(); g.setLineDash([]);
+  }
+  for (let i = 0; i < sp.length; i++) {
+    const X = A.px(sp[i]), Y = A.py(de[i]);
+    g.beginPath(); g.arc(X, Y, 3.4, 0, 7);
+    g.fillStyle = COL("--puck"); g.globalAlpha = .7; g.fill(); g.globalAlpha = 1;
+    hit[0].push({ x: X, y: Y, frame: f.bounds_a ? f.bounds_a[i] : null });
+  }
+  $("#c1").textContent = f.drag
+    ? `decel = a + b·v². b = ${f.drag.b.toExponential(2)} ± ${f.drag.se_b.toExponential(1)} — solid line. `
+      + `Dashed is the single constant the sim used to want. a = ${f.drag.a.toFixed(1)} ± ${f.drag.se_a.toFixed(1)}, `
+      + (Math.abs(f.drag.a) < 2 * f.drag.se_a ? "consistent with zero." : "resolved.")
+    : "";
+}
+
+function plotWalls() {
+  const cv = $("#p2"), g = cv.getContext("2d"), W = cv.width, H = cv.height;
+  g.clearRect(0, 0, W, H); hit[1] = [];
+  if (!D.walls.length) { $("#c2").textContent = "no measurable wall contacts"; return; }
+  const sp = D.walls.map(w => w.speed_in / 1000), e = D.walls.map(w => w.e_normal);
+  const A = axes(g, W, H, [0, Math.max(...sp) * 1.08], [0, 1.1],
+    "impact speed (m/s)", "e (normal)");
+  g.strokeStyle = COL("--faint"); g.setLineDash([4, 4]);
+  g.beginPath(); g.moveTo(A.L, A.py(1)); g.lineTo(W - A.R, A.py(1)); g.stroke();
+  g.setLineDash([]);
+  const cols = { "near(-y)": COL("--puck"), "far(+y)": COL("--wall"),
+    "human(-x)": COL("--mallet"), "robot(+x)": COL("--spin") };
+  D.walls.forEach((w, i) => {
+    const X = A.px(sp[i]), Y = A.py(e[i]);
+    g.beginPath(); g.arc(X, Y, 5, 0, 7);
+    g.fillStyle = cols[w.wall] || COL("--dim"); g.fill();
+    g.strokeStyle = COL("--panel"); g.lineWidth = 1.2; g.stroke();
+    hit[1].push({ x: X, y: Y, frame: w.c });
+  });
+  const mean = e.reduce((a, b) => a + b, 0) / e.length;
+  $("#c2").textContent = `${D.walls.length} measurable of `
+    + `${D.events.filter(v => v.kind === "wall" || v.kind === "wall-skipped").length} `
+    + `that reached a cushion. Mean e = ${mean.toFixed(3)}. Colour is the rail.`;
+}
+
+function plotSpin() {
+  const cv = $("#p3"), g = cv.getContext("2d"), W = cv.width, H = cv.height;
+  g.clearRect(0, 0, W, H); hit[2] = [];
+  const s = D.spin;
+  if (!s || !s.rows || s.rows.length < 3) { $("#c3").textContent = "not enough spin data"; return; }
+  const dv = s.rows.map(r => r.dvt), dw = s.rows.map(r => r.dw);
+  const xa = Math.max(...dv.map(Math.abs)) * 1.1, ya = Math.max(...dw.map(Math.abs)) * 1.1;
+  const A = axes(g, W, H, [-xa, xa], [-ya, ya],
+    "Δ tangential velocity (mm/s)", "Δ spin (rad/s)");
+  g.strokeStyle = COL("--line");
+  g.beginPath(); g.moveTo(A.px(-xa), A.py(0)); g.lineTo(A.px(xa), A.py(0)); g.stroke();
+  g.beginPath(); g.moveTo(A.px(0), A.py(-ya)); g.lineTo(A.px(0), A.py(ya)); g.stroke();
+  // what a GRIPPING cushion would look like: dw = -2/R * dvt
+  g.strokeStyle = COL("--skip"); g.setLineDash([6, 4]); g.lineWidth = 2;
+  g.beginPath(); g.moveTo(A.px(-xa), A.py(-s.predicted * -xa));
+  g.lineTo(A.px(xa), A.py(s.predicted * xa)); g.stroke(); g.setLineDash([]);
+  g.strokeStyle = COL("--accent"); g.lineWidth = 2;
+  g.beginPath(); g.moveTo(A.px(-xa), A.py(s.slope * -xa));
+  g.lineTo(A.px(xa), A.py(s.slope * xa)); g.stroke();
+  s.rows.forEach((r, i) => {
+    const X = A.px(r.dvt), Y = A.py(r.dw);
+    g.beginPath(); g.arc(X, Y, 4.5, 0, 7);
+    g.fillStyle = COL("--spin"); g.globalAlpha = .8; g.fill(); g.globalAlpha = 1;
+    hit[2].push({ x: X, y: Y, frame: r.c });
+  });
+  $("#c3").textContent = `Dashed = a cushion that GRIPS (Δω = −2Δv/R). Solid = measured, `
+    + `${(100 * s.grip).toFixed(0)}% of it, r² ${s.r2.toFixed(2)}. `
+    + `Flat means the tangential loss goes to heat, not spin — so the sim needs no puck orientation.`;
+}
+
+function plotPaddle() {
+  const cv = $("#p4"), g = cv.getContext("2d"), W = cv.width, H = cv.height;
+  g.clearRect(0, 0, W, H); hit[3] = [];
+  if (!D.paddle.length) { $("#c4").textContent = "no mallet contacts"; return; }
+  const sp = D.paddle.map(h => h.speed_in / 1000), rc = D.paddle.map(h => h.recoil / 1000);
+  const A = axes(g, W, H, [0, Math.max(...sp) * 1.08], [0, Math.max(...rc) * 1.08],
+    "puck impact speed (m/s)", "mallet recoil (m/s)");
+  // A free mass cannot recoil faster than the striker arrived: y = x is the
+  // ceiling, and points above it are the hand still pushing.
+  g.strokeStyle = COL("--skip"); g.setLineDash([5, 4]); g.lineWidth = 2;
+  const lim = Math.min(Math.max(...sp), Math.max(...rc));
+  g.beginPath(); g.moveTo(A.px(0), A.py(0)); g.lineTo(A.px(lim), A.py(lim)); g.stroke();
+  g.setLineDash([]);
+  D.paddle.forEach((h, i) => {
+    const X = A.px(sp[i]), Y = A.py(rc[i]);
+    g.beginPath(); g.arc(X, Y, 5, 0, 7);
+    g.fillStyle = rc[i] > sp[i] ? COL("--skip") : COL("--mallet");
+    g.globalAlpha = .82; g.fill(); g.globalAlpha = 1;
+    hit[3].push({ x: X, y: Y, frame: h.c });
+  });
+  const above = rc.filter((v, i) => v > sp[i]).length;
+  $("#c4").textContent = `Dashed is recoil = impact speed, the ceiling for a free mass `
+    + `struck by a lighter one. ${above} of ${rc.length} sit above it — the hand was still `
+    + `driving the mallet through contact, so those e values carry the arm's work.`;
+}
+
+/* ── plot click → seek ─────────────────────────────────────────────── */
+["#p1", "#p2", "#p3", "#p4"].forEach((id, k) => {
+  const cv = $(id);
+  cv.style.cursor = "crosshair";
+  cv.onclick = ev => {
+    const r = cv.getBoundingClientRect();
+    const X = (ev.clientX - r.left) * cv.width / r.width;
+    const Y = (ev.clientY - r.top) * cv.height / r.height;
+    let best = null, bd = 400;
+    for (const p of hit[k]) {
+      if (p.frame == null) continue;
+      const d2 = (p.x - X) ** 2 + (p.y - Y) ** 2;
+      if (d2 < bd) { bd = d2; best = p; }
+    }
+    if (best) { seek(best.frame); selectByFrame(best.frame); }
+  };
+});
+
+/* ── events list ───────────────────────────────────────────────────── */
+const LABEL = { wall: "wall", mallet: "mallet", "wall-skipped": "wall (skipped)",
+  goal: "goal mouth", open: "open table" };
+function buildEvents() {
+  const box = $("#events");
+  box.innerHTML = "";
+  D.events.forEach((e, k) => {
+    const row = document.createElement("div");
+    row.className = "ev"; row.dataset.k = k;
+    row.innerHTML = `<span class="mono" style="color:var(--faint)">${e.t.toFixed(2)}s</span>`
+      + `<span><span class="dot" style="background:${kindColor(e.kind)}"></span>`
+      + `<span class="k">${LABEL[e.kind]}${e.wall ? " · " + e.wall : ""}</span>`
+      + `<div class="n">${e.note}</div></span>`
+      + `<span class="mono n">${e.x.toFixed(0)},${e.y.toFixed(0)}</span>`;
+    row.onclick = () => { sel = k; seek(e.c); render(); };
+    box.appendChild(row);
+  });
+}
+function selectByFrame(f) {
+  let best = -1, bd = 1e9;
+  D.events.forEach((e, k) => { const d = Math.abs(e.c - f); if (d < bd) { bd = d; best = k; } });
+  if (bd < 40) sel = best;
+}
+
+/* ── playback ──────────────────────────────────────────────────────── */
+function seek(f) { frame = Math.max(0, Math.min(N - 1, f | 0)); $("#scrub").value = frame; render(); }
+$("#scrub").max = N - 1;
+$("#scrub").oninput = e => { playing = false; $("#play").textContent = "▶ play"; seek(+e.target.value); };
+$("#play").onclick = () => {
+  playing = !playing; $("#play").textContent = playing ? "❚❚ pause" : "▶ play";
+  $("#play").classList.toggle("on", playing);
+  lastT = performance.now();
+  if (playing) requestAnimationFrame(tick);
+};
+$("#timeline").onclick = ev => {
+  const r = ev.currentTarget.getBoundingClientRect();
+  seek(Math.round((ev.clientX - r.left) / r.width * (N - 1)));
+  selectByFrame(frame); render();
+};
+for (const id of ["#showAll", "#showMallet", "#showBand"]) $(id).onchange = render;
+addEventListener("keydown", e => {
+  if (e.key === " ") { e.preventDefault(); $("#play").click(); }
+  if (e.key === "ArrowRight") seek(frame + (e.shiftKey ? 25 : 1));
+  if (e.key === "ArrowLeft") seek(frame - (e.shiftKey ? 25 : 1));
+});
+function tick(now) {
+  if (!playing) return;
+  const dt = (now - lastT) / 1000; lastT = now;
+  const adv = dt * 200 * parseFloat($("#speed").value);
+  frame += adv;
+  if (frame >= N - 1) { frame = 0; }
+  $("#scrub").value = frame | 0;
+  render();
+  requestAnimationFrame(tick);
+}
+
+/* ── readouts ──────────────────────────────────────────────────────── */
+function render() {
+  const f = frame | 0;
+  drawRink(); drawTimeline();
+  $("#clock").textContent = `${D.t[f].toFixed(2)} s   #${f}`;
+  const sp = Math.hypot(D.vx[f] || 0, D.vy[f] || 0);
+  const c = cls[f];
+  const state = c === 1 ? "glide (fitted)" : c === 2 ? "glide (not fitted)"
+    : c >= 3 ? LABEL[D.events[c - 3].kind] : "—";
+  $("#readout").innerHTML = [
+    ["puck", `${D.x[f].toFixed(0)}, ${D.y[f].toFixed(0)} mm`],
+    ["speed", `${sp.toFixed(0)} mm/s`],
+    ["spin", D.w && D.w[f] != null ? `${(D.w[f] * 180 / Math.PI).toFixed(0)} °/s` : "—"],
+    ["corners", D.n ? `${D.n[f]}/4` : "—"],
+    ["mallet", D.mx && D.mx[f] != null ? `${D.mx[f].toFixed(0)}, ${D.my[f].toFixed(0)}` : "not seen"],
+    ["state", state],
+  ].map(([k, v]) => `<div><span>${k}</span>${v}</div>`).join("");
+  document.querySelectorAll(".ev").forEach(r =>
+    r.classList.toggle("sel", +r.dataset.k === sel));
+}
+function drawAll() { render(); plotFriction(); plotWalls(); plotSpin(); plotPaddle(); }
+
+/* ── header ────────────────────────────────────────────────────────── */
+$("#fname").textContent = `${D.file} — ${D.counts.samples} frames over ${D.counts.span} s`;
+const nWall = D.events.filter(e => e.kind === "wall").length;
+const nSkip = D.events.filter(e => e.kind === "wall-skipped").length;
+const f = D.friction || {};
+$("#stats").innerHTML = [
+  [`${nWall + nSkip}`, "cushion contacts"],
+  [`${nWall}`, "measurable"],
+  [`${D.paddle.length}`, "mallet contacts"],
+  [f.drag ? f.drag.b.toExponential(2) : "—", "drag b (1/mm)"],
+  [D.walls.length ? (D.walls.reduce((a, w) => a + w.e_normal, 0) / D.walls.length).toFixed(3) : "—",
+    "wall e"],
+  [D.spin && D.spin.grip != null ? `${(100 * D.spin.grip).toFixed(0)}%` : "—", "cushion grip"],
+].map(([v, k]) => `<div class="stat"><b class="mono">${v}</b><span>${k}</span></div>`).join("");
+$("#legend").innerHTML = [["wall", "measured cushion contact"],
+  ["wall-skipped", "cushion contact, not bracketable"], ["mallet", "mallet contact"],
+  ["goal", "goal mouth"], ["open", "open table (hand)"]]
+  .map(([k, t]) => `<span><span class="dot" style="background:${kindColor(k)}"></span>${t}</span>`)
+  .join("");
+$("#fitnote").textContent = `Glide segments shorter than ${D.consts.MIN_GLIDE} frames, or with `
+  + `no clean bracket within ${D.consts.gate} mm, are excluded. `
+  + `${D.counts.others} contacts landed away from any rail.`;
+
+buildEvents();
+drawAll();
+</script>

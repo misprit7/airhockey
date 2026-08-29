@@ -184,7 +184,7 @@ def fit_friction(d, bounds):
             continue
         slope = np.polyfit(t - t[0], v, 1)[0]           # mm/s per s
         if slope < 0 and -slope < MAX_DECEL_MM_S2:
-            rows.append((-slope, len(t), v.mean()))
+            rows.append((-slope, len(t), v.mean(), a, b))
     if not rows:
         return None
     dec = np.array([r[0] for r in rows])
@@ -200,7 +200,8 @@ def fit_friction(d, bounds):
            # FITTED rather than re-deriving it and disagreeing. The plot was
            # drawing points the fitter had rejected, which made a clean fit
            # look outlier-ridden.
-           "decels": dec, "weights": np.array([r[1] for r in rows])}
+           "decels": dec, "weights": np.array([r[1] for r in rows]),
+           "bounds": [(int(r[3]), int(r[4])) for r in rows]}
     # decel = a + b*v^2, in mm units. Fit only if the speeds actually span a
     # range; otherwise the quadratic term is unconstrained and will fit noise.
     if len(rows) >= 8 and speeds.max() > 3 * max(speeds.min(), 1e-9):
@@ -436,7 +437,8 @@ def fit_bounces(d, events, gate=None):
         # and those were producing the impossible tangential ratios.
         if -vout_n / vin_n > 1.0:
             continue
-        walls.append({"wall": name, "speed_in": float(np.hypot(*vin)),
+        walls.append({"wall": name, "lo": int(lo), "hi": int(hi),
+                      "c": int(c), "speed_in": float(np.hypot(*vin)),
                       "e_normal": float(-vout_n / vin_n),
                       "e_tangential": float((vout @ tan) / (vin @ tan))
                       if abs(vin @ tan) > 50 else np.nan})
@@ -496,7 +498,8 @@ def fit_spin(d, events, gate=None):
         w_out = float(np.nanmean(d["w"][hi + 1:hi + 1 + BRACKET]))
         if not (np.isfinite(w_in) and np.isfinite(w_out)):
             continue
-        rows.append({"dvt": float((vout - vin) @ tan),
+        rows.append({"lo": int(lo), "hi": int(hi), "c": int(c),
+                     "dvt": float((vout - vin) @ tan),
                      "dw": w_out - w_in,
                      "vt_in": float(vin @ tan),
                      "speed_in": float(np.hypot(*vin))})
@@ -583,7 +586,8 @@ def fit_paddle(d, events, gate=None):
         rel_out = (vout - mv_out) @ nrm
         if rel_in >= 0 or rel_out <= 0:
             continue
-        hits.append({"e": float(-rel_out / rel_in),
+        hits.append({"lo": int(lo), "hi": int(hi), "c": int(c),
+                     "e": float(-rel_out / rel_in),
                      "speed_in": float(np.hypot(*vin)),
                      "recoil": float(np.hypot(*(mv_out - mv_in)))})
     return hits
