@@ -23,7 +23,7 @@ sys.path.insert(0, str(Path(__file__).resolve().parent))
 sys.path.insert(0, str(Path(__file__).resolve().parents[2] / "shared"))
 import cdpr_geometry as geom  # noqa: E402
 from fit_puck import (  # noqa: E402
-    contact_events,
+    contact_events, noise_floor,
     G_MM_S2, MIN_GLIDE, MIN_SPEED, SKIP, fit_bounces, fit_friction, load,
     segment,
 )
@@ -43,7 +43,8 @@ def main() -> int:
     d = load(args.recording)
     bounds, cuts, _gaps = segment(d)
     fr = fit_friction(d, bounds)
-    walls, _others = fit_bounces(d, contact_events(cuts))
+    walls, _others = fit_bounces(d, contact_events(cuts),
+                                 6.0 * noise_floor(d, bounds))
 
     fig, ax = plt.subplots(2, 3, figsize=(17, 9))
     fig.suptitle(f"puck fits — {Path(args.recording).name}", fontsize=13)
