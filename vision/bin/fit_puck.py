@@ -854,7 +854,17 @@ def main() -> int:
         sp = np.array([h["speed_in"] for h in pad])
         frac = (rc / np.maximum(sp, 1e-9)).mean()
         print(f"  recoil / impact speed  {frac:.2f}")
-        if frac > 0.15:
+        if frac > 1.2:
+            print("  -> ABOVE 1: the mallet left FASTER than the puck arrived, "
+                  "which no free mass\n     struck by a lighter one can do. "
+                  "The hand was still driving it THROUGH the\n     contact, so "
+                  "this is not a free-body collision and the e above is not a\n"
+                  "     material property -- it has the arm's work folded into "
+                  "it, which is\n     also why the spread is 0.15-1.04.\n"
+                  "     A SWUNG mallet cannot measure paddle restitution. Shoot "
+                  "the puck at a\n     mallet held STILL, or better, left "
+                  "resting free on the table.")
+        elif frac > 0.15:
             print("  -> the mallet moves roughly like a free mass, so the "
                   "springs and motors are\n     too slow to matter during "
                   "contact and ONE paddle_restitution covers both\n     the "
