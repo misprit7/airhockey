@@ -204,6 +204,14 @@ def _drop_puck(cands, K, dist, rvec, tvec):
     because that is the plane the square is actually in and the tolerance the
     solver applies is only 5 mm. Returns the list unchanged when no square
     solves, so a table with no puck on it behaves exactly as before.
+
+    Removes the corners UNCONDITIONALLY once a square solves, even if that
+    leaves too few candidates for a paddle. Keeping them "because otherwise
+    there is no paddle" is how the caller ends up reporting the puck AS the
+    paddle -- which is exactly what happened when the puck was alone on the
+    table: four corners, no other blobs, a compact cluster that sails through
+    the spread check, and a pose 2 mm from the puck centre. No paddle is the
+    correct answer there, and it is the answer a caller can act on.
     """
     from puck_markers import find_puck        # pure geometry, no camera
 
@@ -214,8 +222,7 @@ def _drop_puck(cands, K, dist, rvec, tvec):
     if got is None:
         return cands
     drop = set(int(i) for i in got[2])
-    rest = [c for i, c in enumerate(cands) if i not in drop]
-    return rest if len(rest) >= 3 else cands
+    return [c for i, c in enumerate(cands) if i not in drop]
 
 
 def locate(img, K, dist, rvec, tvec, field, cands=None):
@@ -240,8 +247,16 @@ def locate(img, K, dist, rvec, tvec, field, cands=None):
     # four in a square about 19 px on a side, which is comfortably inside
     # CLUSTER_PX and would beat the paddle's three. Identified by solving the
     # square rather than by size, and only removed when it actually solves.
-    if len(cands) > 4:
-        cands = _drop_puck(cands, K, dist, rvec, tvec)
+    #
+    # Tried unconditionally, NOT only when more than four blobs survive. That
+    # guard looked like a cheap way to skip the work and instead disabled the
+    # check in the case that needs it most: a puck alone on the table is
+    # exactly four candidates, so the guard never fired and the solver
+    # returned the puck as the paddle, 2 mm from the puck centre, with only a
+    # 19.7-degree arm disagreement in the note to say anything was wrong.
+    cands = _drop_puck(cands, K, dist, rvec, tvec)
+    if not cands:
+        return None, "only the puck is on the table — no paddle markers"
 
     # Keep only the tight cluster: paddle markers are close together, stray
     # reflections are not.
