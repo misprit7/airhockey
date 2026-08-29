@@ -486,3 +486,55 @@ def test_the_blind_spot_actually_degrades_the_observation():
     # Coasting across the patch at 3 m/s must cost far more than the ~30 mm a
     # one-step camera delay alone explains.
     assert worst > 0.08, f"blind spot cost only {worst * 1000:.0f} mm"
+
+
+def test_the_robot_starts_where_it_can_stand():
+    """Constraining the ACTION but not the START STATE constrains nothing.
+
+    The engine draws the agent paddle over the whole half, which is 2.8x the
+    reachable box, so 58% of episodes began outside it and spent their first
+    steps being hauled back by the clamp -- from a pose the machine cannot
+    hold, possibly having touched the puck there.
+    """
+    from airhockey.batch_env import BatchAirHockeyEnv
+    from airhockey.env import AirHockeyEnv
+    e = BatchAirHockeyEnv(n_envs=4000)
+    e.reset(seed=0)
+    ws = e._ws
+    x, y = e.engine.paddle_agent_x, e.engine.paddle_agent_y
+    assert np.all((x >= ws["min_x"]) & (x <= ws["max_x"])), "reset x outside box"
+    assert np.all((y >= ws["min_y"]) & (y <= ws["max_y"])), "reset y outside box"
+    # and it still spans the box rather than collapsing to a fixed point
+    assert x.max() - x.min() > 0.8 * (ws["max_x"] - ws["min_x"])
+    assert y.max() - y.min() > 0.8 * (ws["max_y"] - ws["min_y"])
+
+    # Scalar env too -- it drives the UI and has diverged before.
+    s = AirHockeyEnv()
+    for seed in range(50):
+        s.reset(seed=seed)
+        p = s.engine.state.paddle_agent
+        assert ws["min_x"] <= p.x <= ws["max_x"], f"scalar x {p.x}"
+        assert ws["min_y"] <= p.y <= ws["max_y"], f"scalar y {p.y}"
+
+
+def test_a_stationary_opponent_stays_where_it_was_placed():
+    """`state` is a view rebuilt from the arrays, so the corner and goalie
+    placements were written to a transient object and reverted on the first
+    sync -- a 'stationary in a corner' opponent that was never in the corner."""
+    from airhockey.env import AirHockeyEnv
+    for policy, check in (
+        ("goalie", lambda p, c: abs(p.x - c.width / 2) < 1e-6),
+        ("corner", lambda p, c: min(abs(p.x - c.paddle_radius),
+                                    abs(p.x - (c.width - c.paddle_radius))) < 1e-6),
+    ):
+        e = AirHockeyEnv(opponent_policy=policy)
+        e.reset(seed=1)
+        cfg = e.table_config
+        placed = (e.engine.state.paddle_opponent.x,
+                  e.engine.state.paddle_opponent.y)
+        assert check(e.engine.state.paddle_opponent, cfg), f"{policy}: bad placement"
+        for _ in range(50):
+            e.step(np.zeros(2, dtype=np.float32))
+        now = e.engine.state.paddle_opponent
+        assert abs(now.x - placed[0]) < 1e-6 and abs(now.y - placed[1]) < 1e-6, \
+            f"{policy} opponent drifted from {placed} to ({now.x}, {now.y})"

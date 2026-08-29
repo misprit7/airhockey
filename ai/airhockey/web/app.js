@@ -364,6 +364,9 @@ function connect() {
         // world out from under the UI.
         if (mode !== "replay") {
             ws.send(JSON.stringify({ type: "set_mode", mode: mode }));
+            // Same for the side, and for the same reason: the server starts
+            // every connection on the robot.
+            ws.send(JSON.stringify({ type: "set_side", side: controlSide }));
         }
     };
 
@@ -444,8 +447,15 @@ function screenToPhysics(clientX, clientY) {
     const displayScale = rect.width / config.width;
     const mx = (clientX - rect.left) / displayScale;
     const my = config.height - (clientY - rect.top) / displayScale;
-    const clampedX = Math.min(Math.max(mx, config.paddle_radius), config.width - config.paddle_radius);
-    const clampedY = Math.min(Math.max(my, config.paddle_radius), config.height / 2 - config.paddle_radius);
+    const r = config.paddle_radius;
+    const half = config.height / 2;
+    // Which half the pointer is allowed into follows which paddle it drives.
+    // Control mode has no second paddle, so it is always the robot's.
+    const human = controlSide === "human" && mode === "sim";
+    const loY = human ? half + r : r;
+    const hiY = human ? config.height - r : half - r;
+    const clampedX = Math.min(Math.max(mx, r), config.width - r);
+    const clampedY = Math.min(Math.max(my, loY), hiY);
     return { x: clampedX, y: clampedY };
 }
 
@@ -461,6 +471,23 @@ function screenToPhysics(clientX, clientY) {
 // a move, which is wrong while you are still checking whether a single
 // commanded move lands where it should.
 let controlMode = "click";    // "click" | "follow"
+
+// Which paddle the mouse drives in SIMULATION mode. The sides are not
+// symmetric — the human has 2.3x the reach, no jerk limit, and can stand on
+// their own goal line, which the cable robot cannot — so playing the human
+// side is the only way to feel what the policy is actually up against.
+// Control mode ignores this: there is no world there, only the machine.
+let controlSide = "robot";    // "robot" | "human"
+
+function setControlSide(next) {
+    controlSide = next;
+    const btn = document.getElementById("btn-side");
+    btn.textContent = next === "human" ? "Playing: Human" : "Playing: Robot";
+    btn.classList.toggle("active", next === "human");
+    if (ws && ws.readyState === 1) {
+        ws.send(JSON.stringify({ type: "set_side", side: next }));
+    }
+}
 
 // `deliberate` distinguishes a click or tap from the pointer merely passing
 // over the canvas. Only a deliberate action may pull the UI out of replay —
@@ -509,6 +536,10 @@ function setControlMode(next) {
     btn.classList.toggle("active", next === "click");
     canvas.style.cursor = next === "click" ? "pointer" : "crosshair";
 }
+
+document.getElementById("btn-side").addEventListener("click", () => {
+    setControlSide(controlSide === "human" ? "robot" : "human");
+});
 
 document.getElementById("btn-control").addEventListener("click", () => {
     setControlMode(controlMode === "follow" ? "click" : "follow");
@@ -561,6 +592,9 @@ function setMode(next) {
     document.getElementById("topbar-stats").style.visibility =
         next === "sim" ? "" : "hidden";
     document.getElementById("sidebar-reward").style.display =
+        next === "sim" ? "" : "none";
+    // Only sim has two paddles to choose between.
+    document.getElementById("btn-side").style.display =
         next === "sim" ? "" : "none";
 
     const replayPanel = document.getElementById("replay-panel");

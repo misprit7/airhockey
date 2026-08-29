@@ -317,6 +317,28 @@ class BatchAirHockeyEnv:
             "ramp_s": 0.003,
         }
 
+    def _reset_agent_into_workspace(self, mask: np.ndarray | None) -> None:
+        """Start the robot somewhere it can actually stand.
+
+        The engine draws the agent paddle uniformly over its HALF, which is
+        2.8x the reachable box, so 58% of episodes began outside it. Every one
+        of those spent its first steps being dragged back by the action clamp
+        -- from a pose the machine cannot hold, having possibly already touched
+        the puck there. Constraining the action but not the start state
+        constrains nothing.
+        """
+        if self._ws is None:
+            return
+        idx = slice(None) if mask is None else mask
+        n = self.n_envs if mask is None else int(mask.sum())
+        if n == 0:
+            return
+        ws = self._ws
+        self.engine.paddle_agent_x[idx] = self._rng.uniform(
+            ws["min_x"], ws["max_x"], size=n)
+        self.engine.paddle_agent_y[idx] = self._rng.uniform(
+            ws["min_y"], ws["max_y"], size=n)
+
     def reset(
         self,
         seed: int | None = None,
@@ -330,6 +352,7 @@ class BatchAirHockeyEnv:
             self._rng = np.random.default_rng(seed)
 
         self.engine.reset(self._rng, mask=mask)
+        self._reset_agent_into_workspace(mask)
 
         # Reset per-env step counters and stuck detection
         if mask is None:

@@ -75,7 +75,14 @@ class AirHockeyEnv(gym.Env):
 
         self.table_config = table_config or TableConfig()
         self.agent_dynamics = agent_dynamics or ProfileDynamics()
-        self.opponent_dynamics = opponent_dynamics or DelayedDynamics()
+        # The opponent stands in for a HUMAN, so it gets the human's caps, not
+        # the robot's. DelayedDynamics defaults to the machine's limits, which
+        # made the scalar env's sparring partner a second CDPR -- the same
+        # mistake the batch env made by passing dyn_type to both sides.
+        self.opponent_dynamics = opponent_dynamics or DelayedDynamics(
+            max_speed=OPPONENT_MAX_SPEED_M_S,
+            max_accel=OPPONENT_MAX_ACCEL_M_S2,
+        )
         self.physics_dt = physics_dt
         self.action_dt = action_dt
         self.camera_delay = camera_delay
@@ -147,6 +154,15 @@ class AirHockeyEnv(gym.Env):
 
         state = self.engine.reset(self._rng, still=self.still_puck)
 
+        # Start the robot where it can actually stand. The engine draws over
+        # the whole half, which is 2.8x the reachable box -- see
+        # BatchAirHockeyEnv._reset_agent_into_workspace.
+        if self._ws is not None:
+            state = self.engine.place_paddles(agent=(
+                float(self._rng.uniform(self._ws["min_x"], self._ws["max_x"])),
+                float(self._rng.uniform(self._ws["min_y"], self._ws["max_y"])),
+            ))
+
         self.agent_dynamics.reset(state.paddle_agent.x, state.paddle_agent.y)
 
         # Override opponent position for stationary policies
@@ -157,11 +173,10 @@ class AirHockeyEnv(gym.Env):
                 (cfg.width - cfg.paddle_radius, cfg.height - cfg.paddle_radius),
             ]
             cx, cy = corners[self._rng.integers(0, len(corners))]
-            state.paddle_opponent.x = cx
-            state.paddle_opponent.y = cy
+            state = self.engine.place_paddles(opponent=(cx, cy))
         elif self.opponent_policy == "goalie":
-            state.paddle_opponent.x = cfg.width / 2
-            state.paddle_opponent.y = cfg.height - cfg.paddle_radius
+            state = self.engine.place_paddles(
+                opponent=(cfg.width / 2, cfg.height - cfg.paddle_radius))
 
         self.opponent_dynamics.reset(state.paddle_opponent.x, state.paddle_opponent.y)
 

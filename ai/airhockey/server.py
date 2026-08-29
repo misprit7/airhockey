@@ -225,6 +225,14 @@ async def live_game(ws: WebSocket):
     use_instant = False
     use_hardware = False
     ui_mode = "control"     # "control" | "sim"; replay never reaches here
+    # Which paddle the mouse drives in SIM mode. The two sides are not
+    # symmetric -- different speed and accel caps, and only the robot is
+    # confined to its reachable box -- so playing the human side is the only
+    # way to feel what the policy will actually be up against, rather than
+    # what it would be up against if its opponent were another CDPR.
+    # Control mode always drives the robot: there is no world and no second
+    # paddle, only the machine.
+    control_side = "robot"      # "robot" | "human"
     hardware_dynamics = None
     # The UI drives the SAME control law the Teensy runs, so what you see
     # dragging the mouse is what the machine will do -- jerk-limited, with the
@@ -375,10 +383,34 @@ async def live_game(ws: WebSocket):
                         # "sim" = the full game. Replay never reaches here.
                         ui_mode = ("control" if msg.get("mode") == "control"
                                    else "sim")
+                    elif msg_type == "set_side":
+                        control_side = ("human" if msg.get("side") == "human"
+                                        else "robot")
+                        # "external" is what makes _opponent_action read a
+                        # target we supply; leaving it on "follow" would have
+                        # the built-in policy fight the mouse for the same
+                        # paddle. Handing the robot side back means giving it
+                        # an opponent again.
+                        env.opponent_policy = ("external"
+                                               if control_side == "human"
+                                               else "follow")
+                        # Park the cursor in the half now being driven, so the
+                        # first frame after a switch does not command a dash
+                        # across the table from wherever the last click was.
+                        if control_side == "human":
+                            target_x = cfg.width / 2
+                            target_y = cfg.height * 0.85
+                        else:
+                            target_x = cfg.width / 2
+                            target_y = cfg.height * 0.15
+                        await ws.send_json({"type": "side",
+                                            "side": control_side})
                     elif msg_type == "reset":
                         obs, info = env.reset()
                         target_x = cfg.width / 2
-                        target_y = cfg.height * 0.15
+                        # Back to the half being driven, not always the robot's.
+                        target_y = (cfg.height * 0.85 if control_side == "human"
+                                    else cfg.height * 0.15)
             except (TimeoutError, asyncio.TimeoutError):
                 pass
 
@@ -418,9 +450,28 @@ async def live_game(ws: WebSocket):
                 await asyncio.sleep(1 / 60)
                 continue
 
+            if control_side == "human":
+                # Driving the far paddle. It is NOT bound by the robot's
+                # workspace -- a hand can reach its own goal line and the
+                # machine cannot, which is most of the point of playing this
+                # side -- so it is clamped only by the table and the halfway
+                # line.
+                r = cfg.paddle_radius
+                env._external_opponent_target = (
+                    min(max(target_x, r), cfg.width - r),
+                    min(max(target_y, cfg.height / 2 + r), cfg.height - r),
+                )
+                # The robot holds station. Commanding its CURRENT position
+                # rather than a fixed point keeps the profile from lurching on
+                # the frame the side is handed over.
+                pa = env.engine.state.paddle_agent
+                agent_target = (pa.x, pa.y)
+            else:
+                agent_target = (target_x, target_y)
+
             # Convert physics coords to normalized [-1, 1] action space
-            norm_x = (target_x - env._action_low[0]) / (env._action_high[0] - env._action_low[0]) * 2 - 1
-            norm_y = (target_y - env._action_low[1]) / (env._action_high[1] - env._action_low[1]) * 2 - 1
+            norm_x = (agent_target[0] - env._action_low[0]) / (env._action_high[0] - env._action_low[0]) * 2 - 1
+            norm_y = (agent_target[1] - env._action_low[1]) / (env._action_high[1] - env._action_low[1]) * 2 - 1
             action = np.array([norm_x, norm_y], dtype=np.float32)
             action = np.clip(action, -1.0, 1.0)
             obs, reward, terminated, truncated, info = env.step(action)
@@ -437,6 +488,7 @@ async def live_game(ws: WebSocket):
                 "score_agent": state.score_agent,
                 "score_opponent": state.score_opponent,
                 "time": round(state.time, 2),
+                "side": control_side,
             }
             if use_hardware and hardware_dynamics:
                 frame_msg["hw_x"] = hardware_dynamics.x
@@ -452,7 +504,9 @@ async def live_game(ws: WebSocket):
                 await ws.send_json({"type": "game_over", **info})
                 obs, info = env.reset()
                 target_x = cfg.width / 2
-                target_y = cfg.height * 0.15
+                # Back to the half being driven, not always the robot's.
+                target_y = (cfg.height * 0.85 if control_side == "human"
+                            else cfg.height * 0.15)
 
             await asyncio.sleep(1 / 60)
 

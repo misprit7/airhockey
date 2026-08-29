@@ -80,6 +80,26 @@ class ScalarPhysicsEngine:
         self._batch.step(dt)
         return self._sync()
 
+    def place_paddles(self, agent: tuple[float, float] | None = None,
+                      opponent: tuple[float, float] | None = None
+                      ) -> PhysicsState:
+        """Teleport a paddle at reset, writing the ARRAYS not the view.
+
+        Needed because `state` is rebuilt from the arrays on every access, so
+        assigning to `state.paddle_agent.x` lasts exactly until the next sync
+        and then silently reverts. env.py's corner and goalie opponent
+        placements did precisely that, which is why a "stationary in a corner"
+        opponent was never actually in the corner after the first step.
+        """
+        b = self._batch
+        if agent is not None:
+            b.paddle_agent_x[0], b.paddle_agent_y[0] = agent
+            b.paddle_agent_vx[0] = b.paddle_agent_vy[0] = 0.0
+        if opponent is not None:
+            b.paddle_opp_x[0], b.paddle_opp_y[0] = opponent
+            b.paddle_opp_vx[0] = b.paddle_opp_vy[0] = 0.0
+        return self._sync()
+
     def update_paddle(self, paddle: PaddleState, x: float, y: float,
                       dt: float) -> None:
         """Route by identity, since the batch engine has separate setters.
