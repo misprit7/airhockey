@@ -278,16 +278,26 @@ python vision/bin/track_mallet.py --watch
 python shared/check_geometry.py
 ```
 
-## World Model Architecture (TD-MPC2 + GRU)
-The world model uses a GRU-based recurrent dynamics model (similar to DreamerV3 RSSM but without stochastic component):
-- **Encoder**: MLP (obs_dim → latent_dim=512 via enc_dim=256, 2 layers, SimNorm output)
-- **Dynamics**: `nn.GRUCell(latent_dim + action_dim, latent_dim)` + SimNorm. Returns `(z_next, h_next)` — z is the SimNorm of the GRU hidden state. Hidden state h persists per-env across timesteps.
-- **Reward**: MLP(latent_dim + action_dim → num_bins=101, two-hot encoding)
-- **Policy prior**: MLP(latent_dim → 2×action_dim), Gaussian with squashed output
-- **Q-functions**: 5× ensemble MLP(latent_dim + action_dim → num_bins=101)
-- **act()** returns `(actions, h_next)` tuple — all callers must unpack both values
-- **Training** uses h=None per trajectory slice (deliberate train/inference mismatch, same as DreamerV3)
-- External repo at `/home/rbhagat/projects/tdmpc2` — `tdmpc2.py` and `common/world_model.py` are modified
+## World Model Architecture (TD-MPC2)
+STOCK upstream TD-MPC2 (MLP dynamics), from the checkout at
+`~/dev/p-airhockey/tdmpc2` — NOT the GRU variant this section used to
+describe. That fork (GRUCell dynamics, prioritized replay, tuple-returning
+act) lived at `/home/rbhagat/projects/tdmpc2`, which does not exist on this
+machine; discovered 2026-08-29 when training crashed on its missing pieces.
+
+What the local checkout DOES carry, as a local commit (`git log` in that
+repo), is **batched MPPI planning**: `act()` accepts `(N, obs_dim)`
+observations with a per-env bool `t0` mask and plans every env in one call
+(`_plan_batch`), warm-starting from `_prev_mean_batch [N, horizon,
+action_dim]`. `train_tdmpc2_fast.py` requires this — collection is
+vectorized — and its prioritized-replay path degrades to uniform sampling
+with a warning because stock `Buffer` has no `set_beta`. Measured 3x over
+sequential planning at N=32; single-env plan is ~13 ms at 512 samples / 6
+iterations, which does NOT fit a 100 Hz deployment loop — deploy with fewer
+iterations or the policy prior.
+
+That repo is NOT a github fork with a remote — the batched-MPPI commit
+exists only locally. Do not `git pull --rebase` it away.
 
 ## Tech Stack
 - Python, NumPy for physics/env
@@ -295,7 +305,7 @@ The world model uses a GRU-based recurrent dynamics model (similar to DreamerV3 
 - FastAPI + WebSocket for visualization server
 - Vanilla JS + Canvas for web UI
 - Stable-Baselines3 for RL training (SAC)
-- TD-MPC2 for model-based planning (external repo at /home/rbhagat/projects/tdmpc2)
+- TD-MPC2 for model-based planning (checkout at ~/dev/p-airhockey/tdmpc2, local batched-MPPI commit)
 
 ## Training Learnings
 - **Algorithm**: SAC works much better than PPO for this continuous control task.
