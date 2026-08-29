@@ -271,7 +271,13 @@ class TestRewardScale:
 
         # Stage 1 has proximity + contact + directed_hit — rewards can spike on contact
         if stage == 1:
-            assert np.max(np.abs(all_shaped)) < 20.0
+            # Raised from 20 when the puck got its real drag (2026-08-29).
+            # The old model took 159 mm/s^2 off a 1 m/s puck; the measured
+            # figure is 49. A puck that keeps moving gets hit more, and
+            # directed_hit scales with speed, so stage 1 legitimately peaks
+            # higher now. This is still a runaway guard, not a fit -- the
+            # observed peak is ~26.
+            assert np.max(np.abs(all_shaped)) < 40.0
 
 
 # ---------------------------------------------------------------------------

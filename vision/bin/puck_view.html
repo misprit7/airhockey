@@ -108,7 +108,7 @@ label.chk{display:inline-flex;gap:6px;align-items:center;font-size:13px;color:va
     </select>
     <label class="chk"><input type="checkbox" id="showAll" checked> full path</label>
     <label class="chk"><input type="checkbox" id="showMallet" checked> mallet</label>
-    <label class="chk"><input type="checkbox" id="showBand"> wall band</label>
+    <label class="chk"><input type="checkbox" id="showBand"> contact + fit band</label>
   </div>
   <canvas id="timeline" width="1400" height="92"></canvas>
   <div class="legend" id="legend"></div>
@@ -210,11 +210,29 @@ function drawRink() {
     g.lineTo(m.X(gx), m.Y(ymid + gh)); g.stroke();
   }
   if ($("#showBand").checked) {
-    g.strokeStyle = COL("--wall"); g.setLineDash([4, 5]); g.lineWidth = 1;
-    g.globalAlpha = .5;
+    // TWO lines, because they are different things and showing only the
+    // outer one makes it look misaligned with the bounces.
+    //
+    //  solid  CONTACT: the puck centre is exactly one radius (40.7 mm) from
+    //         the rail at the moment of impact, so bounces sit ON this line.
+    //  dashed CLASSIFICATION BAND: radius + 18 mm of slack, which is how far
+    //         out fit_puck will still call something a rail contact. It is a
+    //         tolerance for tracking error and for the rails being stored as
+    //         the INSCRIBED rectangle, so it is deliberately 18 mm inside the
+    //         contact line and is not where anything physically happens.
+    const R = G.puck_r;
+    g.lineWidth = 1; g.globalAlpha = .65;
+    g.strokeStyle = COL("--puck");
+    g.strokeRect(m.X(RX0 + R), m.Y(RY1 - R),
+      (RX1 - RX0 - 2 * R) * m.s, (RY1 - RY0 - 2 * R) * m.s);
+    g.strokeStyle = COL("--wall"); g.setLineDash([4, 5]); g.globalAlpha = .45;
     g.strokeRect(m.X(RX0 + G.band), m.Y(RY1 - G.band),
       (RX1 - RX0 - 2 * G.band) * m.s, (RY1 - RY0 - 2 * G.band) * m.s);
     g.setLineDash([]); g.globalAlpha = 1;
+    g.fillStyle = COL("--faint"); g.font = "12px ui-monospace,monospace";
+    g.textAlign = "left";
+    g.fillText(`contact ${R.toFixed(1)} mm (solid)  ·  fit band `
+      + `${G.band.toFixed(1)} mm (dashed)`, m.X(RX0) + 8, m.Y(RY1) - 8);
   }
 
   // full path, faint, so the session's shape is visible at a glance
