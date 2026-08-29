@@ -1079,6 +1079,12 @@ def main():
     # Step-based metric accumulators (logged every 10k steps, then reset)
     step_goals_scored = 0
     step_goals_conceded = 0
+    # Scoreboard from the previous step, for counting goals by DELTA. The
+    # counters used the sign of the raw reward, which also fires on the
+    # workspace-overshoot fine and the stuck-puck penalty -- conceded_per_10k
+    # read 9,150 in a window whose 16 episodes could hold at most 112.
+    prev_score_agent_track = np.zeros(n_envs, dtype=np.int64)
+    prev_score_opp_track = np.zeros(n_envs, dtype=np.int64)
     step_contacts = 0
     step_episodes_completed = 0
     step_wins = 0
@@ -1214,8 +1220,14 @@ def main():
         puck_speed_now = np.hypot(info["puck_vx"], info["puck_vy"])
         contacts_now = (puck_dist_step < 0.15) & ((puck_speed_now - prev_puck_speed_track) > 0.3)
         prev_puck_speed_track = puck_speed_now
-        step_goals_scored += int((raw_rewards > 0).sum())
-        step_goals_conceded += int((raw_rewards < 0).sum())
+        # Goals by scoreboard delta, not reward sign (see the accumulator
+        # comment). A score DROP is an episode reset, not a negative goal.
+        step_goals_scored += int(
+            (info["score_agent"] > prev_score_agent_track).sum())
+        step_goals_conceded += int(
+            (info["score_opponent"] > prev_score_opp_track).sum())
+        prev_score_agent_track[:] = info["score_agent"]
+        prev_score_opp_track[:] = info["score_opponent"]
         step_contacts += int(contacts_now.sum())
         step_shaped_reward += float(shaped_rewards.sum())
         step_puck_dist_acc += float(puck_dist_step.sum())
