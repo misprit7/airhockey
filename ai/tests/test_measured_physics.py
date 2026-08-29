@@ -277,3 +277,37 @@ def test_domain_randomised_speed_never_exceeds_the_firmware_clamp():
             f"sampled {dyn['max_speed'].max():.2f} m/s above the "
             f"{MAX_SPEED_M_S} clamp")
         assert dyn["max_speed"].min() < MAX_SPEED_M_S, "not randomised at all"
+
+
+def test_scalar_env_and_batch_env_agree_on_the_reachable_box():
+    """Both envs must bound the paddle identically.
+
+    The batch env was constrained first and the scalar one -- which is what
+    the web UI runs -- was missed, so dragging the mouse still put the paddle
+    where the robot cannot reach. Two envs disagreeing about the machine's
+    limits is the same class of bug as two copies of a constant.
+    """
+    from airhockey.batch_env import BatchAirHockeyEnv
+    from airhockey.env import AirHockeyEnv
+    b = BatchAirHockeyEnv(n_envs=1)
+    sc = AirHockeyEnv()
+    np.testing.assert_allclose(sc._action_low, b._action_low, atol=1e-9)
+    np.testing.assert_allclose(sc._action_high, b._action_high, atol=1e-9)
+    # Everything else the two must not disagree about. They are still separate
+    # implementations -- see SIM2REAL.md -- so until the scalar env becomes an
+    # adapter over the batch one, this is the guard that keeps a fix applied
+    # to one from being missed on the other. That has now happened twice.
+    assert sc.action_dt == b.action_dt, "action rate diverged"
+    assert type(sc.agent_dynamics).__name__ == "ProfileDynamics", (
+        "scalar env is not on the firmware law")
+    assert b.agent_dynamics_type == "profile"
+
+
+def test_scalar_env_clamps_the_agent_to_the_workspace():
+    from airhockey.env import AirHockeyEnv
+    e = AirHockeyEnv()
+    e.reset(seed=1)
+    for corner in ((-5.0, -5.0), (5.0, 5.0), (-5.0, 5.0), (5.0, -5.0)):
+        x, y = e._clamp_to_half(corner[0], corner[1], agent=True)
+        assert e._ws["min_x"] - 1e-9 <= x <= e._ws["max_x"] + 1e-9
+        assert e._ws["min_y"] - 1e-9 <= y <= e._ws["max_y"] + 1e-9

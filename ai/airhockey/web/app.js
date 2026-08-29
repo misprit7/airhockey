@@ -339,8 +339,12 @@ function render() {
                        COLORS.opponentRing);
         }
         drawPaddle(frame.agent_x, frame.agent_y, COLORS.agent, COLORS.agentGlow, COLORS.agentRing);
+        // The reachable box is a property of the MACHINE, not of whether the
+        // drives happen to be connected, so it is drawn whenever the server
+        // has told us what it is. Not drawing it made the sim look like it
+        // offered the whole half.
+        if (hwWorkspace) drawReachable(hwWorkspace);
         if (hwPosition && showHwOverlay) {
-            if (hwWorkspace) drawReachable(hwWorkspace);
             drawHwPaddle(hwPosition.x, hwPosition.y);
         }
     }

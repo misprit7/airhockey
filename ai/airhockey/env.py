@@ -9,7 +9,9 @@ import gymnasium as gym
 import numpy as np
 from gymnasium import spaces
 
-from airhockey.dynamics import ProfileDynamics, DelayedDynamics, IdealDynamics, MotorDynamics
+from airhockey.dynamics import (ProfileDynamics, DelayedDynamics,
+                                IdealDynamics, MotorDynamics,
+                                workspace_in_sim)
 from airhockey.physics import PhysicsState, TableConfig
 from airhockey.scalar_engine import ScalarPhysicsEngine
 from airhockey.recorder import FrameData, Recorder
@@ -93,11 +95,13 @@ class AirHockeyEnv(gym.Env):
             high=np.array([1.0, 1.0], dtype=np.float32),
             dtype=np.float32,
         )
-        # Real position bounds for rescaling
-        self._action_low = np.array([cfg.paddle_radius, cfg.paddle_radius])
-        self._action_high = np.array(
-            [cfg.width - cfg.paddle_radius, cfg.height / 2 - cfg.paddle_radius]
-        )
+        # Real position bounds for rescaling. The MACHINE's box, not the
+        # table half -- see dynamics.workspace_in_sim. The batch env was
+        # fixed first and this was missed, which is exactly how the two ended
+        # up disagreeing about where the paddle may go.
+        self._ws = workspace_in_sim(cfg.width, cfg.height / 2)
+        self._action_low = np.array([self._ws["min_x"], self._ws["min_y"]])
+        self._action_high = np.array([self._ws["max_x"], self._ws["max_y"]])
 
         # Camera delay buffer
         self._obs_buffer: deque[np.ndarray] = deque()
@@ -246,6 +250,9 @@ class AirHockeyEnv(gym.Env):
         """Clamp paddle position to its own half of the table."""
         cfg = self.table_config
         r = cfg.paddle_radius
+        if agent:
+            return (float(np.clip(x, self._ws["min_x"], self._ws["max_x"])),
+                    float(np.clip(y, self._ws["min_y"], self._ws["max_y"])))
         x = np.clip(x, r, cfg.width - r)
         if agent:
             y = np.clip(y, r, cfg.height / 2 - r)

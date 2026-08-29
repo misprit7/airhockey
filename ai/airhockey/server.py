@@ -389,8 +389,15 @@ async def live_game(ws: WebSocket):
                 # cosmetic: a goal calls env.reset(), which repositions the
                 # agent paddle and would command the hardware to move on its
                 # own. Drive the dynamics directly and skip the world.
-                ax, ay = env.agent_dynamics.update(target_x, target_y,
-                                                   env.action_dt)
+                # Clamp to the machine's reachable box BEFORE the dynamics.
+                # This path bypasses the env's action space entirely, so it
+                # was the one place the mouse could still drag the paddle
+                # somewhere the robot cannot go -- and with hardware enabled
+                # the display then disagreed with the machine, which clamps
+                # in _sim_to_mm regardless.
+                tx = min(max(target_x, env._ws["min_x"]), env._ws["max_x"])
+                ty = min(max(target_y, env._ws["min_y"]), env._ws["max_y"])
+                ax, ay = env.agent_dynamics.update(tx, ty, env.action_dt)
                 frame_msg = {
                     "type": "frame",
                     "control": True,
@@ -405,7 +412,8 @@ async def live_game(ws: WebSocket):
                     frame_msg["hw_y_mm"] = round(hy, 1)
                     frame_msg["hw"] = hardware_dynamics.hw_state()
                     frame_msg["hw_ws"] = hardware_dynamics.workspace_in_sim()
-                frame_msg.update(_camera_objects())
+                frame_msg["hw_ws"] = env._ws     # draw the limit always, not
+                frame_msg.update(_camera_objects())   # only in hardware mode
                 await ws.send_json(frame_msg)
                 await asyncio.sleep(1 / 60)
                 continue

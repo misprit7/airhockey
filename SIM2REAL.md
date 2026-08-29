@@ -80,6 +80,31 @@ fails if one comes back.
 
 Cost: 823k env-steps/s at 1024 envs against 1.9M for `ideal`. Worth it.
 
+### Known duplication: two env implementations
+
+`AirHockeyEnv` (scalar, drives the web UI) and `BatchAirHockeyEnv` (training)
+are SEPARATE implementations of the same rules. That is why the workspace
+constraint had to be written twice, and why the speed/accel caps got fixed in
+the library while `ai/bin` kept its own copies.
+
+The physics is already shared — `scalar_engine.py` presents the scalar
+interface over `BatchPhysicsEngine(n_envs=1)`. The env layer is not.
+
+They have also diverged in FEATURES, which is what makes this more than a
+rename: `env.py` has `still_puck`, `record`/`get_recording`; `batch_env.py`
+has `realistic_perception`. Collapsing them means porting those, not just
+deleting one.
+
+**Plan**: `AirHockeyEnv` becomes a thin Gymnasium adapter over
+`BatchAirHockeyEnv(n_envs=1)`, the same way the physics engine went. ~400
+lines out. Blocked on nothing except doing it carefully — `server.py` reaches
+into `env.engine.state`, `env._action_low`, `env._ws`, and hot-swaps
+`env.agent_dynamics` mid-session, so the adapter has to keep that surface.
+
+**Until then**: `test_scalar_env_and_batch_env_agree_on_the_reachable_box`
+asserts the two agree on bounds, action rate and dynamics type. It is a guard,
+not a fix.
+
 ### The one real gap: paddle restitution
 Two recordings have tried and neither can answer it. A hand-SWUNG mallet is
 not a free body — the 2026-08-29 session gave recoil at 3.54× the puck's
