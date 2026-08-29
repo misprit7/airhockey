@@ -287,6 +287,24 @@ BRACKET_MIN = 5
 # short blind spells leave holes; a hole is not a discontinuity.
 MAX_WINDOW_GAP = 6
 
+# How far BEFORE the first detected cut the incoming bracket must start.
+#
+# The two sides are not symmetric, which is easy to miss. Detection ENDS when
+# the slope window is fully post-impact, so the outgoing anchor hi+1 already
+# sits ~SLOPE_FRAMES clear of the collision for free. Detection BEGINS as soon
+# as the window first touches it, so lo can be at the impact -- and for a
+# glancing bounce, where the per-frame heading change is small, the 12-degree
+# threshold is not crossed until several frames into the ramp, putting lo
+# AFTER it. Anchoring the incoming window at lo-1 then straddles the impact.
+#
+# The signature was unmistakable once measured: every one of 29 failures was
+# on the incoming side and none on the outgoing, with incoming residuals 50x
+# the outgoing ones despite similar speeds. Backing off by this much takes
+# measurable rail contacts from 14 to 47 while the residual DROPS 0.134 ->
+# 0.055 mm, and both numbers sit on a plateau from 2 frames to 8 -- which is
+# what distinguishes a fix from a tuned knob.
+PRE_ANCHOR = SLOPE_FRAMES
+
 
 def noise_floor(d, bounds):
     """Bracket residual on CLEAN glide interiors -- the rig's own noise.
@@ -419,7 +437,7 @@ def fit_bounces(d, events, gate=None):
         c = int(span[int(np.argmin(near))])
         name, nrm = wall_of(d["x"][c], d["y"][c])
         t_c = 0.5 * (d["t"][lo] + d["t"][min(hi + 1, n - 1)])
-        vin, r_in = clean_velocity(d, lo - 1, -1, t_c, gate)
+        vin, r_in = clean_velocity(d, lo - 1 - PRE_ANCHOR, -1, t_c, gate)
         vout, r_out = clean_velocity(d, hi + 1, +1, t_c, gate)
         if vin is None or vout is None:
             continue
@@ -444,76 +462,6 @@ def fit_bounces(d, events, gate=None):
                       if abs(vin @ tan) > 50 else np.nan})
     return walls, others
 
-
-
-def fit_spin(d, events, gate=None):
-    """Does the tangential momentum lost at a rail turn into SPIN?
-
-    Until the puck carried four markers this could only be inferred. It now
-    has an orientation, so the question is a measurement.
-
-    For a uniform disc, a tangential impulse J at the rim changes both terms:
-
-        dv_t = J/m           dw = -J*R/I,   I = m*R^2/2
-
-    so dw = -2*dv_t/R. Fitting dw against dv_t and comparing the slope to
-    -2/R = -0.0491 rad/s per mm/s separates two very different worlds:
-
-      slope ~ -2/R   the rail GRIPS. Momentum went into spin, the puck
-                     leaves rotating, and a sim with no orientation state
-                     will misplace every bank shot.
-      slope ~ 0      the rail RUBS. Momentum went into heat, the puck
-                     leaves barely spinning, and a plain tangential
-                     coefficient is the whole model.
-    """
-    if "w" not in d:
-        return None
-    n, rows = len(d["t"]), []
-    for lo, hi in events:
-        i, j = lo - BRACKET_MIN, hi + BRACKET_MIN
-        if i < 0 or j >= n:
-            continue
-        span = np.arange(max(0, lo - SLOPE_FRAMES - 4), min(hi + 3, n))
-        near = np.minimum(
-            np.minimum(d["x"][span] - geom.RAIL_MIN_X,
-                       geom.RAIL_MAX_X - d["x"][span]),
-            np.minimum(d["y"][span] - geom.RAIL_MIN_Y,
-                       geom.RAIL_MAX_Y - d["y"][span]))
-        c = int(span[int(np.argmin(near))])
-        name, nrm = wall_of(d["x"][c], d["y"][c])
-        if name is None:
-            continue
-        t_c = d["t"][c]
-        vin, r_in = clean_velocity(d, lo - 1, -1, t_c, gate)
-        vout, r_out = clean_velocity(d, hi + 1, +1, t_c, gate)
-        if vin is None or vout is None:
-            continue
-        if vin @ nrm >= 0 or vout @ nrm <= 0:
-            continue
-        tan = np.array([-nrm[1], nrm[0]])
-        # Spin either side, averaged over the same clean frames. w is already
-        # a 6-frame slope of the unwrapped angle, so it smears exactly like
-        # the velocity does and needs the same standoff.
-        w_in = float(np.nanmean(d["w"][max(0, lo - BRACKET):lo]))
-        w_out = float(np.nanmean(d["w"][hi + 1:hi + 1 + BRACKET]))
-        if not (np.isfinite(w_in) and np.isfinite(w_out)):
-            continue
-        rows.append({"lo": int(lo), "hi": int(hi), "c": int(c),
-                     "dvt": float((vout - vin) @ tan),
-                     "dw": w_out - w_in,
-                     "vt_in": float(vin @ tan),
-                     "speed_in": float(np.hypot(*vin))})
-    if len(rows) < 6:
-        return {"n": len(rows), "rows": rows}
-    dvt = np.array([r["dvt"] for r in rows])
-    dw = np.array([r["dw"] for r in rows])
-    slope = float((dvt * dw).sum() / (dvt * dvt).sum())     # through origin
-    pred = -2.0 / geom.PUCK_RADIUS_MM
-    resid = dw - slope * dvt
-    ss = float(((dw - dw.mean()) ** 2).sum())
-    return {"n": len(rows), "rows": rows, "slope": slope, "predicted": pred,
-            "grip": slope / pred,
-            "r2": float(1.0 - (resid ** 2).sum() / ss) if ss > 0 else 0.0}
 
 
 def fit_paddle(d, events, gate=None):
@@ -563,7 +511,7 @@ def fit_paddle(d, events, gate=None):
         nrm /= ln
 
         t_c = d["t"][c]
-        vin, r_in = clean_velocity(d, lo - 1, -1, t_c, gate)
+        vin, r_in = clean_velocity(d, lo - 1 - PRE_ANCHOR, -1, t_c, gate)
         vout, r_out = clean_velocity(d, hi + 1, +1, t_c, gate)
         if vin is None or vout is None:
             continue
@@ -575,7 +523,7 @@ def fit_paddle(d, events, gate=None):
         # its speed at contact, and that error goes straight into the
         # relative normal velocity that defines e.
         md = {"t": d["t"], "seq": d["seq"], "x": d["mx"], "y": d["my"]}
-        mv_in, _ = clean_velocity(md, lo - 1, -1, t_c, np.inf)
+        mv_in, _ = clean_velocity(md, lo - 1 - PRE_ANCHOR, -1, t_c, np.inf)
         mv_out, _ = clean_velocity(md, hi + 1, +1, t_c, np.inf)
         if mv_in is None or mv_out is None:
             continue
@@ -896,33 +844,10 @@ def main() -> int:
         et = np.array([w["e_tangential"] for w in walls])
         et = et[~np.isnan(et)]
         if len(et) >= 5 and et.mean() < 0.9:
-            print(f"\n  TANGENTIAL ratio {et.mean():.3f} < 1: the rail "
-                  "takes tangential momentum. WHERE it goes -- into spin, or\n"
-                  "  into heat -- this number cannot say, and the two want "
-                  "different simulators. See the spin\n"
-                  "  section below, which measures it directly now that the "
-                  "puck has an orientation.")
-    sp = fit_spin(d, contact_events(cuts), gate)
-    if sp is not None:
-        print("\n── SPIN AT THE CUSHION " + "─" * 44)
-        if sp["n"] < 6:
-            print(f"  only {sp['n']} clean wall contacts carry spin -- too few "
-                  f"to separate grip from rub.")
-        else:
-            print(f"  {sp['n']} contacts.  dw vs dv_t slope "
-                  f"{sp['slope']:+.4f} rad/s per mm/s")
-            print(f"  a gripping rail predicts -2/R = {sp['predicted']:+.4f}"
-                  f"  ->  {100 * sp['grip']:.0f}% of it   (r2 {sp['r2']:.2f})")
-            if sp["grip"] > 0.5:
-                print("  -> the rail GRIPS: the tangential loss really is going into")
-                print("     spin, and the sim needs a puck orientation state.")
-            elif sp["grip"] < 0.2:
-                print("  -> the rail RUBS: tangential momentum goes to friction, NOT")
-                print("     into spin. A tangential coefficient is the whole model and")
-                print("     the sim does NOT need orientation to get bounces right.")
-            else:
-                print("  -> partial: some of the tangential loss becomes spin.")
-
+            print(f"\n  TANGENTIAL ratio {et.mean():.3f} < 1: the rail takes "
+                  "tangential momentum. Model it as this\n  coefficient on "
+                  "the tangential component -- it needs no puck orientation "
+                  "state.")
     print("\n── PADDLE (MALLET) RESTITUTION " + "─" * 36)
     pad = fit_paddle(d, contact_events(cuts), gate)
     if pad is None:

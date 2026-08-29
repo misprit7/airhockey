@@ -258,16 +258,6 @@ function drawRink() {
   g.beginPath(); g.arc(px, py, G.puck_r * m.s, 0, 7);
   g.fillStyle = COL("--puck"); g.globalAlpha = .16; g.fill(); g.globalAlpha = 1;
   g.strokeStyle = COL("--puck"); g.lineWidth = 2; g.stroke();
-  if (D.th && D.th[f] != null) {
-    g.fillStyle = COL("--puck");
-    for (let q = 0; q < 4; q++) {
-      const a = D.th[f] + q * Math.PI / 2;
-      g.beginPath();
-      g.arc(px + Math.cos(a) * G.marker_r * m.s,
-            py - Math.sin(a) * G.marker_r * m.s, 2.4, 0, 7);
-      g.fill();
-    }
-  }
   if ($("#showMallet").checked && D.mx && D.mx[f] != null) {
     const qx = m.X(D.mx[f]), qy = m.Y(D.my[f]);
     g.beginPath(); g.arc(qx, qy, G.mallet_r * m.s, 0, 7);
@@ -390,34 +380,38 @@ function plotWalls() {
     + `that reached a rail. Mean e = ${mean.toFixed(3)}. Colour is the rail.`;
 }
 
-function plotSpin() {
+function plotRails() {
   const cv = $("#p3"), g = cv.getContext("2d"), W = cv.width, H = cv.height;
   g.clearRect(0, 0, W, H); hit[2] = [];
-  const s = D.spin;
-  if (!s || !s.rows || s.rows.length < 3) { $("#c3").textContent = "not enough spin data"; return; }
-  const dv = s.rows.map(r => r.dvt), dw = s.rows.map(r => r.dw);
-  const xa = Math.max(...dv.map(Math.abs)) * 1.1, ya = Math.max(...dw.map(Math.abs)) * 1.1;
-  const A = axes(g, W, H, [-xa, xa], [-ya, ya],
-    "Δ tangential velocity (mm/s)", "Δ spin (rad/s)");
-  g.strokeStyle = COL("--line");
-  g.beginPath(); g.moveTo(A.px(-xa), A.py(0)); g.lineTo(A.px(xa), A.py(0)); g.stroke();
-  g.beginPath(); g.moveTo(A.px(0), A.py(-ya)); g.lineTo(A.px(0), A.py(ya)); g.stroke();
-  // what a GRIPPING rail would look like: dw = -2/R * dvt
-  g.strokeStyle = COL("--skip"); g.setLineDash([6, 4]); g.lineWidth = 2;
-  g.beginPath(); g.moveTo(A.px(-xa), A.py(-s.predicted * -xa));
-  g.lineTo(A.px(xa), A.py(s.predicted * xa)); g.stroke(); g.setLineDash([]);
-  g.strokeStyle = COL("--accent"); g.lineWidth = 2;
-  g.beginPath(); g.moveTo(A.px(-xa), A.py(s.slope * -xa));
-  g.lineTo(A.px(xa), A.py(s.slope * xa)); g.stroke();
-  s.rows.forEach((r, i) => {
-    const X = A.px(r.dvt), Y = A.py(r.dw);
-    g.beginPath(); g.arc(X, Y, 4.5, 0, 7);
-    g.fillStyle = COL("--spin"); g.globalAlpha = .8; g.fill(); g.globalAlpha = 1;
-    hit[2].push({ x: X, y: Y, frame: r.c });
+  const names = ["near(-y)", "far(+y)", "human(-x)", "robot(+x)"];
+  if (!D.walls.length) { $("#c3").textContent = "no measurable rail contacts"; return; }
+  const A = axes(g, W, H, [0, 4], [0.4, 1.05], "", "e (normal)");
+  const cols = [COL("--puck"), COL("--wall"), COL("--mallet"), COL("--spin")];
+  g.font = "11px system-ui"; g.textAlign = "center";
+  names.forEach((nm, k) => {
+    const grp = D.walls.filter(w => w.wall === nm);
+    const cx = A.px(k + 0.5);
+    g.fillStyle = COL("--dim");
+    g.fillText(nm.replace("(", " ("), cx, H - 18);
+    g.fillStyle = COL("--faint");
+    g.fillText(`n=${grp.length}`, cx, H - 6);
+    if (!grp.length) return;
+    const es = grp.map(w => w.e_normal).sort((x, y) => x - y);
+    const med = es[es.length >> 1];
+    g.strokeStyle = cols[k]; g.lineWidth = 2;
+    g.beginPath(); g.moveTo(cx - 26, A.py(med)); g.lineTo(cx + 26, A.py(med)); g.stroke();
+    grp.forEach((w, i) => {
+      const jx = cx + ((i % 7) - 3) * 6;
+      const X = jx, Y = A.py(w.e_normal);
+      g.beginPath(); g.arc(X, Y, 4, 0, 7);
+      g.fillStyle = cols[k]; g.globalAlpha = .7; g.fill(); g.globalAlpha = 1;
+      hit[2].push({ x: X, y: Y, frame: w.c });
+    });
   });
-  $("#c3").textContent = `Dashed = a rail that GRIPS (Δω = −2Δv/R). Solid = measured, `
-    + `${(100 * s.grip).toFixed(0)}% of it, r² ${s.r2.toFixed(2)}. `
-    + `Flat means the tangential loss goes to heat, not spin — so the sim needs no puck orientation.`;
+  const per = names.map(nm => D.walls.filter(w => w.wall === nm).length);
+  $("#c3").textContent = `Restitution per rail; the bar is the median, the dots `
+    + `are individual bounces. The two END rails (human/robot) carry a goal mouth, `
+    + `so only their outer strips count — which is why they are thin: ${per.join(" / ")}.`;
 }
 
 function plotPaddle() {
@@ -532,7 +526,6 @@ function render() {
   $("#readout").innerHTML = [
     ["puck", `${D.x[f].toFixed(0)}, ${D.y[f].toFixed(0)} mm`],
     ["speed", `${sp.toFixed(0)} mm/s`],
-    ["spin", D.w && D.w[f] != null ? `${(D.w[f] * 180 / Math.PI).toFixed(0)} °/s` : "—"],
     ["corners", D.n ? `${D.n[f]}/4` : "—"],
     ["mallet", D.mx && D.mx[f] != null ? `${D.mx[f].toFixed(0)}, ${D.my[f].toFixed(0)}` : "not seen"],
     ["state", state],
@@ -540,7 +533,7 @@ function render() {
   document.querySelectorAll(".ev").forEach(r =>
     r.classList.toggle("sel", +r.dataset.k === sel));
 }
-function drawAll() { render(); plotFriction(); plotWalls(); plotSpin(); plotPaddle(); }
+function drawAll() { render(); plotFriction(); plotWalls(); plotRails(); plotPaddle(); }
 
 /* ── header ────────────────────────────────────────────────────────── */
 $("#fname").textContent = `${D.file} — ${D.counts.samples} frames over ${D.counts.span} s`;
@@ -554,7 +547,9 @@ $("#stats").innerHTML = [
   [f.drag ? f.drag.b.toExponential(2) : "—", "drag b (1/mm)"],
   [D.walls.length ? (D.walls.reduce((a, w) => a + w.e_normal, 0) / D.walls.length).toFixed(3) : "—",
     "wall e"],
-  [D.spin && D.spin.grip != null ? `${(100 * D.spin.grip).toFixed(0)}%` : "—", "rail grip"],
+  [(() => { const t = D.walls.map(w => w.e_tangential).filter(v => v != null);
+     return t.length ? (t.reduce((a, b) => a + b, 0) / t.length).toFixed(3) : "—"; })(),
+    "tangential ratio"],
 ].map(([v, k]) => `<div class="stat"><b class="mono">${v}</b><span>${k}</span></div>`).join("");
 $("#legend").innerHTML = [["wall", "measured rail contact"],
   ["wall-skipped", "rail contact, not bracketable"], ["mallet", "mallet contact"],

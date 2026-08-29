@@ -35,7 +35,7 @@ sys.path.insert(0, str(Path(__file__).resolve().parents[2] / "shared"))
 import cdpr_geometry as geom  # noqa: E402
 from fit_puck import (  # noqa: E402
     MIN_GLIDE, SKIP, SLOPE_FRAMES, WALL_BAND_MM, contact_events, fit_bounces,
-    fit_friction, fit_paddle, fit_spin, load, noise_floor, segment, wall_of,
+    fit_friction, fit_paddle, load, noise_floor, segment, wall_of,
 )
 
 
@@ -89,7 +89,6 @@ def build(path):
     fr = fit_friction(d, bounds)
     walls, others = fit_bounces(d, events, gate)
     hits = fit_paddle(d, events, gate) or []
-    spin = fit_spin(d, events, gate)
 
     def col(key, nd):
         v = d.get(key)
@@ -98,6 +97,19 @@ def build(path):
         v = np.where(np.isfinite(v), v, np.nan)
         return [None if not np.isfinite(a) else round(float(a), nd) for a in v]
 
+    def clean(v):
+        """NaN is a legitimate result -- e_tangential is NaN when the
+        tangential component is too small to divide by -- but it is not JSON.
+        Carry it across as null rather than dropping the whole contact."""
+        if isinstance(v, float):
+            return None if not np.isfinite(v) else v
+        if isinstance(v, dict):
+            return {k: clean(x) for k, x in v.items()}
+        if isinstance(v, list):
+            return [clean(x) for x in v]
+        return v
+
+    walls, hits = clean(walls), clean(hits)
     ev = classify_events(d, events, walls, hits)
     fitted = {(a, b) for a, b in fr.get("bounds", [])} if fr else set()
 
@@ -116,7 +128,7 @@ def build(path):
         "t": col("t", 4), "x": col("x", 1), "y": col("y", 1),
         "mx": col("mx", 1), "my": col("my", 1),
         "n": [int(a) for a in d["n"]] if "n" in d else None,
-        "th": col("th", 4), "w": col("w", 2),
+        "w": col("w", 2),
         "vx": col("vx", 1), "vy": col("vy", 1),
         "segments": [{"a": int(a), "b": int(b), "fitted": (a, b) in fitted}
                      for a, b in bounds],
@@ -131,8 +143,6 @@ def build(path):
             bounds_a=[int((a + b) // 2) for a, b in (fr or {}).get("bounds", [])]),
         "walls": walls,
         "paddle": hits,
-        "spin": spin if spin is None else
-                {k: (v if k != "rows" else v) for k, v in spin.items()},
         "counts": {"samples": len(d["t"]), "others": others,
                    "span": round(float(d["t"][-1] - d["t"][0]), 1)},
         "consts": {"MIN_GLIDE": MIN_GLIDE, "SKIP": SKIP, "gate": round(gate, 3)},
