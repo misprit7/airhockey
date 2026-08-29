@@ -3,10 +3,10 @@
 
 Produces the three numbers the simulator currently guesses:
 
-    puck_friction        deceleration coefficient a = mu*g on the air cushion
-    wall_restitution     |v_out| / |v_in| normal to each cushion
+    puck_friction        deceleration coefficient a = mu*g on the air rail
+    wall_restitution     |v_out| / |v_in| normal to each rail
     (tangential ratio)   |v_t_out| / |v_t_in|, which is 1.0 for a frictionless
-                         cushion and less than 1 if the puck picks up spin
+                         rail and less than 1 if the puck picks up spin
 
 METHOD
     Segments the recording into glides separated by contacts. A contact is a
@@ -27,7 +27,7 @@ METHOD
 
 WHAT TO LOOK FOR
     Restitution that falls with impact speed is normal and worth modelling.
-    A tangential ratio well below 1 means the cushion imparts spin, which the
+    A tangential ratio well below 1 means the rail imparts spin, which the
     simulator does not model at all -- the puck has no orientation state --
     and that would make every bank shot the policy plans systematically
     wrong.
@@ -74,7 +74,7 @@ TURN_DEG = 12.0
 # back to c -- one pre-impact frame inside every post-impact velocity. The
 # synthetic check put a number on it: e_normal came back 0.749 against a
 # truth of 0.800 and e_tangential 0.475 against 0.700, a 32% error that
-# looked exactly like a physical result about cushions taking spin.
+# looked exactly like a physical result about rails taking spin.
 SLOPE_FRAMES = 6
 SKIP = SLOPE_FRAMES - 1
 MIN_GLIDE = 15          # frames; shorter segments do not constrain a slope
@@ -91,7 +91,7 @@ MIN_SPEED = 200.0       # mm/s; below this the tracker's noise dominates
 # are cut.
 ACCEL_TOL_MM_S = 25.0
 
-# Nothing on an air cushion decelerates faster than this. A backstop for
+# Nothing on an air rail decelerates faster than this. A backstop for
 # segments that survive everything else; a puck at 1 m/s losing 3.7 m/s^2
 # would stop dead in a quarter second, which is not friction.
 MAX_DECEL_MM_S2 = 2000.0
@@ -162,7 +162,7 @@ def segment(d):
 def fit_friction(d, bounds):
     """Deceleration per glide, as a constant AND as a + b*v^2.
 
-    A single coefficient cannot describe this surface. On an air cushion the
+    A single coefficient cannot describe this surface. On an air rail the
     Coulomb term is tiny and AERODYNAMIC DRAG dominates at speed, so
     deceleration rises with v^2 -- which is exactly what an eightfold IQR
     across glides from 0.4 to 8.7 m/s means. Reporting only the mean would
@@ -327,9 +327,9 @@ def clean_velocity(d, anchor, direction, t_at, gate):
 
 
 def wall_of(x, y):
-    """Which cushion is this point against, if any.
+    """Which rail is this point against, if any.
 
-    The END rails are not continuous cushion: each has a 380 mm goal mouth
+    The END rails are not continuous rail surface: each has a 380 mm goal mouth
     centred on it. A puck arriving there does not bounce -- it goes in, or
     clips the goal edge -- so those contacts are not restitution measurements
     and mixing them in is what dragged the two end rails down to e ~ 0.45
@@ -374,7 +374,7 @@ def contact_events(cuts):
 
 
 def wall_events(d, events):
-    """Events where the puck centre actually reached a cushion.
+    """Events where the puck centre actually reached a rail.
 
     Separate from how many are MEASURABLE, and the gap between the two is
     worth printing rather than hiding. Detection is unambiguous -- the
@@ -405,10 +405,10 @@ def fit_bounces(d, events, gate=None):
         i, j = lo - SKIP, hi + 1 + SKIP
         if i < 0 or j >= n or d["seq"][j] - d["seq"][i] > (j - i) + 4:
             continue
-        # Classify on the frame that actually touched the cushion: the one
+        # Classify on the frame that actually touched the rail: the one
         # CLOSEST TO A RAIL, not the middle of the event. The middle sits 2-3
         # frames after contact, and at 2.4 m/s outgoing that is already 36 mm
-        # off the cushion -- outside WALL_BAND_MM, so every clean bounce was
+        # off the rail -- outside WALL_BAND_MM, so every clean bounce was
         # being classified "away from a rail" and counted as a mallet hit.
         span = np.arange(max(0, lo - SLOPE_FRAMES - 4), min(hi + 3, n))
         near = np.minimum(
@@ -432,7 +432,7 @@ def fit_bounces(d, events, gate=None):
         vin_n, vout_n = vin @ nrm, vout @ nrm
         if vin_n >= 0 or vout_n <= 0:        # not actually approaching/leaving
             continue
-        # A cushion cannot return more normal speed than it received. A
+        # A rail cannot return more normal speed than it received. A
         # ratio above 1 means something pushed -- a hand still in contact --
         # and those were producing the impossible tangential ratios.
         if -vout_n / vin_n > 1.0:
@@ -447,7 +447,7 @@ def fit_bounces(d, events, gate=None):
 
 
 def fit_spin(d, events, gate=None):
-    """Does the tangential momentum lost at a cushion turn into SPIN?
+    """Does the tangential momentum lost at a rail turn into SPIN?
 
     Until the puck carried four markers this could only be inferred. It now
     has an orientation, so the question is a measurement.
@@ -459,10 +459,10 @@ def fit_spin(d, events, gate=None):
     so dw = -2*dv_t/R. Fitting dw against dv_t and comparing the slope to
     -2/R = -0.0491 rad/s per mm/s separates two very different worlds:
 
-      slope ~ -2/R   the cushion GRIPS. Momentum went into spin, the puck
+      slope ~ -2/R   the rail GRIPS. Momentum went into spin, the puck
                      leaves rotating, and a sim with no orientation state
                      will misplace every bank shot.
-      slope ~ 0      the cushion RUBS. Momentum went into heat, the puck
+      slope ~ 0      the rail RUBS. Momentum went into heat, the puck
                      leaves barely spinning, and a plain tangential
                      coefficient is the whole model.
     """
@@ -847,11 +847,11 @@ def main() -> int:
     print("\n── WALL RESTITUTION " + "─" * 47)
     walls, others = fit_bounces(d, contact_events(cuts), gate)
     if not walls:
-        print("  no clean wall contacts found. Hit each cushion square-on a "
+        print("  no clean wall contacts found. Hit each rail square-on a "
               "few times, at a few speeds.")
     else:
         seen = wall_events(d, contact_events(cuts))
-        print(f"  {seen} contacts reached a cushion; {len(walls)} could be "
+        print(f"  {seen} contacts reached a rail; {len(walls)} could be "
               f"MEASURED cleanly.")
         if seen > 2 * max(len(walls), 1):
             print(f"  The other {seen - len(walls)} are real bounces with no "
@@ -860,7 +860,7 @@ def main() -> int:
                   "uncontaminated to")
             print("  bracket. Not a shortage of wall hits; a shortage of "
                   "ISOLATED ones. To pin")
-            print("  restitution down, hit the puck at a cushion and then let "
+            print("  restitution down, hit the puck at a rail and then let "
                   "it run untouched")
             print("  for half a second before touching it again.")
         print(f"  ({others} contacts away from any rail -- mallet or hand)\n")
@@ -891,12 +891,12 @@ def main() -> int:
                       "wrong at one end of the range")
         else:
             print("  not enough speed variety to test speed dependence; "
-                  "hit the cushions both softly and hard")
+                  "hit the rails both softly and hard")
 
         et = np.array([w["e_tangential"] for w in walls])
         et = et[~np.isnan(et)]
         if len(et) >= 5 and et.mean() < 0.9:
-            print(f"\n  TANGENTIAL ratio {et.mean():.3f} < 1: the cushion "
+            print(f"\n  TANGENTIAL ratio {et.mean():.3f} < 1: the rail "
                   "takes tangential momentum. WHERE it goes -- into spin, or\n"
                   "  into heat -- this number cannot say, and the two want "
                   "different simulators. See the spin\n"
@@ -911,13 +911,13 @@ def main() -> int:
         else:
             print(f"  {sp['n']} contacts.  dw vs dv_t slope "
                   f"{sp['slope']:+.4f} rad/s per mm/s")
-            print(f"  a gripping cushion predicts -2/R = {sp['predicted']:+.4f}"
+            print(f"  a gripping rail predicts -2/R = {sp['predicted']:+.4f}"
                   f"  ->  {100 * sp['grip']:.0f}% of it   (r2 {sp['r2']:.2f})")
             if sp["grip"] > 0.5:
-                print("  -> the cushion GRIPS: the tangential loss really is going into")
+                print("  -> the rail GRIPS: the tangential loss really is going into")
                 print("     spin, and the sim needs a puck orientation state.")
             elif sp["grip"] < 0.2:
-                print("  -> the cushion RUBS: tangential momentum goes to friction, NOT")
+                print("  -> the rail RUBS: tangential momentum goes to friction, NOT")
                 print("     into spin. A tangential coefficient is the whole model and")
                 print("     the sim does NOT need orientation to get bounces right.")
             else:

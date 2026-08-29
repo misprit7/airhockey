@@ -148,7 +148,7 @@ def main() -> int:
     a.axvline(et.mean(), color="crimson", lw=2, label=f"mean {et.mean():.3f}")
     a.set_xlabel("tangential velocity ratio")
     a.set_ylabel("contacts")
-    a.set_title("cushion takes tangential momentum:\n"
+    a.set_title("rail takes tangential momentum:\n"
                 "bounce ANGLES are not specular")
     a.legend(fontsize=8)
     a.grid(alpha=0.25, axis="y")

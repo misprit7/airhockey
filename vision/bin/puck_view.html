@@ -189,6 +189,11 @@ let frame = 0, playing = false, lastT = 0, sel = -1;
 
 function drawRink() {
   const cv = $("#rink"), g = cv.getContext("2d"), m = rinkMap(cv);
+  // `frame` advances FRACTIONALLY during playback, and D.x[1234.56] is
+  // undefined -- arrays have integer keys only. Everything downstream then
+  // draws at NaN, which is invisible. Paused it looked fine because seek()
+  // floors, so the bug only appeared while running.
+  const f = frame | 0;
   g.fillStyle = COL("--rink"); g.fillRect(0, 0, cv.width, cv.height);
 
   // rails + centre stripe + goals — the model, drawn so the trail can be
@@ -237,8 +242,8 @@ function drawRink() {
 
   // the recent trail, coloured by what the fitter thinks it is
   const TRAIL = 90;
-  for (let i = Math.max(1, frame - TRAIL); i <= frame; i++) {
-    const a = 1 - (frame - i) / TRAIL;
+  for (let i = Math.max(1, f - TRAIL); i <= f; i++) {
+    const a = 1 - (f - i) / TRAIL;
     const c = cls[i];
     g.strokeStyle = c === 1 ? COL("--puck") : c >= 3 ? kindColor(D.events[c - 3].kind)
       : COL("--glide");
@@ -249,22 +254,22 @@ function drawRink() {
   g.globalAlpha = 1;
 
   // puck at true radius, with its marker square at the measured orientation
-  const px = m.X(D.x[frame]), py = m.Y(D.y[frame]);
+  const px = m.X(D.x[f]), py = m.Y(D.y[f]);
   g.beginPath(); g.arc(px, py, G.puck_r * m.s, 0, 7);
   g.fillStyle = COL("--puck"); g.globalAlpha = .16; g.fill(); g.globalAlpha = 1;
   g.strokeStyle = COL("--puck"); g.lineWidth = 2; g.stroke();
-  if (D.th && D.th[frame] != null) {
+  if (D.th && D.th[f] != null) {
     g.fillStyle = COL("--puck");
     for (let q = 0; q < 4; q++) {
-      const a = D.th[frame] + q * Math.PI / 2;
+      const a = D.th[f] + q * Math.PI / 2;
       g.beginPath();
       g.arc(px + Math.cos(a) * G.marker_r * m.s,
             py - Math.sin(a) * G.marker_r * m.s, 2.4, 0, 7);
       g.fill();
     }
   }
-  if ($("#showMallet").checked && D.mx && D.mx[frame] != null) {
-    const qx = m.X(D.mx[frame]), qy = m.Y(D.my[frame]);
+  if ($("#showMallet").checked && D.mx && D.mx[f] != null) {
+    const qx = m.X(D.mx[f]), qy = m.Y(D.my[f]);
     g.beginPath(); g.arc(qx, qy, G.mallet_r * m.s, 0, 7);
     g.strokeStyle = COL("--mallet"); g.lineWidth = 2; g.stroke();
     g.globalAlpha = .12; g.fillStyle = COL("--mallet"); g.fill(); g.globalAlpha = 1;
@@ -382,7 +387,7 @@ function plotWalls() {
   const mean = e.reduce((a, b) => a + b, 0) / e.length;
   $("#c2").textContent = `${D.walls.length} measurable of `
     + `${D.events.filter(v => v.kind === "wall" || v.kind === "wall-skipped").length} `
-    + `that reached a cushion. Mean e = ${mean.toFixed(3)}. Colour is the rail.`;
+    + `that reached a rail. Mean e = ${mean.toFixed(3)}. Colour is the rail.`;
 }
 
 function plotSpin() {
@@ -397,7 +402,7 @@ function plotSpin() {
   g.strokeStyle = COL("--line");
   g.beginPath(); g.moveTo(A.px(-xa), A.py(0)); g.lineTo(A.px(xa), A.py(0)); g.stroke();
   g.beginPath(); g.moveTo(A.px(0), A.py(-ya)); g.lineTo(A.px(0), A.py(ya)); g.stroke();
-  // what a GRIPPING cushion would look like: dw = -2/R * dvt
+  // what a GRIPPING rail would look like: dw = -2/R * dvt
   g.strokeStyle = COL("--skip"); g.setLineDash([6, 4]); g.lineWidth = 2;
   g.beginPath(); g.moveTo(A.px(-xa), A.py(-s.predicted * -xa));
   g.lineTo(A.px(xa), A.py(s.predicted * xa)); g.stroke(); g.setLineDash([]);
@@ -410,7 +415,7 @@ function plotSpin() {
     g.fillStyle = COL("--spin"); g.globalAlpha = .8; g.fill(); g.globalAlpha = 1;
     hit[2].push({ x: X, y: Y, frame: r.c });
   });
-  $("#c3").textContent = `Dashed = a cushion that GRIPS (Δω = −2Δv/R). Solid = measured, `
+  $("#c3").textContent = `Dashed = a rail that GRIPS (Δω = −2Δv/R). Solid = measured, `
     + `${(100 * s.grip).toFixed(0)}% of it, r² ${s.r2.toFixed(2)}. `
     + `Flat means the tangential loss goes to heat, not spin — so the sim needs no puck orientation.`;
 }
@@ -543,16 +548,16 @@ const nWall = D.events.filter(e => e.kind === "wall").length;
 const nSkip = D.events.filter(e => e.kind === "wall-skipped").length;
 const f = D.friction || {};
 $("#stats").innerHTML = [
-  [`${nWall + nSkip}`, "cushion contacts"],
+  [`${nWall + nSkip}`, "rail contacts"],
   [`${nWall}`, "measurable"],
   [`${D.paddle.length}`, "mallet contacts"],
   [f.drag ? f.drag.b.toExponential(2) : "—", "drag b (1/mm)"],
   [D.walls.length ? (D.walls.reduce((a, w) => a + w.e_normal, 0) / D.walls.length).toFixed(3) : "—",
     "wall e"],
-  [D.spin && D.spin.grip != null ? `${(100 * D.spin.grip).toFixed(0)}%` : "—", "cushion grip"],
+  [D.spin && D.spin.grip != null ? `${(100 * D.spin.grip).toFixed(0)}%` : "—", "rail grip"],
 ].map(([v, k]) => `<div class="stat"><b class="mono">${v}</b><span>${k}</span></div>`).join("");
-$("#legend").innerHTML = [["wall", "measured cushion contact"],
-  ["wall-skipped", "cushion contact, not bracketable"], ["mallet", "mallet contact"],
+$("#legend").innerHTML = [["wall", "measured rail contact"],
+  ["wall-skipped", "rail contact, not bracketable"], ["mallet", "mallet contact"],
   ["goal", "goal mouth"], ["open", "open table (hand)"]]
   .map(([k, t]) => `<span><span class="dot" style="background:${kindColor(k)}"></span>${t}</span>`)
   .join("");

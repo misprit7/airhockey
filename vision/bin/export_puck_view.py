@@ -68,7 +68,7 @@ def classify_events(d, events, walls, hits):
         elif h is not None:
             kind, note = "mallet", f"measured, e = {h['e']:.3f}"
         elif at_rail and name is None:
-            kind, note = "goal", "in the goal mouth — not a cushion"
+            kind, note = "goal", "in the goal mouth — not a rail"
         elif at_rail:
             kind, note = "wall-skipped", "no clean glide either side to bracket"
         else:
