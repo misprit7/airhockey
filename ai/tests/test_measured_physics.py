@@ -372,7 +372,7 @@ def test_side_flag_tells_the_policy_which_body_it_is_driving():
     e = BatchAirHockeyEnv(n_envs=4)
     out = e.reset(seed=0)
     obs = out[0] if isinstance(out, tuple) else out
-    assert obs.shape[1] == BatchAirHockeyEnv.OBS_DIM == 13
+    assert obs.shape[1] == BatchAirHockeyEnv.OBS_DIM == 15
     assert np.all(obs[:, 12] == BatchAirHockeyEnv.ROBOT_SIDE)
     mirrored = e.mirror_obs(obs)
     assert np.all(mirrored[:, 12] == BatchAirHockeyEnv.HUMAN_SIDE)
@@ -393,3 +393,60 @@ def test_opponent_reaches_where_the_robot_cannot():
     cfg = e.table_config
     assert e.engine.paddle_opp_y.max() > cfg.height - 0.15, \
         "opponent never approaches its own goal line"
+
+
+def test_cap_features_report_the_body_the_policy_is_driving():
+    """Nominal robot reads exactly 1.0 on both, so the features are a ratio to
+    the machine as built rather than an arbitrary scale."""
+    from airhockey.batch_env import BatchAirHockeyEnv
+    e = BatchAirHockeyEnv(n_envs=4)
+    obs = e.reset(seed=0)
+    np.testing.assert_allclose(obs[:, 13], 1.0, atol=1e-6)
+    np.testing.assert_allclose(obs[:, 14], 1.0, atol=1e-6)
+
+
+def test_cap_features_track_domain_randomisation():
+    """The whole point: with DR on, envs differ and the policy can see it.
+
+    A constant feature would be worse than no feature -- it would look like the
+    policy had been told its limits while telling it nothing.
+    """
+    from airhockey.batch_env import BatchAirHockeyEnv
+    from airhockey.dynamics import MAX_ACCEL_M_S2, MAX_SPEED_M_S
+    e = BatchAirHockeyEnv(n_envs=512, domain_randomize=True)
+    obs = e.reset(seed=3)
+    assert obs[:, 13].std() > 0.05, "speed feature is constant under DR"
+    assert obs[:, 14].std() > 0.05, "accel feature is constant under DR"
+    # And they are the caps actually in force, not a redundant copy of nominal.
+    np.testing.assert_allclose(
+        obs[:, 13], e._agent_dyn["max_speed"] / MAX_SPEED_M_S, rtol=1e-6)
+    np.testing.assert_allclose(
+        obs[:, 14], e._agent_dyn["max_accel"] / MAX_ACCEL_M_S2, rtol=1e-6)
+
+
+def test_mirrored_view_reports_the_human_caps():
+    """Mirroring hands the policy the other body, so it must hand over the
+    other body's limits -- and still round-trip."""
+    from airhockey.batch_env import BatchAirHockeyEnv
+    from airhockey.dynamics import (MAX_ACCEL_M_S2, MAX_SPEED_M_S,
+                                    OPPONENT_MAX_ACCEL_M_S2,
+                                    OPPONENT_MAX_SPEED_M_S)
+    e = BatchAirHockeyEnv(n_envs=8)
+    obs = e.reset(seed=0)
+    m = e.mirror_obs(obs)
+    np.testing.assert_allclose(
+        m[:, 13], OPPONENT_MAX_SPEED_M_S / MAX_SPEED_M_S, rtol=1e-6)
+    np.testing.assert_allclose(
+        m[:, 14], OPPONENT_MAX_ACCEL_M_S2 / MAX_ACCEL_M_S2, rtol=1e-6)
+    np.testing.assert_allclose(e.mirror_obs(m), obs, atol=1e-6)
+
+
+def test_scalar_env_reports_the_same_cap_features():
+    """The scalar env drives the UI and must not drift from the batch env --
+    this is the third feature both have had to grow independently."""
+    from airhockey.batch_env import BatchAirHockeyEnv
+    from airhockey.env import AirHockeyEnv
+    s, _ = AirHockeyEnv().reset(seed=0)
+    b = BatchAirHockeyEnv(n_envs=1).reset(seed=0)
+    assert s.shape[0] == b.shape[1] == BatchAirHockeyEnv.OBS_DIM
+    np.testing.assert_allclose(s[12:], b[0, 12:], atol=1e-6)

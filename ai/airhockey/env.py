@@ -11,6 +11,9 @@ from gymnasium import spaces
 
 from airhockey.dynamics import (ProfileDynamics, DelayedDynamics,
                                 IdealDynamics, MotorDynamics,
+                                MAX_ACCEL_M_S2, MAX_SPEED_M_S,
+                                OPPONENT_MAX_ACCEL_M_S2,
+                                OPPONENT_MAX_SPEED_M_S,
                                 workspace_in_sim)
 from airhockey.physics import PhysicsState, TableConfig
 from airhockey.scalar_engine import ScalarPhysicsEngine
@@ -95,6 +98,8 @@ class AirHockeyEnv(gym.Env):
             cfg.width, cfg.height, vel_max, vel_max,      # paddle
             cfg.width, cfg.height, vel_max, vel_max,      # opponent
             1.0,                                          # side flag
+            OPPONENT_MAX_SPEED_M_S / MAX_SPEED_M_S,       # max speed ratio
+            OPPONENT_MAX_ACCEL_M_S2 / MAX_ACCEL_M_S2,     # max accel ratio
         ], dtype=np.float32)
         self.observation_space = spaces.Box(-high_obs, high_obs, dtype=np.float32)
 
@@ -370,7 +375,20 @@ class AirHockeyEnv(gym.Env):
             # only self-play ever presents the human side, and that goes
             # through BatchAirHockeyEnv.mirror_obs.
             self.ROBOT_SIDE,
+            *self._cap_features(),
         ], dtype=np.float32)
+
+    def _cap_features(self) -> tuple[float, float]:
+        """Own speed/accel caps, as a ratio to the robot's nominal.
+
+        getattr, because not every dynamics model carries caps: IdealDynamics
+        has none, and HardwareDynamics has none because the caps it obeys live
+        in the firmware -- and those ARE the nominal values, so falling back to
+        them is the correct answer on hardware rather than a placeholder.
+        """
+        dyn = self.agent_dynamics
+        return (getattr(dyn, "max_speed", MAX_SPEED_M_S) / MAX_SPEED_M_S,
+                getattr(dyn, "max_accel", MAX_ACCEL_M_S2) / MAX_ACCEL_M_S2)
 
     def _get_delayed_obs(self, current_obs: np.ndarray) -> np.ndarray:
         if self._delay_steps == 0:

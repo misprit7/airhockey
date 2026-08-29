@@ -41,10 +41,11 @@ _OPP_POLICY_MAP = {
 class BatchAirHockeyEnv:
     """Batch air hockey environment — N envs stepped simultaneously.
 
-    Observation per env (12 dims):
+    Observation per env (15 dims):
         puck_x, puck_y, puck_vx, puck_vy,
         paddle_x, paddle_y, paddle_vx, paddle_vy,
-        opp_x, opp_y, opp_vx, opp_vy
+        opp_x, opp_y, opp_vx, opp_vy,
+        side, max_speed, max_accel
 
     Action per env: (2,) — normalized [-1, 1] target position.
 
@@ -52,13 +53,28 @@ class BatchAirHockeyEnv:
     calling convention (no Gymnasium wrappers, returns batched arrays).
     """
 
-    # 13, not 12. The last feature is WHICH SIDE this observation belongs to:
-    # 1.0 for the robot, 0.0 for the human. The two sides do not have the same
-    # capabilities -- different speed and acceleration caps, and only the robot
-    # is confined to the reachable workspace -- so a policy that plays both in
-    # self-play cannot act correctly without knowing which it currently is.
-    # In production it is always 1.0.
-    OBS_DIM = 13
+    # 15, not 12. The last three features describe the BODY the observation is
+    # driving, which the twelve state features do not determine.
+    #
+    #   [12] SIDE: 1.0 robot, 0.0 human. The two sides do not have the same
+    #        capabilities, and only the robot is confined to the reachable
+    #        workspace, so a policy that plays both in self-play cannot act
+    #        correctly without knowing which it currently is. Always 1.0 in
+    #        production.
+    #   [13] MAX SPEED, [14] MAX ACCEL, as a ratio to the robot's nominal
+    #        caps. Domain randomisation samples these per env, and they change
+    #        the right play rather than just the execution: how early to commit
+    #        to an intercept, whether a cross-table save is reachable at all,
+    #        how much of a wind-up a shot can afford. A policy that cannot see
+    #        them has to average over the range and will consistently
+    #        over-commit on a slow draw and under-use a fast one.
+    #
+    # OWN caps only. The opponent's are deliberately NOT given: in production
+    # the opponent is a human whose limits are unknown and unknowable, so a
+    # feature for them would be informative in sim and a fixed lie on the
+    # table. The policy has to read the opponent off their motion, as it will
+    # have to for real.
+    OBS_DIM = 15
     ROBOT_SIDE = 1.0
     HUMAN_SIDE = 0.0
 
@@ -172,6 +188,11 @@ class BatchAirHockeyEnv:
             cfg.width, cfg.height, vel_max, vel_max,      # puck
             cfg.width, cfg.height, vel_max, vel_max,      # paddle
             cfg.width, cfg.height, vel_max, vel_max,      # opponent
+            1.0,                                          # side flag
+            # Caps, as a ratio to the robot's nominal. The bound is the human
+            # side's, since that is the largest either feature ever takes.
+            OPPONENT_MAX_SPEED_M_S / MAX_SPEED_M_S,
+            OPPONENT_MAX_ACCEL_M_S2 / MAX_ACCEL_M_S2,
         ], dtype=np.float32)
 
         # Camera delay ring buffer.
@@ -587,6 +608,19 @@ class BatchAirHockeyEnv:
         # robot's again. Pinning it made mirror_obs stop being an involution,
         # which is exactly what its round-trip test is for.
         m[:, 12] = (self.ROBOT_SIDE + self.HUMAN_SIDE) - obs[:, 12]
+
+        # The cap features describe the body being driven, so they follow the
+        # side across the mirror. Which caps to write depends on which side the
+        # INCOMING view belongs to -- always writing the opponent's would make
+        # mirror(mirror(x)) != x, the same way pinning the side flag did.
+        # Caps are per-env constants within an episode, so reading them live
+        # rather than from the (possibly delayed) obs is safe.
+        was_robot = obs[:, 12] > (self.ROBOT_SIDE + self.HUMAN_SIDE) * 0.5
+        for col, key, ref in ((13, "max_speed", MAX_SPEED_M_S),
+                              (14, "max_accel", MAX_ACCEL_M_S2)):
+            m[:, col] = np.where(was_robot,
+                                 self._opp_dyn[key],
+                                 self._agent_dyn[key]) / ref
         return m
 
     def mirror_action_to_opponent(self, actions: np.ndarray) -> tuple[np.ndarray, np.ndarray]:
@@ -752,11 +786,16 @@ class BatchAirHockeyEnv:
         else:
             px, py, pvx, pvy = e.puck_x, e.puck_y, e.puck_vx, e.puck_vy
 
+        # Caps as a ratio to the robot's nominal, so a nominal robot reads
+        # exactly 1.0 on both and anything else is a ratio to the machine as
+        # built. The human side reads above 1.0, which is the point.
         return np.column_stack([
             px, py, pvx, pvy,
             e.paddle_agent_x, e.paddle_agent_y, agent_vx, agent_vy,
             e.paddle_opp_x, e.paddle_opp_y, opp_vx, opp_vy,
             np.full(self.n_envs, self.ROBOT_SIDE),
+            self._agent_dyn["max_speed"] / MAX_SPEED_M_S,
+            self._agent_dyn["max_accel"] / MAX_ACCEL_M_S2,
         ]).astype(np.float32)
 
     def _get_delayed_obs(self, current_obs: np.ndarray) -> np.ndarray:
