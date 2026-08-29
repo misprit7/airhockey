@@ -112,7 +112,11 @@ def main():
 
     run_dir = Path("runs") / args.run_name
     run_dir.mkdir(parents=True, exist_ok=True)
-    recordings_dir = Path("recordings")
+    # The web UI's replay tab reads ai/recordings (server.py RECORDINGS_DIR).
+    # This was Path("recordings"), i.e. relative to WHEREVER the trainer was
+    # launched from -- recordings landed at the repo root and the UI never
+    # listed them.
+    recordings_dir = Path(__file__).resolve().parents[1] / "recordings"
     log_dir = run_dir / "logs"
     log_dir.mkdir(exist_ok=True)
     writer = SummaryWriter(str(log_dir))

@@ -38,3 +38,4 @@ hw/**/production/
 
 # Runtime logs from cdpr_master — regenerated every run
 logs/
+/recordings
