@@ -32,7 +32,15 @@ class AirHockeyEnv(gym.Env):
     a delayed version.
     """
 
-    OBS_DIM = 12
+    # Imported, not written down again. This class and BatchAirHockeyEnv are
+    # still separate implementations (see SIM2REAL.md), so every constant they
+    # share is a chance for them to disagree -- and this one already did, for
+    # exactly as long as it took to add the 13th feature to one of them.
+    from airhockey.batch_env import BatchAirHockeyEnv as _B
+    OBS_DIM = _B.OBS_DIM
+    ROBOT_SIDE = _B.ROBOT_SIDE
+    HUMAN_SIDE = _B.HUMAN_SIDE
+    del _B
 
     metadata = {"render_modes": ["human"]}
 
@@ -86,6 +94,7 @@ class AirHockeyEnv(gym.Env):
             cfg.width, cfg.height, vel_max, vel_max,      # puck
             cfg.width, cfg.height, vel_max, vel_max,      # paddle
             cfg.width, cfg.height, vel_max, vel_max,      # opponent
+            1.0,                                          # side flag
         ], dtype=np.float32)
         self.observation_space = spaces.Box(-high_obs, high_obs, dtype=np.float32)
 
@@ -339,7 +348,7 @@ class AirHockeyEnv(gym.Env):
         return opp.x, opp.y
 
     def _make_obs(self, state: PhysicsState) -> np.ndarray:
-        """Build 12-dim observation: puck + agent_paddle + opp_paddle (pos+vel each)."""
+        """Observation: puck + agent paddle + opponent paddle (pos+vel), + side flag."""
         dt = self.action_dt
         # Paddle velocities from finite differences
         agent_vx = (state.paddle_agent.x - self._prev_agent_x) / dt
@@ -357,6 +366,10 @@ class AirHockeyEnv(gym.Env):
             state.puck.x, state.puck.y, state.puck.vx, state.puck.vy,
             state.paddle_agent.x, state.paddle_agent.y, agent_vx, agent_vy,
             state.paddle_opponent.x, state.paddle_opponent.y, opp_vx, opp_vy,
+            # Which body this observation is driving. Always the robot here;
+            # only self-play ever presents the human side, and that goes
+            # through BatchAirHockeyEnv.mirror_obs.
+            self.ROBOT_SIDE,
         ], dtype=np.float32)
 
     def _get_delayed_obs(self, current_obs: np.ndarray) -> np.ndarray:

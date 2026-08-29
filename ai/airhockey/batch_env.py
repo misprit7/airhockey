@@ -13,6 +13,8 @@ import numpy as np
 from airhockey.batch_physics import BatchPhysicsEngine
 from airhockey.dynamics import (DR_ACCEL_RANGE, DR_SPEED_RANGE,
                                 MAX_ACCEL_M_S2, MAX_SPEED_M_S,
+                                OPPONENT_MAX_ACCEL_M_S2,
+                                OPPONENT_MAX_SPEED_M_S,
                                 workspace_in_sim)
 from airhockey.motion import DEFAULT_SIM_DT, CartState, advance
 from airhockey.perception import PuckPerception
@@ -50,7 +52,15 @@ class BatchAirHockeyEnv:
     calling convention (no Gymnasium wrappers, returns batched arrays).
     """
 
-    OBS_DIM = 12
+    # 13, not 12. The last feature is WHICH SIDE this observation belongs to:
+    # 1.0 for the robot, 0.0 for the human. The two sides do not have the same
+    # capabilities -- different speed and acceleration caps, and only the robot
+    # is confined to the reachable workspace -- so a policy that plays both in
+    # self-play cannot act correctly without knowing which it currently is.
+    # In production it is always 1.0.
+    OBS_DIM = 13
+    ROBOT_SIDE = 1.0
+    HUMAN_SIDE = 0.0
 
     def __init__(
         self,
@@ -64,7 +74,10 @@ class BatchAirHockeyEnv:
         # trained against that learns to command positions no actuator can
         # reach, and finds out on the hardware.
         agent_dynamics: str = "profile",   # "ideal" | "delayed" | "profile"
-        opponent_dynamics: str = "profile",
+        # The opponent is a HUMAN, and a hand is not a stepper under a
+        # trapezoidal profile. "delayed" -- a first-order lag with caps -- is
+        # the better model, and it is deliberately given the human limits.
+        opponent_dynamics: str = "delayed",
         # 12 m/s over a 2 ms step is 24 mm, well inside the 80.7 mm at which
         # puck and paddle touch. At the old 1/240 it was 50 mm and a fast puck
         # could step straight through the paddle without ever registering a
@@ -193,8 +206,8 @@ class BatchAirHockeyEnv:
                                                      dynamics_max_accel,
                                                      dynamics_time_constant)
         self._opp_dyn = self._make_dynamics_state(opponent_dynamics, n_envs,
-                                                   dynamics_max_speed,
-                                                   dynamics_max_accel,
+                                                   OPPONENT_MAX_SPEED_M_S,
+                                                   OPPONENT_MAX_ACCEL_M_S2,
                                                    dynamics_time_constant)
 
         self._rng = np.random.default_rng()
@@ -555,6 +568,12 @@ class BatchAirHockeyEnv:
         m[:, 9] = cfg.height - obs[:, 5]    # pad_y → opp_y (flipped)
         m[:, 10] = obs[:, 6]                # pad_vx → opp_vx
         m[:, 11] = -obs[:, 7]               # pad_vy → opp_vy (negated)
+        # FLIP the side flag rather than pinning it to HUMAN. Whoever looks
+        # through a mirrored view is the other side -- so mirroring the
+        # robot's view yields the human's, and mirroring that yields the
+        # robot's again. Pinning it made mirror_obs stop being an involution,
+        # which is exactly what its round-trip test is for.
+        m[:, 12] = (self.ROBOT_SIDE + self.HUMAN_SIDE) - obs[:, 12]
         return m
 
     def mirror_action_to_opponent(self, actions: np.ndarray) -> tuple[np.ndarray, np.ndarray]:
@@ -724,6 +743,7 @@ class BatchAirHockeyEnv:
             px, py, pvx, pvy,
             e.paddle_agent_x, e.paddle_agent_y, agent_vx, agent_vy,
             e.paddle_opp_x, e.paddle_opp_y, opp_vx, opp_vy,
+            np.full(self.n_envs, self.ROBOT_SIDE),
         ]).astype(np.float32)
 
     def _get_delayed_obs(self, current_obs: np.ndarray) -> np.ndarray:

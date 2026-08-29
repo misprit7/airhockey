@@ -335,7 +335,10 @@ def main():
     )
     reward_shaper = BatchRewardShaper(n_envs, stage=stage, frame_stack=frame_stack)
 
-    obs_dim = 12  # puck(4) + paddle(4) + opp(4)
+    # Taken from the env, not written down again. The 13th feature (which
+    # side this body is) was added and these two would silently have built a
+    # network with the wrong input width.
+    obs_dim = BatchAirHockeyEnv.OBS_DIM  # puck(4) + paddle(4) + opp(4) + side(1)
     cfg.obs_shape = {"state": (obs_dim,)}
     cfg.action_dim = 2
     cfg.episode_length = 1800  # 30s at 60Hz

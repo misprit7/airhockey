@@ -174,7 +174,9 @@ def test_batch_env_defaults_to_the_firmware_profile():
     from airhockey.batch_env import BatchAirHockeyEnv
     e = BatchAirHockeyEnv(n_envs=2)
     assert e.agent_dynamics_type == "profile"
-    assert e.opponent_dynamics_type == "profile"
+    # The OPPONENT is a human and is deliberately NOT on the firmware law --
+    # a hand is not a stepper under a trapezoidal profile.
+    assert e.opponent_dynamics_type == "delayed"
 
 
 def test_action_rate_can_represent_the_measured_latency():
@@ -311,3 +313,55 @@ def test_scalar_env_clamps_the_agent_to_the_workspace():
         x, y = e._clamp_to_half(corner[0], corner[1], agent=True)
         assert e._ws["min_x"] - 1e-9 <= x <= e._ws["max_x"] + 1e-9
         assert e._ws["min_y"] - 1e-9 <= y <= e._ws["max_y"] + 1e-9
+
+
+# ── The two sides are not the same machine ───────────────────────────────
+
+def test_the_human_side_is_less_constrained_than_the_robot():
+    """Training against a copy of yourself teaches you your own limits.
+
+    The opponent stands in for a person, and the measured hand-held mallet
+    reached 7.33 m/s over 862 x 951 mm against the robot's 568 x 620 box. The
+    sparring partner must therefore be faster, sharper and unconfined --
+    otherwise the policy learns that its opponent is exactly as limited as it
+    is, which is the one thing certainly false.
+    """
+    from airhockey.batch_env import BatchAirHockeyEnv
+    e = BatchAirHockeyEnv(n_envs=8)
+    assert e._opp_dyn["max_speed"][0] > e._agent_dyn["max_speed"][0]
+    assert e._opp_dyn["max_accel"][0] > e._agent_dyn["max_accel"][0]
+    # and a hand is not a stepper under a trapezoidal profile
+    assert e.agent_dynamics_type == "profile"
+    assert e.opponent_dynamics_type == "delayed"
+
+
+def test_side_flag_tells_the_policy_which_body_it_is_driving():
+    """In self-play one network plays both sides. They have different caps and
+    only one is confined, so without this feature the policy cannot act
+    correctly for either -- the observation would be identical in both cases.
+    Production always sets it to ROBOT."""
+    from airhockey.batch_env import BatchAirHockeyEnv
+    e = BatchAirHockeyEnv(n_envs=4)
+    out = e.reset(seed=0)
+    obs = out[0] if isinstance(out, tuple) else out
+    assert obs.shape[1] == BatchAirHockeyEnv.OBS_DIM == 13
+    assert np.all(obs[:, 12] == BatchAirHockeyEnv.ROBOT_SIDE)
+    mirrored = e.mirror_obs(obs)
+    assert np.all(mirrored[:, 12] == BatchAirHockeyEnv.HUMAN_SIDE)
+    # mirror is an involution, flag included
+    np.testing.assert_allclose(e.mirror_obs(mirrored), obs, atol=1e-6)
+
+
+def test_opponent_reaches_where_the_robot_cannot():
+    """Concretely: the human must be able to stand on their goal line."""
+    from airhockey.batch_env import BatchAirHockeyEnv
+    e = BatchAirHockeyEnv(n_envs=128, agent_dynamics="ideal",
+                          opponent_dynamics="ideal", opponent_policy="random")
+    e.reset(seed=9)
+    lowest = 1e9
+    for _ in range(80):
+        e.step(np.zeros((128, 2), dtype=np.float32))
+        lowest = min(lowest, float(e.engine.paddle_opp_y.max()))
+    cfg = e.table_config
+    assert e.engine.paddle_opp_y.max() > cfg.height - 0.15, \
+        "opponent never approaches its own goal line"

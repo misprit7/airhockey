@@ -86,6 +86,23 @@ def table_mm_to_sim(mm_x: float, mm_y: float, sim_width: float = 1.0,
 # thing that happens.
 DR_SPEED_RANGE = (0.5, 1.0)
 
+# ── The HUMAN side. Deliberately NOT the robot's limits. ─────────────────
+#
+# The opponent is a sparring partner, not a second robot, and the point of
+# training against it is that the machine will face something less
+# constrained than itself. Modelling it with the robot's own caps and the
+# robot's own workspace teaches the policy that its opponent is exactly as
+# limited as it is, which is the one thing that is certainly false.
+#
+# Grounded in the 2026-08-29 recording, where the tracked hand-held mallet
+# reached 7.33 m/s peak (p99 3.49) and covered 862 x 951 mm against the
+# robot's 568 x 620 -- so a human is not much faster at the top end, but has
+# 2.3x the reach and gets there without a jerk limit. Headroom over the
+# measured peak is deliberate: the recording is one person warming up, not
+# the hardest opponent the robot should survive.
+OPPONENT_MAX_SPEED_M_S = 15.0    # 1.25x the robot, 2x the measured human peak
+OPPONENT_MAX_ACCEL_M_S2 = 80.0   # 4x the robot: a wrist has no jerk limit
+
 # ACCEL is two-sided, because unlike speed it is genuinely uncertain rather
 # than clamped. The firmware ceiling is 120000 mm/s^2, six times the nominal
 # here, so nothing in this range is near it; what actually bounds

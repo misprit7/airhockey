@@ -116,7 +116,7 @@ class TestFullPipelineSmoke:
         shaper = BatchRewardShaper(n_envs=N_ENVS, stage=stage)
 
         obs = env.reset(seed=0)
-        assert obs.shape == (N_ENVS, 12)
+        assert obs.shape == (N_ENVS, BatchAirHockeyEnv.OBS_DIM)
 
         shaper.reset(obs)
 
@@ -206,16 +206,16 @@ class TestOpponentPolicy:
 class TestObsShape:
     """Obs is always 12 dims (velocities replace frame stacking)."""
 
-    def test_obs_shape_12(self):
+    def test_obs_shape(self):
         env = _make_env()
         obs = env.reset(seed=0)
-        assert obs.shape == (N_ENVS, 12)
+        assert obs.shape == (N_ENVS, BatchAirHockeyEnv.OBS_DIM)
 
     def test_frame_stack_param_ignored(self):
         """frame_stack param is accepted for API compat but obs is always 12."""
         env = _make_env(frame_stack=4)
         obs = env.reset(seed=0)
-        assert obs.shape == (N_ENVS, 12)
+        assert obs.shape == (N_ENVS, BatchAirHockeyEnv.OBS_DIM)
 
     def test_velocities_nonzero_after_steps(self):
         env = _make_env()
