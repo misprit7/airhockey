@@ -163,3 +163,61 @@ def test_a_simulated_glide_refits_to_the_input_drag():
     coef, *_ = np.linalg.lstsq(A, np.array(decels), rcond=None)
     assert coef[1] == pytest.approx(c.PUCK_DRAG_B, rel=0.02), (
         f"recovered b {coef[1]:.4e} vs input {c.PUCK_DRAG_B:.4e}")
+
+
+# ── The paddle must move like the machine, not like a convenience ────────
+
+def test_batch_env_defaults_to_the_firmware_profile():
+    """`ideal` teleports the paddle. Training against it produces a policy
+    that commands positions no actuator can reach, and it finds out on the
+    hardware. This was the default for a long time."""
+    from airhockey.batch_env import BatchAirHockeyEnv
+    e = BatchAirHockeyEnv(n_envs=2)
+    assert e.agent_dynamics_type == "profile"
+    assert e.opponent_dynamics_type == "profile"
+
+
+def test_action_rate_can_represent_the_measured_latency():
+    """At 60 Hz a step is 16.7 ms, longer than the whole 7.7 ms loop latency,
+    so the delay rounds to zero or one step and the sim silently models a
+    robot that sees instantly."""
+    from airhockey.batch_env import BatchAirHockeyEnv
+    from airhockey.perception import MEASURED_LOOP_MEAN_S
+    e = BatchAirHockeyEnv(n_envs=1)
+    assert e.action_dt <= MEASURED_LOOP_MEAN_S * 1.5, (
+        f"action_dt {e.action_dt * 1000:.1f} ms cannot resolve a "
+        f"{MEASURED_LOOP_MEAN_S * 1000:.1f} ms delay")
+
+
+def test_profile_paddle_does_not_teleport():
+    """One action step of the real law covers a bounded distance.
+
+    Ideal dynamics would jump the full 0.4 m instantly; the firmware profile
+    accelerates from rest under a jerk limit, so the first 10 ms step moves
+    roughly half a millimetre. Anything that reverts the default to `ideal`
+    fails here rather than at the table.
+    """
+    from airhockey.dynamics import ProfileDynamics
+    d = ProfileDynamics()
+    d.reset(0.5, 0.5)
+    x, _y = d.update(0.9, 0.5, 1 / 100)
+    moved = x - 0.5
+    assert 0.0 < moved < 0.02, f"moved {moved * 1000:.2f} mm in one step"
+    # and it does converge, rather than crawling forever
+    for _ in range(200):
+        x, _y = d.update(0.9, 0.5, 1 / 100)
+    assert abs(x - 0.9) < 1e-3, f"never arrived: {x:.4f}"
+
+
+def test_no_entry_point_carries_its_own_caps():
+    """The caps live in dynamics.py. They were duplicated into every training
+    script at 3.0 / 30.0, so a policy trained from any of them learned a
+    paddle four times slower than the machine."""
+    import pathlib
+    root = pathlib.Path(__file__).resolve().parents[1]
+    bad = []
+    for p in list((root / "bin").rglob("*.py")) + list((root / "airhockey").rglob("*.py")):
+        txt = p.read_text()
+        if "max_speed=3.0" in txt or "max_accel=30.0" in txt:
+            bad.append(p.name)
+    assert not bad, f"hardcoded caps still in: {bad}"

@@ -60,6 +60,26 @@ range sampled 3× to 33× the real rolling term.
 numbers. It exists because both model changes broke NOTHING in the existing
 82 tests, which means none of them constrained the physics.
 
+### Paddle dynamics — done 2026-08-29
+
+The sim now moves the paddle with the **real firmware control law**
+(`fw/include/motion_profile.h` via `motion.py`), not an approximation of it.
+
+| | was | now |
+|---|---|---|
+| default dynamics | `ideal` (paddle teleports) | `profile` (firmware law, jerk-limited) |
+| action rate | 60 Hz — one step longer than the whole 7.7 ms latency | **100 Hz** |
+| physics step | 1/240 — a 12 m/s puck moved 50 mm/step and could pass through the paddle | **1/500** (24 mm, vs 80.7 mm contact distance) |
+| caps in trainers | `max_speed=3.0, max_accel=30.0` hardcoded at 11 sites | canonical 12.0 / 20.0 |
+| UI | `DelayedDynamics(tc=0.01)` | `ProfileDynamics` — same law as the machine |
+
+The caps duplication was the worst of it: every training entry point carried
+its own 3.0 / 30.0, so any policy trained before today learned a paddle four
+times slower than the robot. `test_no_entry_point_carries_its_own_caps` now
+fails if one comes back.
+
+Cost: 823k env-steps/s at 1024 envs against 1.9M for `ideal`. Worth it.
+
 ### The one real gap: paddle restitution
 Two recordings have tried and neither can answer it. A hand-SWUNG mallet is
 not a free body — the 2026-08-29 session gave recoil at 3.54× the puck's

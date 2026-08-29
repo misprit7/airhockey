@@ -53,7 +53,7 @@ from common import MODEL_SIZE
 from tdmpc2 import TDMPC2
 
 from airhockey.batch_env import BatchAirHockeyEnv
-from airhockey.dynamics import DelayedDynamics
+from airhockey.dynamics import ProfileDynamics, DelayedDynamics
 from airhockey.env import AirHockeyEnv
 from airhockey.recorder import Recorder
 from airhockey.rewards import (
@@ -385,13 +385,13 @@ class FastLogger:
 def _run_eval(agent, cfg, step, start_time, logger, use_dynamics, frame_stack=1):
     """Run eval episodes."""
     from airhockey.dynamics import IdealDynamics
-    dynamics = DelayedDynamics(max_speed=3.0, max_accel=30.0) if use_dynamics else IdealDynamics()
+    dynamics = ProfileDynamics() if use_dynamics else IdealDynamics()
     env = ShapedRewardWrapper(
         AirHockeyEnv(
             agent_dynamics=dynamics,
             opponent_policy="idle",
             record=False,
-            action_dt=1 / 60,
+            action_dt=1 / 100,
             max_episode_time=30.0,
             max_score=7,
             frame_stack=frame_stack,
@@ -436,10 +436,10 @@ def _fresh_agent_from_checkpoint(cfg, checkpoint_path):
 def _record_game_pretrain(agent, step, recordings_dir, run_name, stage=STAGE_SCORING, frame_stack=1):
     """Record a pretrain game (vs idle opponent) for web UI."""
     inner = AirHockeyEnv(
-        agent_dynamics=DelayedDynamics(max_speed=3.0, max_accel=30.0),
+        agent_dynamics=ProfileDynamics(),
         opponent_policy="idle",
         record=True,
-        action_dt=1 / 60,
+        action_dt=1 / 100,
         max_episode_time=90.0,
         max_score=21,
         frame_stack=frame_stack,
@@ -476,11 +476,11 @@ def _record_game_pretrain(agent, step, recordings_dir, run_name, stage=STAGE_SCO
 def _record_game_selfplay(agent, opponent, step, recordings_dir, run_name, stage=STAGE_SCORING, frame_stack=1):
     """Record a self-play game for web UI."""
     inner = AirHockeyEnv(
-        agent_dynamics=DelayedDynamics(max_speed=3.0, max_accel=30.0),
-        opponent_dynamics=DelayedDynamics(max_speed=3.0, max_accel=30.0),
+        agent_dynamics=ProfileDynamics(),
+        opponent_dynamics=ProfileDynamics(),
         opponent_policy="external",
         record=True,
-        action_dt=1 / 60,
+        action_dt=1 / 100,
         max_episode_time=90.0,
         max_score=21,
         frame_stack=frame_stack,
@@ -524,7 +524,7 @@ def _run_benchmark(agent, step, logger, frame_stack=1):
     Plays 5 games each against idle, goalie, and follow opponents.
     Logs win rates, goals per game, and composite score to TensorBoard.
     """
-    from airhockey.dynamics import DelayedDynamics
+    from airhockey.dynamics import ProfileDynamics
 
     opponents = ["idle", "goalie", "follow"]
     n_games = 5
@@ -535,10 +535,10 @@ def _run_benchmark(agent, step, logger, frame_stack=1):
         wins, goals_for, goals_against = 0, 0, 0
         for game in range(n_games):
             env = AirHockeyEnv(
-                agent_dynamics=DelayedDynamics(max_speed=3.0, max_accel=30.0),
-                opponent_dynamics=DelayedDynamics(max_speed=3.0, max_accel=30.0),
+                agent_dynamics=ProfileDynamics(),
+                opponent_dynamics=ProfileDynamics(),
                 opponent_policy=opp,
-                action_dt=1 / 60,
+                action_dt=1 / 100,
                 max_episode_steps=1800,
                 max_score=7,
                 frame_stack=frame_stack,
@@ -870,7 +870,10 @@ def main():
     else:
         opp_policy = "idle"
 
-    dyn_type = "delayed" if args.dynamics else "ideal"
+    # "profile" is the real firmware law, not an approximation of it. "ideal"
+    # teleports the paddle, which trains a policy to command positions no
+    # actuator can reach; it stays available with --no-dynamics for ablations.
+    dyn_type = "profile" if args.dynamics else "ideal"
     episode_steps = STAGE_EPISODE_STEPS.get(current_stage, 1800) if use_curriculum else None
     batch_env = BatchAirHockeyEnv(
         n_envs=n_envs,
@@ -878,12 +881,11 @@ def main():
         opponent_dynamics=dyn_type,
         opponent_policy=opp_policy,
         opponent_mix=opp_mix,
-        action_dt=1 / 60,
+        action_dt=1 / 100,
         max_episode_time=30.0,
         max_episode_steps=episode_steps,
         max_score=7,
-        dynamics_max_speed=3.0,
-        dynamics_max_accel=30.0,
+        
         frame_stack=frame_stack,
         score_handicap=(current_stage == STAGE_SELFPLAY) if use_curriculum else self_play,
     )

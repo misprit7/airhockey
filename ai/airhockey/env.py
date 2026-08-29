@@ -9,7 +9,7 @@ import gymnasium as gym
 import numpy as np
 from gymnasium import spaces
 
-from airhockey.dynamics import DelayedDynamics, IdealDynamics, MotorDynamics
+from airhockey.dynamics import ProfileDynamics, DelayedDynamics, IdealDynamics, MotorDynamics
 from airhockey.physics import PhysicsState, TableConfig
 from airhockey.scalar_engine import ScalarPhysicsEngine
 from airhockey.recorder import FrameData, Recorder
@@ -40,7 +40,9 @@ class AirHockeyEnv(gym.Env):
         agent_dynamics: MotorDynamics | None = None,
         opponent_dynamics: MotorDynamics | None = None,
         physics_dt: float = 1 / 240,  # 240 Hz physics
-        action_dt: float = 1 / 60,  # 60 Hz agent control
+        # 100 Hz. The measured 7.7 ms loop latency is shorter than a 60 Hz
+        # step, so at 60 the delay cannot be represented at all.
+        action_dt: float = 1 / 100,
         camera_delay: float = 0.0,  # seconds of observation delay
         max_episode_time: float = 60.0,  # seconds
         max_episode_steps: int | None = None,
@@ -59,7 +61,7 @@ class AirHockeyEnv(gym.Env):
         super().__init__()
 
         self.table_config = table_config or TableConfig()
-        self.agent_dynamics = agent_dynamics or IdealDynamics()
+        self.agent_dynamics = agent_dynamics or ProfileDynamics()
         self.opponent_dynamics = opponent_dynamics or DelayedDynamics()
         self.physics_dt = physics_dt
         self.action_dt = action_dt

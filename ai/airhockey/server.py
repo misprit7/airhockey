@@ -13,7 +13,8 @@ from fastapi.responses import StreamingResponse
 from fastapi import FastAPI, WebSocket, WebSocketDisconnect
 from fastapi.responses import HTMLResponse
 
-from airhockey.dynamics import (DelayedDynamics, HardwareDynamics,
+from airhockey.dynamics import (DelayedDynamics, HardwareDynamics,  # noqa: F401
+                                ProfileDynamics,
                                 IdealDynamics, table_mm_to_sim)
 from airhockey.env import AirHockeyEnv
 from airhockey.recorder import Recorder
@@ -225,12 +226,17 @@ async def live_game(ws: WebSocket):
     use_hardware = False
     ui_mode = "control"     # "control" | "sim"; replay never reaches here
     hardware_dynamics = None
-    agent_dynamics = DelayedDynamics(time_constant=0.01)
+    # The UI drives the SAME control law the Teensy runs, so what you see
+    # dragging the mouse is what the machine will do -- jerk-limited, with the
+    # firmware's parking rule. A first-order lag looked close and was not.
+    agent_dynamics = ProfileDynamics()
     env = AirHockeyEnv(
         agent_dynamics=agent_dynamics,
         opponent_policy="follow",
         record=True,
-        action_dt=1 / 60,
+        # 100 Hz: the measured 7.7 ms loop latency is shorter than a 60 Hz
+        # step, so at 60 the delay cannot be represented at all.
+        action_dt=1 / 100,
         still_puck=True,     # a human is driving — see AirHockeyEnv
     )
     obs, info = env.reset()
@@ -271,7 +277,7 @@ async def live_game(ws: WebSocket):
                         if use_instant:
                             env.agent_dynamics = IdealDynamics()
                         else:
-                            env.agent_dynamics = DelayedDynamics(time_constant=0.01)
+                            env.agent_dynamics = ProfileDynamics()
                         env.agent_dynamics.reset(
                             env.engine.state.paddle_agent.x,
                             env.engine.state.paddle_agent.y,
@@ -338,7 +344,7 @@ async def live_game(ws: WebSocket):
                                 except Exception:
                                     pass
                                 hardware_dynamics = None
-                            env.agent_dynamics = DelayedDynamics(time_constant=0.01)
+                            env.agent_dynamics = ProfileDynamics()
                             env.agent_dynamics.reset(
                                 env.engine.state.paddle_agent.x,
                                 env.engine.state.paddle_agent.y,

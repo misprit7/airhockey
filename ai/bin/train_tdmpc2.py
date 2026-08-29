@@ -37,7 +37,7 @@ from common.buffer import Buffer
 from tdmpc2 import TDMPC2
 
 from airhockey.batch_env import BatchAirHockeyEnv
-from airhockey.dynamics import DelayedDynamics
+from airhockey.dynamics import ProfileDynamics, DelayedDynamics
 from airhockey.env import AirHockeyEnv
 from airhockey.recorder import Recorder
 from airhockey.rewards import (
@@ -54,7 +54,7 @@ class AirHockeyTDMPC2Wrapper:
     """Wraps our air hockey env for TD-MPC2 compatibility."""
 
     def __init__(self, use_dynamics: bool = True, stage: int = STAGE_SCORING, frame_stack: int = 1):
-        dynamics = DelayedDynamics() if use_dynamics else None
+        dynamics = ProfileDynamics() if use_dynamics else None
         from airhockey.dynamics import IdealDynamics
         if dynamics is None:
             dynamics = IdealDynamics()
@@ -66,7 +66,7 @@ class AirHockeyTDMPC2Wrapper:
                 agent_dynamics=dynamics,
                 opponent_policy=opponent_policy,
                 record=False,
-                action_dt=1 / 60,
+                action_dt=1 / 100,
                 max_episode_time=30.0,
                 max_score=7,
                 frame_stack=frame_stack,
@@ -152,10 +152,10 @@ def record_game(agent, env_factory, step, recordings_dir, run_name, stage=STAGE_
     if opponent_policy == "external":
         opponent_policy = "idle"  # can't use external agent for recording
     inner_env = AirHockeyEnv(
-        agent_dynamics=DelayedDynamics(),
+        agent_dynamics=ProfileDynamics(),
         opponent_policy=opponent_policy,
         record=True,
-        action_dt=1 / 60,
+        action_dt=1 / 100,
         max_episode_time=30.0,
         max_score=7,
         frame_stack=frame_stack,
@@ -317,7 +317,10 @@ def main():
 
     # Create vectorized batch env
     stage = args.stage
-    dyn_type = "delayed" if args.dynamics else "ideal"
+    # "profile" is the real firmware law, not an approximation of it. "ideal"
+    # teleports the paddle, which trains a policy to command positions no
+    # actuator can reach; it stays available with --no-dynamics for ablations.
+    dyn_type = "profile" if args.dynamics else "ideal"
     opponent_policy = STAGE_OPPONENT[stage]
     frame_stack = args.frame_stack
     batch_env = BatchAirHockeyEnv(
@@ -325,7 +328,7 @@ def main():
         agent_dynamics=dyn_type,
         opponent_dynamics=dyn_type,
         opponent_policy=opponent_policy,
-        action_dt=1 / 60,
+        action_dt=1 / 100,
         max_episode_time=30.0,
         max_score=7,
         frame_stack=frame_stack,

@@ -54,10 +54,27 @@ class BatchAirHockeyEnv:
         self,
         n_envs: int,
         table_config: TableConfig | None = None,
-        agent_dynamics: str = "ideal",  # "ideal" or "delayed"
-        opponent_dynamics: str = "delayed",
-        physics_dt: float = 1 / 240,
-        action_dt: float = 1 / 60,
+        # "profile" is the REAL firmware control law (fw/include/
+        # motion_profile.h, built as a host library and bound in motion.py):
+        # one velocity profile along the direction of travel, jerk-limited,
+        # with the same parking rule the Teensy uses. It is the default
+        # because "ideal" teleports the paddle to its target -- a policy
+        # trained against that learns to command positions no actuator can
+        # reach, and finds out on the hardware.
+        agent_dynamics: str = "profile",   # "ideal" | "delayed" | "profile"
+        opponent_dynamics: str = "profile",
+        # 12 m/s over a 2 ms step is 24 mm, well inside the 80.7 mm at which
+        # puck and paddle touch. At the old 1/240 it was 50 mm and a fast puck
+        # could step straight through the paddle without ever registering a
+        # collision.
+        physics_dt: float = 1 / 500,
+        # 100 Hz, not 60. Measured loop latency is 7.7 ms; at 60 Hz one action
+        # step is 16.7 ms, so the delay is SHORTER than a step and cannot be
+        # represented at all -- the sim would silently model a robot that sees
+        # instantly. At 100 Hz it is almost exactly one step. It is also what
+        # the real control loop can sustain, since the policy has to run
+        # between camera frames.
+        action_dt: float = 1 / 100,
         max_episode_time: float = 60.0,
         max_episode_steps: int | None = None,
         max_score: int = 7,

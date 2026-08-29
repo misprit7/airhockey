@@ -63,7 +63,7 @@ def main():
     batch_env = BatchAirHockeyEnv(
         n_envs=N_ENVS, agent_dynamics="delayed", opponent_dynamics="delayed",
         opponent_policy="idle", action_dt=1/60, max_episode_time=30.0,
-        max_score=7, dynamics_max_speed=3.0, dynamics_max_accel=30.0,
+        max_score=7, 
     )
     reward_shaper = BatchRewardShaper(N_ENVS, stage=STAGE_SCORING)
 

@@ -108,6 +108,51 @@ class IdealDynamics(MotorDynamics):
 
 
 @dataclass
+class ProfileDynamics(MotorDynamics):
+    """The REAL firmware motion law, for a single paddle.
+
+    Wraps the same `fw/include/motion_profile.h` the Teensy runs, built as a
+    host library and bound through motion.py -- so the web UI and a scalar
+    env move the paddle exactly the way the machine does, jerk limit and
+    parking rule included, rather than through a first-order lag that
+    resembles it.
+
+    ACCELERATION IS STATE. The profile slews it to bound jerk, so the same
+    command produces different motion depending on what the acceleration was.
+    That is why this holds a CartState rather than recomputing from position.
+    """
+
+    max_speed: float = MAX_SPEED_M_S
+    max_accel: float = MAX_ACCEL_M_S2
+    ramp_s: float = 0.003          # matches the firmware's RAMP default
+    x: float = 0.0
+    y: float = 0.0
+
+    def __post_init__(self):
+        from airhockey.motion import CartState
+        self._cart = CartState(1)
+
+    def reset(self, x: float, y: float) -> None:
+        self.x, self.y = x, y
+        c = self._cart
+        c.x[0], c.y[0] = x * 1000.0, y * 1000.0
+        c.vx[0] = c.vy[0] = c.ax[0] = c.ay[0] = 0.0
+
+    def update(self, target_x: float, target_y: float,
+               dt: float) -> tuple[float, float]:
+        from airhockey.motion import DEFAULT_SIM_DT, advance
+        c = self._cart
+        substeps = max(1, int(round(dt / DEFAULT_SIM_DT)))
+        advance(c,
+                np.float32([target_x * 1000.0]), np.float32([target_y * 1000.0]),
+                self.max_speed * 1000.0, self.max_accel * 1000.0,
+                self.ramp_s, dt / substeps, substeps)
+        self.x = float(c.x[0]) / 1000.0
+        self.y = float(c.y[0]) / 1000.0
+        return self.x, self.y
+
+
+@dataclass
 class DelayedDynamics(MotorDynamics):
     """First-order low-pass filter dynamics with velocity and acceleration limits.
 

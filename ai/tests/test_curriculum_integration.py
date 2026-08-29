@@ -346,11 +346,23 @@ class TestCameraDelay:
             "Delayed obs should differ from non-delayed after several steps"
 
     def test_delay_range_per_env(self):
-        env = _make_env(camera_delay=(1.0 / 60, 3.0 / 60), n_envs=16)
+        """Delay in SECONDS must convert to the right number of steps.
+
+        This used to assert [1, 3] against a camera_delay of 1/60..3/60 s,
+        which silently assumed action_dt was 1/60. The action rate is now
+        1/100 -- 60 Hz cannot represent the measured 7.7 ms latency, since one
+        step is longer than the whole delay -- so the same seconds are a
+        different number of steps. Derive the bounds from the env's own rate
+        rather than pinning the rate inside an unrelated test.
+        """
+        lo_s, hi_s = 1.0 / 60, 3.0 / 60
+        env = _make_env(camera_delay=(lo_s, hi_s), n_envs=16)
         env.reset(seed=42)
-        # Delay steps should be in [1, 3]
-        assert np.all(env._delay_steps >= 1)
-        assert np.all(env._delay_steps <= 3)
+        lo = max(0, round(lo_s / env.action_dt))
+        hi = max(0, round(hi_s / env.action_dt))
+        assert np.all(env._delay_steps >= lo), env._delay_steps
+        assert np.all(env._delay_steps <= hi), env._delay_steps
+        assert hi > lo, "range collapsed — the rate makes these indistinguishable"
 
 
 # ---------------------------------------------------------------------------

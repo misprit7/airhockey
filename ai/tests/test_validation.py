@@ -19,7 +19,7 @@ class TestBatchRewardShaping:
     def _make_scalar_env(self):
         return ShapedRewardWrapper(
             AirHockeyEnv(
-                agent_dynamics=DelayedDynamics(max_speed=3.0, max_accel=30.0),
+                agent_dynamics=DelayedDynamics(),
                 opponent_policy="idle",
                 record=False,
                 action_dt=1 / 60,
@@ -181,7 +181,7 @@ class TestBatchEnvConsistency:
         """Delayed dynamics should cause paddle to lag behind target."""
         env = BatchAirHockeyEnv(
             n_envs=1, agent_dynamics="delayed",
-            dynamics_max_speed=3.0, dynamics_max_accel=30.0,
+            
         )
         obs = env.reset(seed=42)
 

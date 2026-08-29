@@ -35,7 +35,7 @@ from common.buffer import Buffer
 from common import MODEL_SIZE
 from tdmpc2 import TDMPC2
 
-from airhockey.dynamics import DelayedDynamics, IdealDynamics
+from airhockey.dynamics import ProfileDynamics, DelayedDynamics, IdealDynamics
 from airhockey.env import AirHockeyEnv
 from airhockey.recorder import Recorder
 from airhockey.rewards import ShapedRewardWrapper, STAGE_SCORING
@@ -46,13 +46,13 @@ torch.set_float32_matmul_precision('high')
 
 
 def make_selfplay_env(use_dynamics=True):
-    dynamics = DelayedDynamics() if use_dynamics else IdealDynamics()
+    dynamics = ProfileDynamics() if use_dynamics else IdealDynamics()
     inner = AirHockeyEnv(
         agent_dynamics=dynamics,
-        opponent_dynamics=DelayedDynamics() if use_dynamics else IdealDynamics(),
+        opponent_dynamics=ProfileDynamics() if use_dynamics else IdealDynamics(),
         opponent_policy="external",
         record=False,
-        action_dt=1 / 60,
+        action_dt=1 / 100,
         max_episode_time=30.0,
         max_score=7,
     )
@@ -63,11 +63,11 @@ def make_selfplay_env(use_dynamics=True):
 def record_game(agent, opponent, step, recordings_dir, run_name, use_dynamics=True):
     """Record a self-play game for the web UI."""
     inner = AirHockeyEnv(
-        agent_dynamics=DelayedDynamics(),
-        opponent_dynamics=DelayedDynamics(),
+        agent_dynamics=ProfileDynamics(),
+        opponent_dynamics=ProfileDynamics(),
         opponent_policy="external",
         record=True,
-        action_dt=1 / 60,
+        action_dt=1 / 100,
         max_episode_time=30.0,
         max_score=7,
     )
