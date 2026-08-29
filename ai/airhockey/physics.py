@@ -31,16 +31,17 @@ class TableConfig:
     paddle_radius: float = 0.04  # 80mm diameter paddle
     puck_mass: float = 0.015  # 15g puck
     paddle_mass: float = 0.17  # 170g paddle
-    # MEASURED 2026-08-23 from 78 free glides (vision/bin/fit_puck.py).
+    # ROLLING term only, mu, MEASURED over two sessions. The quadratic model
+    # is now actually USED (see _apply_friction) rather than stored beside a
+    # constant that ignored it, so this is no longer the constant-model
+    # equivalent -- it is the v-independent part alone.
     #
-    # This is the CONSTANT-model equivalent and is not a good model. The real
-    # deceleration is overwhelmingly AERODYNAMIC: only 22 mm/s^2 of rolling
-    # (mu 0.0022, which is what an air cushion should give) plus 3.71e-5 * v^2
-    # of drag. At 1 m/s that is 59 mm/s^2 and at 6 m/s it is 1358 -- a factor
-    # of 23 across the range a policy will see. A single coefficient cannot
-    # span that, and a struck puck is the regime that matters. See
-    # PUCK_DRAG_B; the quadratic halves the residual (215 vs 350 rms).
-    puck_friction: float = 0.0162
+    # WEAKLY IDENTIFIED, deliberately kept anyway: the fit gives 14.5 +- 7.1
+    # mm/s^2, consistent with zero at 2 sigma, because it is an intercept
+    # extrapolated from glides that are mostly fast. It is small enough that
+    # being wrong by its own error bar moves a 1 m/s puck by 15%% and a 6 m/s
+    # puck by 0.6%%. To pin it down, record long SLOW glides (200-600 mm/s).
+    puck_friction: float = 0.0015
     # MEASURED 2026-08-23 from 53 wall contacts, all four rails agreeing
     # (0.756 / 0.777 / 0.756 / 0.811) once goal-mouth events were excluded --
     # a puck arriving at the 380 mm goal does not bounce, and mixing those in
@@ -50,7 +51,26 @@ class TableConfig:
     # Also speed-dependent: -0.039 per m/s over the 0.7-7.3 m/s measured, so
     # ~0.79 for a drifting puck and ~0.53 for a hard shot. Not yet modelled.
     wall_restitution: float = 0.785
-    paddle_restitution: float = 0.9  # energy retained on paddle hit
+    # STILL UNMEASURED. Two recordings tried and neither can answer it: a
+    # hand-SWUNG mallet is not a free body, and the arm keeps doing work
+    # through the contact. The 2026-08-29 session came back with recoil at
+    # 3.54x the puck's impact speed, which no free mass struck by a lighter
+    # one can do, so the 0.507 it reported has the swing folded into it.
+    #
+    # 0.9 is a guess and is left as one on purpose, rather than replaced by a
+    # measured-looking number that is really a measurement of somebody's arm.
+    # To fix: shoot the puck at a mallet held still, or resting free.
+    paddle_restitution: float = 0.9
+
+    # Fraction of TANGENTIAL velocity surviving a rail bounce. 1.0 is a
+    # frictionless rail and specular reflection, which is what the sim did
+    # until now and is wrong by a third.
+    #
+    # Measured 0.678 (2026-08-23) and 0.645 (2026-08-29); per-rail on the
+    # later session 0.603 / 0.646 / 0.726. This is where the tangential
+    # momentum goes, and it does NOT come back as spin -- the puck needs no
+    # orientation state, only this coefficient.
+    wall_tangential: float = 0.66
     # MEASURED 380 mm, centred on each end rail. Derived from the canonical
     # geometry rather than restated, since it is a fact about the table. The
     # 0.25 that was here predates the table existing and was 34% narrow --
@@ -61,11 +81,25 @@ class TableConfig:
     # is goal matches, which is what actually governs whether a shot scores.
     goal_width: float = (_geom.GOAL_WIDTH_MM
                          / (_geom.RAIL_MAX_Y - _geom.RAIL_MIN_Y))
-    max_puck_speed: float = 9.0  # m/s; measured glides reached 8.7
+    # MEASURED peak 9.7 m/s in the 2026-08-29 session, so 9.0 was clamping
+    # below what a human actually produces -- and the clamp is invisible: the
+    # puck just quietly never goes as fast as it does on the table. Raised
+    # with headroom, since this is a safety rail against integrator blow-up,
+    # not a physical fact.
+    max_puck_speed: float = 12.0
 
     # Aerodynamic drag, decel = puck_friction*g + PUCK_DRAG_B * v^2, in SI.
-    # Measured b = 1.853e-5 per mm; * 1000 for metres.
-    PUCK_DRAG_B: float = 3.710e-2
+    # Measured b per mm, times 1000 for metres.
+    #
+    # REPRODUCED ACROSS TWO SESSIONS with different puck marking (one dot,
+    # then four) and the same validated fitter: 3.539e-5 +- 9.9e-7 on
+    # 2026-08-23 and 3.433e-5 +- 7.5e-7 on 2026-08-29. Those agree inside one
+    # sigma, which is better evidence than either alone -- the tracking method
+    # changed between them and the answer did not. This is their mean.
+    #
+    # It is the dominant term everywhere a policy plays: at 6 m/s it is
+    # 1250 mm/s^2 against 15 of rolling.
+    PUCK_DRAG_B: float = 3.48e-2
 
 
 @dataclass

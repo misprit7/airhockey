@@ -29,6 +29,8 @@ class BatchPhysicsEngine:
         cfg = self.config
         self.puck_friction = np.full(n_envs, cfg.puck_friction)
         self.wall_restitution = np.full(n_envs, cfg.wall_restitution)
+        self.wall_tangential = np.full(n_envs, cfg.wall_tangential)
+        self.drag_b = np.full(n_envs, cfg.PUCK_DRAG_B)
         self.paddle_restitution = np.full(n_envs, cfg.paddle_restitution)
         self.puck_mass = np.full(n_envs, cfg.puck_mass)
 
@@ -75,9 +77,28 @@ class BatchPhysicsEngine:
 
         # Domain randomization: per-env physics parameters
         if self.domain_randomize:
-            self.puck_friction[idx] = rng.uniform(0.005, 0.05, size=n)
-            self.wall_restitution[idx] = rng.uniform(0.7, 0.95, size=n)
-            self.paddle_restitution[idx] = rng.uniform(0.75, 0.98, size=n)
+            # Ranges centred on what was MEASURED, with a width that covers
+            # the spread actually observed rather than a round guess. The old
+            # ones predate the table: friction 0.005-0.05 is 3x to 33x the
+            # rolling term, so most sampled envs modelled a surface the puck
+            # has never been on.
+            #
+            # friction: the rolling term is 0.0015 and only known to +-0.0007,
+            #           so this spans roughly its own error bar.
+            # drag:     two sessions gave 3.43e-2 and 3.54e-2. Widened well
+            #           past that, since it is the term that matters most and
+            #           the policy should not be brittle to it.
+            # wall e:   per-rail 0.756-0.813, and it falls ~0.012 per m/s of
+            #           impact speed over a 9 m/s range, so the range has to
+            #           cover the speed dependence the sim does not model.
+            # tangential: 0.603-0.726 across rails and sessions.
+            # paddle e: UNMEASURED, so this stays deliberately wide -- the one
+            #           parameter randomisation is genuinely papering over.
+            self.puck_friction[idx] = rng.uniform(0.0005, 0.0030, size=n)
+            self.drag_b[idx] = rng.uniform(0.030, 0.040, size=n)
+            self.wall_restitution[idx] = rng.uniform(0.72, 0.86, size=n)
+            self.wall_tangential[idx] = rng.uniform(0.58, 0.76, size=n)
+            self.paddle_restitution[idx] = rng.uniform(0.60, 0.95, size=n)
             self.puck_mass[idx] = rng.uniform(0.01, 0.04, size=n)
 
         # Randomize puck position and velocity
@@ -165,8 +186,16 @@ class BatchPhysicsEngine:
     # --- Vectorized physics internals ---
 
     def _apply_friction(self, dt: float) -> None:
+        """Rolling plus AERODYNAMIC drag: decel = mu*g + b*v^2.
+
+        The v^2 term is the whole story above walking pace. A constant
+        deceleration -- which is what this was -- is about 3x too much on a
+        drifting puck and 8x too little on a struck one, and a struck puck is
+        the only regime a policy plays in. Measured over two sessions six days
+        apart with different puck marking; see TableConfig.PUCK_DRAG_B.
+        """
         speed = np.hypot(self.puck_vx, self.puck_vy)
-        friction_decel = self.puck_friction * 9.81  # per-env [N]
+        friction_decel = self.puck_friction * 9.81 + self.drag_b * speed ** 2
         new_speed = np.maximum(0.0, speed - friction_decel * dt)
         safe_speed = np.maximum(speed, 1e-8)
         factor = np.where(speed > 1e-6, new_speed / safe_speed, 0.0)
@@ -181,6 +210,12 @@ class BatchPhysicsEngine:
         cfg = self.config
         r = cfg.puck_radius
         e = self.wall_restitution  # per-env [N]
+        # The rail also takes a THIRD of the tangential velocity. Reflection
+        # was specular here, which makes every bank shot leave at the wrong
+        # angle -- and banking is precisely the skill worth learning. The
+        # momentum is lost to friction, not stored as spin, so a coefficient
+        # is the entire model and the puck needs no orientation state.
+        t = self.wall_tangential  # per-env [N]
         goal_left = (cfg.width - cfg.goal_width) / 2
         goal_right = (cfg.width + cfg.goal_width) / 2
 
@@ -188,11 +223,13 @@ class BatchPhysicsEngine:
         hit_left = self.puck_x - r < 0
         self.puck_x = np.where(hit_left, r, self.puck_x)
         self.puck_vx = np.where(hit_left, np.abs(self.puck_vx) * e, self.puck_vx)
+        self.puck_vy = np.where(hit_left, self.puck_vy * t, self.puck_vy)
 
         # Right wall
         hit_right = self.puck_x + r > cfg.width
         self.puck_x = np.where(hit_right, cfg.width - r, self.puck_x)
         self.puck_vx = np.where(hit_right, -np.abs(self.puck_vx) * e, self.puck_vx)
+        self.puck_vy = np.where(hit_right, self.puck_vy * t, self.puck_vy)
 
         # Bottom wall (agent's side) — skip goal opening
         hit_bottom = self.puck_y - r < 0
@@ -200,6 +237,7 @@ class BatchPhysicsEngine:
         bounce_bottom = hit_bottom & ~in_goal_bottom
         self.puck_y = np.where(bounce_bottom, r, self.puck_y)
         self.puck_vy = np.where(bounce_bottom, np.abs(self.puck_vy) * e, self.puck_vy)
+        self.puck_vx = np.where(bounce_bottom, self.puck_vx * t, self.puck_vx)
 
         # Top wall (opponent's side) — skip goal opening
         hit_top = self.puck_y + r > cfg.height
@@ -207,6 +245,7 @@ class BatchPhysicsEngine:
         bounce_top = hit_top & ~in_goal_top
         self.puck_y = np.where(bounce_top, cfg.height - r, self.puck_y)
         self.puck_vy = np.where(bounce_top, -np.abs(self.puck_vy) * e, self.puck_vy)
+        self.puck_vx = np.where(bounce_top, self.puck_vx * t, self.puck_vx)
 
     def _collide_paddle(
         self,

@@ -39,6 +39,34 @@ you at the table for about an hour total.
 
 ---
 
+## Sim now runs the measured physics — 2026-08-29
+
+| constant | value | evidence |
+|---|---|---|
+| `PUCK_DRAG_B` | 3.48e-2 /m | 3.539e-5 and 3.433e-5 per mm across TWO sessions with different puck marking; agree inside 1σ |
+| `wall_restitution` | 0.785 | 0.781 (48 contacts) and 0.787 (46) |
+| `wall_tangential` | 0.66 | **new term** — reflection was specular, which is wrong by a third on every bank shot |
+| `puck_friction` | 0.0015 | rolling only; weakly identified (±0.0007) and dwarfed by drag above ~0.5 m/s |
+| `max_puck_speed` | 12.0 | was 9.0, silently clamping below the measured 9.7 peak |
+| `paddle_restitution` | 0.9 | **STILL A GUESS — see below** |
+
+Two MODEL changes, not just constants: `_apply_friction` is now `mu*g + b*v²`
+(was a constant deceleration, 3× too much at 0.3 m/s and 8× too little at
+6 m/s), and `_collide_walls` takes tangential momentum (was specular).
+Domain-randomisation ranges recentred on the measurements — the old friction
+range sampled 3× to 33× the real rolling term.
+
+`ai/tests/test_measured_physics.py` pins all of it against the measured
+numbers. It exists because both model changes broke NOTHING in the existing
+82 tests, which means none of them constrained the physics.
+
+### The one real gap: paddle restitution
+Two recordings have tried and neither can answer it. A hand-SWUNG mallet is
+not a free body — the 2026-08-29 session gave recoil at 3.54× the puck's
+impact speed, which no free mass struck by a lighter one can do, so the
+measured 0.507 has the arm's work folded in. **Shoot the puck at a mallet held
+still, or resting free on the table.** Everything else is ready to train.
+
 ## Measured so far
 
 **Loop latency — DONE 2026-08-23.** `command 0.11 ms one way`, `sensing 7.7 ms
