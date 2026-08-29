@@ -43,6 +43,7 @@ class AirHockeyEnv(gym.Env):
     OBS_DIM = _B.OBS_DIM
     ROBOT_SIDE = _B.ROBOT_SIDE
     HUMAN_SIDE = _B.HUMAN_SIDE
+    WS_PENALTY_PER_UNIT = _B.WS_PENALTY_PER_UNIT
     del _B
 
     metadata = {"render_modes": ["human"]}
@@ -116,13 +117,15 @@ class AirHockeyEnv(gym.Env):
             high=np.array([1.0, 1.0], dtype=np.float32),
             dtype=np.float32,
         )
-        # Real position bounds for rescaling. The MACHINE's box, not the
-        # table half -- see dynamics.workspace_in_sim. The batch env was
-        # fixed first and this was missed, which is exactly how the two ended
-        # up disagreeing about where the paddle may go.
+        # Real position bounds for rescaling: the FULL half, matching
+        # BatchAirHockeyEnv. The machine's box is enforced in step() by
+        # capping the target at the closest reachable point and charging
+        # WS_PENALTY_PER_UNIT for the overshoot -- see the batch env's
+        # action-bounds comment for why the mapping is not the box itself.
         self._ws = workspace_in_sim(cfg.width, cfg.height / 2)
-        self._action_low = np.array([self._ws["min_x"], self._ws["min_y"]])
-        self._action_high = np.array([self._ws["max_x"], self._ws["max_y"]])
+        self._action_low = np.array([cfg.paddle_radius, cfg.paddle_radius])
+        self._action_high = np.array(
+            [cfg.width - cfg.paddle_radius, cfg.height / 2 - cfg.paddle_radius])
 
         # Camera delay buffer
         self._obs_buffer: deque[np.ndarray] = deque()
@@ -218,6 +221,15 @@ class AirHockeyEnv(gym.Env):
 
         state = self.engine.state
         reward = 0.0
+
+        # Cap unreachable commands at the closest reachable point and charge
+        # for the overshoot -- same rule, same constant as the batch env.
+        if self._ws is not None:
+            cx = min(max(target_x, self._ws["min_x"]), self._ws["max_x"])
+            cy = min(max(target_y, self._ws["min_y"]), self._ws["max_y"])
+            reward -= self.WS_PENALTY_PER_UNIT * float(
+                np.hypot(target_x - cx, target_y - cy))
+            target_x, target_y = cx, cy
 
         for _ in range(n_substeps):
             # Update agent paddle through dynamics

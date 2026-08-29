@@ -538,3 +538,52 @@ def test_a_stationary_opponent_stays_where_it_was_placed():
         now = e.engine.state.paddle_opponent
         assert abs(now.x - placed[0]) < 1e-6 and abs(now.y - placed[1]) < 1e-6, \
             f"{policy} opponent drifted from {placed} to ({now.x}, {now.y})"
+
+
+# ── Actions speak table coordinates; the box is learned, not baked in ────
+
+def test_unreachable_commands_are_capped_and_fined():
+    """The action space spans the full half so one space serves both bodies
+    in self-play; the machine's box is enforced by capping the target at the
+    closest reachable point and charging for the overshoot."""
+    from airhockey.batch_env import BatchAirHockeyEnv
+    e = BatchAirHockeyEnv(n_envs=3, agent_dynamics="ideal")
+    e.reset(seed=2)
+    # Park the puck away from everything so no goal/contact reward interferes.
+    e.engine.puck_x[:], e.engine.puck_y[:] = 0.5, 1.5
+    e.engine.puck_vx[:], e.engine.puck_vy[:] = 0.0, 0.0
+
+    # env0: mid-box (reachable). env1: own goal line (unreachable).
+    # env2: the half's far corner (unreachable, worst case).
+    acts = np.array([[0.0, 0.0], [0.0, -1.0], [1.0, -1.0]], dtype=np.float32)
+    _, r, _, _, info = e.step(acts)
+
+    assert r[0] == 0.0, f"reachable command was fined: {r[0]}"
+    assert r[1] < 0.0 and r[2] < 0.0, "unreachable commands were free"
+    assert r[2] < r[1], "fine is not proportional to the overshoot"
+    assert r[2] > -0.05, f"fine {r[2]} is not 'slight'"
+    np.testing.assert_allclose(info["ws_overshoot"][0], 0.0)
+
+    # The paddle itself was capped at the closest reachable point.
+    ws = e._ws
+    np.testing.assert_allclose(e.engine.paddle_agent_y[1], ws["min_y"], atol=1e-6)
+    np.testing.assert_allclose(e.engine.paddle_agent_x[2], ws["max_x"], atol=1e-6)
+    np.testing.assert_allclose(e.engine.paddle_agent_y[2], ws["min_y"], atol=1e-6)
+
+
+def test_scalar_env_fines_unreachable_commands_identically():
+    """Same rule, same constant, or the UI and training drift apart again."""
+    from airhockey.batch_env import BatchAirHockeyEnv
+    from airhockey.env import AirHockeyEnv
+    assert AirHockeyEnv.WS_PENALTY_PER_UNIT == BatchAirHockeyEnv.WS_PENALTY_PER_UNIT
+
+    s = AirHockeyEnv(agent_dynamics=None, still_puck=True)
+    s.reset(seed=2)
+    _, r, _, _, _ = s.step(np.array([0.0, -1.0], dtype=np.float32))
+    b = BatchAirHockeyEnv(n_envs=1)
+    b.reset(seed=2)
+    b.engine.puck_x[:], b.engine.puck_y[:] = 0.5, 1.5
+    b.engine.puck_vx[:], b.engine.puck_vy[:] = 0.0, 0.0
+    _, rb, _, _, _ = b.step(np.array([[0.0, -1.0]], dtype=np.float32))
+    assert r < 0.0 and rb[0] < 0.0
+    np.testing.assert_allclose(r, rb[0], atol=1e-9)

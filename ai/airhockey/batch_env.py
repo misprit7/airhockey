@@ -100,6 +100,17 @@ class BatchAirHockeyEnv:
     ROBOT_SIDE = 1.0
     HUMAN_SIDE = 0.0
 
+    # Reward charged per sim-unit of commanded overshoot past the reachable
+    # box, per step. PROPORTIONAL rather than a flat fine, deliberately: the
+    # robot's best defensive station is often ON the box's bottom edge, and a
+    # cliff penalty right at the boundary would fine the tiny action noise of
+    # standing exactly where the policy should stand. Proportional cost at
+    # the boundary is zero, and grows with how far past it the command
+    # pretends to go -- a gradient pointing back to reachable ground.
+    # Worst case (far corner of the half from the nearest box corner) is
+    # ~0.34 sim-units -> -0.007/step, small next to the 0.1 proximity term.
+    WS_PENALTY_PER_UNIT = 0.02
+
     def __init__(
         self,
         n_envs: int,
@@ -191,17 +202,28 @@ class BatchAirHockeyEnv:
         self.n_substeps = max(1, int(action_dt / physics_dt))
         self.sub_dt = action_dt / self.n_substeps
 
-        # Action rescaling bounds
+        # Action rescaling bounds: the FULL half, for both sides and both
+        # settings of constrain_to_workspace.
+        #
+        # The action space used to map onto the reachable box, so the policy
+        # could not even EXPRESS an unreachable target. That changed for two
+        # reasons. First, self-play: one network drives both bodies through
+        # one action space, and the human side genuinely reaches the whole
+        # half -- mapping the shared space onto the robot's box would shrink
+        # the human's reach by the robot's limits. Second, the box is a
+        # per-machine fact that may move (respooling, anchor changes), and a
+        # policy whose action UNITS are the box has to be retrained when it
+        # does; one that speaks table coordinates and learns the boundary
+        # from a penalty does not.
+        #
+        # Unreachable commands are clamped to the nearest reachable point and
+        # charged WS_PENALTY_PER_UNIT per sim-unit of overshoot in step().
         self.constrain_to_workspace = constrain_to_workspace
         self._ws = (workspace_in_sim(cfg.width, cfg.height / 2)
                     if constrain_to_workspace else None)
-        if self._ws is not None:
-            self._action_low = np.array([self._ws["min_x"], self._ws["min_y"]])
-            self._action_high = np.array([self._ws["max_x"], self._ws["max_y"]])
-        else:
-            self._action_low = np.array([cfg.paddle_radius, cfg.paddle_radius])
-            self._action_high = np.array(
-                [cfg.width - cfg.paddle_radius, cfg.height / 2 - cfg.paddle_radius]
+        self._action_low = np.array([cfg.paddle_radius, cfg.paddle_radius])
+        self._action_high = np.array(
+            [cfg.width - cfg.paddle_radius, cfg.height / 2 - cfg.paddle_radius]
         )
 
         # Observation bounds
@@ -486,6 +508,20 @@ class BatchAirHockeyEnv:
         cfg = self.table_config
         rewards = np.zeros(self.n_envs)
 
+        # The action space spans the full half; the machine does not. An
+        # unreachable command is capped at the closest reachable point --
+        # exactly what the firmware would do -- and charged for the overshoot,
+        # so the boundary is learned in sim rather than discovered on the
+        # hardware as a paddle that silently stops short.
+        if self._ws is not None:
+            cx = np.clip(target_x, self._ws["min_x"], self._ws["max_x"])
+            cy = np.clip(target_y, self._ws["min_y"], self._ws["max_y"])
+            ws_overshoot = np.hypot(target_x - cx, target_y - cy)
+            rewards -= self.WS_PENALTY_PER_UNIT * ws_overshoot
+            target_x, target_y = cx, cy
+        else:
+            ws_overshoot = np.zeros(self.n_envs)
+
         for _ in range(self.n_substeps):
             dt = self.sub_dt
 
@@ -553,6 +589,10 @@ class BatchAirHockeyEnv:
             "time": self.engine.time.copy(),
             "puck_vx": self.engine.puck_vx.copy(),
             "puck_vy": self.engine.puck_vy.copy(),
+            # How far past the reachable box this step's command pointed.
+            # Worth watching in training: if it does not fall over time, the
+            # policy is not learning the boundary, just paying the fine.
+            "ws_overshoot": ws_overshoot,
         }
 
         return obs, rewards, terminated, truncated, info
