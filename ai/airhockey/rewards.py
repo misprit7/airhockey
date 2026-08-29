@@ -110,6 +110,8 @@ class ShapedRewardWrapper(gym.Wrapper):
         self._prev_puck_y: float | None = None
         self._prev_puck_speed: float | None = None
         self._contact_count: int = 0
+        self._prev_score_agent: int = 0
+        self._prev_score_opp: int = 0
 
     def reset(self, **kwargs):
         obs, info = self.env.reset(**kwargs)
@@ -118,6 +120,9 @@ class ShapedRewardWrapper(gym.Wrapper):
         puck_vy = info.get("puck_vy", obs[3])
         self._prev_puck_speed = float(np.hypot(puck_vx, puck_vy))
         self._contact_count = 0
+        # Baseline from info, not zero: score handicap starts games at 0-3.
+        self._prev_score_agent = info.get("score_agent", 0)
+        self._prev_score_opp = info.get("score_opponent", 0)
         return obs, info
 
     def step(
@@ -167,10 +172,20 @@ class ShapedRewardWrapper(gym.Wrapper):
             if pad_y < puck_y:
                 shaped_reward += self.defense_weight * x_alignment
 
-        # Goals
-        if reward > 0 and self.goal_reward > 0:
+        # Goals, detected from the SCOREBOARD, not the sign of the base
+        # reward. The sign check was a contract ("raw reward != 0 means a
+        # goal happened") that the env quietly stopped honouring twice: the
+        # stuck-puck penalty (-0.5) has always read as a phantom conceded
+        # goal, and the workspace-overshoot penalty made every out-of-reach
+        # command bill -20 -- a random policy earned -36k a game while
+        # actually up 2-0.
+        goal_for = info["score_agent"] > self._prev_score_agent
+        goal_against = info["score_opponent"] > self._prev_score_opp
+        self._prev_score_agent = info["score_agent"]
+        self._prev_score_opp = info["score_opponent"]
+        if goal_for and self.goal_reward > 0:
             shaped_reward += self.goal_reward
-        elif reward < 0 and self.goal_penalty != 0:
+        elif goal_against and self.goal_penalty != 0:
             shaped_reward += self.goal_penalty
 
         # Entropy bonus
@@ -182,7 +197,7 @@ class ShapedRewardWrapper(gym.Wrapper):
         self._prev_puck_speed = puck_speed
 
         # Reset potentials after goal
-        if reward != 0:
+        if goal_for or goal_against:
             self._prev_puck_y = obs[1]  # puck_y
             self._contact_count = 0
 
@@ -242,6 +257,12 @@ class BatchRewardShaper:
         self._prev_puck_y = np.zeros(n_envs)
         self._prev_puck_speed = np.zeros(n_envs)
         self._contact_count = np.zeros(n_envs, dtype=np.int32)
+        # Scoreboard as of the previous step, for goal detection by delta.
+        # A DROP in score (episode reset, or a handicap re-deal) is not a
+        # goal; only an increase is. No reset hook needed: after any reset
+        # the delta is <= 0 and the baseline self-corrects in one step.
+        self._prev_score_agent = np.zeros(n_envs, dtype=np.int64)
+        self._prev_score_opp = np.zeros(n_envs, dtype=np.int64)
         self._anneal_decay = 0.0  # 0 = no decay, 1 = full decay
         self._penalty_ramp = 1.0  # 1 = full penalty by default; set_progress() ramps from 0
 
@@ -361,12 +382,28 @@ class BatchRewardShaper:
             x_align = np.exp(-3.0 * np.abs(puck_x - pad_x))
             shaped += aux_scale * self.defense_weight * approaching * between * x_align
 
-        # Goals (NOT annealed)
+        # Goals (NOT annealed), detected from the SCOREBOARD rather than the
+        # sign of the raw reward. The sign check assumed "raw reward != 0
+        # means a goal" -- but the stuck-puck penalty (-0.5) has always read
+        # as a phantom conceded goal, and the workspace-overshoot penalty
+        # turned every out-of-reach command into a -20. See
+        # ShapedRewardWrapper for the scalar twin of this fix.
+        if info is not None and "score_agent" in info:
+            goal_for = info["score_agent"] > self._prev_score_agent
+            goal_against = info["score_opponent"] > self._prev_score_opp
+            self._prev_score_agent[:] = info["score_agent"]
+            self._prev_score_opp[:] = info["score_opponent"]
+        else:
+            # No scoreboard offered (bare-bones callers): the sign is all
+            # there is. Only trustworthy if the env's raw reward carries
+            # nothing but goals.
+            goal_for = raw_rewards > 0
+            goal_against = raw_rewards < 0
         if self.goal_reward > 0:
-            shaped += np.where(raw_rewards > 0, self.goal_reward, 0.0)
+            shaped += np.where(goal_for, self.goal_reward, 0.0)
         if self.goal_penalty != 0:
             ramped_penalty = self.goal_penalty * self._penalty_ramp
-            shaped += np.where(raw_rewards < 0, ramped_penalty, 0.0)
+            shaped += np.where(goal_against, ramped_penalty, 0.0)
 
         # Entropy bonus (NOT annealed)
         if self.entropy_weight > 0 and actions is not None:
@@ -377,7 +414,7 @@ class BatchRewardShaper:
         self._prev_puck_speed[:] = puck_speed
 
         # Reset potentials and contact count after goals
-        goal_mask = raw_rewards != 0
+        goal_mask = goal_for | goal_against
         if np.any(goal_mask):
             self._prev_puck_y[goal_mask] = obs[goal_mask, 1]  # puck_y
             self._contact_count[goal_mask] = 0

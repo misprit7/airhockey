@@ -587,3 +587,48 @@ def test_scalar_env_fines_unreachable_commands_identically():
     _, rb, _, _, _ = b.step(np.array([[0.0, -1.0]], dtype=np.float32))
     assert r < 0.0 and rb[0] < 0.0
     np.testing.assert_allclose(r, rb[0], atol=1e-9)
+
+
+def test_no_phantom_goal_penalty_for_unreachable_commands():
+    """A conceded goal costs -20; commanding past the reachable box must not.
+
+    The shapers detected goals from the SIGN of the base reward, and the
+    workspace-overshoot penalty made that sign negative on every out-of-box
+    command -- a random policy earned -36k shaped reward while actually
+    winning 2-0, and the first training run learned from those numbers.
+    """
+    from airhockey.dynamics import ProfileDynamics
+    from airhockey.env import AirHockeyEnv
+    from airhockey.rewards import BatchRewardShaper, ShapedRewardWrapper, STAGE_SCORING
+
+    env = ShapedRewardWrapper(
+        AirHockeyEnv(agent_dynamics=ProfileDynamics(), opponent_policy="idle",
+                     still_puck=True),
+        stage=STAGE_SCORING)
+    env.reset(seed=0)
+    # Hammer the far corner of the half -- far outside the box -- with the
+    # puck parked dead centre: no goals can occur.
+    total = 0.0
+    for _ in range(100):
+        _, r, _, _, info = env.step(np.array([1.0, -1.0], dtype=np.float32))
+        total += r
+    assert info["score_agent"] == 0 and info["score_opponent"] == 0
+    assert total > -2.0, (
+        f"{total:.1f} over 100 goalless steps — the -20 goal penalty is "
+        "firing on the workspace fine again")
+
+    # And the batch shaper agrees when handed a scoreboard.
+    from airhockey.batch_env import BatchAirHockeyEnv
+    e = BatchAirHockeyEnv(n_envs=4)
+    obs = e.reset(seed=0)
+    shaper = BatchRewardShaper(4, stage=STAGE_SCORING)
+    info = {"puck_vx": np.zeros(4), "puck_vy": np.zeros(4),
+            "score_agent": np.zeros(4), "score_opponent": np.zeros(4)}
+    shaper.reset(obs, info=info)
+    raw = np.full(4, -0.007)      # ws fine, no goal anywhere
+    shaped = shaper.compute(obs, raw, info=info)
+    assert np.all(shaped > -1.0), shaped
+    # A real concession -- scoreboard moved -- still costs the full penalty.
+    info2 = dict(info, score_opponent=np.ones(4))
+    shaped = shaper.compute(obs, np.full(4, -1.0), info=info2)
+    assert np.all(shaped <= -19.0), shaped

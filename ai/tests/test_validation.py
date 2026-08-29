@@ -82,10 +82,16 @@ class TestBatchRewardShaping:
             scalar_obs = np.array(new_scalar_obs)
             scalar_shaped = np.array(scalar_rewards_shaped)
 
-            # Build batch info for velocity
+            # Build batch info for velocity AND the scoreboard: goal detection
+            # runs on score deltas now, and a batch_info without scores drops
+            # the batch shaper into its sign fallback while the scalar wrapper
+            # uses the scoreboard -- the exact divergence this test exists to
+            # catch. Real callers pass the env's full info, which has both.
             batch_info = {
                 "puck_vx": np.array([inf.get("puck_vx", 0.0) for inf in new_scalar_infos]),
                 "puck_vy": np.array([inf.get("puck_vy", 0.0) for inf in new_scalar_infos]),
+                "score_agent": np.array([inf.get("score_agent", 0) for inf in new_scalar_infos]),
+                "score_opponent": np.array([inf.get("score_opponent", 0) for inf in new_scalar_infos]),
             }
 
             # Compute batch rewards
