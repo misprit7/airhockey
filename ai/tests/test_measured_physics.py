@@ -450,3 +450,39 @@ def test_scalar_env_reports_the_same_cap_features():
     b = BatchAirHockeyEnv(n_envs=1).reset(seed=0)
     assert s.shape[0] == b.shape[1] == BatchAirHockeyEnv.OBS_DIM
     np.testing.assert_allclose(s[12:], b[0, 12:], atol=1e-6)
+
+
+def test_trainers_enable_the_real_sensing_chain():
+    """Camera delay, tracker noise and the IR blind spot were all implemented,
+    defaulted off in the env, and then never switched on anywhere -- so every
+    run trained on perfect, instantaneous, always-visible observation. Same for
+    domain randomisation. The env defaults stay off on purpose; the TRAINERS
+    are what must not."""
+    import pathlib
+    root = pathlib.Path(__file__).resolve().parents[1]
+    for name in ("train_tdmpc2.py", "train_tdmpc2_fast.py"):
+        txt = (root / "bin" / name).read_text()
+        assert "sensing_kwargs(" in txt, f"{name} does not model the camera"
+        assert "domain_randomize=" in txt, f"{name} does not randomise"
+
+
+def test_the_blind_spot_actually_degrades_the_observation():
+    """The IR ring's reflection is a hole in a fixed place in the busiest part
+    of the table. A perception model that quietly returned truth there would be
+    worse than none -- it would look like the sim had been made realistic."""
+    from airhockey.batch_env import BatchAirHockeyEnv, sensing_kwargs
+    from airhockey.perception import GLARE_W_MM
+    e = BatchAirHockeyEnv(n_envs=4, **sensing_kwargs(True))
+    e.reset(seed=0)
+    cfg = e.table_config
+    e.engine.puck_x[:], e.engine.puck_y[:] = 0.10, cfg.height / 2
+    e.engine.puck_vx[:], e.engine.puck_vy[:] = 3.0, 0.0
+    worst, crossed = 0.0, False
+    for _ in range(60):
+        obs, *_ = e.step(np.zeros((4, 2), dtype=np.float32))
+        worst = max(worst, abs(float(obs[0, 0]) - float(e.engine.puck_x[0])))
+        crossed |= abs(float(e.engine.puck_x[0]) - cfg.width / 2) < GLARE_W_MM / 2000.0
+    assert crossed, "puck never entered the glare patch — test setup is wrong"
+    # Coasting across the patch at 3 m/s must cost far more than the ~30 mm a
+    # one-step camera delay alone explains.
+    assert worst > 0.08, f"blind spot cost only {worst * 1000:.0f} mm"

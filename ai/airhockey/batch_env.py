@@ -17,8 +17,30 @@ from airhockey.dynamics import (DR_ACCEL_RANGE, DR_SPEED_RANGE,
                                 OPPONENT_MAX_SPEED_M_S,
                                 workspace_in_sim)
 from airhockey.motion import DEFAULT_SIM_DT, CartState, advance
-from airhockey.perception import PuckPerception
+from airhockey.perception import CAMERA_DELAY_RANGE_S, PuckPerception
 from airhockey.physics import TableConfig
+
+
+def sensing_kwargs(realistic: bool = True) -> dict[str, Any]:
+    """The sensing chain the real robot actually has.
+
+    Kept here rather than written out at each call site because there are two
+    trainers and a server, and every feature that has been restated across
+    them has eventually diverged.
+
+    NOT the env's own default, deliberately: a library whose observations are
+    noisy unless you ask otherwise makes every test that checks physics into a
+    test that checks physics through a noise model. Training is where it
+    belongs, and training should always have it on.
+
+    Note the delay is quantised by action_dt. At 100 Hz the measured
+    5.1-10.3 ms band rounds to one step either way, i.e. a flat 10 ms -- real,
+    but 30% above the 7.7 ms mean, and no longer randomised. Sub-step delay
+    would need interpolation the ring buffer does not do.
+    """
+    if not realistic:
+        return {"camera_delay": 0.0, "realistic_perception": False}
+    return {"camera_delay": CAMERA_DELAY_RANGE_S, "realistic_perception": True}
 
 # Per-env opponent policy IDs
 OPP_IDLE = 0

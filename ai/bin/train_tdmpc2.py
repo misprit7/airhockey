@@ -36,7 +36,7 @@ from common.seed import set_seed
 from common.buffer import Buffer
 from tdmpc2 import TDMPC2
 
-from airhockey.batch_env import BatchAirHockeyEnv
+from airhockey.batch_env import BatchAirHockeyEnv, sensing_kwargs
 from airhockey.dynamics import ProfileDynamics, DelayedDynamics
 from airhockey.env import AirHockeyEnv
 from airhockey.recorder import Recorder
@@ -219,6 +219,18 @@ def main():
     parser.add_argument("--model-size", type=int, default=5, choices=[1, 5, 19, 48])
     parser.add_argument("--dynamics", action="store_true", default=True)
     parser.add_argument("--no-dynamics", dest="dynamics", action="store_false")
+    # Sensing realism and domain randomisation, ON by default. Both were
+    # implemented, defaulted off in the env, and then never switched on by any
+    # trainer -- so every run so far trained on nominal physics with perfect,
+    # instantaneous, always-visible observation.
+    parser.add_argument("--realistic-sensing", action="store_true", default=True,
+                        help="camera delay + tracker noise + the IR blind spot")
+    parser.add_argument("--no-realistic-sensing", dest="realistic_sensing",
+                        action="store_false")
+    parser.add_argument("--domain-randomize", action="store_true", default=True,
+                        help="per-env physics and actuator caps")
+    parser.add_argument("--no-domain-randomize", dest="domain_randomize",
+                        action="store_false")
     parser.add_argument("--run-name", type=str, default="tdmpc2")
     parser.add_argument("--record-freq", type=int, default=50_000)
     parser.add_argument("--horizon", type=int, default=5, help="Planning horizon (steps to look ahead)")
@@ -326,8 +338,11 @@ def main():
     batch_env = BatchAirHockeyEnv(
         n_envs=n_envs,
         agent_dynamics=dyn_type,
-        opponent_dynamics=dyn_type,
+        # A hand, not a second stepper. See train_tdmpc2_fast.py.
+        opponent_dynamics="delayed" if args.dynamics else "ideal",
         opponent_policy=opponent_policy,
+        domain_randomize=args.domain_randomize,
+        **sensing_kwargs(args.realistic_sensing),
         action_dt=1 / 100,
         max_episode_time=30.0,
         max_score=7,
