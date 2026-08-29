@@ -75,7 +75,57 @@ def table_mm_to_sim(mm_x: float, mm_y: float, sim_width: float = 1.0,
 # Domain-randomisation spread, as a FRACTION of the nominal above, so the
 # range tracks the nominal instead of silently excluding it. The old
 # absolute range would not have contained a 12 m/s nominal at all.
-DR_CAP_RANGE = (0.5, 1.125)
+#
+# SPEED IS ONE-SIDED, and that asymmetry is the point. MAX_SPEED_M_S is not
+# an estimate, it is the firmware's own clamp (MAX_VELOCITY_MM_S = 12000 in
+# cdpr_config.h) and the Teensy enforces it absolutely. Sampling above it --
+# the shared range used to reach 13.5 m/s -- trains the policy to plan
+# intercepts at a speed the machine physically cannot produce, and on the day
+# the firmware silently clamps instead of failing. Randomising DOWN is
+# different and useful: it models a machine that underperforms, which is a
+# thing that happens.
+DR_SPEED_RANGE = (0.5, 1.0)
+
+# ACCEL is two-sided, because unlike speed it is genuinely uncertain rather
+# than clamped. The firmware ceiling is 120000 mm/s^2, six times the nominal
+# here, so nothing in this range is near it; what actually bounds
+# acceleration is what the cables can deliver, and that VARIES WITH POSITION
+# -- cdpr_config.h's solve puts the table centre near 114000 and its worst
+# corner near 9000. Sampling above nominal is therefore a claim about the
+# cables, not a violation of a limit.
+DR_ACCEL_RANGE = (0.5, 1.125)
+
+# Deprecated alias; both terms used to share one range. Kept so an old caller
+# fails loudly at import rather than silently getting the speed range.
+DR_CAP_RANGE = DR_ACCEL_RANGE
+
+
+def workspace_in_sim(sim_width: float = 1.0, sim_half_height: float = 1.0,
+                     flip: bool = False):
+    """The box the PADDLE can actually reach, in sim metres.
+
+    Not the table half. Cables pull only, so the paddle is holdable only well
+    inside the anchor hull, and the workspace is further trimmed where the
+    drives overloaded just HOLDING position. The result is 35% of the robot's
+    half, and it does not include the robot's own goal line -- the nearest it
+    gets is sim y 0.099.
+
+    That gap is why this exists. A sim that lets the paddle sit on its goal
+    line trains a policy to defend from a place the machine cannot occupy, and
+    HardwareDynamics._sim_to_mm clamps silently on the day, so the failure
+    looks like a policy that is merely bad rather than one being cut off.
+    """
+    import sys as _sys
+    from pathlib import Path as _Path
+    _sys.path.insert(0, str(_Path(__file__).resolve().parents[2] / "shared"))
+    import cdpr_geometry as g
+
+    x0, y0 = table_mm_to_sim(g.WS_MIN_X, g.WS_MIN_Y, sim_width,
+                             sim_half_height, flip)
+    x1, y1 = table_mm_to_sim(g.WS_MAX_X, g.WS_MAX_Y, sim_width,
+                             sim_half_height, flip)
+    return {"min_x": min(x0, x1), "max_x": max(x0, x1),
+            "min_y": min(y0, y1), "max_y": max(y0, y1)}
 
 
 class MotorDynamics:

@@ -221,3 +221,59 @@ def test_no_entry_point_carries_its_own_caps():
         if "max_speed=3.0" in txt or "max_accel=30.0" in txt:
             bad.append(p.name)
     assert not bad, f"hardcoded caps still in: {bad}"
+
+
+def test_agent_is_confined_to_the_reachable_workspace():
+    """The sim must not offer the paddle ground the machine cannot stand on.
+
+    Cables pull only, so the reachable box is 35% of the robot's half and its
+    nearest approach to its own goal line is sim y 0.099. A policy trained on
+    the full half learns to defend from y=0; on the hardware
+    HardwareDynamics._sim_to_mm clamps silently, so the paddle stops short and
+    the failure looks like a bad policy rather than one being cut off.
+    """
+    from airhockey.batch_env import BatchAirHockeyEnv
+    from airhockey.dynamics import workspace_in_sim
+    e = BatchAirHockeyEnv(n_envs=64, agent_dynamics="ideal")
+    ws = workspace_in_sim(e.table_config.width, e.table_config.height / 2)
+    e.reset(seed=3)
+    rng = np.random.default_rng(0)
+    for _ in range(60):
+        e.step(rng.uniform(-1, 1, (64, 2)).astype(np.float32))
+        assert e.engine.paddle_agent_x.min() >= ws["min_x"] - 1e-6
+        assert e.engine.paddle_agent_x.max() <= ws["max_x"] + 1e-6
+        assert e.engine.paddle_agent_y.min() >= ws["min_y"] - 1e-6
+        assert e.engine.paddle_agent_y.max() <= ws["max_y"] + 1e-6
+
+
+def test_the_opponent_is_not_confined():
+    """The opponent stands in for a HUMAN, who can reach their whole side."""
+    from airhockey.batch_env import BatchAirHockeyEnv
+    from airhockey.dynamics import workspace_in_sim
+    e = BatchAirHockeyEnv(n_envs=256, agent_dynamics="ideal",
+                          opponent_dynamics="ideal", opponent_policy="random")
+    ws = workspace_in_sim(e.table_config.width, e.table_config.height / 2)
+    e.reset(seed=5)
+    reach = 0.0
+    for _ in range(60):
+        e.step(np.zeros((256, 2), dtype=np.float32))
+        reach = max(reach, float(e.engine.paddle_opp_x.max()))
+    assert reach > ws["max_x"] + 0.02, "opponent wrongly clamped to the robot's box"
+
+
+def test_domain_randomised_speed_never_exceeds_the_firmware_clamp():
+    """MAX_SPEED_M_S is the Teensy's own clamp, not an estimate.
+
+    Sampling above it trains intercepts the machine physically cannot make,
+    and the firmware clamps silently rather than failing. The shared cap range
+    used to reach 1.125x nominal, i.e. 13.5 m/s against a 12.0 clamp.
+    """
+    from airhockey.batch_env import BatchAirHockeyEnv
+    from airhockey.dynamics import MAX_SPEED_M_S
+    e = BatchAirHockeyEnv(n_envs=4000, domain_randomize=True)
+    e.reset(seed=11)
+    for dyn in (e._agent_dyn, e._opp_dyn):
+        assert dyn["max_speed"].max() <= MAX_SPEED_M_S + 1e-9, (
+            f"sampled {dyn['max_speed'].max():.2f} m/s above the "
+            f"{MAX_SPEED_M_S} clamp")
+        assert dyn["max_speed"].min() < MAX_SPEED_M_S, "not randomised at all"

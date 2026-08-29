@@ -136,21 +136,25 @@ class TestBatchAirHockeyEnv:
         assert env.engine.puck_x[1] == old_puck_x_1
 
     def test_actions_rescale(self):
-        """Actions at -1 and 1 should map to paddle bounds."""
+        """Actions at -1 and 1 map to the REACHABLE bounds, not the table's.
+
+        This used to assert the paddle reached paddle_radius from each edge of
+        its half. It cannot: cables pull only, so the machine reaches 35% of
+        that half and never its own goal line. Asserting the table's corners
+        was asserting a capability the robot does not have.
+        """
         env = BatchAirHockeyEnv(n_envs=2, agent_dynamics="ideal")
         env.reset(seed=7)
+        env.step(np.array([[-1.0, -1.0], [1.0, 1.0]]))
 
-        # Action [-1, -1] = bottom-left, [1, 1] = top-right of agent half
-        actions = np.array([[-1.0, -1.0], [1.0, 1.0]])
-        env.step(actions)
+        lo, hi = env._action_low, env._action_high
+        np.testing.assert_allclose(env.engine.paddle_agent_x[0], lo[0], atol=0.01)
+        np.testing.assert_allclose(env.engine.paddle_agent_y[0], lo[1], atol=0.01)
+        np.testing.assert_allclose(env.engine.paddle_agent_x[1], hi[0], atol=0.01)
+        np.testing.assert_allclose(env.engine.paddle_agent_y[1], hi[1], atol=0.01)
 
+        # and those bounds are the machine's, well inside the half
         cfg = env.table_config
-        r = cfg.paddle_radius
-        np.testing.assert_allclose(env.engine.paddle_agent_x[0], r, atol=0.01)
-        np.testing.assert_allclose(env.engine.paddle_agent_y[0], r, atol=0.01)
-        np.testing.assert_allclose(
-            env.engine.paddle_agent_x[1], cfg.width - r, atol=0.01
-        )
-        np.testing.assert_allclose(
-            env.engine.paddle_agent_y[1], cfg.height / 2 - r, atol=0.01
-        )
+        assert lo[1] > cfg.paddle_radius * 2, (
+            "agent can reach its own goal line — workspace not applied")
+        assert hi[1] < cfg.height / 2 - cfg.paddle_radius

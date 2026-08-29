@@ -11,7 +11,9 @@ from typing import Any
 import numpy as np
 
 from airhockey.batch_physics import BatchPhysicsEngine
-from airhockey.dynamics import DR_CAP_RANGE, MAX_ACCEL_M_S2, MAX_SPEED_M_S
+from airhockey.dynamics import (DR_ACCEL_RANGE, DR_SPEED_RANGE,
+                                MAX_ACCEL_M_S2, MAX_SPEED_M_S,
+                                workspace_in_sim)
 from airhockey.motion import DEFAULT_SIM_DT, CartState, advance
 from airhockey.perception import PuckPerception
 from airhockey.physics import TableConfig
@@ -92,6 +94,12 @@ class BatchAirHockeyEnv:
         # than reading the engine: finite-difference velocity over noisy
         # positions, plus the IR ring's blind spot at table centre.
         realistic_perception: bool = False,
+        # Bound the AGENT to the box the machine can actually reach, rather
+        # than to its half of the table. Off only for ablations; on it, the
+        # policy would learn to use 65% of the half that does not exist.
+        # The OPPONENT is deliberately left with the full half: it stands in
+        # for a human, who can reach anywhere on their side.
+        constrain_to_workspace: bool = True,
     ):
         self.n_envs = n_envs
         self.table_config = table_config or TableConfig()
@@ -133,9 +141,16 @@ class BatchAirHockeyEnv:
         self.sub_dt = action_dt / self.n_substeps
 
         # Action rescaling bounds
-        self._action_low = np.array([cfg.paddle_radius, cfg.paddle_radius])
-        self._action_high = np.array(
-            [cfg.width - cfg.paddle_radius, cfg.height / 2 - cfg.paddle_radius]
+        self.constrain_to_workspace = constrain_to_workspace
+        self._ws = (workspace_in_sim(cfg.width, cfg.height / 2)
+                    if constrain_to_workspace else None)
+        if self._ws is not None:
+            self._action_low = np.array([self._ws["min_x"], self._ws["min_y"]])
+            self._action_high = np.array([self._ws["max_x"], self._ws["max_y"]])
+        else:
+            self._action_low = np.array([cfg.paddle_radius, cfg.paddle_radius])
+            self._action_high = np.array(
+                [cfg.width - cfg.paddle_radius, cfg.height / 2 - cfg.paddle_radius]
         )
 
         # Observation bounds
@@ -280,11 +295,12 @@ class BatchAirHockeyEnv:
         # Domain randomization: per-env motor dynamics
         if self.domain_randomize:
             for dyn in (self._agent_dyn, self._opp_dyn):
-                lo, hi = DR_CAP_RANGE
+                slo, shi = DR_SPEED_RANGE
+                alo, ahi = DR_ACCEL_RANGE
                 dyn["max_speed"][idx] = self._rng.uniform(
-                    lo * MAX_SPEED_M_S, hi * MAX_SPEED_M_S, size=n)
+                    slo * MAX_SPEED_M_S, shi * MAX_SPEED_M_S, size=n)
                 dyn["max_accel"][idx] = self._rng.uniform(
-                    lo * MAX_ACCEL_M_S2, hi * MAX_ACCEL_M_S2, size=n)
+                    alo * MAX_ACCEL_M_S2, ahi * MAX_ACCEL_M_S2, size=n)
                 dyn["time_constant"][idx] = self._rng.uniform(0.01, 0.04, size=n)
 
         self._agent_dyn["x"][idx] = self.engine.paddle_agent_x[idx]
@@ -669,6 +685,12 @@ class BatchAirHockeyEnv:
     ) -> tuple[np.ndarray, np.ndarray]:
         cfg = self.table_config
         r = cfg.paddle_radius
+        if agent and self._ws is not None:
+            # The machine's own limit, not the table's. The firmware clamps
+            # here too; doing it in the sim means the policy learns the
+            # boundary instead of discovering it on the hardware.
+            return (np.clip(x, self._ws["min_x"], self._ws["max_x"]),
+                    np.clip(y, self._ws["min_y"], self._ws["max_y"]))
         x = np.clip(x, r, cfg.width - r)
         if agent:
             y = np.clip(y, r, cfg.height / 2 - r)
