@@ -943,6 +943,15 @@ def main():
     reward_shaper = _make_reward_shaper(current_stage)
 
     buffer = Buffer(cfg)
+    # Prioritized replay came from the modified tdmpc2 fork that lived at
+    # /home/rbhagat/projects/tdmpc2 and is not on this machine; the checkout
+    # at ../tdmpc2 is stock upstream, whose Buffer samples uniformly. Degrade
+    # rather than crash: uniform sampling trains fine, just a little slower
+    # to pick up rare events.
+    if args.prioritized_replay and not hasattr(buffer, "set_beta"):
+        print("WARNING: this tdmpc2 checkout has no prioritized replay "
+              "(Buffer.set_beta missing) — falling back to uniform sampling")
+        args.prioritized_replay = False
     logger = FastLogger(cfg, self_play=self_play)
 
     mode_str = "(Self-Play)" if self_play else "(Curriculum)" if use_curriculum else "(Pretrain)"

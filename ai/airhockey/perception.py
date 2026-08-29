@@ -114,13 +114,19 @@ class PuckPerception:
         self._den = float((self._tc[:, 0] ** 2).sum())
 
     def reset(self, x: np.ndarray, y: np.ndarray, idx=slice(None)) -> None:
-        self._hist_x[:, idx] = x[idx] if idx != slice(None) else x
-        self._hist_y[:, idx] = y[idx] if idx != slice(None) else y
+        # x[idx] works for both the full and the partial case (slice(None)
+        # just returns a view of x). The previous `idx != slice(None)` guard
+        # was not only redundant but broken: numpy takes != on a boolean mask
+        # elementwise, so the first PARTIAL reset -- i.e. the first episode to
+        # end mid-training -- raised on the ambiguous truth value. Full resets
+        # and the tests that only did full resets never touched it.
+        self._hist_x[:, idx] = x[idx]
+        self._hist_y[:, idx] = y[idx]
         self._coast_t[idx] = 0.0
         self._last_vx[idx] = 0.0
         self._last_vy[idx] = 0.0
-        self._last_x[idx] = x[idx] if idx != slice(None) else x
-        self._last_y[idx] = y[idx] if idx != slice(None) else y
+        self._last_x[idx] = x[idx]
+        self._last_y[idx] = y[idx]
 
     def visible(self, x: np.ndarray, y: np.ndarray) -> np.ndarray:
         if not self.glare:
