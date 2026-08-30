@@ -75,7 +75,7 @@ class AirHockeyTDMPC2Wrapper:
         )
         self.observation_space = self.env.observation_space
         self.action_space = self.env.action_space
-        self.max_episode_steps = 1800  # 30s at 60Hz
+        self.max_episode_steps = 3000  # 30 s at 100 Hz
 
     def rand_act(self):
         return torch.from_numpy(self.action_space.sample().astype(np.float32))
@@ -360,7 +360,7 @@ def main():
     obs_dim = BatchAirHockeyEnv.OBS_DIM  # puck(4) + paddle(4) + opp(4) + side(1)
     cfg.obs_shape = {"state": (obs_dim,)}
     cfg.action_dim = 2
-    cfg.episode_length = 1800  # 30s at 60Hz
+    cfg.episode_length = 3000  # 30 s at 100 Hz
     cfg.seed_steps = max(1000, 5 * cfg.episode_length)
 
     cfg = cfg_to_dataclass(cfg)

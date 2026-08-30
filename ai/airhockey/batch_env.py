@@ -11,7 +11,8 @@ from typing import Any
 import numpy as np
 
 from airhockey.batch_physics import BatchPhysicsEngine
-from airhockey.dynamics import (DR_ACCEL_RANGE, DR_SPEED_RANGE,
+from airhockey.dynamics import (AGENT_DR_ACCEL_M_S2, AGENT_DR_SPEED_M_S,
+                                DR_ACCEL_RANGE, DR_SPEED_RANGE,
                                 MAX_ACCEL_M_S2, MAX_SPEED_M_S,
                                 OPPONENT_MAX_ACCEL_M_S2,
                                 OPPONENT_MAX_SPEED_M_S,
@@ -233,10 +234,11 @@ class BatchAirHockeyEnv:
             cfg.width, cfg.height, vel_max, vel_max,      # paddle
             cfg.width, cfg.height, vel_max, vel_max,      # opponent
             1.0,                                          # side flag
-            # Caps, as a ratio to the robot's nominal. The bound is the human
-            # side's, since that is the largest either feature ever takes.
+            # Caps, as a ratio to the robot's nominal. Bounds are the largest
+            # either feature ever takes: the human side's speed, and the
+            # human side's accel at the top of its DR band (1.125 x 80).
             OPPONENT_MAX_SPEED_M_S / MAX_SPEED_M_S,
-            OPPONENT_MAX_ACCEL_M_S2 / MAX_ACCEL_M_S2,
+            DR_ACCEL_RANGE[1] * OPPONENT_MAX_ACCEL_M_S2 / MAX_ACCEL_M_S2,
         ], dtype=np.float32)
 
         # Camera delay ring buffer.
@@ -400,22 +402,29 @@ class BatchAirHockeyEnv:
 
         # Domain randomization: per-env motor dynamics.
         #
-        # Scaled by EACH SIDE'S OWN nominal caps, not by the robot's. Using
-        # MAX_SPEED_M_S for both -- as this did -- silently deleted the
-        # asymmetry: the opponent is built at 15 m/s / 80 m/s^2 to stand in
-        # for a human, and the first randomised reset overwrote that with
-        # 6-12 m/s and 10-22.5 m/s^2, i.e. a second robot that is on average
-        # SLOWER than the one it is sparring with.
+        # The two sides are randomised DIFFERENTLY, on purpose. The AGENT
+        # uses absolute bands: speed pinned to the firmware clamp (the one
+        # non-estimate in the actuator model) and accel spread wide, because
+        # accel is what actually binds -- see AGENT_DR_* in dynamics.py. The
+        # OPPONENT stands in for a human and scales by its own nominal caps;
+        # using the robot's constants for it -- as this once did -- made the
+        # sparring partner slower on average than the machine it stretches.
         if self.domain_randomize:
-            for dyn in (self._agent_dyn, self._opp_dyn):
-                slo, shi = DR_SPEED_RANGE
-                alo, ahi = DR_ACCEL_RANGE
-                speed, accel = dyn["nominal_speed"], dyn["nominal_accel"]
-                dyn["max_speed"][idx] = self._rng.uniform(
-                    slo * speed, shi * speed, size=n)
-                dyn["max_accel"][idx] = self._rng.uniform(
-                    alo * accel, ahi * accel, size=n)
-                dyn["time_constant"][idx] = self._rng.uniform(0.01, 0.04, size=n)
+            a = self._agent_dyn
+            a["max_speed"][idx] = self._rng.uniform(
+                AGENT_DR_SPEED_M_S[0], AGENT_DR_SPEED_M_S[1], size=n)
+            a["max_accel"][idx] = self._rng.uniform(
+                AGENT_DR_ACCEL_M_S2[0], AGENT_DR_ACCEL_M_S2[1], size=n)
+            a["time_constant"][idx] = self._rng.uniform(0.01, 0.04, size=n)
+
+            o = self._opp_dyn
+            slo, shi = DR_SPEED_RANGE
+            alo, ahi = DR_ACCEL_RANGE
+            o["max_speed"][idx] = self._rng.uniform(
+                slo * o["nominal_speed"], shi * o["nominal_speed"], size=n)
+            o["max_accel"][idx] = self._rng.uniform(
+                alo * o["nominal_accel"], ahi * o["nominal_accel"], size=n)
+            o["time_constant"][idx] = self._rng.uniform(0.01, 0.04, size=n)
 
         self._agent_dyn["x"][idx] = self.engine.paddle_agent_x[idx]
         self._agent_dyn["y"][idx] = self.engine.paddle_agent_y[idx]

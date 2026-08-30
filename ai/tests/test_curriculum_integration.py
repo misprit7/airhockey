@@ -296,21 +296,18 @@ class TestDomainRandomization:
         accels = env._agent_dyn["max_accel"]
         tcs = env._agent_dyn["time_constant"]
 
-        # With 4 envs and randomization, values should not all be identical
-        assert not np.all(speeds == speeds[0]), "max_speed should vary across envs"
+        # Speed is deliberately NOT varied: it is the firmware clamp, the one
+        # number in the actuator model that is not an estimate, and a run
+        # showed the machine never approaches it anyway (accel binds first).
+        # Accel and time constant carry all the randomisation.
         assert not np.all(accels == accels[0]), "max_accel should vary across envs"
         assert not np.all(tcs == tcs[0]), "time_constant should vary across envs"
 
-        # Check ranges. Derived from the nominal caps rather than hardcoded:
-        # this assertion was the seventh copy of those two numbers and would
-        # have had to be edited every time the robot's limits were revised,
-        # which is how a test ends up pinning a value nobody believes.
-        slo, shi = DR_SPEED_RANGE
-        alo, ahi = DR_ACCEL_RANGE
-        assert np.all((speeds >= slo * MAX_SPEED_M_S)
-                      & (speeds <= shi * MAX_SPEED_M_S))
-        assert np.all((accels >= alo * MAX_ACCEL_M_S2)
-                      & (accels <= ahi * MAX_ACCEL_M_S2))
+        from airhockey.dynamics import AGENT_DR_ACCEL_M_S2, AGENT_DR_SPEED_M_S
+        assert AGENT_DR_SPEED_M_S[0] == MAX_SPEED_M_S
+        assert np.all(speeds == MAX_SPEED_M_S)
+        assert np.all((accels >= AGENT_DR_ACCEL_M_S2[0])
+                      & (accels <= AGENT_DR_ACCEL_M_S2[1]))
         assert np.all((tcs >= 0.01) & (tcs <= 0.04))
 
     def test_no_randomization_default(self):

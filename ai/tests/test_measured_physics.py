@@ -263,26 +263,26 @@ def test_the_opponent_is_not_confined():
     assert reach > ws["max_x"] + 0.02, "opponent wrongly clamped to the robot's box"
 
 
-def test_domain_randomised_speed_never_exceeds_the_firmware_clamp():
-    """MAX_SPEED_M_S is the Teensy's own clamp, not an estimate.
-
-    Sampling above it trains intercepts the machine physically cannot make,
-    and the firmware clamps silently rather than failing. The shared cap range
-    used to reach 1.125x nominal, i.e. 13.5 m/s against a 12.0 clamp.
+def test_agent_speed_is_pinned_to_the_firmware_clamp():
+    """MAX_SPEED_M_S is the Teensy's own clamp, not an estimate -- the one
+    number in the actuator model that is exact. It is neither sampled above
+    (the machine cannot go there) nor below (a full run showed accel binds
+    long before speed: v = sqrt(2ad) tops out ~3.5 m/s inside the box, so an
+    "underperforming machine" is modelled by the accel band, which IS wide).
 
     Scoped to the AGENT. The opponent stands in for a human and is not behind
-    the Teensy, so the clamp is not a fact about it -- it is allowed, and
-    expected, to sample faster than the robot can move.
+    the Teensy; its caps are its own.
     """
     from airhockey.batch_env import BatchAirHockeyEnv
-    from airhockey.dynamics import MAX_SPEED_M_S
+    from airhockey.dynamics import AGENT_DR_ACCEL_M_S2, MAX_SPEED_M_S
     e = BatchAirHockeyEnv(n_envs=4000, domain_randomize=True)
     e.reset(seed=11)
     dyn = e._agent_dyn
-    assert dyn["max_speed"].max() <= MAX_SPEED_M_S + 1e-9, (
-        f"sampled {dyn['max_speed'].max():.2f} m/s above the "
-        f"{MAX_SPEED_M_S} clamp")
-    assert dyn["max_speed"].min() < MAX_SPEED_M_S, "not randomised at all"
+    assert np.all(dyn["max_speed"] == MAX_SPEED_M_S), "speed must be pinned"
+    lo, hi = AGENT_DR_ACCEL_M_S2
+    assert (lo, hi) == (10.0, 60.0)
+    assert dyn["max_accel"].min() >= lo and dyn["max_accel"].max() <= hi
+    assert dyn["max_accel"].std() > 5.0, "accel band not actually sampled"
 
 
 def test_randomisation_does_not_erase_the_side_asymmetry():
@@ -300,10 +300,12 @@ def test_randomisation_does_not_erase_the_side_asymmetry():
     e.reset(seed=11)
     opp, agent = e._opp_dyn, e._agent_dyn
 
-    assert opp["max_speed"].mean() > agent["max_speed"].mean(), (
-        "randomised opponent is slower on average than the robot")
+    # Accel is where the asymmetry lives now (agent 10-60, human 40-90), and
+    # the human's top-end speed still exceeds the robot's clamp.
     assert opp["max_accel"].mean() > agent["max_accel"].mean(), (
         "randomised opponent accelerates less than the robot")
+    assert opp["max_speed"].max() > agent["max_speed"].max(), (
+        "human top speed should exceed the robot clamp")
     # Each side stays inside its own band.
     assert opp["max_speed"].max() <= OPPONENT_MAX_SPEED_M_S + 1e-9
     assert opp["max_accel"].max() <= 1.125 * OPPONENT_MAX_ACCEL_M_S2 + 1e-9
@@ -415,7 +417,10 @@ def test_cap_features_track_domain_randomisation():
     from airhockey.dynamics import MAX_ACCEL_M_S2, MAX_SPEED_M_S
     e = BatchAirHockeyEnv(n_envs=512, domain_randomize=True)
     obs = e.reset(seed=3)
-    assert obs[:, 13].std() > 0.05, "speed feature is constant under DR"
+    # Speed is pinned to the firmware clamp, so its feature is a constant
+    # 1.0 on the robot -- it still earns its slot by reading 1.25 on the
+    # mirrored human side. Accel carries the per-env variation.
+    np.testing.assert_allclose(obs[:, 13], 1.0, atol=1e-6)
     assert obs[:, 14].std() > 0.05, "accel feature is constant under DR"
     # And they are the caps actually in force, not a redundant copy of nominal.
     np.testing.assert_allclose(
@@ -632,3 +637,27 @@ def test_no_phantom_goal_penalty_for_unreachable_commands():
     info2 = dict(info, score_opponent=np.ones(4))
     shaped = shaper.compute(obs, np.full(4, -1.0), info=info2)
     assert np.all(shaped <= -19.0), shaped
+
+
+def test_shot_mix_rewards_the_neglected_shot_type():
+    """Bank and straight shots should both stay in the repertoire.
+
+    The bonus pays weight * (recent fraction of the OTHER kind): all-straight
+    play makes banks worth more and vice versa, equilibrium 50/50. It must
+    stay small -- a tiebreaker, not a reason to bank an open net.
+    """
+    from airhockey.rewards import BatchRewardShaper, _is_bank_shot
+
+    # Geometry first: from centre, straight up is straight; a shot angled
+    # hard sideways leaves the table before the far goal line.
+    assert not _is_bank_shot(0.5, 1.0, 0.0, 3.0)
+    assert _is_bank_shot(0.5, 1.0, 4.0, 2.0)
+    assert _is_bank_shot(0.2, 0.5, -2.0, 2.0)
+
+    sh = BatchRewardShaper(1, stage=2)
+    assert 0 < sh.shot_mix_weight <= 1.0, "mix bonus must stay small"
+    # After a run of banks, a straight shot must pay more than another bank.
+    sh._bank_ema[:] = 0.9
+    straight_pay = sh.shot_mix_weight * sh._bank_ema[0]
+    bank_pay = sh.shot_mix_weight * (1.0 - sh._bank_ema[0])
+    assert straight_pay > bank_pay

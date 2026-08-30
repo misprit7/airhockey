@@ -72,18 +72,27 @@ def table_mm_to_sim(mm_x: float, mm_y: float, sim_width: float = 1.0,
 #          to be where a trained policy first asks for something the rig
 #          cannot deliver.
 
-# Domain-randomisation spread, as a FRACTION of the nominal above, so the
-# range tracks the nominal instead of silently excluding it. The old
-# absolute range would not have contained a 12 m/s nominal at all.
+# ── The ROBOT's domain randomisation, in ABSOLUTE units ──────────────────
 #
-# SPEED IS ONE-SIDED, and that asymmetry is the point. MAX_SPEED_M_S is not
-# an estimate, it is the firmware's own clamp (MAX_VELOCITY_MM_S = 12000 in
-# cdpr_config.h) and the Teensy enforces it absolutely. Sampling above it --
-# the shared range used to reach 13.5 m/s -- trains the policy to plan
-# intercepts at a speed the machine physically cannot produce, and on the day
-# the firmware silently clamps instead of failing. Randomising DOWN is
-# different and useful: it models a machine that underperforms, which is a
-# thing that happens.
+# SPEED IS NOT RANDOMISED. MAX_SPEED_M_S is the firmware's own clamp
+# (MAX_VELOCITY_MM_S = 12000 in cdpr_config.h) and the Teensy enforces it
+# absolutely -- the one number in the whole actuator model that is not an
+# estimate. It used to be sampled 0.5-1.0x "to model a machine that
+# underperforms", but a full run showed the machine never gets NEAR the
+# clamp anyway: at 20 m/s^2 over the workspace's ~0.3 m runs, v = sqrt(2ad)
+# tops out around 3.5 m/s. Speed is not the binding constraint; sampling it
+# down only taught the policy about machines that do not exist.
+#
+# ACCEL IS THE BINDING CONSTRAINT, so that is where the spread goes:
+# 10-60 m/s^2, absolute. The truth varies with position -- cdpr_config.h's
+# solve puts the table centre near 114 m/s^2 and the worst corner near 9 --
+# and the sim's single number cannot follow the pose, so the band brackets
+# most of the workspace instead. The firmware ceiling is 120; nothing here
+# approaches it.
+AGENT_DR_SPEED_M_S = (MAX_SPEED_M_S, MAX_SPEED_M_S)   # pinned to the clamp
+AGENT_DR_ACCEL_M_S2 = (10.0, 60.0)
+
+# Fraction-of-nominal spread for the OPPONENT (human) side only.
 DR_SPEED_RANGE = (0.5, 1.0)
 
 # ── The HUMAN side. Deliberately NOT the robot's limits. ─────────────────

@@ -329,6 +329,19 @@ class AirHockeyEnv(gym.Env):
         mirrored[9] = cfg.height - obs[5]    # pad_y → opp_y (flipped)
         mirrored[10] = obs[6]                # pad_vx → opp_vx
         mirrored[11] = -obs[7]               # pad_vy → opp_vy (negated)
+
+        # The identity features follow the body, exactly as in
+        # BatchAirHockeyEnv.mirror_obs: flip the side flag, and hand over
+        # the OTHER side's caps. This stopped at 12 dims when the obs grew
+        # to 15, so a mirrored view claimed to be the robot with the
+        # robot's caps -- fine for the built-in scripted opponents that
+        # never look at an observation, wrong the moment a policy drives
+        # the far paddle.
+        mirrored[12] = (self.ROBOT_SIDE + self.HUMAN_SIDE) - obs[12]
+        was_robot = obs[12] > (self.ROBOT_SIDE + self.HUMAN_SIDE) * 0.5
+        dyn = self.opponent_dynamics if was_robot else self.agent_dynamics
+        mirrored[13] = getattr(dyn, "max_speed", MAX_SPEED_M_S) / MAX_SPEED_M_S
+        mirrored[14] = getattr(dyn, "max_accel", MAX_ACCEL_M_S2) / MAX_ACCEL_M_S2
         return mirrored
 
     def mirror_action_to_opponent(self, action: np.ndarray) -> tuple[float, float]:

@@ -33,10 +33,10 @@ STAGE_SCORING = STAGE_GAME_GOALIE
 # Stage configuration tables
 # ---------------------------------------------------------------------------
 STAGE_DEFAULTS: dict[int, dict[str, float]] = {
-    1: {"proximity": 0,    "contact": 3.0, "directed_hit": 2.0, "puck_progress": 0,   "defense": 0,   "shot_placement": 0,   "goal_reward": 0,     "goal_penalty": 0,     "entropy": 0},
-    2: {"proximity": 0,    "contact": 0.1, "directed_hit": 0.1, "puck_progress": 0.1, "defense": 0.1, "shot_placement": 0.2, "goal_reward": 160.0, "goal_penalty": -20.0, "entropy": 0},
-    3: {"proximity": 0,    "contact": 0,   "directed_hit": 0,   "puck_progress": 0.1, "defense": 0.1, "shot_placement": 0.2, "goal_reward": 160.0, "goal_penalty": -20.0, "entropy": 0},
-    4: {"proximity": 0,    "contact": 0,   "directed_hit": 0,   "puck_progress": 0,   "defense": 0,   "shot_placement": 0,   "goal_reward": 130.0, "goal_penalty": -20.0, "entropy": 0},
+    1: {"proximity": 0,    "contact": 3.0, "directed_hit": 2.0, "puck_progress": 0,   "defense": 0,   "shot_placement": 0,   "goal_reward": 0,     "goal_penalty": 0,     "entropy": 0, "shot_mix": 0.5},
+    2: {"proximity": 0,    "contact": 0.1, "directed_hit": 0.1, "puck_progress": 0.1, "defense": 0.1, "shot_placement": 0.2, "goal_reward": 160.0, "goal_penalty": -20.0, "entropy": 0, "shot_mix": 0.5},
+    3: {"proximity": 0,    "contact": 0,   "directed_hit": 0,   "puck_progress": 0.1, "defense": 0.1, "shot_placement": 0.2, "goal_reward": 160.0, "goal_penalty": -20.0, "entropy": 0, "shot_mix": 0.5},
+    4: {"proximity": 0,    "contact": 0,   "directed_hit": 0,   "puck_progress": 0,   "defense": 0,   "shot_placement": 0,   "goal_reward": 130.0, "goal_penalty": -20.0, "entropy": 0, "shot_mix": 0.5},
 }
 
 STAGE_OPPONENT: dict[int, str] = {
@@ -53,16 +53,35 @@ STAGE_NAMES: dict[int, str] = {
     4: "SELF-PLAY",
 }
 
+# Steps are at the 100 Hz action rate. These were written for 60 Hz
+# ("600 steps ~ 10 s") and never rescaled when action_dt moved to 1/100 --
+# which silently cut every episode to 60% of its intended wall time and made
+# each goals-PER-EPISODE gate ~1.7x harder. The first full curriculum run
+# spent 840k of its 1M steps held at stage 2 by that inflated bar, while its
+# recorded games were winning 5-0.
 STAGE_EPISODE_STEPS: dict[int, int] = {
-    1: 600,    # ~10s at 60Hz — chase + hit
-    2: 1200,   # ~20s — game vs goalie
-    3: 1800,   # ~30s — game vs follower
-    4: 1800,   # ~30s — self-play
+    1: 1000,   # 10 s — chase + hit
+    2: 2000,   # 20 s — game vs goalie
+    3: 3000,   # 30 s — game vs follower
+    4: 3000,   # 30 s — self-play
 }
 
 # Default table geometry for shot placement
 _GOAL_CX = 0.5   # table_width / 2
 _GOAL_CY = 2.0   # table_height
+_TABLE_W = 1.0
+
+
+def _is_bank_shot(px, py, vx, vy):
+    """Will this shot touch a side rail before reaching the far goal line?
+
+    Pure geometry on the outgoing velocity: extend the line from (px, py)
+    along (vx, vy) to y = table height; if x leaves the table on the way,
+    the shot banks. Works elementwise on arrays and on scalars alike.
+    """
+    t_goal = (_GOAL_CY - py) / np.maximum(vy, 1e-8)
+    x_at_goal = px + vx * t_goal
+    return (x_at_goal < 0.0) | (x_at_goal > _TABLE_W)
 
 
 def _resolve(explicit: float | None, key: str, stage: int) -> float:
@@ -91,6 +110,7 @@ class ShapedRewardWrapper(gym.Wrapper):
         defense_weight: float | None = None,
         shot_placement_weight: float | None = None,
         entropy_weight: float | None = None,
+        shot_mix_weight: float | None = None,
         max_contacts_per_episode: int = 5,
     ):
         super().__init__(env)
@@ -105,7 +125,14 @@ class ShapedRewardWrapper(gym.Wrapper):
         self.defense_weight = _resolve(defense_weight, "defense", stage)
         self.shot_placement_weight = _resolve(shot_placement_weight, "shot_placement", stage)
         self.entropy_weight = _resolve(entropy_weight, "entropy", stage)
+        self.shot_mix_weight = _resolve(shot_mix_weight, "shot_mix", stage)
         self.max_contacts_per_episode = max_contacts_per_episode
+
+        # Running bank-shot fraction, for the shot-mix bonus. Starts at the
+        # 50/50 target so the very first shot of a run is not biased either
+        # way. Survives episode resets on purpose: the mix worth balancing is
+        # the policy's repertoire, not one episode's.
+        self._bank_ema: float = 0.5
 
         self._prev_puck_y: float | None = None
         self._prev_puck_speed: float | None = None
@@ -159,6 +186,18 @@ class ShapedRewardWrapper(gym.Wrapper):
                     goal_dist = np.hypot(dx, dy)
                     alignment = (puck_vx * dx + puck_vy * dy) / (puck_speed * goal_dist + 1e-8)
                     shaped_reward += self.shot_placement_weight * float(np.clip(alignment, 0, 1))
+                # Shot-mix: nudge toward a repertoire of BOTH bank and
+                # straight shots. Each shot earns weight * (fraction of
+                # recent shots that were the OTHER kind), so whichever type
+                # the policy neglects pays better, with a 50/50 equilibrium.
+                # The weight is deliberately small next to a 160-point goal:
+                # this is a tiebreaker between near-equal shots, not a
+                # reason to bank from in front of an open net.
+                if self.shot_mix_weight > 0 and contact_ok:
+                    bank = bool(_is_bank_shot(puck_x, puck_y, puck_vx, puck_vy))
+                    other_frac = (1.0 - self._bank_ema) if bank else self._bank_ema
+                    shaped_reward += self.shot_mix_weight * other_frac
+                    self._bank_ema += 0.2 * (float(bank) - self._bank_ema)
 
         # Puck progress
         if self.puck_progress_weight > 0 and self._prev_puck_y is not None:
@@ -237,6 +276,7 @@ class BatchRewardShaper:
         defense_weight: float | None = None,
         shot_placement_weight: float | None = None,
         entropy_weight: float | None = None,
+        shot_mix_weight: float | None = None,
         max_contacts_per_episode: int = 5,
     ):
         self.n_envs = n_envs
@@ -252,11 +292,17 @@ class BatchRewardShaper:
         self.defense_weight = _resolve(defense_weight, "defense", stage)
         self.shot_placement_weight = _resolve(shot_placement_weight, "shot_placement", stage)
         self.entropy_weight = _resolve(entropy_weight, "entropy", stage)
+        self.shot_mix_weight = _resolve(shot_mix_weight, "shot_mix", stage)
         self.max_contacts_per_episode = max_contacts_per_episode
 
         self._prev_puck_y = np.zeros(n_envs)
         self._prev_puck_speed = np.zeros(n_envs)
         self._contact_count = np.zeros(n_envs, dtype=np.int32)
+        # Per-env running bank-shot fraction for the shot-mix bonus; starts
+        # at the 50/50 target and deliberately survives episode resets --
+        # the mix being balanced is the policy's repertoire, not one
+        # episode's. See ShapedRewardWrapper for the scalar twin.
+        self._bank_ema = np.full(n_envs, 0.5)
         # Scoreboard as of the previous step, for goal detection by delta.
         # A DROP in score (episode reset, or a handicap re-deal) is not a
         # goal; only an increase is. No reset hook needed: after any reset
@@ -369,6 +415,19 @@ class BatchRewardShaper:
                 aux_scale * self.shot_placement_weight * alignment,
                 0.0,
             )
+
+        # Shot-mix: each shot earns weight * (recent fraction of the OTHER
+        # kind), so the neglected type pays better; 50/50 equilibrium. Small
+        # by design ("mostly EV maximise"): a tiebreaker between near-equal
+        # shots, never a reason to bank from in front of an open net.
+        if self.shot_mix_weight > 0:
+            shooting = hit & contact_ok
+            if np.any(shooting):
+                bank = _is_bank_shot(puck_x, puck_y, puck_vx, puck_vy)
+                other_frac = np.where(bank, 1.0 - self._bank_ema, self._bank_ema)
+                shaped += np.where(shooting, self.shot_mix_weight * other_frac, 0.0)
+                upd = shooting
+                self._bank_ema[upd] += 0.2 * (bank[upd].astype(float) - self._bank_ema[upd])
 
         # Puck progress (one-way, only positive delta)
         if self.puck_progress_weight > 0:

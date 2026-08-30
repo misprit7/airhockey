@@ -433,51 +433,15 @@ def _fresh_agent_from_checkpoint(cfg, checkpoint_path):
     return fresh
 
 
-def _record_game_pretrain(agent, step, recordings_dir, run_name, stage=STAGE_SCORING, frame_stack=1):
-    """Record a pretrain game (vs idle opponent) for web UI."""
-    inner = AirHockeyEnv(
-        agent_dynamics=ProfileDynamics(),
-        opponent_policy="idle",
-        record=True,
-        action_dt=1 / 100,
-        max_episode_time=90.0,
-        max_score=21,
-        frame_stack=frame_stack,
-    )
-    wrapped = ShapedRewardWrapper(inner, stage=stage)
-    obs, _ = wrapped.reset()
-    obs_t = torch.from_numpy(obs).float()
-    done, t = False, 0
-    while not done:
-        with torch.no_grad():
-            action = agent.act(obs_t, t0=(t == 0), eval_mode=True)
-        obs, _, terminated, truncated, info = wrapped.step(action.numpy())
-        obs_t = torch.from_numpy(obs).float()
-        done = terminated or truncated
-        t += 1
-    recording = inner.get_recording()
-    if recording:
-        rec = Recorder()
-        rec._current = recording
-        recordings_dir.mkdir(parents=True, exist_ok=True)
-        metadata = {
-            "stage": stage,
-            "stage_name": f"Stage {stage}: {STAGE_NAMES.get(stage, 'Unknown')}",
-            "step": step,
-        }
-        rec.save(
-            recordings_dir / f"{run_name}_s{stage}_step_{step:07d}.json",
-            metadata=metadata,
-        )
-        score = f"{info['score_agent']}-{info['score_opponent']}"
-        print(f"Recorded game at step {step:,}: {score}")
-
-
 def _record_game_selfplay(agent, opponent, step, recordings_dir, run_name, stage=STAGE_SCORING, frame_stack=1):
     """Record a self-play game for web UI."""
     inner = AirHockeyEnv(
         agent_dynamics=ProfileDynamics(),
-        opponent_dynamics=ProfileDynamics(),
+        # opponent_dynamics deliberately DEFAULTED: the scalar env builds the
+        # human model (DelayedDynamics at the opponent caps), which is the
+        # body the policy actually trains against -- and the one the mirrored
+        # observation's cap features claim. Forcing ProfileDynamics here
+        # recorded games against a second robot that training never sees.
         opponent_policy="external",
         record=True,
         action_dt=1 / 100,
@@ -539,7 +503,7 @@ def _run_benchmark(agent, step, logger, frame_stack=1):
                 opponent_dynamics=ProfileDynamics(),
                 opponent_policy=opp,
                 action_dt=1 / 100,
-                max_episode_steps=1800,
+                max_episode_steps=3000,
                 max_score=7,
                 frame_stack=frame_stack,
             )
@@ -812,7 +776,7 @@ def main():
     # network with the wrong input width.
     obs_dim = BatchAirHockeyEnv.OBS_DIM  # puck(4) + paddle(4) + opp(4) + side(1)
     action_dim = 2
-    episode_length = 1800  # 30s at 60Hz
+    episode_length = 3000  # 30 s at the 100 Hz action rate
 
     cfg = OmegaConf.merge(cfg, OmegaConf.create({
         "obs_shape": {"state": [obs_dim]},
@@ -893,7 +857,7 @@ def main():
     # teleports the paddle, which trains a policy to command positions no
     # actuator can reach; it stays available with --no-dynamics for ablations.
     dyn_type = "profile" if args.dynamics else "ideal"
-    episode_steps = STAGE_EPISODE_STEPS.get(current_stage, 1800) if use_curriculum else None
+    episode_steps = STAGE_EPISODE_STEPS.get(current_stage, 3000) if use_curriculum else None
     batch_env = BatchAirHockeyEnv(
         n_envs=n_envs,
         agent_dynamics=dyn_type,
@@ -1060,7 +1024,7 @@ def main():
                     plateau.configure_for_stage(current_stage)
                     cfg.horizon = STAGE_HORIZON.get(current_stage, cfg.horizon)
                     batch_env.opponent_policy = STAGE_OPPONENT[current_stage]
-                    batch_env.max_episode_steps = STAGE_EPISODE_STEPS.get(current_stage, 1800)
+                    batch_env.max_episode_steps = STAGE_EPISODE_STEPS.get(current_stage, 3000)
                     reward_shaper = _make_reward_shaper(current_stage)
                 saved_rewards = ts.get('plateau_rewards')
                 if saved_rewards:
@@ -1354,8 +1318,11 @@ def main():
                             )
                             del rec_opp
                         else:
-                            _record_game_pretrain(
-                                rec_agent, step, recordings_dir,
+                            # The agent plays its own mirror: recordings show
+                            # actual two-sided hockey at every stage, not a
+                            # rally against scripted furniture.
+                            _record_game_selfplay(
+                                rec_agent, rec_agent, step, recordings_dir,
                                 f"{args.run_name}_s{current_stage}",
                                 stage=current_stage, frame_stack=frame_stack,
                             )
@@ -1380,7 +1347,7 @@ def main():
 
                         # Update opponent policy, episode length, and score handicap
                         batch_env.opponent_policy = STAGE_OPPONENT[current_stage]
-                        batch_env.max_episode_steps = STAGE_EPISODE_STEPS.get(current_stage, 1800)
+                        batch_env.max_episode_steps = STAGE_EPISODE_STEPS.get(current_stage, 3000)
                         batch_env.score_handicap = (current_stage == STAGE_SELFPLAY)
 
                         # Create new reward shaper
@@ -1419,7 +1386,7 @@ def main():
                         # Full env reset to apply new opponent policy
                         obs_all = batch_env.reset()
                         # Re-stagger so episodes don't all complete at the same step
-                        max_ep = STAGE_EPISODE_STEPS.get(current_stage, 1800)
+                        max_ep = STAGE_EPISODE_STEPS.get(current_stage, 3000)
                         batch_env._step_count[:] = np.linspace(
                             0, max_ep, n_envs, endpoint=False,
                         ).astype(np.int32)
@@ -1451,7 +1418,7 @@ def main():
                               f"→ advancing to {STAGE_NAMES[current_stage]}")
                         print(f"  Saved checkpoint: {ckpt_path}")
                         print(f"  Opponent: {STAGE_OPPONENT[current_stage]}")
-                        ep_steps = STAGE_EPISODE_STEPS.get(current_stage, 1800)
+                        ep_steps = STAGE_EPISODE_STEPS.get(current_stage, 3000)
                         print(f"  Episode length: {ep_steps} steps (~{ep_steps/60:.0f}s at 60Hz)")
                         if STAGE_HORIZON.get(current_stage, 3) != STAGE_HORIZON.get(prev_stage, 3):
                             print(f"  Note: replay buffer was recreated (horizon changed)")
@@ -1566,8 +1533,9 @@ def main():
                 )
                 del rec_opp
             else:
-                _record_game_pretrain(
-                    rec_agent, step, recordings_dir, rec_name,
+                # Agent vs its own mirror -- see the stage-transition site.
+                _record_game_selfplay(
+                    rec_agent, rec_agent, step, recordings_dir, rec_name,
                     frame_stack=frame_stack,
                 )
             del rec_agent
@@ -1601,8 +1569,8 @@ def main():
                               frame_stack=frame_stack)
         del final_opp
     else:
-        _record_game_pretrain(final_agent, step, recordings_dir, final_rec_name,
-                              frame_stack=frame_stack)
+        _record_game_selfplay(final_agent, final_agent, step, recordings_dir,
+                              final_rec_name, frame_stack=frame_stack)
     del final_agent
 
     if self_play:
