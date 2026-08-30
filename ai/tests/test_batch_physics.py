@@ -162,4 +162,9 @@ class TestBatchAirHockeyEnv:
         np.testing.assert_allclose(env.engine.paddle_agent_y[0], ws["min_y"], atol=0.01)
         np.testing.assert_allclose(env.engine.paddle_agent_x[1], ws["max_x"], atol=0.01)
         np.testing.assert_allclose(env.engine.paddle_agent_y[1], ws["max_y"], atol=0.01)
-        assert ws["min_y"] > r * 2, "agent can reach its own goal line"
+        # The workspace floor must sit clear ABOVE where an unconstrained
+        # paddle could go (y = r against the back wall): the machine cannot
+        # defend from its own goal line. Was `> r * 2`, an arbitrary proxy
+        # that broke the day paddle_radius was corrected to its measured
+        # 50.4 mm — the property held, the proxy didn't.
+        assert ws["min_y"] > r, "agent can reach its own goal line"

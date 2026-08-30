@@ -28,7 +28,13 @@ class TableConfig:
     # restated. Sim units are metres and the sim table is ~1 m wide,
     # so mm/1000 is the right conversion here.
     puck_radius: float = _geom.PUCK_RADIUS_MM / 1000.0
-    paddle_radius: float = 0.04  # 80mm diameter paddle
+    # MEASURED 100.8 mm diameter, from the canonical geometry. Was a
+    # hardcoded 0.04 predating the measurement -- a 10 mm error in every
+    # contact the sim ever computed: anything aiming "through the puck"
+    # touched it 10 mm early, which transfers to the table as a systematic
+    # shot error rather than noise. Found by the heuristics tournament,
+    # whose bots compute contact geometry explicitly.
+    paddle_radius: float = _geom.MALLET_RADIUS_MM / 1000.0
     puck_mass: float = 0.015  # 15g puck
     paddle_mass: float = 0.17  # 170g paddle
     # ROLLING term only, mu, MEASURED over two sessions. The quadratic model

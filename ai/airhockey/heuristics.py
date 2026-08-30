@@ -82,11 +82,19 @@ MAX_SPEED_MM_S = 12000.0
 MAX_ACCEL_MM_S2 = 60000.0
 DEFAULT_ACCEL_MM_S2 = 20000.0
 
-# Below this, a sign change between consecutive frames is centroid noise
-# rather than a bounce. 0.35 mm of position noise over one 5 ms frame is
-# already 70 mm/s of apparent velocity, so the threshold cannot be much
-# smaller without the estimator "detecting" a bounce in every straight line.
-BOUNCE_EPS_MM_S = 50.0
+# Below this much TRAVEL, a sign change between two frames is centroid noise
+# rather than a bounce.
+#
+# In MILLIMETRES, deliberately, and not in mm/s. The noise on a displacement
+# between two tracked positions is sqrt(2) x 0.35 = 0.50 mm no matter how far
+# apart in time those positions are, so a millimetre threshold means the same
+# thing at any sample spacing. A VELOCITY threshold does not: the same 0.50 mm
+# is 50 mm/s across a 10 ms gap and 100 mm/s across a 5 ms one, so a constant
+# in mm/s silently tightens as the history gets denser. That is not
+# hypothetical -- at the tracker's native 200 Hz the old 50 mm/s constant fired
+# on 33% of ticks for a slow puck travelling in a straight line, cutting the
+# fit to two frames and tripling its own error. 1.5 mm is 3 sigma.
+BOUNCE_EPS_MM = 1.5
 
 
 # ══ The interface ════════════════════════════════════════════════════════
@@ -465,7 +473,7 @@ def reach_time_s(distance_mm: float, max_speed_mm_s: float,
 
 
 def estimate_velocity(samples, window_s: float = 0.06,
-                      bounce_eps_mm_s: float = BOUNCE_EPS_MM_S
+                      bounce_eps_mm: float = BOUNCE_EPS_MM
                       ) -> PuckEstimate | None:
     """Least-squares slope over the recent history, cut at a bounce.
 
@@ -473,8 +481,13 @@ def estimate_velocity(samples, window_s: float = 0.06,
     back-projection noise; a window that spans a bounce would average the
     incoming and outgoing legs into a velocity the puck never had, and it does
     so exactly when the goalie most needs the answer. So: take the newest run
-    of samples whose consecutive differences agree in sign, inside the window,
-    and fit that.
+    of samples whose consecutive DISPLACEMENTS agree in sign, inside the
+    window, and fit that.
+
+    Displacements rather than velocities, so that the reversal test means the
+    same thing whether the caller feeds 5 ms frames or 50 ms ones -- see
+    BOUNCE_EPS_MM. Signs are identical either way (time only ever runs
+    forward); it is the threshold that has to be spacing-free.
     """
     if not samples:
         return None
@@ -490,10 +503,9 @@ def estimate_velocity(samples, window_s: float = 0.06,
     # Walk newest -> oldest, stopping at the first segment that reverses
     # either component relative to the newest one.
     def seg(a, b):
-        dt = a.t_s - b.t_s
-        if dt <= 0.0:
+        if a.t_s <= b.t_s:
             return None
-        return ((a.x_mm - b.x_mm) / dt, (a.y_mm - b.y_mm) / dt)
+        return (a.x_mm - b.x_mm, a.y_mm - b.y_mm)
 
     first = seg(window[0], window[1])
     if first is None:
@@ -505,7 +517,7 @@ def estimate_velocity(samples, window_s: float = 0.06,
         if nxt is None:
             break
         reversed_axis = any(
-            a * b < 0.0 and abs(a) > bounce_eps_mm_s and abs(b) > bounce_eps_mm_s
+            a * b < 0.0 and abs(a) > bounce_eps_mm and abs(b) > bounce_eps_mm
             for a, b in zip(first, nxt)
         )
         if reversed_axis:

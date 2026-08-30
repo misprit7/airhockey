@@ -84,11 +84,32 @@ OBS_MALLET = "mallet"
 OBS_OPPONENT = "opponent"
 OBS_TIME = "t_s"
 
-# How much puck history the report carries. 200 ms at 200 Hz is up to 40
-# samples -- enough for a bot to fit a velocity and see a wall bounce inside
-# the window, and short enough that a bounce does not sit in the window long
-# enough to corrupt a naive straight-line fit for long.
+# How much puck history the report RETAINS. 200 ms at 200 Hz is up to 40
+# samples -- enough to serve every lag below with room for a dropout.
 HISTORY_S = 0.200
+
+# ...but a bot is handed only these lags, in seconds behind the newest fix.
+#
+# THE RAW 200 Hz RING IS THE WRONG SHAPE TO HAND A BOT, and not by a little.
+# heuristics.estimate_velocity cuts its fit at a sign reversal so a rail
+# bounce is never averaged across. At 5 ms spacing the measured 0.35 mm of
+# centroid noise is itself about 100 mm/s per segment, which trips that cut
+# on a straight line. Measured by the heuristics workstream over 400 trials
+# of a clean straight run:
+#
+#     5 ms spacing   spurious cut 33% of ticks   vx error sd 55 mm/s
+#    10 ms spacing   spurious cut 13% of ticks   vx error sd 21 mm/s
+#
+# A 4 m/s puck is unaffected either way; it is the SLOW ones that degrade,
+# which are exactly the ones the striker attacks.
+#
+# These are BatchAirHockeyEnv.HISTORY_PUCK_LAGS (0, 2, 4, 10, 20 frames) at
+# the 200 Hz frame interval, i.e. the identical shape the bots were tuned
+# against in simulation. Matching it is the whole point: a bot fed a
+# different sampling density is being asked to do a job it was never
+# evaluated on, which is the sim-to-real mismatch this project exists to
+# avoid. If the sim's lags move, move these with them.
+PUCK_LAGS_S = (0.0, 0.010, 0.020, 0.050, 0.100)
 
 # Beyond this with no fix, the puck is not "somewhere near where it was", it
 # is unknown. Matches PuckTracker._coast, which gives up at the same point.
@@ -158,14 +179,20 @@ class ReportBuilder:
     `puck_age`. A bot sees a gap, which is the truth.
     """
 
-    def __init__(self, history_s: float = HISTORY_S):
+    def __init__(self, history_s: float = HISTORY_S,
+                 lags_s: tuple[float, ...] | None = PUCK_LAGS_S):
         self.history_s = history_s
+        # None = hand over the whole ring. Only the future `sac:` adapter
+        # should want that; every heuristic bot wants PUCK_LAGS_S.
+        self.lags_s = lags_s
         self.puck: deque[tuple[float, float, float]] = deque()
         self.mallet: tuple[float, float] | None = None
+        self.controller_mallet: tuple[float, float] | None = None
         self.opponent: tuple[float, float] | None = None
         # Last time each was actually SEEN, not last time it was asked for.
         self.t_puck = float("-inf")
         self.t_mallet = float("-inf")
+        self.t_controller = float("-inf")
         self.t_opponent = float("-inf")
         # Counters for the status line; the interesting number on the rig is
         # what fraction of frames produced a real fix.
