@@ -195,6 +195,68 @@ def test_estimate_velocity_cuts_at_a_bounce():
     assert abs(naive.vy_mm_s) < 3140.0, "the cut is doing nothing"
 
 
+def _noisy_line(rng, spacing_s, n, vx, vy, sigma_mm=0.35):
+    """A straight run as the tracker would report it, at a given frame spacing.
+
+    sigma is perception.POS_NOISE_MM -- the measured back-projection noise.
+    """
+    return tuple(PuckSample(1500.0 - vx * k * spacing_s + rng.normal(0, sigma_mm),
+                            500.0 - vy * k * spacing_s + rng.normal(0, sigma_mm),
+                            -k * spacing_s)
+                 for k in range(n))
+
+
+@pytest.mark.parametrize("spacing_s,n", [(0.005, 13), (0.010, 7), (0.020, 5)])
+def test_bounce_cut_does_not_fire_on_a_straight_line(spacing_s, n):
+    """The reason the threshold is in MILLIMETRES and not in mm/s.
+
+    Displacement noise between two frames is sqrt(2)x0.35 = 0.5 mm however far
+    apart in time they are, so a millimetre threshold means the same thing at
+    any frame spacing. The velocity threshold this replaced did not: the same
+    0.5 mm reads as 50 mm/s across a 10 ms gap and 100 mm/s across a 5 ms one,
+    so feeding the tracker's native 200 Hz tripped the cut on a THIRD of ticks
+    for a slow puck and tripled the estimator's own error.
+    """
+    rng = np.random.default_rng(0)
+    for vx, vy in ((300.0, 0.0), (1000.0, 0.0), (4000.0, 1000.0)):
+        ests = [estimate_velocity(_noisy_line(rng, spacing_s, n, vx, vy))
+                for _ in range(200)]
+        cut = np.mean([e.n_samples <= 2 for e in ests])
+        err = np.std([e.vx_mm_s - vx for e in ests])
+        assert cut < 0.02, f"cut fired on {cut:.0%} of straight runs"
+        assert err < 25.0, f"vx error {err:.0f} mm/s at {spacing_s*1000:.0f} ms"
+
+
+@pytest.mark.parametrize("spacing_s,n", [(0.005, 13), (0.010, 7)])
+def test_bounce_cut_still_fires_on_a_real_bounce(spacing_s, n):
+    """Rejecting noise must not cost the thing the cut exists for."""
+    rng = np.random.default_rng(1)
+    y_top = puck_bounds()[3]
+    v_in, bounce = 3000.0, 4
+    v_out = -0.785 * v_in
+
+    def history():
+        out = []
+        for k in range(n):
+            # t is time since the bounce, negative before it; y = y_top + v*t
+            # on both legs, with the outgoing pair scaled by the measured
+            # rail coefficients.
+            if k <= bounce:
+                t = (bounce - k) * spacing_s
+                vx, vy = 0.66 * v_in, v_out
+            else:
+                t = -(k - bounce) * spacing_s
+                vx, vy = v_in, v_in
+            out.append(PuckSample(960.4 + vx * t + rng.normal(0, 0.35),
+                                  y_top + vy * t + rng.normal(0, 0.35),
+                                  -k * spacing_s))
+        return tuple(out)
+
+    ests = [estimate_velocity(history(), window_s=1.0) for _ in range(200)]
+    assert all(e.n_samples <= bounce + 1 for e in ests), "missed the bounce"
+    assert np.mean([e.vy_mm_s for e in ests]) == pytest.approx(v_out, rel=0.02)
+
+
 def test_estimate_velocity_degenerate_inputs():
     assert estimate_velocity(()) is None
     one = estimate_velocity((PuckSample(1.0, 2.0, 0.0),))

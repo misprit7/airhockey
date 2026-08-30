@@ -97,9 +97,13 @@ def run_match(bot_name: str, opponent: str, games: int, seconds: float,
     )
     bridge = SimBridge(env)
 
-    # The sim paddle is 80 mm across and the real mallet is 100.8. The bots
-    # aim through the puck by mallet+puck radius, so they have to be told
-    # which body they are driving or every shot leaves 10 mm off-line.
+    # Taken from the env rather than left at BotConfig's default, even though
+    # since 1e8c303 the two agree (TableConfig.paddle_radius now comes from
+    # geom.MALLET_RADIUS_MM, so both are the measured 50.4 mm). The bots aim
+    # THROUGH the puck by mallet+puck radius, so a bot told the wrong body
+    # leaves every shot off-line by the difference -- and reading it from the
+    # env means the harness cannot silently disagree with the table it is
+    # playing on, whichever way that number moves next.
     cfg = BotConfig(mallet_radius_mm=env.table_config.paddle_radius * 1000.0)
     bots = [make_bot(bot_name, cfg) for _ in range(games)]
 
