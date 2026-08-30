@@ -57,6 +57,8 @@ class BatchVecEnv(VecEnv):
         super().__init__(env.n_envs, observation_space, action_space)
         self._actions = None
         self.render_mode = None
+        self._ep_rew = np.zeros(env.n_envs)
+        self._ep_len = np.zeros(env.n_envs, dtype=np.int64)
 
     def reset(self):
         obs = self.env.reset()
@@ -82,11 +84,19 @@ class BatchVecEnv(VecEnv):
         self._elapsed += self.env.n_envs
 
         dones = term | trunc
+        self._ep_rew += shaped
+        self._ep_len += 1
         infos = [{} for _ in range(self.num_envs)]
         if np.any(dones):
             for i in np.where(dones)[0]:
                 infos[i]["terminal_observation"] = obs[i].copy()
                 infos[i]["TimeLimit.truncated"] = bool(trunc[i] and not term[i])
+                # SB3's ep_rew_mean comes from this dict; without it the
+                # run trains blind on the one chart that matters.
+                infos[i]["episode"] = {"r": float(self._ep_rew[i]),
+                                       "l": int(self._ep_len[i])}
+                self._ep_rew[i] = 0.0
+                self._ep_len[i] = 0
             new_obs = self.env.auto_reset(term, trunc)
             if new_obs is not None:
                 obs = new_obs
@@ -189,6 +199,11 @@ def main():
     p.add_argument("--batch-size", type=int, default=1024)
     p.add_argument("--lr", type=float, default=5e-4)
     p.add_argument("--buffer", type=int, default=1_000_000)
+    p.add_argument("--train-freq", type=int, default=1,
+                   help="vec steps between training bursts")
+    p.add_argument("--grad-steps", type=int, default=32,
+                   help="gradient steps per burst (UTD = this*batch over "
+                        "train_freq*n_envs new transitions)")
     args = p.parse_args()
 
     run_dir = ROOT / "runs" / args.run_name
@@ -208,8 +223,12 @@ def main():
         learning_rate=lr_schedule,
         buffer_size=args.buffer,
         batch_size=args.batch_size,
-        train_freq=(64, "step"),
-        gradient_steps=16,
+        # train_freq counts VEC steps: one vec step is n_envs transitions.
+        # The first run used (64, "step") x 64 envs = one training burst per
+        # 4,096 transitions -- ~12k gradient steps across 3M transitions,
+        # SAC starved to nothing at a very impressive-looking 22k fps.
+        train_freq=(args.train_freq, "step"),
+        gradient_steps=args.grad_steps,
         learning_starts=20_000,
         policy_kwargs=dict(net_arch=[512, 256, 128]),
         tensorboard_log=str(run_dir / "logs"),
