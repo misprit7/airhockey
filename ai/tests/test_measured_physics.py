@@ -471,26 +471,57 @@ def test_trainers_enable_the_real_sensing_chain():
         assert "domain_randomize=" in txt, f"{name} does not randomise"
 
 
-def test_the_blind_spot_actually_degrades_the_observation():
-    """The IR ring's reflection is a hole in a fixed place in the busiest part
-    of the table. A perception model that quietly returned truth there would be
-    worse than none -- it would look like the sim had been made realistic."""
+def test_the_camera_clock_delays_and_the_blind_spot_blinds():
+    """Two properties of the 200 Hz camera model, tested separately.
+
+    LATENCY: at constant velocity, the observed puck trails the true one by
+    roughly v * latency. The measured band is 5.1-10.3 ms, which at 3 m/s is
+    a 15-31 mm trail -- and crucially it must NOT be zero (perfect sight)
+    nor a whole action step's worth quantised up (the old ring gave exactly
+    30 mm always).
+
+    BLIND SPOT: a straight glide through the glare patch is dead-reckoned
+    well -- that is faithful, the real tracker coasts on velocity -- so the
+    honest failure mode is a DIRECTION CHANGE while hidden. Flip the puck's
+    velocity inside the patch: the tracker must keep believing the old
+    course for a while, i.e. large transient error.
+    """
     from airhockey.batch_env import BatchAirHockeyEnv, sensing_kwargs
     from airhockey.perception import GLARE_W_MM
     e = BatchAirHockeyEnv(n_envs=4, **sensing_kwargs(True))
     e.reset(seed=0)
     cfg = e.table_config
-    e.engine.puck_x[:], e.engine.puck_y[:] = 0.10, cfg.height / 2
+
+    # -- latency, far from the glare patch
+    e.engine.puck_x[:], e.engine.puck_y[:] = 0.10, 0.4
     e.engine.puck_vx[:], e.engine.puck_vy[:] = 3.0, 0.0
-    worst, crossed = 0.0, False
-    for _ in range(60):
+    trails = []
+    for _ in range(20):
         obs, *_ = e.step(np.zeros((4, 2), dtype=np.float32))
-        worst = max(worst, abs(float(obs[0, 0]) - float(e.engine.puck_x[0])))
-        crossed |= abs(float(e.engine.puck_x[0]) - cfg.width / 2) < GLARE_W_MM / 2000.0
-    assert crossed, "puck never entered the glare patch — test setup is wrong"
-    # Coasting across the patch at 3 m/s must cost far more than the ~30 mm a
-    # one-step camera delay alone explains.
-    assert worst > 0.08, f"blind spot cost only {worst * 1000:.0f} mm"
+        trails.append(float(e.engine.puck_x[0]) - float(obs[0, 0]))
+    trail = np.median(trails[5:])
+    assert 0.010 < trail < 0.045, (
+        f"obs trails truth by {trail*1000:.0f} mm at 3 m/s — outside the "
+        "5-10 ms latency band (15-31 mm) plus noise margin")
+
+    # -- blind spot: reverse course while hidden in the glare
+    e.reset(seed=1)
+    e.engine.puck_x[:], e.engine.puck_y[:] = cfg.width / 2 - 0.03, cfg.height / 2
+    e.engine.puck_vx[:], e.engine.puck_vy[:] = 1.5, 0.0
+    worst = 0.0
+    flipped = False
+    for _ in range(40):
+        inside = abs(float(e.engine.puck_x[0]) - cfg.width / 2) < GLARE_W_MM / 2000.0
+        if inside and not flipped:
+            e.engine.puck_vx[:] = -1.5     # the bounce nobody saw
+            flipped = True
+        obs, *_ = e.step(np.zeros((4, 2), dtype=np.float32))
+        if flipped:
+            worst = max(worst, abs(float(obs[0, 0]) - float(e.engine.puck_x[0])))
+    assert flipped, "puck never entered the glare patch — test setup is wrong"
+    assert worst > 0.05, (
+        f"unseen course reversal cost only {worst*1000:.0f} mm — the "
+        "tracker is seeing through the glare")
 
 
 def test_the_robot_starts_where_it_can_stand():

@@ -18,7 +18,8 @@ from airhockey.dynamics import (AGENT_DR_ACCEL_M_S2, AGENT_DR_SPEED_M_S,
                                 OPPONENT_MAX_SPEED_M_S,
                                 workspace_in_sim)
 from airhockey.motion import DEFAULT_SIM_DT, CartState, advance
-from airhockey.perception import CAMERA_DELAY_RANGE_S, PuckPerception
+from airhockey.perception import (CAMERA_DELAY_RANGE_S, FRAME_INTERVAL_S,
+                                  PuckPerception)
 from airhockey.physics import TableConfig
 
 
@@ -128,17 +129,17 @@ class BatchAirHockeyEnv:
         # trapezoidal profile. "delayed" -- a first-order lag with caps -- is
         # the better model, and it is deliberately given the human limits.
         opponent_dynamics: str = "delayed",
-        # 12 m/s over a 2 ms step is 24 mm, well inside the 80.7 mm at which
-        # puck and paddle touch. At the old 1/240 it was 50 mm and a fast puck
-        # could step straight through the paddle without ever registering a
-        # collision.
-        physics_dt: float = 1 / 500,
-        # 100 Hz, not 60. Measured loop latency is 7.7 ms; at 60 Hz one action
-        # step is 16.7 ms, so the delay is SHORTER than a step and cannot be
-        # represented at all -- the sim would silently model a robot that sees
-        # instantly. At 100 Hz it is almost exactly one step. It is also what
-        # the real control loop can sustain, since the policy has to run
-        # between camera frames.
+        # 400 Hz: fine enough that a 12 m/s puck moves 30 mm per step (well
+        # inside the 80.7 mm contact distance), and an exact multiple of the
+        # camera's 200 Hz so the simulated camera can tick every 2nd substep.
+        # The previous 1/500 was finer but did NOT divide the camera rate,
+        # which is why the delay ended up modelled at the action layer with
+        # whole-tick quantisation.
+        physics_dt: float = 1 / 400,
+        # The action rate is now a free choice: sensing runs on its own
+        # 200 Hz camera clock (see below), so nothing about the delay model
+        # depends on this number. 100 Hz keeps decisions fresh against a
+        # fast puck and is sustainable in real time with a 3-iteration MPPI.
         action_dt: float = 1 / 100,
         max_episode_time: float = 60.0,
         max_episode_steps: int | None = None,
@@ -241,31 +242,68 @@ class BatchAirHockeyEnv:
             DR_ACCEL_RANGE[1] * OPPONENT_MAX_ACCEL_M_S2 / MAX_ACCEL_M_S2,
         ], dtype=np.float32)
 
-        # Camera delay ring buffer.
-        # camera_delay: float (uniform) or (min, max) tuple (per-env randomized).
+        # ── Sensing ─────────────────────────────────────────────────────
+        # Two mutually exclusive models.
+        #
+        # realistic_perception=True: a simulated 200 Hz CAMERA ticks inside
+        # the physics loop -- every camera frame runs the perception model
+        # (noise, blind spot, 6-frame velocity slope, now spanning the same
+        # 30 ms as the real PuckTracker) and snapshots what the tracker
+        # would report into a frame ring. The policy reads the newest frame
+        # at least `latency` old, with per-env latency drawn from the
+        # measured 5.1-10.3 ms band. On the 5 ms frame grid that realises
+        # as 1-2 frames -- mean ~7.7 ms, spread one frame interval, exactly
+        # what vision/bin/measure_latency.py observed. The delay is no
+        # longer quantised by the ACTION rate at all; camera_delay (a
+        # (min,max) tuple in seconds) sets the latency band.
+        #
+        # Only the PUCK and the OPPONENT go through the camera. The robot's
+        # own paddle is observed fresh: on the table the controller knows
+        # its own commanded position with ~zero latency, so delaying
+        # self-state modelled a handicap the real system does not have.
+        #
+        # realistic_perception=False: legacy whole-obs ring delayed by
+        # whole ACTION steps (kept for ablations and tests; with
+        # camera_delay=0.0 it is a no-op and observations are truth).
         self._obs_dim = self.OBS_DIM
-        if isinstance(camera_delay, tuple):
-            # ROUND, not truncate. The measured 9.9 ms loop against a
-            # 10 ms step is 0.99 steps, and int() would call that zero --
-            # discarding 99% of a delay that was measured precisely so it
-            # would not have to be guessed.
-            self._delay_range = (
-                max(0, int(round(camera_delay[0] / action_dt))),
-                max(0, int(round(camera_delay[1] / action_dt))),
-            )
+        self._env_idx = np.arange(n_envs)
+        if realistic_perception:
+            self._cam_dt = FRAME_INTERVAL_S
+            self._cam_every = int(round(self._cam_dt / physics_dt))
+            if abs(self._cam_every * physics_dt - self._cam_dt) > 1e-9:
+                raise ValueError(
+                    f"physics_dt {physics_dt} must divide the camera frame "
+                    f"interval {self._cam_dt} for the camera clock to tick "
+                    "on substep boundaries")
+            lo, hi = (camera_delay if isinstance(camera_delay, tuple)
+                      else (camera_delay, camera_delay))
+            self._cam_latency_range = (float(lo), float(hi))
+            max_lag = max(1, int(round(hi / self._cam_dt)))
+            self._cam_ring_size = max_lag + 2   # +1 newest, +1 for velocity diff
+            # Per-frame tracker report: puck x,y,vx,vy + opponent x,y
+            self._cam_ring = np.zeros((self._cam_ring_size, n_envs, 6))
+            self._cam_write = 0
+            self._cam_lag = np.ones(n_envs, dtype=np.int32)
+            self._max_delay = 0                  # legacy ring off
+            self._delay_range = (0, 0)
         else:
-            d = max(0, int(round(camera_delay / action_dt)))
-            self._delay_range = (d, d)
-        self._max_delay = self._delay_range[1]
-        # Per-env delay in steps [N]
-        self._delay_steps = np.full(n_envs, self._max_delay, dtype=np.int32)
-        if self._max_delay > 0:
-            self._ring_size = self._max_delay + 1
-            self._obs_ring = np.zeros(
-                (self._ring_size, n_envs, self._obs_dim), dtype=np.float32,
-            )
-            self._ring_write = 0
-            self._env_idx = np.arange(n_envs)
+            if isinstance(camera_delay, tuple):
+                self._delay_range = (
+                    max(0, int(round(camera_delay[0] / action_dt))),
+                    max(0, int(round(camera_delay[1] / action_dt))),
+                )
+            else:
+                d = max(0, int(round(camera_delay / action_dt)))
+                self._delay_range = (d, d)
+            self._max_delay = self._delay_range[1]
+            # Per-env delay in steps [N]
+            self._delay_steps = np.full(n_envs, self._max_delay, dtype=np.int32)
+            if self._max_delay > 0:
+                self._ring_size = self._max_delay + 1
+                self._obs_ring = np.zeros(
+                    (self._ring_size, n_envs, self._obs_dim), dtype=np.float32,
+                )
+                self._ring_write = 0
 
         # Vectorized delayed dynamics state (for agent and opponent)
         self._agent_dyn = self._make_dynamics_state(agent_dynamics, n_envs,
@@ -278,8 +316,12 @@ class BatchAirHockeyEnv:
                                                    dynamics_time_constant)
 
         self._rng = np.random.default_rng()
+        # The perception model ticks at the CAMERA rate, not the action
+        # rate: its 6-frame slope window then spans 30 ms like the real
+        # 200 Hz tracker's, instead of the 60 ms it smeared over when it
+        # ran per action step.
         self._perception = (
-            PuckPerception(n_envs, cfg.width, cfg.height, action_dt,
+            PuckPerception(n_envs, cfg.width, cfg.height, self._cam_dt,
                            self._rng)
             if realistic_perception else None)
 
@@ -461,6 +503,24 @@ class BatchAirHockeyEnv:
         # Init previous positions (zero velocity at start)
         if self._perception is not None:
             self._perception.reset(self.engine.puck_x, self.engine.puck_y, idx)
+            # Fill the camera ring with the reset state so the first reads
+            # see a stationary, correctly-placed world rather than frames
+            # from the previous episode, and draw each env's latency from
+            # the measured band.
+            e = self.engine
+            for f in range(self._cam_ring_size):
+                self._cam_ring[f, idx, 0] = e.puck_x[idx]
+                self._cam_ring[f, idx, 1] = e.puck_y[idx]
+                self._cam_ring[f, idx, 2] = 0.0
+                self._cam_ring[f, idx, 3] = 0.0
+                self._cam_ring[f, idx, 4] = e.paddle_opp_x[idx]
+                self._cam_ring[f, idx, 5] = e.paddle_opp_y[idx]
+            lo, hi = self._cam_latency_range
+            n_r = self.n_envs if mask is None else int(mask.sum())
+            lat = self._rng.uniform(lo, hi, size=n_r)
+            self._cam_lag[idx] = np.clip(
+                np.round(lat / self._cam_dt).astype(np.int32),
+                1, self._cam_ring_size - 2)
 
         self._prev_agent_x[idx] = self.engine.paddle_agent_x[idx]
         self._prev_agent_y[idx] = self.engine.paddle_agent_y[idx]
@@ -531,7 +591,7 @@ class BatchAirHockeyEnv:
         else:
             ws_overshoot = np.zeros(self.n_envs)
 
-        for _ in range(self.n_substeps):
+        for sub in range(self.n_substeps):
             dt = self.sub_dt
 
             # Update agent paddle through dynamics
@@ -545,6 +605,12 @@ class BatchAirHockeyEnv:
             self.engine.update_paddle_opponent(ox, oy, dt)
 
             self.engine.step(dt)
+
+            # Camera tick: the simulated 200 Hz camera lives IN the physics
+            # loop, not at the action boundary, so sensing latency is a
+            # property of the world rather than of the control rate.
+            if self._perception is not None and (sub + 1) % self._cam_every == 0:
+                self._camera_tick()
 
             # Accumulate goal rewards
             rewards += np.where(self.engine.goal_scored == 1, 1.0, 0.0)
@@ -858,16 +924,56 @@ class BatchAirHockeyEnv:
             y = np.clip(y, cfg.height / 2 + r, cfg.height - r)
         return x, y
 
+    def _camera_tick(self) -> None:
+        """One 200 Hz camera frame: run the tracker model, store its report."""
+        e = self.engine
+        px, py, pvx, pvy = self._perception.update(e.puck_x, e.puck_y)
+        w = self._cam_write
+        self._cam_ring[w, :, 0] = px
+        self._cam_ring[w, :, 1] = py
+        self._cam_ring[w, :, 2] = pvx
+        self._cam_ring[w, :, 3] = pvy
+        self._cam_ring[w, :, 4] = e.paddle_opp_x
+        self._cam_ring[w, :, 5] = e.paddle_opp_y
+        self._cam_write = (w + 1) % self._cam_ring_size
+
+    def _camera_read(self):
+        """The tracker report each env is entitled to see right now.
+
+        Newest frame that is at least the env's latency old: per-env lag in
+        whole frames, indexed off the write head. Opponent velocity is a
+        finite difference of adjacent camera frames -- the same estimator
+        the real mallet tracker amounts to.
+        """
+        newest = (self._cam_write - 1) % self._cam_ring_size
+        idx = (newest - self._cam_lag) % self._cam_ring_size
+        prev = (idx - 1) % self._cam_ring_size
+        seen = self._cam_ring[idx, self._env_idx]        # [N, 6]
+        before = self._cam_ring[prev, self._env_idx]
+        opp_vx = (seen[:, 4] - before[:, 4]) / self._cam_dt
+        opp_vy = (seen[:, 5] - before[:, 5]) / self._cam_dt
+        return seen, opp_vx, opp_vy
+
     def _make_obs_direct(self) -> np.ndarray:
-        """Build [N, 12] observation with positions + velocities."""
+        """Build [N, OBS_DIM] observation with positions + velocities."""
         e = self.engine
         dt = self.action_dt
 
-        # Paddle velocities from finite differences
+        # OWN paddle: fresh and true. The controller knows its own commanded
+        # position with ~zero latency on the real machine; only the puck and
+        # the opponent arrive through the camera.
         agent_vx = (e.paddle_agent_x - self._prev_agent_x) / dt
         agent_vy = (e.paddle_agent_y - self._prev_agent_y) / dt
-        opp_vx = (e.paddle_opp_x - self._prev_opp_x) / dt
-        opp_vy = (e.paddle_opp_y - self._prev_opp_y) / dt
+
+        if self._perception is not None:
+            seen, opp_vx, opp_vy = self._camera_read()
+            px, py, pvx, pvy = seen[:, 0], seen[:, 1], seen[:, 2], seen[:, 3]
+            opp_x, opp_y = seen[:, 4], seen[:, 5]
+        else:
+            px, py, pvx, pvy = e.puck_x, e.puck_y, e.puck_vx, e.puck_vy
+            opp_x, opp_y = e.paddle_opp_x, e.paddle_opp_y
+            opp_vx = (e.paddle_opp_x - self._prev_opp_x) / dt
+            opp_vy = (e.paddle_opp_y - self._prev_opp_y) / dt
 
         # Update previous positions
         self._prev_agent_x[:] = e.paddle_agent_x
@@ -875,18 +981,13 @@ class BatchAirHockeyEnv:
         self._prev_opp_x[:] = e.paddle_opp_x
         self._prev_opp_y[:] = e.paddle_opp_y
 
-        if self._perception is not None:
-            px, py, pvx, pvy = self._perception.update(e.puck_x, e.puck_y)
-        else:
-            px, py, pvx, pvy = e.puck_x, e.puck_y, e.puck_vx, e.puck_vy
-
         # Caps as a ratio to the robot's nominal, so a nominal robot reads
         # exactly 1.0 on both and anything else is a ratio to the machine as
         # built. The human side reads above 1.0, which is the point.
         return np.column_stack([
             px, py, pvx, pvy,
             e.paddle_agent_x, e.paddle_agent_y, agent_vx, agent_vy,
-            e.paddle_opp_x, e.paddle_opp_y, opp_vx, opp_vy,
+            opp_x, opp_y, opp_vx, opp_vy,
             np.full(self.n_envs, self.ROBOT_SIDE),
             self._agent_dyn["max_speed"] / MAX_SPEED_M_S,
             self._agent_dyn["max_accel"] / MAX_ACCEL_M_S2,
