@@ -201,6 +201,15 @@ static bool waitTeensyOK(int teensy_fd, int timeout_ms = 5000) {
                 pos = buf + pos - start;
                 memmove(buf, start, pos);
             }
+            // If a reply line ever exceeds the buffer (or several queued
+            // status lines arrive ahead of the OK), the buffer fills with
+            // no newline to consume: sizeof(buf)-pos-1 hits zero, read()
+            // returns 0 forever, and this loop spins out the full timeout
+            // as a silent 5 s stall. Drop the unparseable head instead --
+            // losing one garbled line beats wedging the control path.
+            if (pos >= (int)sizeof(buf) - 1) {
+                pos = 0;
+            }
         }
         usleep(1000);
         elapsed++;
@@ -212,7 +221,12 @@ static bool waitTeensyOK(int teensy_fd, int timeout_ms = 5000) {
 // Return: 1 = continue, 0 = quit, -1 = error
 static int handleCommand(const char *line, ClearPath &robot, int client_fd, int teensy_fd) {
     char resp[256];
-    double x, y, speed;
+    // speed MUST be initialized: "CMD x y" parses two fields (sscanf >= 2
+    // accepts it) and leaves speed untouched -- previously indeterminate
+    // stack memory, which "if (speed > 0.0)" then happily forwarded to the
+    // Teensy as a SPEED command. Zero means "no speed given", which the
+    // check below already treats as "don't send one".
+    double x, y, speed = 0.0;
 
     if (strncmp(line, "ENABLE", 6) == 0) {
         logf("  ENABLE\n");
