@@ -55,6 +55,14 @@ class BatchPhysicsEngine:
         self.goal_scored = np.zeros(n_envs, dtype=np.int32)  # 0=none, 1=agent, -1=opp
         self.time = np.zeros(n_envs)
 
+        # The generator the post-goal restart draws from. It is remembered
+        # from reset() rather than created per goal: _check_goals used to make
+        # a fresh default_rng() on every call, which seeds from OS entropy and
+        # made a seeded env non-reproducible from the first goal onward. That
+        # is invisible in training and fatal to any evaluation that compares
+        # two controllers on "the same" fixtures.
+        self._rng = np.random.default_rng()
+
     def reset(
         self,
         rng: np.random.Generator | None = None,
@@ -65,6 +73,7 @@ class BatchPhysicsEngine:
         cfg = self.config
         if rng is None:
             rng = np.random.default_rng()
+        self._rng = rng
 
         if mask is None:
             n = self.n_envs
@@ -301,7 +310,7 @@ class BatchPhysicsEngine:
     def _check_goals(self) -> None:
         cfg = self.config
         r = cfg.puck_radius
-        rng = np.random.default_rng()
+        rng = self._rng
 
         # Opponent scored (puck past agent's baseline)
         opp_scored = self.puck_y - r < -r

@@ -6,9 +6,18 @@ actual paddle position, simulating real-world actuator behavior.
 
 from __future__ import annotations
 
+import sys
 from dataclasses import dataclass
+from pathlib import Path
 
 import numpy as np
+
+# Module level, as in physics.py. These conversions used to do the
+# sys.path.insert INSIDE the function, which appends a duplicate entry on every
+# call -- fine for the UI's few calls a second, and a growing sys.path for
+# anything driving them from a control loop.
+sys.path.insert(0, str(Path(__file__).resolve().parents[2] / "shared"))
+import cdpr_geometry as _geom  # noqa: E402
 
 
 # ── The robot's operating limits. ONE definition. ───────────────────────
@@ -44,16 +53,31 @@ def table_mm_to_sim(mm_x: float, mm_y: float, sim_width: float = 1.0,
     Grid x below the centreline simply maps to sim y past sim_half_height,
     which is exactly the opponent's half.
     """
-    import sys as _sys
-    from pathlib import Path as _Path
-    _sys.path.insert(0, str(_Path(__file__).resolve().parents[2] / "shared"))
-    import cdpr_geometry as g
-
+    g = _geom
     fy = (g.RAIL_MAX_X - mm_x) / (g.RAIL_MAX_X - g.CENTERLINE_X)
     fx = (mm_y - g.RAIL_MIN_Y) / (g.RAIL_MAX_Y - g.RAIL_MIN_Y)
     if flip:
         fx = 1.0 - fx
     return fx * sim_width, fy * sim_half_height
+
+
+def sim_to_table_mm(sim_x: float, sim_y: float, sim_width: float = 1.0,
+                    sim_half_height: float = 1.0, flip: bool = False):
+    """Sim metres -> grid-frame mm. The exact inverse of `table_mm_to_sim`.
+
+    UNCLAMPED, matching the forward direction, so the two compose to the
+    identity everywhere rather than only inside the workspace. Callers that
+    are about to DRIVE something want HardwareDynamics._sim_to_mm, which is
+    this plus the workspace clamp; callers converting a puck, an opponent's
+    mallet, or a heuristic bot's view of the table want this.
+    """
+    g = _geom
+    fx = sim_x / sim_width
+    fy = sim_y / sim_half_height
+    if flip:
+        fx = 1.0 - fx
+    return (g.RAIL_MAX_X - fy * (g.RAIL_MAX_X - g.CENTERLINE_X),
+            g.RAIL_MIN_Y + fx * (g.RAIL_MAX_Y - g.RAIL_MIN_Y))
 
 # How these sit against the machine, so a transfer failure is not mysterious:
 #
@@ -141,11 +165,7 @@ def workspace_in_sim(sim_width: float = 1.0, sim_half_height: float = 1.0,
     HardwareDynamics._sim_to_mm clamps silently on the day, so the failure
     looks like a policy that is merely bad rather than one being cut off.
     """
-    import sys as _sys
-    from pathlib import Path as _Path
-    _sys.path.insert(0, str(_Path(__file__).resolve().parents[2] / "shared"))
-    import cdpr_geometry as g
-
+    g = _geom
     x0, y0 = table_mm_to_sim(g.WS_MIN_X, g.WS_MIN_Y, sim_width,
                              sim_half_height, flip)
     x1, y1 = table_mm_to_sim(g.WS_MAX_X, g.WS_MAX_Y, sim_width,
@@ -357,16 +377,10 @@ class HardwareDynamics(MotorDynamics):
         cal_pose_mm: tuple[float, float, float] | None = None,
     ):
         import time as _time
-        import sys as _sys
-        from pathlib import Path as _Path
-
-        _sys.path.insert(
-            0, str(_Path(__file__).resolve().parents[2] / "shared"))
-        import cdpr_geometry as geom
 
         from airhockey.hardware import CDPRClient
 
-        self.geom = geom
+        self.geom = _geom
         self.sim_width = sim_width
         self.sim_half_height = sim_height / 2.0
         # A DEFAULT, deliberately conservative — the winding-side sign is
@@ -386,11 +400,11 @@ class HardwareDynamics(MotorDynamics):
         self._time = _time
         self._hw_rate = 10.0  # Hz — command rate to hardware
         self._last_hw_send = 0.0
-        self._hw_x_mm = geom.HOME_X
-        self._hw_y_mm = geom.HOME_Y
+        self._hw_x_mm = _geom.HOME_X
+        self._hw_y_mm = _geom.HOME_Y
         self._hw_counts = [0, 0, 0, 0]
-        self._cmd_x_mm = geom.HOME_X
-        self._cmd_y_mm = geom.HOME_Y
+        self._cmd_x_mm = _geom.HOME_X
+        self._cmd_y_mm = _geom.HOME_Y
         self._enc = None
         self._enc_zero = None
         self._last_enc_read = 0.0
@@ -586,16 +600,18 @@ class HardwareDynamics(MotorDynamics):
     # sim y 0..1  ->  grid x RAIL_MAX_X..CENTERLINE_X  (robot end -> centre)
     # sim x 0..1  ->  grid y RAIL_MIN_Y..RAIL_MAX_Y
     def _sim_to_mm(self, sx: float, sy: float):
-        """Sim metres -> grid-frame mm, clamped into the workspace."""
-        g = self.geom
-        fx = min(max(sx / self.sim_width, 0.0), 1.0)
-        fy = min(max(sy / self.sim_half_height, 0.0), 1.0)
-        if self.SIM_X_FLIP:
-            fx = 1.0 - fx
-        mm_x = g.RAIL_MAX_X - fy * (g.RAIL_MAX_X - g.CENTERLINE_X)
-        mm_y = g.RAIL_MIN_Y + fx * (g.RAIL_MAX_Y - g.RAIL_MIN_Y)
-        # Clamp here rather than letting the firmware do it silently.
-        return g.clamp_to_workspace(mm_x, mm_y)
+        """Sim metres -> grid-frame mm, clamped into the workspace.
+
+        The mapping itself is `sim_to_table_mm`; this adds only the clamp,
+        which is here rather than left to the firmware so an out-of-reach
+        request stops visibly instead of silently. The fraction clamp this
+        used to do first was redundant -- the mapping is monotone in each
+        axis and the workspace is inside the table, so clamping the result
+        subsumes it.
+        """
+        return self.geom.clamp_to_workspace(
+            *sim_to_table_mm(sx, sy, self.sim_width, self.sim_half_height,
+                             self.SIM_X_FLIP))
 
     def _mm_to_sim(self, mm_x: float, mm_y: float):
         return table_mm_to_sim(mm_x, mm_y, self.sim_width,

@@ -464,6 +464,12 @@ class BatchAirHockeyEnv:
         """
         if seed is not None:
             self._rng = np.random.default_rng(seed)
+            # The perception model was handed the PREVIOUS generator in the
+            # constructor, so reseeding here left the sensing noise running off
+            # an unseeded stream -- and once noise differs, so does every
+            # collision downstream of it.
+            if self._perception is not None:
+                self._perception.set_rng(self._rng)
 
         self.engine.reset(self._rng, mask=mask)
         self._reset_agent_into_workspace(mask)

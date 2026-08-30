@@ -113,6 +113,18 @@ class PuckPerception:
         self._tc = (t - t.mean())[:, None]
         self._den = float((self._tc[:, 0] ** 2).sum())
 
+    def set_rng(self, rng: np.random.Generator) -> None:
+        """Adopt a new generator, e.g. when the environment is reseeded.
+
+        Needed because this object is built once, in the env's constructor,
+        from whatever generator existed then -- and `reset(seed=...)` replaces
+        that generator rather than reseeding it in place. Without this the
+        position noise and every draw downstream of it stayed unseeded, so a
+        "seeded" evaluation was reproducible in its puck draws and not in its
+        sensing.
+        """
+        self._rng = rng
+
     def reset(self, x: np.ndarray, y: np.ndarray, idx=slice(None)) -> None:
         # x[idx] works for both the full and the partial case (slice(None)
         # just returns a view of x). The previous `idx != slice(None)` guard
