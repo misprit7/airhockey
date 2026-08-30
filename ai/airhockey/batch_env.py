@@ -118,12 +118,19 @@ class BatchAirHockeyEnv:
     # 5 ms camera frames: 0/10/20/50/100 ms for the puck, 0/20/50 ms for the
     # opponent -- close to the spacing Air-Hockey-Sim used, dense recent,
     # sparse far, enough baseline to read speed AND curvature.
-    # The 30 ms sample (lag 6) exists to close a measured HOLE: with lags
-    # 0/10/20/50/100 ms, a bounce aged 20-50 ms had no samples straddling
-    # the reversal, so the fit averaged across it -- |vy| error ~957 mm/s
-    # against a truth of 1962 at age 40 ms, for ~3 consecutive decision
-    # ticks after EVERY rail contact. No consumer, trained or scripted, can
-    # recover a reversal the observation does not bracket.
+    # The 30 ms sample (lag 6) NARROWS a measured bounce-blindness hole --
+    # it does not close it, and the commit that added it overclaimed. With
+    # lags 0/10/20/50/100 ms, a bounce aged 20-50 ms was unrecoverable
+    # (|vy| error ~957 mm/s against a truth of 1962 at age 40 ms, ~3
+    # decision ticks after every rail contact). With 30 ms added, the bad
+    # band shrinks to under one tick, worst case ~22% vy error near age
+    # 45 ms. The residual is structural to ANY sparse lag set: a reversal
+    # near the OLDER end of a straddled segment leaves the segment's net
+    # displacement un-flipped, so there is nothing for an estimator to
+    # detect -- adding samples only moves and narrows the band. Closing it
+    # entirely means a sample every 10 ms out to 50 (obs +2), accepted as
+    # a bounded residual for now; a learned consumer also has wall
+    # proximity to infer from, which an analytic fitter does not.
     HISTORY_PUCK_LAGS = (0, 2, 4, 6, 10, 20)
     HISTORY_OPP_LAGS = (0, 4, 10)
     # 6*2 puck + 3*2 opp + own(x,y,vx,vy) + prev action(4) + side + caps(2)
