@@ -88,27 +88,42 @@ OBS_TIME = "t_s"
 # samples -- enough to serve every lag below with room for a dropout.
 HISTORY_S = 0.200
 
-# ...but a bot is handed only these lags, in seconds behind the newest fix.
+# The SIM's sampling shape: BatchAirHockeyEnv.HISTORY_PUCK_LAGS
+# (0, 2, 4, 10, 20 frames) at the 200 Hz frame interval, in seconds behind
+# the newest fix. Reachable with --puck-lags sim. NOT the default.
 #
-# THE RAW 200 Hz RING IS THE WRONG SHAPE TO HAND A BOT, and not by a little.
-# heuristics.estimate_velocity cuts its fit at a sign reversal so a rail
-# bounce is never averaged across. At 5 ms spacing the measured 0.35 mm of
-# centroid noise is itself about 100 mm/s per segment, which trips that cut
-# on a straight line. Measured by the heuristics workstream over 400 trials
-# of a clean straight run:
+# It was proposed as the default on the grounds that the raw 200 Hz ring
+# trips estimate_velocity's bounce cut on straight lines -- reported as a
+# spurious cut on 33% of ticks with vx error sd 55 mm/s at 5 ms spacing,
+# against 13% and 21 mm/s at 10 ms. Re-measured against heuristics.py as it
+# now stands, 400 trials per cell, noise 0.35 mm (perception.POS_NOISE_MM,
+# the measured centroid noise), it does not reproduce:
 #
-#     5 ms spacing   spurious cut 33% of ticks   vx error sd 55 mm/s
-#    10 ms spacing   spurious cut 13% of ticks   vx error sd 21 mm/s
+#   straight line, spurious cut rate, 150..4000 mm/s
+#       raw 5 ms ring   0%           sim lags    0%
+#   straight line, vx error sd
+#       raw 5 ms ring   5.3 mm/s     sim lags    9.4 mm/s
+#   REAL bounce, mean |vy error|, by age of the bounce, 200 seeds
+#       10 ms   raw  39     sim  39
+#       20 ms   raw  20     sim  23
+#       30 ms   raw  11     sim  23
+#       40 ms   raw   7     sim 857
 #
-# A 4 m/s puck is unaffected either way; it is the SLOW ones that degrade,
-# which are exactly the ones the striker attacks.
+# Two reasons it does not follow. BOUNCE_EPS_MM = 1.5 already makes the
+# reversal test spacing-free -- it wants 1.5 mm of displacement on BOTH
+# segments, and 0.35 mm of noise cannot manufacture that -- so the spurious
+# cut is already prevented at the source. Sweeping noise puts the 33%/13%
+# pair at 1-2 mm, i.e. 3-6x the measured value. And decimating costs
+# accuracy twice: nine fewer samples in a straight-line fit, and too few
+# segments to LOCALISE a real bounce -- at 40 ms the reversal falls between
+# the 20 and 50 ms lags, so the fit averages straight across it.
 #
-# These are BatchAirHockeyEnv.HISTORY_PUCK_LAGS (0, 2, 4, 10, 20 frames) at
-# the 200 Hz frame interval, i.e. the identical shape the bots were tuned
-# against in simulation. Matching it is the whole point: a bot fed a
-# different sampling density is being asked to do a job it was never
-# evaluated on, which is the sim-to-real mismatch this project exists to
-# avoid. If the sim's lags move, move these with them.
+# Default is therefore the raw ring. Kept switchable because the argument
+# for matching the sim is a real one (the bots were tuned against this
+# shape) and is better settled on the rig than in a simulation of a
+# simulation. Note the bots consume the ESTIMATE, not the samples, and
+# estimate_velocity is spacing-free by construction, which is why a more
+# accurate estimate should serve them whatever the shape.
 PUCK_LAGS_S = (0.0, 0.010, 0.020, 0.050, 0.100)
 
 # Beyond this with no fix, the puck is not "somewhere near where it was", it
@@ -125,6 +140,11 @@ DEFAULT_PUCK_TIMEOUT_S = 2.0
 # calibration is something you watch happen rather than something you hear.
 GENTLE_SPEED = 500.0
 GENTLE_ACCEL = 2000.0
+
+# Camera-vs-controller mallet gap worth complaining about. Generous: the
+# camera is good to ~1 mm and the controller integrates step counts through
+# the cable model, so anything this far apart is the MODEL, not noise.
+MALLET_DISAGREE_WARN_MM = 25.0
 
 
 @dataclass(frozen=True)
@@ -180,10 +200,11 @@ class ReportBuilder:
     """
 
     def __init__(self, history_s: float = HISTORY_S,
-                 lags_s: tuple[float, ...] | None = PUCK_LAGS_S):
+                 lags_s: tuple[float, ...] | None = None):
         self.history_s = history_s
-        # None = hand over the whole ring. Only the future `sac:` adapter
-        # should want that; every heuristic bot wants PUCK_LAGS_S.
+        # None = the whole ring, which measures better on both straight
+        # lines and real bounces; see PUCK_LAGS_S for the numbers and for
+        # why the sim's shape is still worth having.
         self.lags_s = lags_s
         self.puck: deque[tuple[float, float, float]] = deque()
         self.mallet: tuple[float, float] | None = None
@@ -223,10 +244,81 @@ class ReportBuilder:
         self.n_puck += 1
         self._expire(t)
 
+    def _decimate(self) -> list[tuple[float, float, float]]:
+        """The ring subsampled at `lags_s` behind the newest fix.
+
+        Nearest sample per lag, anchored on the NEWEST SAMPLE rather than on
+        the tick clock, so hist[0] is a real measurement -- bots read it as
+        "where the puck is" and interpolating there would invent a fix.
+
+        Deduplicated, because early in a session (or after a dropout) several
+        lags land on the same sample, and heuristics.estimate_velocity needs
+        strictly decreasing timestamps: a zero-length segment is a divide by
+        zero waiting to happen.
+        """
+        if not self.puck or self.lags_s is None:
+            return list(self.puck)
+        s = list(self.puck)                 # newest first, time decreasing
+        t0 = s[0][2]
+        out: list[tuple[float, float, float]] = []
+        j = 0
+        for lag in self.lags_s:
+            want = t0 - lag
+            while j + 1 < len(s) and s[j + 1][2] >= want:
+                j += 1
+            best = j
+            if (j + 1 < len(s)
+                    and abs(s[j + 1][2] - want) < abs(s[j][2] - want)):
+                best = j + 1
+            if not out or s[best][2] < out[-1][2]:
+                out.append(s[best])
+        return out
+
     def add_mallet(self, t: float, x: float, y: float) -> None:
+        """The CAMERA's view of the robot mallet."""
         self.mallet = (float(x), float(y))
         self.t_mallet = t
         self.n_mallet += 1
+
+    def set_controller_mallet(self, t: float, x: float, y: float) -> None:
+        """The CONTROLLER's view of the robot mallet -- POS, not the camera.
+
+        Preferred over the camera when it is available, which is the
+        opposite of what it looks like it should be. Three reasons, and the
+        third is the one that decides it:
+
+          * it is what the SIMULATOR encodes. The env hands a policy its own
+            paddle fresh and unlagged, and the puck and opponent through the
+            camera. A bot tuned against that and then given a lagged, noisy
+            own-position on the table is being asked a different question.
+          * no latency. The camera path is ~7.7 ms; this is the Teensy's own
+            integrated position, cached in the master.
+          * it never drops out. The camera loses the mallet to a hand, to
+            glare, or to the puck sitting on top of it.
+
+        NOT the last commanded target, which is a setpoint rather than a
+        position -- mid-traverse the paddle can be a long way behind it, and
+        feeding that in would tell the bot it had already arrived.
+        """
+        self.controller_mallet = (float(x), float(y))
+        self.t_controller = t
+
+    def mallet_disagreement(self, t: float,
+                            stale_s: float = STALE_S) -> float | None:
+        """How far apart the camera and the controller are, in mm.
+
+        The only cross-check the rig has on its own cable model: the
+        controller's position is derived from step counts through the cable
+        kinematics, and the camera's is measured. A steady disagreement is
+        the model being wrong, which is otherwise invisible until something
+        binds. None when either source is stale.
+        """
+        if (self.mallet is None or self.controller_mallet is None
+                or t - self.t_mallet > stale_s
+                or t - self.t_controller > stale_s):
+            return None
+        return math.hypot(self.mallet[0] - self.controller_mallet[0],
+                          self.mallet[1] - self.controller_mallet[1])
 
     def add_opponent(self, t: float, x: float, y: float) -> None:
         self.opponent = (float(x), float(y))
@@ -256,14 +348,26 @@ class ReportBuilder:
         """
         self._expire(t)
         return {
-            OBS_PUCK: list(self.puck),
-            OBS_MALLET: (self.mallet if (self.mallet is not None
-                                         and t - self.t_mallet <= stale_s)
-                         else mallet_fallback or (geom.HOME_X, geom.HOME_Y)),
+            OBS_PUCK: self._decimate(),
+            OBS_MALLET: self._own_mallet(t, stale_s, mallet_fallback),
             OBS_OPPONENT: (self.opponent
                            if t - self.t_opponent <= stale_s else None),
             OBS_TIME: t,
         }
+
+    def _own_mallet(self, t: float, stale_s: float,
+                    fallback: tuple[float, float] | None):
+        """Controller, then camera, then the last command, then HOME.
+
+        Never None: heuristics.TrackerReport looks this up with
+        obj["mallet"] and would raise on one.
+        """
+        if (self.controller_mallet is not None
+                and t - self.t_controller <= stale_s):
+            return self.controller_mallet
+        if self.mallet is not None and t - self.t_mallet <= stale_s:
+            return self.mallet
+        return fallback or (geom.HOME_X, geom.HOME_Y)
 
     def staleness(self, t: float) -> dict:
         """Ages in seconds; inf for anything never seen."""
@@ -980,7 +1084,8 @@ def run(args) -> int:
     tracker = PuckTracker()
     own = MalletTracker(tracker, markers=3)
     opp = MalletTracker(tracker, markers=1) if args.opponent else None
-    report = ReportBuilder()
+    report = ReportBuilder(
+        lags_s=PUCK_LAGS_S if args.puck_lags == "sim" else None)
     committer = CapCommitter(client, min_interval_s=args.limits_interval)
     lag = LagMonitor()
     watchdog = PuckWatchdog(args.puck_timeout)
@@ -998,6 +1103,7 @@ def run(args) -> int:
     flags: list[str] = []
     n_clamped = 0
     last_print = 0.0
+    warned_disagree = False
     t_wall = time.time()
     try:
         for _seq, t, blobs in stream:
@@ -1025,6 +1131,28 @@ def run(args) -> int:
             if t < next_cmd:
                 continue
             next_cmd = t + period
+
+            # The CONTROLLER's own position, preferred over the camera for
+            # the report's `mallet`. Cheap enough to do every tick: the
+            # master answers POS straight out of its cached status under a
+            # mutex (cdpr_master.cpp:387) without touching the Teensy, so
+            # unlike CMD and LIMITS this is a localhost round trip with no
+            # serial in it at all.
+            if client is not None:
+                try:
+                    px, py, _vx, _vy = client.get_position()
+                    report.set_controller_mallet(t, px, py)
+                except Exception:      # noqa: BLE001
+                    pass               # no status yet; the camera covers it
+                d = report.mallet_disagreement(t)
+                if d is not None and d > MALLET_DISAGREE_WARN_MM \
+                        and not warned_disagree:
+                    warned_disagree = True
+                    print(f"WARNING: camera and controller disagree about the "
+                          f"mallet by {d:.0f} mm. The controller's position "
+                          f"comes from step counts through the cable model, "
+                          f"the camera's is measured — a steady gap is the "
+                          f"model being wrong.")
 
             event = watchdog.update(t - report.t_puck)
             if event:
@@ -1217,6 +1345,12 @@ def main() -> int:
                          f"mm/s^2 (default {Caps.accel_max:.0f}). That "
                          "default is above the ~15120 at which the paddle "
                          "tips; drop it if the paddle hops.")
+    ap.add_argument("--puck-lags", choices=("raw", "sim"), default="raw",
+                    help="shape of the puck history handed to a bot. 'raw' "
+                         "is every fix in the 200 ms window; 'sim' subsamples "
+                         "at BatchAirHockeyEnv's lags, which is what the bots "
+                         "were tuned against. raw measures better on both "
+                         "straight lines and bounces — see PUCK_LAGS_S.")
     ap.add_argument("--puck-timeout", type=float,
                     default=DEFAULT_PUCK_TIMEOUT_S,
                     help="seconds without a puck fix before the policy is "

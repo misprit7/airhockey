@@ -20,6 +20,14 @@ Robotic air hockey table that uses reinforcement learning trained in simulation,
     - `curriculum.py` - Per-stage cosine LR scheduler
     - `recorder.py` - Game recording and replay
     - `server.py` - FastAPI WebSocket server for real-time visualization
+    - `heuristics.py` - Non-learned bots (wall/goalie/striker/intercept) as
+      pure functions of tracker reports in table mm -> (x, y, speed, accel).
+      No sim dependency: the same objects run off `vision/bin/puck_stream.py`.
+      Wall bounces use the MEASURED rail coefficients rather than specular
+      reflection, so a one-bounce prediction lands where the puck does.
+    - `heuristic_bridge.py` - SimBridge: BatchAirHockeyEnv history obs <-> the
+      mm interface above. Reads observations only, never engine state — a bot
+      scored against ground truth is scored on a table that does not exist.
     - `web/` - Browser-based visualization UI
   - `bin/` - Training scripts
     - `train.py` - SAC curriculum training
@@ -28,9 +36,13 @@ Robotic air hockey table that uses reinforcement learning trained in simulation,
     - `train_selfplay.py` - Self-play training with TD-MPC2
     - `run_full_pipeline.sh` - Pretrain + self-play pipeline
     - `profile_loop.py` - Training loop profiler (per-component timing)
+    - `eval_heuristics.py` - Tournament harness for the heuristic bots:
+      each vs the scripted opponents, realistic sensing + DR, shared fixtures
   - `tests/` - Test suite
     - `test_batch_physics.py` - Vectorized physics correctness tests
     - `test_validation.py` - Reward shaping equivalence and env consistency tests
+    - `test_heuristics.py` - Bot prediction maths, the mm<->sim/action round
+      trips, workspace and cap containment, and end-to-end play
 - `shared/` - Geometry shared by every control path. **Canonical.**
   - `cdpr_geometry.h` - Table frame, motor anchors, spool, paddle attachment,
     and the cable-length model (tangency + wrap). Included by `fw/` and
@@ -141,6 +153,16 @@ tracking underneath it is the part that survives.
     python ai/bin/goalie_demo.py --dry-run   # tracks + predicts, commands nothing
     python ai/bin/goalie_demo.py             # moves the robot
 
+SUPERSEDED by `airhockey/heuristics.py`, which is the same idea done against
+measured physics and evaluated. Two differences worth porting if this file
+outlives the transition. It reflects walls SPECULARLY, but the rail keeps 78.5%
+of the normal component and 66% of the tangential, so the outgoing ray is 19%
+steeper — a one-bounce prediction lands ~67 mm off, most of a mallet. And it
+gates on CLOSING SPEED ("below 150 mm/s is drift, ignore it"), which is right
+about rig wear and wrong about air hockey: a puck trickling at 100 mm/s next to
+the net is a goal by geometry. Gating on predicted ARRIVAL TIME instead took
+goals conceded from 0.10 to 0.04 per game.
+
 ## Key Design Decisions
 - **Physics are general-purpose**: Support configurable camera delay, motor dynamics models, friction, restitution, etc. Goal is to closely match real-world behavior.
 - **Observation space**: Puck (pos + vel), own paddle (pos + vel), opponent paddle (pos + vel) — all in 2D. Camera delay is applied to observations to simulate real sensing latency.
@@ -204,6 +226,10 @@ python ai/bin/train_selfplay.py --resume runs/tdmpc2_pretrain/agent.pt
 
 # Profile training loop components
 python ai/bin/profile_loop.py
+
+# Heuristic-bot tournament (the non-ML baseline a policy has to beat)
+python ai/bin/eval_heuristics.py
+python ai/bin/eval_heuristics.py --bots goalie,striker --opponents random
 ```
 
 ## Hardware
