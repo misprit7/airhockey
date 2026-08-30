@@ -366,7 +366,7 @@ function connect() {
             ws.send(JSON.stringify({ type: "set_mode", mode: mode }));
             // Same for the side, and for the same reason: the server starts
             // every connection on the robot.
-            ws.send(JSON.stringify({ type: "set_side", side: controlSide }));
+            ws.send(JSON.stringify({ type: "set_players", ...players }));
         }
     };
 
@@ -397,6 +397,22 @@ function connect() {
                 msg.instant ? "Physics: Instant" : "Physics: Realistic";
         } else if (msg.type === "limits") {
             showLimitResult(msg);
+        } else if (msg.type === "players") {
+            if (msg.error) {
+                document.getElementById("status").textContent =
+                    "player load failed: " + msg.error;
+            }
+            // The server's word is final (a checkpoint may have failed to
+            // load); sync local state and the selects to whatever it acked.
+            players = { agent: msg.agent, opponent: msg.opponent };
+            controlSide = players.opponent.kind === "human" ? "human" : "robot";
+            for (const side of ["agent", "opponent"]) {
+                const sel = document.getElementById("sel-side-" + side);
+                if (sel.options.length) sel.value = playerValue(players[side]);
+            }
+        } else if (msg.type === "sim_limits") {
+            if (msg.speed) document.getElementById("sim-speed").value = msg.speed;
+            if (msg.accel) document.getElementById("sim-accel").value = msg.accel;
         } else if (msg.type === "hardware_mode") {
             document.getElementById("btn-hardware").textContent =
                 msg.enabled ? "Hardware: ON" : "Hardware: Off";
@@ -472,22 +488,90 @@ function screenToPhysics(clientX, clientY) {
 // commanded move lands where it should.
 let controlMode = "click";    // "click" | "follow"
 
-// Which paddle the mouse drives in SIMULATION mode. The sides are not
-// symmetric — the human has 2.3x the reach, no jerk limit, and can stand on
-// their own goal line, which the cable robot cannot — so playing the human
-// side is the only way to feel what the policy is actually up against.
-// Control mode ignores this: there is no world there, only the machine.
-let controlSide = "robot";    // "robot" | "human"
+// Who drives each paddle in SIMULATION mode. Each side is the mouse, a
+// scripted rule, or a trained checkpoint — any pairing, including two
+// checkpoints fighting each other. `controlSide` is derived: it names the
+// half the MOUSE currently drives, which is what the pointer clamp needs.
+// Control mode ignores all of this: there is no world there, only the
+// machine.
+let players = {
+    agent: { kind: "human" },
+    opponent: { kind: "rule", rule: "follow" },
+};
+let controlSide = "robot";    // derived from `players`, never set directly
 
-function setControlSide(next) {
-    controlSide = next;
-    const btn = document.getElementById("btn-side");
-    btn.textContent = next === "human" ? "Playing: Human" : "Playing: Robot";
-    btn.classList.toggle("active", next === "human");
-    if (ws && ws.readyState === 1) {
-        ws.send(JSON.stringify({ type: "set_side", side: next }));
+function parsePlayerValue(v) {
+    if (v === "human") return { kind: "human" };
+    if (v.startsWith("rule:")) return { kind: "rule", rule: v.slice(5) };
+    return { kind: "agent", run: v.slice(6) };
+}
+function playerValue(p) {
+    if (p.kind === "human") return "human";
+    if (p.kind === "rule") return "rule:" + p.rule;
+    return "agent:" + p.run;
+}
+
+const SIDE_RULES = {
+    agent: ["idle", "goalie", "follow"],
+    opponent: ["idle", "goalie", "follow", "random"],
+};
+
+async function refreshAgentList() {
+    let runs = [];
+    try {
+        runs = await (await fetch("/api/agents")).json();
+    } catch (e) { /* server without checkpoints is fine */ }
+    for (const side of ["agent", "opponent"]) {
+        const sel = document.getElementById("sel-side-" + side);
+        const current = playerValue(players[side]);
+        sel.innerHTML = "";
+        const add = (value, label) => {
+            const o = document.createElement("option");
+            o.value = value; o.textContent = label;
+            sel.appendChild(o);
+        };
+        add("human", "Mouse");
+        for (const r of SIDE_RULES[side]) add("rule:" + r, "Rule: " + r);
+        for (const a of runs) add("agent:" + a.run, "Agent: " + a.run);
+        // Keep the selection if it still exists, else fall back sanely.
+        sel.value = current;
+        if (sel.value !== current) sel.value = side === "agent" ? "human" : "rule:follow";
     }
 }
+
+function sendPlayers() {
+    if (ws && ws.readyState === 1) {
+        ws.send(JSON.stringify({ type: "set_players", ...players }));
+    }
+}
+
+function onSideSelect(side) {
+    const sel = document.getElementById("sel-side-" + side);
+    const cfg = parsePlayerValue(sel.value);
+    // One mouse: making this side human bumps the other side off it.
+    const other = side === "agent" ? "opponent" : "agent";
+    if (cfg.kind === "human" && players[other].kind === "human") {
+        players[other] = other === "opponent"
+            ? { kind: "rule", rule: "follow" } : { kind: "rule", rule: "goalie" };
+        document.getElementById("sel-side-" + other).value = playerValue(players[other]);
+    }
+    players[side] = cfg;
+    sendPlayers();
+}
+
+for (const side of ["agent", "opponent"]) {
+    document.getElementById("sel-side-" + side)
+        .addEventListener("change", () => onSideSelect(side));
+}
+
+document.getElementById("btn-sim-limits").addEventListener("click", () => {
+    if (!ws || ws.readyState !== 1) return;
+    ws.send(JSON.stringify({
+        type: "sim_limits",
+        speed: parseFloat(document.getElementById("sim-speed").value),
+        accel: parseFloat(document.getElementById("sim-accel").value),
+    }));
+});
 
 // `deliberate` distinguishes a click or tap from the pointer merely passing
 // over the canvas. Only a deliberate action may pull the UI out of replay —
@@ -536,10 +620,6 @@ function setControlMode(next) {
     btn.classList.toggle("active", next === "click");
     canvas.style.cursor = next === "click" ? "pointer" : "crosshair";
 }
-
-document.getElementById("btn-side").addEventListener("click", () => {
-    setControlSide(controlSide === "human" ? "robot" : "human");
-});
 
 document.getElementById("btn-control").addEventListener("click", () => {
     setControlMode(controlMode === "follow" ? "click" : "follow");
@@ -594,8 +674,9 @@ function setMode(next) {
     document.getElementById("sidebar-reward").style.display =
         next === "sim" ? "" : "none";
     // Only sim has two paddles to choose between.
-    document.getElementById("btn-side").style.display =
-        next === "sim" ? "" : "none";
+    document.getElementById("players-panel").classList.toggle(
+        "hidden", next !== "sim");
+    if (next === "sim") refreshAgentList();
 
     const replayPanel = document.getElementById("replay-panel");
     if (mode === "replay") {

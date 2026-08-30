@@ -144,6 +144,13 @@ async def camera_unproject(z: float = 0.0):
         return {"error": f"{type(e).__name__}: {e}"}
 
 
+@app.get("/api/agents")
+async def list_agents():
+    """Trained checkpoints the sim tab can load as a player."""
+    from airhockey.policy_loader import list_checkpoints
+    return list_checkpoints()
+
+
 @app.get("/camera/status")
 async def camera_status():
     return VISION.status()
@@ -225,14 +232,26 @@ async def live_game(ws: WebSocket):
     use_instant = False
     use_hardware = False
     ui_mode = "control"     # "control" | "sim"; replay never reaches here
-    # Which paddle the mouse drives in SIM mode. The two sides are not
-    # symmetric -- different speed and accel caps, and only the robot is
-    # confined to its reachable box -- so playing the human side is the only
-    # way to feel what the policy will actually be up against, rather than
-    # what it would be up against if its opponent were another CDPR.
-    # Control mode always drives the robot: there is no world and no second
-    # paddle, only the machine.
-    control_side = "robot"      # "robot" | "human"
+
+    # Who drives each paddle in SIM mode. Each side is one of:
+    #   {"kind": "human"}                       the mouse
+    #   {"kind": "rule",  "rule": "idle"|...}   a scripted policy
+    #   {"kind": "agent", "run": "<run name>"}  a trained checkpoint
+    # Any pairing goes: play the robot against a checkpoint, watch two
+    # checkpoints fight, put a rule on either side. Control mode ignores all
+    # of this -- there is no world there, only the machine.
+    players = {
+        "agent": {"kind": "human"},
+        "opponent": {"kind": "rule", "rule": "follow"},
+    }
+    # Loaded checkpoints, cached per run name: loading costs seconds (torch,
+    # CUDA, weights), switching back and forth should not.
+    policy_cache: dict[str, object] = {}
+    agent_t0 = True     # first act() after a load/reset warm-starts nothing
+    opp_t0 = True
+
+    def _policy(run_name):
+        return policy_cache[run_name]
     hardware_dynamics = None
     # The UI drives the SAME control law the Teensy runs, so what you see
     # dragging the mouse is what the machine will do -- jerk-limited, with the
@@ -383,34 +402,71 @@ async def live_game(ws: WebSocket):
                         # "sim" = the full game. Replay never reaches here.
                         ui_mode = ("control" if msg.get("mode") == "control"
                                    else "sim")
-                    elif msg_type == "set_side":
-                        control_side = ("human" if msg.get("side") == "human"
-                                        else "robot")
-                        # "external" is what makes _opponent_action read a
-                        # target we supply; leaving it on "follow" would have
-                        # the built-in policy fight the mouse for the same
-                        # paddle. Handing the robot side back means giving it
-                        # an opponent again.
-                        env.opponent_policy = ("external"
-                                               if control_side == "human"
-                                               else "follow")
-                        # Park the cursor in the half now being driven, so the
-                        # first frame after a switch does not command a dash
-                        # across the table from wherever the last click was.
-                        if control_side == "human":
-                            target_x = cfg.width / 2
-                            target_y = cfg.height * 0.85
+                    elif msg_type == "set_players":
+                        new_players = {
+                            "agent": msg.get("agent") or players["agent"],
+                            "opponent": (msg.get("opponent")
+                                         or players["opponent"]),
+                        }
+                        # Load any checkpoints first, off the event loop --
+                        # torch + CUDA + weights cost seconds, and a stalled
+                        # loop here would freeze the canvas mid-switch.
+                        err = None
+                        for side_cfg in new_players.values():
+                            run = side_cfg.get("run")
+                            if (side_cfg.get("kind") == "agent"
+                                    and run not in policy_cache):
+                                try:
+                                    from airhockey.policy_loader import load_agent
+                                    policy_cache[run] = await asyncio.to_thread(
+                                        load_agent, run)
+                                except Exception as e:  # noqa: BLE001
+                                    err = f"{run}: {type(e).__name__}: {e}"
+                        if err:
+                            await ws.send_json({"type": "players",
+                                                "error": err, **players})
                         else:
-                            target_x = cfg.width / 2
-                            target_y = cfg.height * 0.15
-                        await ws.send_json({"type": "side",
-                                            "side": control_side})
+                            players = new_players
+                            # The opponent slot of the ENV: rules run inside
+                            # _opponent_action; mouse and checkpoints both
+                            # come in as external targets.
+                            opp = players["opponent"]
+                            env.opponent_policy = (opp["rule"]
+                                                   if opp["kind"] == "rule"
+                                                   else "external")
+                            agent_t0 = opp_t0 = True
+                            # Park the mouse cursor in whichever half it now
+                            # drives, so the switch does not command a dash
+                            # from wherever the last click landed.
+                            if players["opponent"]["kind"] == "human":
+                                target_x, target_y = cfg.width / 2, cfg.height * 0.85
+                            else:
+                                target_x, target_y = cfg.width / 2, cfg.height * 0.15
+                            await ws.send_json({"type": "players", **players})
+                    elif msg_type == "sim_limits":
+                        # The SIM robot's caps, not the hardware's ("limits"
+                        # is the message that reaches the Teensy). Applied to
+                        # the live dynamics object; the obs cap features read
+                        # the same attributes, so a loaded policy is TOLD the
+                        # machine it is now driving.
+                        dyn = env.agent_dynamics
+                        if msg.get("speed") is not None:
+                            dyn.max_speed = max(0.1, float(msg["speed"]))
+                        if msg.get("accel") is not None:
+                            dyn.max_accel = max(0.5, float(msg["accel"]))
+                        await ws.send_json({
+                            "type": "sim_limits",
+                            "speed": getattr(dyn, "max_speed", None),
+                            "accel": getattr(dyn, "max_accel", None),
+                        })
                     elif msg_type == "reset":
                         obs, info = env.reset()
                         target_x = cfg.width / 2
-                        # Back to the half being driven, not always the robot's.
-                        target_y = (cfg.height * 0.85 if control_side == "human"
+                        # Back to the half the mouse drives.
+                        target_y = (cfg.height * 0.85
+                                    if players["opponent"]["kind"] == "human"
                                     else cfg.height * 0.15)
+                        agent_t0 = opp_t0 = True
             except (TimeoutError, asyncio.TimeoutError):
                 pass
 
@@ -450,30 +506,59 @@ async def live_game(ws: WebSocket):
                 await asyncio.sleep(1 / 60)
                 continue
 
-            if control_side == "human":
-                # Driving the far paddle. It is NOT bound by the robot's
-                # workspace -- a hand can reach its own goal line and the
-                # machine cannot, which is most of the point of playing this
-                # side -- so it is clamped only by the table and the halfway
-                # line.
+            # ── ROBOT side: mouse, rule, or checkpoint ───────────────────
+            akind = players["agent"]["kind"]
+            if akind == "agent":
+                import torch
+                with torch.no_grad():
+                    a = _policy(players["agent"]["run"]).act(
+                        torch.from_numpy(obs).float(),
+                        t0=agent_t0, eval_mode=True)
+                agent_t0 = False
+                action = a.numpy().astype(np.float32)
+            else:
+                if akind == "human":
+                    agent_target = (target_x, target_y)
+                else:
+                    rule = players["agent"].get("rule", "idle")
+                    pa = env.engine.state.paddle_agent
+                    if rule == "goalie":
+                        # Guard the goal mouth from the closest reachable
+                        # line -- the box floor, since the machine cannot
+                        # stand on its own goal line.
+                        agent_target = (cfg.width / 2, env._ws["min_y"])
+                    elif rule == "follow":
+                        agent_target = (env.engine.state.puck.x,
+                                        env._ws["min_y"] + 0.08)
+                    else:               # idle: hold station
+                        agent_target = (pa.x, pa.y)
+                # Convert physics coords to normalized [-1, 1] action space
+                norm_x = (agent_target[0] - env._action_low[0]) / (env._action_high[0] - env._action_low[0]) * 2 - 1
+                norm_y = (agent_target[1] - env._action_low[1]) / (env._action_high[1] - env._action_low[1]) * 2 - 1
+                action = np.clip(np.array([norm_x, norm_y], dtype=np.float32),
+                                 -1.0, 1.0)
+
+            # ── HUMAN side: mouse or checkpoint (rules run inside the env) ─
+            okind = players["opponent"]["kind"]
+            if okind == "human":
+                # NOT bound by the robot's workspace -- a hand can reach its
+                # own goal line and the machine cannot -- so clamped only by
+                # the table and the halfway line.
                 r = cfg.paddle_radius
                 env._external_opponent_target = (
                     min(max(target_x, r), cfg.width - r),
                     min(max(target_y, cfg.height / 2 + r), cfg.height - r),
                 )
-                # The robot holds station. Commanding its CURRENT position
-                # rather than a fixed point keeps the profile from lurching on
-                # the frame the side is handed over.
-                pa = env.engine.state.paddle_agent
-                agent_target = (pa.x, pa.y)
-            else:
-                agent_target = (target_x, target_y)
+            elif okind == "agent":
+                import torch
+                with torch.no_grad():
+                    oa = _policy(players["opponent"]["run"]).act(
+                        torch.from_numpy(env.mirror_obs(obs)).float(),
+                        t0=opp_t0, eval_mode=True)
+                opp_t0 = False
+                tx, ty = env.mirror_action_to_opponent(oa.numpy())
+                env.set_opponent_action(tx, ty)
 
-            # Convert physics coords to normalized [-1, 1] action space
-            norm_x = (agent_target[0] - env._action_low[0]) / (env._action_high[0] - env._action_low[0]) * 2 - 1
-            norm_y = (agent_target[1] - env._action_low[1]) / (env._action_high[1] - env._action_low[1]) * 2 - 1
-            action = np.array([norm_x, norm_y], dtype=np.float32)
-            action = np.clip(action, -1.0, 1.0)
             obs, reward, terminated, truncated, info = env.step(action)
 
             state = env.engine.state
@@ -488,7 +573,9 @@ async def live_game(ws: WebSocket):
                 "score_agent": state.score_agent,
                 "score_opponent": state.score_opponent,
                 "time": round(state.time, 2),
-                "side": control_side,
+                # Which half the MOUSE drives, for the client's clamp.
+                "side": ("human" if players["opponent"]["kind"] == "human"
+                         else "robot"),
             }
             if use_hardware and hardware_dynamics:
                 frame_msg["hw_x"] = hardware_dynamics.x
@@ -503,9 +590,11 @@ async def live_game(ws: WebSocket):
             if terminated or truncated:
                 await ws.send_json({"type": "game_over", **info})
                 obs, info = env.reset()
+                agent_t0 = opp_t0 = True
                 target_x = cfg.width / 2
-                # Back to the half being driven, not always the robot's.
-                target_y = (cfg.height * 0.85 if control_side == "human"
+                # Back to the half the mouse drives.
+                target_y = (cfg.height * 0.85
+                            if players["opponent"]["kind"] == "human"
                             else cfg.height * 0.15)
 
             await asyncio.sleep(1 / 60)

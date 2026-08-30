@@ -86,6 +86,29 @@
                 <button class="mode-btn" data-mode="sim">Simulation</button>
                 <button class="mode-btn" data-mode="replay">Replay</button>
             </div>
+            <div id="players-panel" class="hidden">
+                <h3 title="Who drives each paddle. Mouse = you. Rules are scripted policies. Agents are trained checkpoints from runs/ — pick one for each side to watch it play itself. The robot side runs the firmware motion law inside its reachable box; the human side has the whole half and human-model dynamics.">Players &#9432;</h3>
+                <div class="limit-row">
+                    <span class="lim-name">robot</span>
+                    <select id="sel-side-agent"></select>
+                </div>
+                <div class="limit-row">
+                    <span class="lim-name">human</span>
+                    <select id="sel-side-opponent"></select>
+                </div>
+                <h3 title="The SIM robot's motion caps (the real machine's live in Motion limits above). The policy is told these through its observation, so lowering accel here shows how a trained agent adapts to a weaker machine. Position bounds are the measured cable workspace and are not adjustable.">Sim bot limits &#9432;</h3>
+                <div class="limit-row">
+                    <span class="lim-name">vel</span>
+                    <input type="number" id="sim-speed" min="0.1" step="1" value="12">
+                    <span class="lim-unit">m/s</span>
+                </div>
+                <div class="limit-row">
+                    <span class="lim-name">accel</span>
+                    <input type="number" id="sim-accel" min="0.5" step="5" value="20">
+                    <span class="lim-unit">m/s&sup2;</span>
+                </div>
+                <button id="btn-sim-limits">Apply</button>
+            </div>
             <div id="limits-panel">
                 <h3 title="The trajectory profile lives on the Teensy. These push the caps to it at runtime, and the indicator says which one the last tick actually hit — a move that is accel-limited the whole way never reached its speed cap, so raising the speed would do nothing.">Motion limits &#9432;</h3>
                 <div class="limit-row">
