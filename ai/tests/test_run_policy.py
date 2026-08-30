@@ -142,94 +142,47 @@ def test_history_is_newest_first_and_windowed():
     assert ts[0] - ts[-1] <= 0.100 + 1e-9
 
 
-# ── History decimation (--puck-lags sim) ────────────────────────────────
-#
-# NOT the default: re-measuring showed the raw ring more accurate on
-# straight lines AND on real bounces. See PUCK_LAGS_S in run_policy.py for
-# the numbers. These tests pin the opt-in shape so it stays correct and
-# stays aligned with the sim, since it is what an on-rig A/B would use.
+def test_the_whole_ring_is_handed_over_undecimated():
+    """Every fix in the window, at the camera's full rate.
 
-
-def test_lags_match_the_simulator_the_bots_were_tuned_against():
-    """If the env's lags move, these must move with them."""
-    from airhockey.batch_env import BatchAirHockeyEnv
-    from airhockey.perception import FRAME_INTERVAL_S
-
-    expected = tuple(lag * FRAME_INTERVAL_S
-                     for lag in BatchAirHockeyEnv.HISTORY_PUCK_LAGS)
-    assert rp.PUCK_LAGS_S == expected, (
-        f"runner lags {rp.PUCK_LAGS_S} no longer match the sim's "
-        f"{expected} — a bot tuned on one and run on the other is being "
-        "asked a different question")
-
-
-def test_history_is_decimated_to_the_lags():
-    r = rp.ReportBuilder(lags_s=rp.PUCK_LAGS_S)
-    for k in range(60):                        # 0.3 s at 200 Hz
-        r.add_puck(k * 0.005, float(k), 0.0)
-    hist = r.observation(0.295)[rp.OBS_PUCK]
-    assert len(hist) == len(rp.PUCK_LAGS_S)
-    t0 = hist[0][2]
-    got = [round(t0 - s[2], 4) for s in hist]
-    assert got == [round(v, 4) for v in rp.PUCK_LAGS_S], got
-
-
-def test_decimation_anchors_on_the_newest_real_sample():
-    """hist[0] is read as 'where the puck is' — it must be a measurement."""
-    r = rp.ReportBuilder(lags_s=rp.PUCK_LAGS_S)
-    for k in range(60):
-        r.add_puck(k * 0.005, 100.0 + k, 200.0 + 2 * k)
-    hist = r.observation(0.295)[rp.OBS_PUCK]
-    assert (hist[0][0], hist[0][1]) == (159.0, 318.0)
-    assert hist[0][2] == pytest.approx(0.295)
-
-
-def test_decimated_timestamps_strictly_decrease_even_on_a_short_history():
-    """estimate_velocity divides by segment durations; no zero-length ones.
-
-    Early in a session several lags land on the same sample, which is the
-    case that would produce a duplicate.
+    Subsampling to the simulator's lag set was tried and removed: denser is
+    strictly more information, and the decimated shape could not localise a
+    real bounce that fell between two lags. See HISTORY_S in run_policy.py.
     """
-    r = rp.ReportBuilder(lags_s=rp.PUCK_LAGS_S)
-    for k in range(3):                         # only 15 ms of history
+    r = rp.ReportBuilder()
+    for k in range(40):
         r.add_puck(k * 0.005, float(k), 0.0)
-    hist = r.observation(0.010)[rp.OBS_PUCK]
-    ts = [s[2] for s in hist]
-    assert len(ts) == len(set(ts)), f"duplicate timestamps: {ts}"
-    assert all(a > b for a, b in zip(ts, ts[1:])), ts
+    hist = r.observation(0.195)[rp.OBS_PUCK]
+    assert len(hist) == 40
+    assert (hist[0][0], hist[0][2]) == (39.0, pytest.approx(0.195)), \
+        "hist[0] must be the newest real fix"
 
 
-def test_decimation_survives_a_dropout_in_the_middle():
-    """A gap must not produce duplicates or reordering either."""
-    r = rp.ReportBuilder(lags_s=rp.PUCK_LAGS_S)
+def test_timestamps_strictly_decrease_across_a_dropout():
+    """estimate_velocity divides by segment durations; no zero-length ones,
+    and no reordering when the tracker drops frames in the middle."""
+    r = rp.ReportBuilder()
     for k in range(60):
         t = k * 0.005
         if 0.10 <= t < 0.16:                   # 60 ms hole
             continue
         r.add_puck(t, float(k), 0.0)
-    hist = r.observation(0.295)[rp.OBS_PUCK]
-    ts = [s[2] for s in hist]
+    ts = [s[2] for s in r.observation(0.295)[rp.OBS_PUCK]]
     assert len(ts) == len(set(ts))
     assert all(a > b for a, b in zip(ts, ts[1:])), ts
 
 
-def test_lags_none_hands_over_the_whole_ring():
-    """The default: every fix in the window."""
-    r = rp.ReportBuilder(lags_s=None)
-    for k in range(40):
-        r.add_puck(k * 0.005, float(k), 0.0)
-    assert len(r.observation(0.195)[rp.OBS_PUCK]) == 40
-
-
-def test_decimated_history_still_reaches_the_bots_intact():
+def test_history_reaches_the_bots_intact():
     from airhockey.heuristics import TrackerReport
 
-    r = rp.ReportBuilder(lags_s=rp.PUCK_LAGS_S)
+    r = rp.ReportBuilder()
     for k in range(60):
         r.add_puck(k * 0.005, 1400.0 - 5.0 * k, 500.0 + 2.0 * k)
     r.add_mallet(0.295, geom.HOME_X, geom.HOME_Y)
     rep = TrackerReport.coerce(r.observation(0.295))
-    assert len(rep.puck) == len(rp.PUCK_LAGS_S)
+    # The 200 ms window is inclusive at both ends, so t=0.095..0.295 at
+    # 5 ms spacing is 41 samples -- the whole ring, nothing subsampled.
+    assert len(rep.puck) == 41
     assert rep.puck[0].t_s > rep.puck[-1].t_s
 
 
@@ -794,7 +747,7 @@ def _loop_args(**over):
         live=False, policy="heuristic:goalie", opponent=False, gentle=False,
         fps=200.0, exposure=300.0, gain=12.0, threshold=90, cmd_hz=100.0,
         speed=8000.0, accel=24000.0, ramp=3.0,
-        puck_timeout=rp.DEFAULT_PUCK_TIMEOUT_S, puck_lags="raw",
+        puck_timeout=rp.DEFAULT_PUCK_TIMEOUT_S,
         limits_interval=rp.CapCommitter.MIN_INTERVAL_S,
         park="stop", park_speed=500.0, park_accel=2000.0, no_enable=False)
     base.update(over)

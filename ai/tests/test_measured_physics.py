@@ -715,8 +715,8 @@ def test_history_obs_are_ordered_frames_with_the_right_spacing():
     e.engine.puck_vx[:], e.engine.puck_vy[:] = 0.0, 2.0
     for _ in range(25):
         obs, *_ = e.step(np.zeros((4, 4), dtype=np.float32))
-    assert obs.shape[1] == BatchAirHockeyEnv.HISTORY_OBS_DIM == 27
-    py = obs[0, 1:11:2]
+    assert obs.shape[1] == BatchAirHockeyEnv.HISTORY_OBS_DIM == 29
+    py = obs[0, 1:13:2]
     gaps = -np.diff(py)
     assert np.all(gaps > 0), f"history not newest-first: {py}"
     assert 0.012 < gaps[0] < 0.030, f"10 ms gap reads {gaps[0]*1000:.0f} mm at 2 m/s"

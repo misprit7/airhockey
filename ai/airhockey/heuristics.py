@@ -39,6 +39,17 @@ exact for the dominant term. That matters for the strikers, which are choosing
 an intercept TIME, and not at all for a goalie, which is choosing a place.
 
 All measured constants come from TableConfig; none are restated here.
+
+FEED THESE BOTS THE DENSEST PUCK HISTORY YOU HAVE. `estimate_velocity` cuts
+its fit at a rail bounce, and the cut can only fire on a segment that
+STRADDLES the reversal -- so the resolution of the history sets how precisely
+a bounce can be located. The tracker's native 200 Hz ring handles a bounce of
+any age. A sparse history does not: `BatchAirHockeyEnv.HISTORY_PUCK_LAGS`
+samples at 0/10/20/50/100 ms, and a bounce 40 ms old falls INSIDE the 20-50 ms
+segment, where the reversal averages away and the estimate comes back about
+50% wrong (measured: 957 mm/s of error against 7 for the raw ring). That is a
+hole in the observation rather than in the estimator, and it applies to
+anything reading those lags -- a learned policy included.
 """
 
 from __future__ import annotations

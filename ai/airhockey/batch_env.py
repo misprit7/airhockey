@@ -118,10 +118,16 @@ class BatchAirHockeyEnv:
     # 5 ms camera frames: 0/10/20/50/100 ms for the puck, 0/20/50 ms for the
     # opponent -- close to the spacing Air-Hockey-Sim used, dense recent,
     # sparse far, enough baseline to read speed AND curvature.
-    HISTORY_PUCK_LAGS = (0, 2, 4, 10, 20)
+    # The 30 ms sample (lag 6) exists to close a measured HOLE: with lags
+    # 0/10/20/50/100 ms, a bounce aged 20-50 ms had no samples straddling
+    # the reversal, so the fit averaged across it -- |vy| error ~957 mm/s
+    # against a truth of 1962 at age 40 ms, for ~3 consecutive decision
+    # ticks after EVERY rail contact. No consumer, trained or scripted, can
+    # recover a reversal the observation does not bracket.
+    HISTORY_PUCK_LAGS = (0, 2, 4, 6, 10, 20)
     HISTORY_OPP_LAGS = (0, 4, 10)
-    # 5*2 puck + 3*2 opp + own(x,y,vx,vy) + prev action(4) + side + caps(2)
-    HISTORY_OBS_DIM = 10 + 6 + 4 + 4 + 3
+    # 6*2 puck + 3*2 opp + own(x,y,vx,vy) + prev action(4) + side + caps(2)
+    HISTORY_OBS_DIM = 12 + 6 + 4 + 4 + 3
 
     def __init__(
         self,

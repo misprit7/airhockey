@@ -257,6 +257,41 @@ def test_bounce_cut_still_fires_on_a_real_bounce(spacing_s, n):
     assert np.mean([e.vy_mm_s for e in ests]) == pytest.approx(v_out, rel=0.02)
 
 
+def test_bounce_is_localised_at_any_age_given_a_dense_history():
+    """A bounce does not wait for a sample boundary.
+
+    The cut can only fire on a segment that straddles the reversal, so what
+    matters is that SOME segment is short enough to isolate it. With the
+    tracker's native 5 ms ring that is true at every bounce age. It is NOT
+    true of a sparse history: BatchAirHockeyEnv.HISTORY_PUCK_LAGS has samples
+    at 20 and 50 ms and nothing between, so a bounce 40 ms old falls inside
+    one segment, the reversal is averaged away, and the estimate comes back
+    ~50% wrong. See the note in the module docstring -- that gap is the
+    observation's, not the estimator's, and this test is the guard that the
+    estimator itself is not the limitation.
+    """
+    rng = np.random.default_rng(3)
+    y_top = puck_bounds()[3]
+    v_in = 2500.0
+    v_out = -0.785 * v_in
+
+    def history(age_s):
+        out = []
+        for k in range(13):                     # 60 ms of 5 ms frames
+            t = k * 0.005                       # seconds before now
+            dt = age_s - t                      # time since the bounce
+            vy, vx = (v_out, 0.66 * 3000.0) if dt >= 0 else (v_in, 3000.0)
+            out.append(PuckSample(960.4 + vx * dt + rng.normal(0, 0.35),
+                                  y_top + vy * dt + rng.normal(0, 0.35), -t))
+        return tuple(out)
+
+    for age_ms in (10, 15, 20, 25, 30, 35, 40, 45, 50):
+        ests = [estimate_velocity(history(age_ms / 1000.0)) for _ in range(60)]
+        err = np.mean([abs(e.vy_mm_s - v_out) for e in ests])
+        assert err < 0.05 * abs(v_out), (
+            f"bounce {age_ms} ms old: vy off by {err:.0f} mm/s")
+
+
 def test_estimate_velocity_degenerate_inputs():
     assert estimate_velocity(()) is None
     one = estimate_velocity((PuckSample(1.0, 2.0, 0.0),))

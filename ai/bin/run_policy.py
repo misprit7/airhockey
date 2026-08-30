@@ -84,47 +84,26 @@ OBS_MALLET = "mallet"
 OBS_OPPONENT = "opponent"
 OBS_TIME = "t_s"
 
-# How much puck history the report RETAINS. 200 ms at 200 Hz is up to 40
-# samples -- enough to serve every lag below with room for a dropout.
+# How much puck history the report carries, and it is handed over WHOLE --
+# every fix in the window, at the camera's 200 Hz. 200 ms is up to 40
+# samples, enough to fit a velocity and see a bounce with room for a
+# dropout.
+#
+# Subsampling it to the simulator's lag set (0/10/20/50/100 ms) was tried
+# and removed. Denser is strictly better here: measured over 400 trials at
+# the 0.35 mm centroid noise, the raw ring fits a straight line to 5.3 mm/s
+# against 9.4 for the decimated one, and -- the case that decided it --
+# recovers a REAL bounce 40 ms old to within 7 mm/s where decimating misses
+# by 857, because the reversal falls between two lags and the fit averages
+# across it. That is precisely the "velocity the puck never had" that
+# heuristics.estimate_velocity's bounce cut exists to prevent.
+#
+# For the record, the decimation was proposed on measurements (spurious cut
+# 33% of ticks, vx error sd 55 mm/s at 5 ms spacing) that were CORRECT for
+# the estimator of the time; heuristics.py then replaced its velocity-based
+# reversal threshold with a millimetre displacement one (BOUNCE_EPS_MM),
+# which made the test spacing-free and the workaround unnecessary.
 HISTORY_S = 0.200
-
-# The SIM's sampling shape: BatchAirHockeyEnv.HISTORY_PUCK_LAGS
-# (0, 2, 4, 10, 20 frames) at the 200 Hz frame interval, in seconds behind
-# the newest fix. Reachable with --puck-lags sim. NOT the default.
-#
-# It was proposed as the default on the grounds that the raw 200 Hz ring
-# trips estimate_velocity's bounce cut on straight lines -- reported as a
-# spurious cut on 33% of ticks with vx error sd 55 mm/s at 5 ms spacing,
-# against 13% and 21 mm/s at 10 ms. Re-measured against heuristics.py as it
-# now stands, 400 trials per cell, noise 0.35 mm (perception.POS_NOISE_MM,
-# the measured centroid noise), it does not reproduce:
-#
-#   straight line, spurious cut rate, 150..4000 mm/s
-#       raw 5 ms ring   0%           sim lags    0%
-#   straight line, vx error sd
-#       raw 5 ms ring   5.3 mm/s     sim lags    9.4 mm/s
-#   REAL bounce, mean |vy error|, by age of the bounce, 200 seeds
-#       10 ms   raw  39     sim  39
-#       20 ms   raw  20     sim  23
-#       30 ms   raw  11     sim  23
-#       40 ms   raw   7     sim 857
-#
-# Two reasons it does not follow. BOUNCE_EPS_MM = 1.5 already makes the
-# reversal test spacing-free -- it wants 1.5 mm of displacement on BOTH
-# segments, and 0.35 mm of noise cannot manufacture that -- so the spurious
-# cut is already prevented at the source. Sweeping noise puts the 33%/13%
-# pair at 1-2 mm, i.e. 3-6x the measured value. And decimating costs
-# accuracy twice: nine fewer samples in a straight-line fit, and too few
-# segments to LOCALISE a real bounce -- at 40 ms the reversal falls between
-# the 20 and 50 ms lags, so the fit averages straight across it.
-#
-# Default is therefore the raw ring. Kept switchable because the argument
-# for matching the sim is a real one (the bots were tuned against this
-# shape) and is better settled on the rig than in a simulation of a
-# simulation. Note the bots consume the ESTIMATE, not the samples, and
-# estimate_velocity is spacing-free by construction, which is why a more
-# accurate estimate should serve them whatever the shape.
-PUCK_LAGS_S = (0.0, 0.010, 0.020, 0.050, 0.100)
 
 # Beyond this with no fix, the puck is not "somewhere near where it was", it
 # is unknown. Matches PuckTracker._coast, which gives up at the same point.
@@ -199,13 +178,8 @@ class ReportBuilder:
     `puck_age`. A bot sees a gap, which is the truth.
     """
 
-    def __init__(self, history_s: float = HISTORY_S,
-                 lags_s: tuple[float, ...] | None = None):
+    def __init__(self, history_s: float = HISTORY_S):
         self.history_s = history_s
-        # None = the whole ring, which measures better on both straight
-        # lines and real bounces; see PUCK_LAGS_S for the numbers and for
-        # why the sim's shape is still worth having.
-        self.lags_s = lags_s
         self.puck: deque[tuple[float, float, float]] = deque()
         self.mallet: tuple[float, float] | None = None
         self.controller_mallet: tuple[float, float] | None = None
@@ -243,36 +217,6 @@ class ReportBuilder:
         self.t_puck = t
         self.n_puck += 1
         self._expire(t)
-
-    def _decimate(self) -> list[tuple[float, float, float]]:
-        """The ring subsampled at `lags_s` behind the newest fix.
-
-        Nearest sample per lag, anchored on the NEWEST SAMPLE rather than on
-        the tick clock, so hist[0] is a real measurement -- bots read it as
-        "where the puck is" and interpolating there would invent a fix.
-
-        Deduplicated, because early in a session (or after a dropout) several
-        lags land on the same sample, and heuristics.estimate_velocity needs
-        strictly decreasing timestamps: a zero-length segment is a divide by
-        zero waiting to happen.
-        """
-        if not self.puck or self.lags_s is None:
-            return list(self.puck)
-        s = list(self.puck)                 # newest first, time decreasing
-        t0 = s[0][2]
-        out: list[tuple[float, float, float]] = []
-        j = 0
-        for lag in self.lags_s:
-            want = t0 - lag
-            while j + 1 < len(s) and s[j + 1][2] >= want:
-                j += 1
-            best = j
-            if (j + 1 < len(s)
-                    and abs(s[j + 1][2] - want) < abs(s[j][2] - want)):
-                best = j + 1
-            if not out or s[best][2] < out[-1][2]:
-                out.append(s[best])
-        return out
 
     def add_mallet(self, t: float, x: float, y: float) -> None:
         """The CAMERA's view of the robot mallet."""
@@ -348,7 +292,7 @@ class ReportBuilder:
         """
         self._expire(t)
         return {
-            OBS_PUCK: self._decimate(),
+            OBS_PUCK: list(self.puck),
             OBS_MALLET: self._own_mallet(t, stale_s, mallet_fallback),
             OBS_OPPONENT: (self.opponent
                            if t - self.t_opponent <= stale_s else None),
@@ -1084,8 +1028,7 @@ def run(args) -> int:
     tracker = PuckTracker()
     own = MalletTracker(tracker, markers=3)
     opp = MalletTracker(tracker, markers=1) if args.opponent else None
-    report = ReportBuilder(
-        lags_s=PUCK_LAGS_S if args.puck_lags == "sim" else None)
+    report = ReportBuilder()
     committer = CapCommitter(client, min_interval_s=args.limits_interval)
     lag = LagMonitor()
     watchdog = PuckWatchdog(args.puck_timeout)
@@ -1345,12 +1288,6 @@ def main() -> int:
                          f"mm/s^2 (default {Caps.accel_max:.0f}). That "
                          "default is above the ~15120 at which the paddle "
                          "tips; drop it if the paddle hops.")
-    ap.add_argument("--puck-lags", choices=("raw", "sim"), default="raw",
-                    help="shape of the puck history handed to a bot. 'raw' "
-                         "is every fix in the 200 ms window; 'sim' subsamples "
-                         "at BatchAirHockeyEnv's lags, which is what the bots "
-                         "were tuned against. raw measures better on both "
-                         "straight lines and bounces — see PUCK_LAGS_S.")
     ap.add_argument("--puck-timeout", type=float,
                     default=DEFAULT_PUCK_TIMEOUT_S,
                     help="seconds without a puck fix before the policy is "
