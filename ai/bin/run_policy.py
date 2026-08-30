@@ -673,10 +673,21 @@ def _load_sac(run: str, caps: Caps):
         checkpoints do not carry their hyperparameters (see policy_loader);
         building it from the wrong assumption produces plausible motion
         rather than an error.
-      * the agent emits a target POSITION only. Caps are not part of its
-        action space, so whoever writes this decides whether they come from
-        a flag, from the training config, or from a policy retrained to emit
-        them -- and that decision belongs with the training run, not here.
+      * whether the agent emits caps depends on the checkpoint's action
+        mode: TD-MPC2 runs emit a target POSITION only (caps must come from
+        a flag or the training config), while SAC runs trained with
+        action_mode="profile_v" emit (x, y, speed_frac, accel_frac) -- four
+        dims, caps as fractions of the machine's. Feed the wrong assumption
+        and you get plausible motion at the wrong caps, not an error.
+
+    One concrete inherited limitation, so the adapter's author meets it
+    here rather than on the rig: a policy trained on the history obs
+    carries its lag set's residual bounce blindness (batch_env
+    HISTORY_PUCK_LAGS comment: worst case ~22% vy error for under one
+    decision tick, bounce aged ~45 ms). Expect occasional mis-timed play
+    in the first tick after rail contact and only then -- that is the
+    observation, not the adapter, and densifying the lags before a
+    training run is the fix if it matters on the table.
     """
     raise NotImplementedError(
         f"--policy sac:{run} is not implemented. See _load_sac() in "
