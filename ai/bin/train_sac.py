@@ -191,6 +191,42 @@ def collect_demos(vec, bots, bridge, n_transitions):
             np.concatenate(NO), np.concatenate(D))
 
 
+def dagger_rounds(model, vec, bots, bridge, args, d_obs, d_act):
+    """DAgger: the clone drives, the teacher labels the states the clone
+    actually reaches, the aggregate retrains the clone.
+
+    Pure BC failed here measurably (clone 0.15 GF vs teacher 0.80): mse
+    0.0007 on the TEACHER'S states says nothing about the states the
+    clone's own small errors steer it into, where it has no data at all.
+    Labelling exactly those states is the fix.
+    """
+    O = [d_obs]
+    A = [d_act]
+    per_round = args.bc_transitions // 2
+    for r in range(args.dagger_iters):
+        obs = vec.reset()
+        bridge.reset()
+        ro, ra = [], []
+        for _ in range(int(np.ceil(per_round / vec.num_envs))):
+            # Teacher labels for the CURRENT states...
+            reports = bridge.reports(obs)
+            commands = [bot(rep) for bot, rep in zip(bots, reports)]
+            labels = bridge.actions(commands, obs).astype(np.float32)
+            ro.append(obs.copy())
+            ra.append(labels)
+            # ...but the CLONE chooses where to go next.
+            act, _ = model.predict(obs, deterministic=True)
+            vec.step_async(act.astype(np.float32))
+            obs, _, _, _ = vec.step_wait()
+        O.append(np.concatenate(ro)); A.append(np.concatenate(ra))
+        all_o, all_a = np.concatenate(O), np.concatenate(A)
+        bc_pretrain(model, all_o, all_a, args.bc_epochs // 2 or 1,
+                    batch_size=args.batch_size)
+        print(f"  DAgger round {r + 1}/{args.dagger_iters}: "
+              f"dataset {len(all_o):,}")
+    return np.concatenate(O), np.concatenate(A)
+
+
 def bc_pretrain(model, demo_obs, demo_act, epochs, batch_size=1024):
     """Supervised warm start: pull the actor's squashed mean onto the
     teacher's actions. The critic is deliberately untouched -- it learns from
@@ -282,6 +318,8 @@ def main():
                    help="heuristic teacher for the warm start; 'none' disables")
     p.add_argument("--bc-transitions", type=int, default=200_000)
     p.add_argument("--bc-epochs", type=int, default=25)
+    p.add_argument("--dagger-iters", type=int, default=4,
+                   help="rounds of clone-drives/teacher-labels; 0 disables")
     p.add_argument("--bc-refresh-epochs", type=int, default=2,
                    help="BC epochs re-anchoring the actor between chunks; "
                         "0 disables")
@@ -367,6 +405,12 @@ def main():
         # this checkpoint survives it.
         model.save(run_dir / "agent_bc_only")
         print(f"BC-only actor saved to {run_dir}/agent_bc_only.zip")
+        if args.dagger_iters > 0:
+            print(f"DAgger: {args.dagger_iters} rounds...")
+            d_obs, d_act = dagger_rounds(model, vec, bots, bridge, args,
+                                         d_obs, d_act)
+            model.save(run_dir / "agent_dagger")
+            print(f"DAgger actor saved to {run_dir}/agent_dagger.zip")
 
     remaining = args.steps
     chunk = args.record_freq
