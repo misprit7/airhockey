@@ -692,3 +692,68 @@ def test_shot_mix_rewards_the_neglected_shot_type():
     straight_pay = sh.shot_mix_weight * sh._bank_ema[0]
     bank_pay = sh.shot_mix_weight * (1.0 - sh._bank_ema[0])
     assert straight_pay > bank_pay
+
+
+# ── History observations and the velocity-carrying action ────────────────
+
+def test_history_obs_are_ordered_frames_with_the_right_spacing():
+    """5 puck frames at 0/10/20/50/100 ms behind the newest visible one.
+
+    Motion must read newest-first, and the spacing must be wall-clock true:
+    at 2 m/s the 10 ms gap between the first two lags is ~20 mm.
+    """
+    from airhockey.batch_env import BatchAirHockeyEnv, sensing_kwargs
+    e = BatchAirHockeyEnv(n_envs=4, obs_mode="history", action_mode="profile_v",
+                          **sensing_kwargs(True))
+    e.reset(seed=0)
+    # A lane no paddle can reach during the test: hug the left rail heading
+    # away from the agent, with the opponent parked in the far corner. The
+    # first version sent the puck across the agent's half and the paddle HIT
+    # it -- real physics ruining a test that assumed free flight.
+    e.engine.paddle_opp_x[:], e.engine.paddle_opp_y[:] = 0.9, 1.9
+    e.engine.puck_x[:], e.engine.puck_y[:] = 0.08, 0.8
+    e.engine.puck_vx[:], e.engine.puck_vy[:] = 0.0, 2.0
+    for _ in range(25):
+        obs, *_ = e.step(np.zeros((4, 4), dtype=np.float32))
+    assert obs.shape[1] == BatchAirHockeyEnv.HISTORY_OBS_DIM == 27
+    py = obs[0, 1:11:2]
+    gaps = -np.diff(py)
+    assert np.all(gaps > 0), f"history not newest-first: {py}"
+    assert 0.012 < gaps[0] < 0.030, f"10 ms gap reads {gaps[0]*1000:.0f} mm at 2 m/s"
+
+
+def test_profile_v_action_caps_bind_and_stay_inside_the_machine():
+    """Dims 2-3 command per-segment speed/accel caps as fractions of the
+    machine's. A 5% command must crawl; a 100% command must not exceed what
+    the machine could ever do (the Teensy LIMITS clamp on the table)."""
+    from airhockey.batch_env import BatchAirHockeyEnv
+    e = BatchAirHockeyEnv(n_envs=2, obs_mode="history", action_mode="profile_v")
+    e.reset(seed=1)
+    for arr in (e.engine.paddle_agent_x, e._agent_dyn["x"]):
+        arr[:] = 0.3
+    for arr in (e.engine.paddle_agent_y, e._agent_dyn["y"]):
+        arr[:] = 0.3
+    acts = np.array([[1, 1, 1, 1], [1, 1, -1, -1]], dtype=np.float32)
+    peak = 0.0
+    for _ in range(30):
+        e.step(acts)
+        peak = max(peak, float(np.hypot(e._agent_dyn["vx"][0], e._agent_dyn["vy"][0])))
+    full = float(e.engine.paddle_agent_x[0]) - 0.3
+    crawl = float(e.engine.paddle_agent_x[1]) - 0.3
+    assert full > 3 * crawl, f"caps did not bind: full {full:.3f} vs 5% {crawl:.3f}"
+    assert peak <= float(e._agent_dyn["max_speed"][0]) + 1e-6, "exceeded machine cap"
+
+
+def test_history_mode_with_sensing_off_is_clean_truth():
+    """Clean-sim history: zero latency, truth frames — the diagnostic
+    configuration must not smuggle in any sensing corruption."""
+    from airhockey.batch_env import BatchAirHockeyEnv, sensing_kwargs
+    e = BatchAirHockeyEnv(n_envs=2, obs_mode="history", action_mode="profile_v",
+                          **sensing_kwargs(False))
+    e.reset(seed=2)
+    assert np.all(e._cam_lag == 0)
+    e.engine.puck_x[:], e.engine.puck_y[:] = 0.4, 0.6
+    e.engine.puck_vx[:], e.engine.puck_vy[:] = 1.0, 0.0
+    obs, *_ = e.step(np.zeros((2, 4), dtype=np.float32))
+    # newest frame is exactly truth
+    np.testing.assert_allclose(obs[0, 0], e.engine.puck_x[0], atol=1e-6)

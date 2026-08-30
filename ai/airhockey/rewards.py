@@ -345,9 +345,12 @@ class BatchRewardShaper:
             idx = slice(None)
         else:
             idx = mask
-        self._prev_puck_y[idx] = obs[idx, 1]  # puck_y
+        if info is not None and "puck_y" in info:
+            self._prev_puck_y[idx] = info["puck_y"][idx]
+        else:
+            self._prev_puck_y[idx] = obs[idx, 1]  # puck_y
         self._contact_count[idx] = 0
-        # Read puck velocity from obs (indices 2-3) or info dict
+        # Read puck velocity from info (truth) or obs (indices 2-3)
         puck_vx = obs[idx, 2]
         puck_vy = obs[idx, 3]
         if info is not None and "puck_vx" in info:
@@ -372,9 +375,16 @@ class BatchRewardShaper:
         shaped = np.zeros(self.n_envs, dtype=np.float32)
         aux_scale = 1.0 - self._anneal_decay  # annealing multiplier
 
-        puck_x, puck_y = obs[:, 0], obs[:, 1]
-        pad_x, pad_y = obs[:, 4], obs[:, 5]
-        # Read puck velocity from obs (indices 2-3); info dict overrides if available
+        # TRUE state from info when the env provides it: rewards score what
+        # happened on the table, not what a noisy tracker believed -- and
+        # history-mode observations do not carry a snapshot at these indices
+        # at all. Obs-index fallback serves bare-bones callers only.
+        if info is not None and "puck_x" in info:
+            puck_x, puck_y = info["puck_x"], info["puck_y"]
+            pad_x, pad_y = info["pad_x"], info["pad_y"]
+        else:
+            puck_x, puck_y = obs[:, 0], obs[:, 1]
+            pad_x, pad_y = obs[:, 4], obs[:, 5]
         puck_vx, puck_vy = obs[:, 2], obs[:, 3]
         if info is not None and "puck_vx" in info:
             puck_vx, puck_vy = info["puck_vx"], info["puck_vy"]
@@ -475,7 +485,7 @@ class BatchRewardShaper:
         # Reset potentials and contact count after goals
         goal_mask = goal_for | goal_against
         if np.any(goal_mask):
-            self._prev_puck_y[goal_mask] = obs[goal_mask, 1]  # puck_y
+            self._prev_puck_y[goal_mask] = puck_y[goal_mask]
             self._contact_count[goal_mask] = 0
 
         return shaped.astype(np.float32)

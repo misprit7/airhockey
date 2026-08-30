@@ -113,6 +113,16 @@ class BatchAirHockeyEnv:
     # ~0.34 sim-units -> -0.007/step, small next to the 0.1 proximity term.
     WS_PENALTY_PER_UNIT = 0.02
 
+    # History-mode observation layout. Frame lags are relative to the newest
+    # frame the env is entitled to see (i.e. after sensing latency), in
+    # 5 ms camera frames: 0/10/20/50/100 ms for the puck, 0/20/50 ms for the
+    # opponent -- close to the spacing Air-Hockey-Sim used, dense recent,
+    # sparse far, enough baseline to read speed AND curvature.
+    HISTORY_PUCK_LAGS = (0, 2, 4, 10, 20)
+    HISTORY_OPP_LAGS = (0, 4, 10)
+    # 5*2 puck + 3*2 opp + own(x,y,vx,vy) + prev action(4) + side + caps(2)
+    HISTORY_OBS_DIM = 10 + 6 + 4 + 4 + 3
+
     def __init__(
         self,
         n_envs: int,
@@ -158,6 +168,23 @@ class BatchAirHockeyEnv:
         # than reading the engine: finite-difference velocity over noisy
         # positions, plus the IR ring's blind spot at table centre.
         realistic_perception: bool = False,
+        # "kinematic" (default): the 15-dim snapshot obs above.
+        # "history": positions over the recent past instead of estimated
+        # velocities -- 5 puck frames and 3 opponent frames read straight
+        # off the camera ring, own state fresh, previous action included.
+        # Motion is left for the network to infer, which sidesteps the
+        # estimator entirely and gives a memoryless learner the memory in
+        # the observation. (The approach HudsonNock/Air-Hockey-Sim proved
+        # on hardware; arrived at independently the moment the camera ring
+        # existed to read from.)
+        obs_mode: str = "kinematic",       # "kinematic" | "history"
+        # "position" (default): 2-dim target the profile chases at machine
+        # caps. "profile_v": 4-dim (x, y, speed_frac, accel_frac) -- the
+        # policy also commands the caps for this segment, as fractions of
+        # the machine's. Productionizable by construction: the Teensy takes
+        # runtime LIMITS alongside MOVE, so this action IS its command set.
+        # Without it a policy can only hit hard by aiming through the puck.
+        action_mode: str = "position",     # "position" | "profile_v"
         # Bound the AGENT to the box the machine can actually reach, rather
         # than to its half of the table. Off only for ablations; on it, the
         # policy would learn to use 65% of the half that does not exist.
@@ -167,6 +194,16 @@ class BatchAirHockeyEnv:
     ):
         self.n_envs = n_envs
         self.table_config = table_config or TableConfig()
+        if obs_mode not in ("kinematic", "history"):
+            raise ValueError(f"unknown obs_mode {obs_mode!r}")
+        if action_mode not in ("position", "profile_v"):
+            raise ValueError(f"unknown action_mode {action_mode!r}")
+        self.obs_mode = obs_mode
+        self.action_mode = action_mode
+        self.action_dim = 2 if action_mode == "position" else 4
+        # Previous action is part of the history observation; kept at the
+        # full 4 slots regardless of mode so the layout never shifts.
+        self._prev_action = np.zeros((n_envs, 4), dtype=np.float32)
         self.physics_dt = physics_dt
         self.action_dt = action_dt
         self.max_episode_time = max_episode_time
@@ -265,9 +302,15 @@ class BatchAirHockeyEnv:
         # realistic_perception=False: legacy whole-obs ring delayed by
         # whole ACTION steps (kept for ablations and tests; with
         # camera_delay=0.0 it is a no-op and observations are truth).
-        self._obs_dim = self.OBS_DIM
+        self._obs_dim = (self.HISTORY_OBS_DIM if obs_mode == "history"
+                         else self.OBS_DIM)
+        self.obs_dim = self._obs_dim
         self._env_idx = np.arange(n_envs)
-        if realistic_perception:
+        # The camera ring runs whenever anything reads frames from it:
+        # realistic sensing (latency + tracker model) or history obs (which
+        # are frames by definition -- truth frames when sensing is off).
+        self._cam_active = realistic_perception or obs_mode == "history"
+        if self._cam_active:
             self._cam_dt = FRAME_INTERVAL_S
             self._cam_every = int(round(self._cam_dt / physics_dt))
             if abs(self._cam_every * physics_dt - self._cam_dt) > 1e-9:
@@ -275,15 +318,20 @@ class BatchAirHockeyEnv:
                     f"physics_dt {physics_dt} must divide the camera frame "
                     f"interval {self._cam_dt} for the camera clock to tick "
                     "on substep boundaries")
-            lo, hi = (camera_delay if isinstance(camera_delay, tuple)
-                      else (camera_delay, camera_delay))
+            if realistic_perception:
+                lo, hi = (camera_delay if isinstance(camera_delay, tuple)
+                          else (camera_delay, camera_delay))
+            else:
+                lo = hi = 0.0                    # clean sim: no latency
             self._cam_latency_range = (float(lo), float(hi))
             max_lag = max(1, int(round(hi / self._cam_dt)))
-            self._cam_ring_size = max_lag + 2   # +1 newest, +1 for velocity diff
+            hist_depth = (max(self.HISTORY_PUCK_LAGS) if obs_mode == "history"
+                          else 0)
+            self._cam_ring_size = max_lag + hist_depth + 2
             # Per-frame tracker report: puck x,y,vx,vy + opponent x,y
             self._cam_ring = np.zeros((self._cam_ring_size, n_envs, 6))
             self._cam_write = 0
-            self._cam_lag = np.ones(n_envs, dtype=np.int32)
+            self._cam_lag = np.zeros(n_envs, dtype=np.int32)
             self._max_delay = 0                  # legacy ring off
             self._delay_range = (0, 0)
         else:
@@ -503,10 +551,11 @@ class BatchAirHockeyEnv:
         # Init previous positions (zero velocity at start)
         if self._perception is not None:
             self._perception.reset(self.engine.puck_x, self.engine.puck_y, idx)
+        if self._cam_active:
             # Fill the camera ring with the reset state so the first reads
             # see a stationary, correctly-placed world rather than frames
             # from the previous episode, and draw each env's latency from
-            # the measured band.
+            # the measured band (zero when sensing realism is off).
             e = self.engine
             for f in range(self._cam_ring_size):
                 self._cam_ring[f, idx, 0] = e.puck_x[idx]
@@ -517,10 +566,14 @@ class BatchAirHockeyEnv:
                 self._cam_ring[f, idx, 5] = e.paddle_opp_y[idx]
             lo, hi = self._cam_latency_range
             n_r = self.n_envs if mask is None else int(mask.sum())
-            lat = self._rng.uniform(lo, hi, size=n_r)
-            self._cam_lag[idx] = np.clip(
-                np.round(lat / self._cam_dt).astype(np.int32),
-                1, self._cam_ring_size - 2)
+            if hi > 0:
+                lat = self._rng.uniform(lo, hi, size=n_r)
+                self._cam_lag[idx] = np.clip(
+                    np.round(lat / self._cam_dt).astype(np.int32),
+                    1, self._cam_ring_size - 2)
+            else:
+                self._cam_lag[idx] = 0
+        self._prev_action[idx] = 0.0
 
         self._prev_agent_x[idx] = self.engine.paddle_agent_x[idx]
         self._prev_agent_y[idx] = self.engine.paddle_agent_y[idx]
@@ -574,6 +627,20 @@ class BatchAirHockeyEnv:
         target_x = self._action_low[0] + (actions[:, 0] + 1.0) * 0.5 * (self._action_high[0] - self._action_low[0])
         target_y = self._action_low[1] + (actions[:, 1] + 1.0) * 0.5 * (self._action_high[1] - self._action_low[1])
 
+        # Velocity-carrying action: dims 2-3 command the caps for this
+        # segment as fractions of the MACHINE caps ([-1,1] -> 5%..100%), so
+        # a command can be gentle or a full-force strike but never exceed
+        # what the DR-sampled machine -- and on the table, the Teensy's
+        # LIMITS clamp -- can deliver.
+        if self.action_mode == "profile_v":
+            v_frac = 0.05 + (actions[:, 2] + 1.0) * 0.5 * 0.95
+            a_frac = 0.05 + (actions[:, 3] + 1.0) * 0.5 * 0.95
+            agent_speed_cap = v_frac * self._agent_dyn["max_speed"]
+            agent_accel_cap = a_frac * self._agent_dyn["max_accel"]
+        else:
+            agent_speed_cap = agent_accel_cap = None
+        self._prev_action[:, :actions.shape[1]] = actions
+
         cfg = self.table_config
         rewards = np.zeros(self.n_envs)
 
@@ -595,7 +662,9 @@ class BatchAirHockeyEnv:
             dt = self.sub_dt
 
             # Update agent paddle through dynamics
-            ax, ay = self._update_dynamics(self._agent_dyn, target_x, target_y, dt)
+            ax, ay = self._update_dynamics(self._agent_dyn, target_x, target_y,
+                                           dt, speed_cap=agent_speed_cap,
+                                           accel_cap=agent_accel_cap)
             ax, ay = self._clamp_to_half(ax, ay, agent=True)
             self.engine.update_paddle_agent(ax, ay, dt)
 
@@ -609,7 +678,7 @@ class BatchAirHockeyEnv:
             # Camera tick: the simulated 200 Hz camera lives IN the physics
             # loop, not at the action boundary, so sensing latency is a
             # property of the world rather than of the control rate.
-            if self._perception is not None and (sub + 1) % self._cam_every == 0:
+            if self._cam_active and (sub + 1) % self._cam_every == 0:
                 self._camera_tick()
 
             # Accumulate goal rewards
@@ -664,6 +733,14 @@ class BatchAirHockeyEnv:
             "time": self.engine.time.copy(),
             "puck_vx": self.engine.puck_vx.copy(),
             "puck_vy": self.engine.puck_vy.copy(),
+            # TRUE positions for reward shaping. History-mode obs do not
+            # carry a current snapshot at fixed indices, and rewards should
+            # be computed on what happened, not on what the noisy tracker
+            # believed happened.
+            "puck_x": self.engine.puck_x.copy(),
+            "puck_y": self.engine.puck_y.copy(),
+            "pad_x": self.engine.paddle_agent_x.copy(),
+            "pad_y": self.engine.paddle_agent_y.copy(),
             # How far past the reachable box this step's command pointed.
             # Worth watching in training: if it does not fall over time, the
             # policy is not learning the boundary, just paying the fine.
@@ -743,6 +820,10 @@ class BatchAirHockeyEnv:
 
         Flip y positions, negate y velocities, swap agent/opponent.
         """
+        if self.obs_mode == "history":
+            raise NotImplementedError(
+                "mirror_obs for history observations lands with SAC "
+                "self-play; scripted opponents never look at an obs")
         cfg = self.table_config
         m = obs.copy()
         # Obs: [puck_x, puck_y, puck_vx, puck_vy,
@@ -803,8 +884,19 @@ class BatchAirHockeyEnv:
         target_x: np.ndarray,
         target_y: np.ndarray,
         dt: float,
+        speed_cap: np.ndarray | None = None,
+        accel_cap: np.ndarray | None = None,
     ) -> tuple[np.ndarray, np.ndarray]:
-        """Vectorized dynamics update. Returns new (x, y) arrays."""
+        """Vectorized dynamics update. Returns new (x, y) arrays.
+
+        speed_cap/accel_cap: optional per-env caps for THIS command,
+        below the machine limits in dyn["max_speed"/"max_accel"]. This is
+        how the velocity-carrying action mode reaches the hardware: the
+        Teensy accepts runtime LIMITS alongside MOVE targets, so a policy
+        that modulates its caps per command is directly productionizable.
+        """
+        v_cap = dyn["max_speed"] if speed_cap is None else speed_cap
+        a_cap = dyn["max_accel"] if accel_cap is None else accel_cap
         if dyn["type"] == "profile":
             # The real firmware control law, via fw/host. Millimetres, because
             # that is what the Teensy works in -- the law itself is
@@ -819,7 +911,7 @@ class BatchAirHockeyEnv:
             advance(cart,
                     (target_x * 1000.0).astype(np.float32),
                     (target_y * 1000.0).astype(np.float32),
-                    dyn["max_speed"] * 1000.0, dyn["max_accel"] * 1000.0,
+                    v_cap * 1000.0, a_cap * 1000.0,
                     dyn["ramp_s"], dt / substeps, substeps)
             dyn["x"] = cart.x.astype(np.float64) / 1000.0
             dyn["y"] = cart.y.astype(np.float64) / 1000.0
@@ -842,10 +934,10 @@ class BatchAirHockeyEnv:
 
         # Clamp desired velocity
         desired_speed = np.hypot(desired_vx, desired_vy)
-        too_fast = desired_speed > dyn["max_speed"]
+        too_fast = desired_speed > v_cap
         factor = np.where(
             too_fast,
-            dyn["max_speed"] / np.maximum(desired_speed, 1e-8),
+            v_cap / np.maximum(desired_speed, 1e-8),
             1.0,
         )
         desired_vx *= factor
@@ -856,7 +948,7 @@ class BatchAirHockeyEnv:
             ax = (desired_vx - dyn["vx"]) / dt
             ay = (desired_vy - dyn["vy"]) / dt
             accel = np.hypot(ax, ay)
-            too_much = accel > dyn["max_accel"]
+            too_much = accel > a_cap
             afactor = np.where(
                 too_much,
                 dyn["max_accel"] / np.maximum(accel, 1e-8),
@@ -925,9 +1017,16 @@ class BatchAirHockeyEnv:
         return x, y
 
     def _camera_tick(self) -> None:
-        """One 200 Hz camera frame: run the tracker model, store its report."""
+        """One 200 Hz camera frame: run the tracker model, store its report.
+
+        With realistic sensing off the "tracker" is truth -- the ring then
+        serves as clean position history for history-mode observations.
+        """
         e = self.engine
-        px, py, pvx, pvy = self._perception.update(e.puck_x, e.puck_y)
+        if self._perception is not None:
+            px, py, pvx, pvy = self._perception.update(e.puck_x, e.puck_y)
+        else:
+            px, py, pvx, pvy = e.puck_x, e.puck_y, e.puck_vx, e.puck_vy
         w = self._cam_write
         self._cam_ring[w, :, 0] = px
         self._cam_ring[w, :, 1] = py
@@ -954,8 +1053,46 @@ class BatchAirHockeyEnv:
         opp_vy = (seen[:, 5] - before[:, 5]) / self._cam_dt
         return seen, opp_vx, opp_vy
 
+    def _history_obs(self) -> np.ndarray:
+        """Build [N, HISTORY_OBS_DIM]: positions over time, not velocities.
+
+        Everything the policy sees about the world is camera frames at fixed
+        lags behind the newest frame it is entitled to (post-latency), so
+        motion -- speed, direction, curvature, a bounce mid-window -- is the
+        network's inference to make. Own state is fresh (the controller
+        knows itself), and the previous action closes the loop on what was
+        already commanded.
+        """
+        e = self.engine
+        newest = (self._cam_write - 1) % self._cam_ring_size
+        base = (newest - self._cam_lag) % self._cam_ring_size
+        cols = []
+        for lag in self.HISTORY_PUCK_LAGS:
+            idx = (base - lag) % self._cam_ring_size
+            frame = self._cam_ring[idx, self._env_idx]
+            cols.append(frame[:, 0])
+            cols.append(frame[:, 1])
+        for lag in self.HISTORY_OPP_LAGS:
+            idx = (base - lag) % self._cam_ring_size
+            frame = self._cam_ring[idx, self._env_idx]
+            cols.append(frame[:, 4])
+            cols.append(frame[:, 5])
+        dt = self.action_dt
+        agent_vx = (e.paddle_agent_x - self._prev_agent_x) / dt
+        agent_vy = (e.paddle_agent_y - self._prev_agent_y) / dt
+        self._prev_agent_x[:] = e.paddle_agent_x
+        self._prev_agent_y[:] = e.paddle_agent_y
+        cols += [e.paddle_agent_x, e.paddle_agent_y, agent_vx, agent_vy]
+        cols += [self._prev_action[:, k] for k in range(4)]
+        cols += [np.full(self.n_envs, self.ROBOT_SIDE),
+                 self._agent_dyn["max_speed"] / MAX_SPEED_M_S,
+                 self._agent_dyn["max_accel"] / MAX_ACCEL_M_S2]
+        return np.column_stack(cols).astype(np.float32)
+
     def _make_obs_direct(self) -> np.ndarray:
         """Build [N, OBS_DIM] observation with positions + velocities."""
+        if self.obs_mode == "history":
+            return self._history_obs()
         e = self.engine
         dt = self.action_dt
 
