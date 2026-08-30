@@ -45,10 +45,15 @@ class BatchVecEnv(VecEnv):
     """
 
     def __init__(self, env: BatchAirHockeyEnv, shaper: BatchRewardShaper,
-                 total_steps: int):
+                 total_steps: int, reward_scale: float = 1.0):
         self.env = env
         self.shaper = shaper
         self.total_steps = total_steps
+        # SAC is sensitive to value scale: with +160-per-goal shaping the
+        # critic starts around Q ~ -20k and the auto entropy coefficient
+        # spikes (observed at 11) then collapses to zero. Scaling rewards
+        # to O(1) is the standard fix and costs nothing semantically.
+        self.reward_scale = reward_scale
         self._elapsed = 0
         obs_dim = env.obs_dim
         observation_space = gym.spaces.Box(-np.inf, np.inf, (obs_dim,),
@@ -80,7 +85,7 @@ class BatchVecEnv(VecEnv):
         # Penalty ramp / late-stage anneal follow global progress.
         self.shaper.set_progress(min(1.0, self._elapsed / max(self.total_steps, 1)))
         shaped = self.shaper.compute(obs, raw, actions=self._actions, info=info)
-        shaped += raw * 0.0  # keep dtype float32 via shaper; raw kept in infos
+        shaped = shaped * self.reward_scale
         self._elapsed += self.env.n_envs
 
         dones = term | trunc
@@ -164,14 +169,72 @@ def record_game(model, args, step, run_name):
           f"{int(e.score_agent[0])}-{int(e.score_opponent[0])}")
 
 
+def collect_demos(vec, bots, bridge, n_transitions):
+    """Roll the striker (or any bot) through the training env, via the same
+    tested SimBridge the tournament used, gathering (obs, action, reward,
+    next_obs, done) at the training reward scale."""
+    import torch  # noqa: F401  (parity with caller's device use)
+    obs = vec.reset()
+    bridge.reset()
+    n_steps = int(np.ceil(n_transitions / vec.num_envs))
+    O, A, R, NO, D = [], [], [], [], []
+    for _ in range(n_steps):
+        reports = bridge.reports(obs)
+        commands = [bot(rep) for bot, rep in zip(bots, reports)]
+        actions = bridge.actions(commands, obs).astype(np.float32)
+        vec.step_async(actions)
+        next_obs, rew, dones, infos = vec.step_wait()
+        O.append(obs.copy()); A.append(actions)
+        R.append(rew.copy()); NO.append(next_obs.copy()); D.append(dones.copy())
+        obs = next_obs
+    return (np.concatenate(O), np.concatenate(A), np.concatenate(R),
+            np.concatenate(NO), np.concatenate(D))
+
+
+def bc_pretrain(model, demo_obs, demo_act, epochs, batch_size=1024):
+    """Supervised warm start: pull the actor's squashed mean onto the
+    teacher's actions. The critic is deliberately untouched -- it learns from
+    the demo transitions prefilled into the replay buffer instead, so its
+    first gradients come from real Bellman targets rather than a guess."""
+    import torch
+    device = model.device
+    obs_t = torch.as_tensor(demo_obs, dtype=torch.float32, device=device)
+    act_t = torch.as_tensor(demo_act, dtype=torch.float32, device=device)
+    n = len(obs_t)
+    actor = model.actor
+    for ep in range(epochs):
+        perm = torch.randperm(n, device=device)
+        total = 0.0
+        for i in range(0, n, batch_size):
+            idx = perm[i:i + batch_size]
+            mean, log_std, _ = actor.get_action_dist_params(obs_t[idx])
+            loss = torch.nn.functional.mse_loss(torch.tanh(mean), act_t[idx])
+            actor.optimizer.zero_grad()
+            loss.backward()
+            actor.optimizer.step()
+            total += float(loss.detach()) * len(idx)
+        if ep == 0 or ep == epochs - 1:
+            print(f"  BC epoch {ep + 1}/{epochs}: mse {total / n:.5f}")
+
+
 def _make_env(args, n_envs=None):
+    n = n_envs or args.n_envs
+    mix = None
+    if getattr(args, "opponent_mix", None):
+        # "goalie:follow:random" counts, e.g. 32:16:16. Training against a
+        # single opponent taught v2-v4 exactly one trick; the striker's
+        # tournament showed the failure modes differ per opponent.
+        parts = [int(p) for p in args.opponent_mix.split(":")]
+        assert sum(parts) == n, f"opponent-mix {parts} must sum to n_envs {n}"
+        mix = {"goalie": parts[0], "follow": parts[1], "random": parts[2]}
     return BatchAirHockeyEnv(
-        n_envs=n_envs or args.n_envs,
+        n_envs=n,
         obs_mode="history",
         action_mode="profile_v",
         agent_dynamics="profile",
         opponent_dynamics="delayed",
         opponent_policy=args.opponent,
+        opponent_mix=mix,
         action_dt=1 / 100,
         max_episode_steps=2000,          # 20 s exchanges
         max_score=7,
@@ -199,6 +262,24 @@ def main():
     p.add_argument("--batch-size", type=int, default=1024)
     p.add_argument("--lr", type=float, default=5e-4)
     p.add_argument("--buffer", type=int, default=1_000_000)
+    p.add_argument("--reward-scale", type=float, default=0.1,
+                   help="multiply shaped rewards; SAC wants O(1) values")
+    p.add_argument("--ent-coef", type=str, default="auto_0.1",
+                   help="SB3 ent_coef; v4's default auto spiked to 11 then "
+                        "collapsed to 0 and the policy went prematurely "
+                        "deterministic")
+    p.add_argument("--target-entropy", type=float, default=-2.0,
+                   help="entropy target (default -dim(A) was -4)")
+    p.add_argument("--defense-weight", type=float, default=0.3,
+                   help="override stage defense shaping (stage-2 default 0.1); "
+                        "v4 conceded only on reset launches it never learned "
+                        "to meet")
+    p.add_argument("--opponent-mix", type=str, default=None,
+                   help="'g:f:r' env counts, e.g. 32:16:16; overrides --opponent")
+    p.add_argument("--bc-bot", type=str, default="striker",
+                   help="heuristic teacher for the warm start; 'none' disables")
+    p.add_argument("--bc-transitions", type=int, default=200_000)
+    p.add_argument("--bc-epochs", type=int, default=25)
     p.add_argument("--train-freq", type=int, default=1,
                    help="vec steps between training bursts")
     p.add_argument("--grad-steps", type=int, default=32,
@@ -210,8 +291,10 @@ def main():
     run_dir.mkdir(parents=True, exist_ok=True)
 
     env = _make_env(args)
-    shaper = BatchRewardShaper(args.n_envs, stage=args.stage)
-    vec = BatchVecEnv(env, shaper, total_steps=args.steps)
+    shaper = BatchRewardShaper(args.n_envs, stage=args.stage,
+                               defense_weight=args.defense_weight)
+    vec = BatchVecEnv(env, shaper, total_steps=args.steps,
+                      reward_scale=args.reward_scale)
 
     # Their scale: a few hundred k parameters, LR decaying an order of
     # magnitude or so over training.
@@ -223,6 +306,8 @@ def main():
         learning_rate=lr_schedule,
         buffer_size=args.buffer,
         batch_size=args.batch_size,
+        ent_coef=args.ent_coef,
+        target_entropy=args.target_entropy,
         # train_freq counts VEC steps: one vec step is n_envs transitions.
         # The first run used (64, "step") x 64 envs = one training burst per
         # 4,096 transitions -- ~12k gradient steps across 3M transitions,
@@ -242,6 +327,34 @@ def main():
           f"DR={'on' if args.domain_randomize else 'off'}")
     print(f"  obs {env.obs_dim} dims (history), action {env.action_dim} dims "
           f"(profile_v)")
+
+    # ── Imitation warm start from a heuristic teacher ────────────────────
+    # The striker scores ~4x what any trained policy has managed through the
+    # identical interface; nobody has to learn air hockey from scratch any
+    # more. The actor is pulled onto the teacher's actions; the teacher's
+    # transitions also prefill the replay buffer so the critic's first
+    # Bellman targets are computed on competent play.
+    if args.bc_bot != "none":
+        from airhockey.heuristic_bridge import SimBridge
+        from airhockey.heuristics import make_bot
+        print(f"Collecting {args.bc_transitions:,} demo transitions from "
+              f"'{args.bc_bot}'...")
+        bridge = SimBridge(env)
+        bots = [make_bot(args.bc_bot) for _ in range(args.n_envs)]
+        d_obs, d_act, d_rew, d_next, d_done = collect_demos(
+            vec, bots, bridge, args.bc_transitions)
+        per_step = float(d_rew.mean())
+        print(f"  demo reward/step {per_step:.3f} (scaled); "
+              f"{len(d_obs):,} transitions")
+        n_env = args.n_envs
+        for i in range(0, len(d_obs) - n_env + 1, n_env):
+            sl = slice(i, i + n_env)
+            model.replay_buffer.add(d_obs[sl], d_next[sl], d_act[sl],
+                                    d_rew[sl], d_done[sl],
+                                    [{} for _ in range(n_env)])
+        print(f"BC pretraining actor: {args.bc_epochs} epochs...")
+        bc_pretrain(model, d_obs, d_act, args.bc_epochs,
+                    batch_size=args.batch_size)
 
     remaining = args.steps
     chunk = args.record_freq
