@@ -220,7 +220,9 @@ def bc_pretrain(model, demo_obs, demo_act, epochs, batch_size=1024):
 def _make_env(args, n_envs=None):
     n = n_envs or args.n_envs
     mix = None
-    if getattr(args, "opponent_mix", None):
+    # The mix only fits the training env's width; the single-env recorder
+    # falls back to --opponent. (Every v5 recording died on this assert.)
+    if getattr(args, "opponent_mix", None) and n == (args.n_envs or n):
         # "goalie:follow:random" counts, e.g. 32:16:16. Training against a
         # single opponent taught v2-v4 exactly one trick; the striker's
         # tournament showed the failure modes differ per opponent.
@@ -260,14 +262,14 @@ def main():
     p.add_argument("--no-domain-randomize", dest="domain_randomize",
                    action="store_false")
     p.add_argument("--batch-size", type=int, default=1024)
-    p.add_argument("--lr", type=float, default=5e-4)
+    p.add_argument("--lr", type=float, default=1e-4)
     p.add_argument("--buffer", type=int, default=1_000_000)
     p.add_argument("--reward-scale", type=float, default=0.1,
                    help="multiply shaped rewards; SAC wants O(1) values")
-    p.add_argument("--ent-coef", type=str, default="auto_0.1",
-                   help="SB3 ent_coef; v4's default auto spiked to 11 then "
-                        "collapsed to 0 and the policy went prematurely "
-                        "deterministic")
+    p.add_argument("--ent-coef", type=str, default="0.02",
+                   help="SB3 ent_coef. FIXED by default: auto collapsed to "
+                        "~0 in both v4 (spike to 11 first) and v5 "
+                        "(auto_0.1, target -2), killing exploration")
     p.add_argument("--target-entropy", type=float, default=-2.0,
                    help="entropy target (default -dim(A) was -4)")
     p.add_argument("--defense-weight", type=float, default=0.3,
@@ -280,6 +282,9 @@ def main():
                    help="heuristic teacher for the warm start; 'none' disables")
     p.add_argument("--bc-transitions", type=int, default=200_000)
     p.add_argument("--bc-epochs", type=int, default=25)
+    p.add_argument("--bc-refresh-epochs", type=int, default=2,
+                   help="BC epochs re-anchoring the actor between chunks; "
+                        "0 disables")
     p.add_argument("--train-freq", type=int, default=1,
                    help="vec steps between training bursts")
     p.add_argument("--grad-steps", type=int, default=32,
@@ -306,7 +311,8 @@ def main():
         learning_rate=lr_schedule,
         buffer_size=args.buffer,
         batch_size=args.batch_size,
-        ent_coef=args.ent_coef,
+        ent_coef=(args.ent_coef if args.ent_coef.startswith("auto")
+                  else float(args.ent_coef)),
         target_entropy=args.target_entropy,
         # train_freq counts VEC steps: one vec step is n_envs transitions.
         # The first run used (64, "step") x 64 envs = one training burst per
@@ -355,6 +361,12 @@ def main():
         print(f"BC pretraining actor: {args.bc_epochs} epochs...")
         bc_pretrain(model, d_obs, d_act, args.bc_epochs,
                     batch_size=args.batch_size)
+        # The clone itself is an artifact: v5 proved RL can DESTROY it (a
+        # 0.0007-mse striker clone came out of 5M steps scoring a quarter
+        # of the teacher and conceding 20x). Whatever fine-tuning does,
+        # this checkpoint survives it.
+        model.save(run_dir / "agent_bc_only")
+        print(f"BC-only actor saved to {run_dir}/agent_bc_only.zip")
 
     remaining = args.steps
     chunk = args.record_freq
@@ -366,6 +378,15 @@ def main():
                     progress_bar=False, log_interval=50)
         done_steps += n
         remaining -= n
+        # Re-anchor: a few BC epochs on the demo set between chunks keeps
+        # the actor from drifting off the teacher while the critic is still
+        # wrong about the world. Crude next to a per-update BC term in the
+        # actor loss, but it has the right failure mode: at worst the
+        # policy stays a striker clone, which v5 shows beats free-running
+        # SAC by a wide margin.
+        if args.bc_bot != "none" and args.bc_refresh_epochs > 0 and remaining > 0:
+            bc_pretrain(model, d_obs, d_act, args.bc_refresh_epochs,
+                        batch_size=args.batch_size)
         model.save(run_dir / "agent")
         fps = done_steps / max(time.time() - t0, 1)
         print(f"[{done_steps:,}/{args.steps:,}] fps={fps:.0f}, saved {run_dir}/agent.zip")
