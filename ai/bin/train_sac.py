@@ -148,7 +148,11 @@ class BatchVecEnv(VecEnv):
 def record_game(model, args, step, run_name):
     """One recorded game for the web UI replay tab, n_envs=1."""
     env = _make_env(args, n_envs=1)
-    obs = env.reset(seed=int(step) % 100_000)
+    # step % 100_000 was ZERO at every multiple-of-500k record step, so
+    # every recording of a run replayed the SAME fixture -- same puck draw,
+    # same DR draw. Eight identical-looking 0-0 replays while the 20-game
+    # benchmark measured 0.55 GF/game was this, not the policy.
+    obs = env.reset(seed=int(step) % 99_991)
     rec = Recorder()
     rec.start_episode()
     e = env.engine
