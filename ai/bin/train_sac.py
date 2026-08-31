@@ -451,6 +451,12 @@ def main():
             bc_pretrain(model, d_obs, d_act, args.bc_refresh_epochs,
                         batch_size=args.batch_size)
         model.save(run_dir / "agent")
+        # Archive per chunk. The best policy of a run is routinely NOT the
+        # last one -- v9's 3M checkpoint benchmarked 0.55 GF vs the final's
+        # 0.20 and was OVERWRITTEN by this very save line; the TD-MPC2 v3
+        # run taught the same lesson. Disk is cheap, deployables are chosen
+        # by benchmark afterwards.
+        model.save(run_dir / f"agent_step_{done_steps:07d}")
         fps = done_steps / max(time.time() - t0, 1)
         print(f"[{done_steps:,}/{args.steps:,}] fps={fps:.0f}, saved {run_dir}/agent.zip")
         try:
