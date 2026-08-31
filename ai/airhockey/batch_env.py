@@ -760,6 +760,8 @@ class BatchAirHockeyEnv:
             "puck_y": self.engine.puck_y.copy(),
             "pad_x": self.engine.paddle_agent_x.copy(),
             "pad_y": self.engine.paddle_agent_y.copy(),
+            "opp_x": self.engine.paddle_opp_x.copy(),
+            "opp_y": self.engine.paddle_opp_y.copy(),
             # How far past the reachable box this step's command pointed.
             # Worth watching in training: if it does not fall over time, the
             # policy is not learning the boundary, just paying the fine.

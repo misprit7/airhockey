@@ -29,7 +29,8 @@ sys.path.insert(0, str(ROOT / "ai"))
 
 from airhockey.batch_env import BatchAirHockeyEnv, sensing_kwargs  # noqa: E402
 from airhockey.recorder import FrameData, Recorder  # noqa: E402
-from airhockey.rewards import BatchRewardShaper  # noqa: E402
+from airhockey.rewards import (BatchRewardShaper,  # noqa: E402
+                               ExchangeRewardShaper)
 
 import gymnasium as gym  # noqa: E402
 from stable_baselines3 import SAC  # noqa: E402
@@ -89,6 +90,12 @@ class BatchVecEnv(VecEnv):
         self._elapsed += self.env.n_envs
 
         dones = term | trunc
+        # Exchange mode: a scored-and-resolved shot ends the exchange, so
+        # each shot is its own credit-assignment unit.
+        ex = getattr(self.shaper, "end_exchange", None)
+        if ex is not None:
+            trunc = trunc | (ex & ~term)
+            dones = dones | ex
         self._ep_rew += shaped
         self._ep_len += 1
         infos = [{} for _ in range(self.num_envs)]
@@ -300,6 +307,11 @@ def main():
     p.add_argument("--batch-size", type=int, default=1024)
     p.add_argument("--lr", type=float, default=1e-4)
     p.add_argument("--buffer", type=int, default=1_000_000)
+    p.add_argument("--reward-mode", type=str, default="exchange",
+                   choices=["exchange", "dense"],
+                   help="exchange = pay shot outcomes, end exchange on "
+                        "block (Air-Hockey-Sim style); dense = the stage "
+                        "shapers, under which v8 proved passivity optimal")
     p.add_argument("--reward-scale", type=float, default=0.1,
                    help="multiply shaped rewards; SAC wants O(1) values")
     p.add_argument("--ent-coef", type=str, default="0.02",
@@ -334,8 +346,11 @@ def main():
     run_dir.mkdir(parents=True, exist_ok=True)
 
     env = _make_env(args)
-    shaper = BatchRewardShaper(args.n_envs, stage=args.stage,
-                               defense_weight=args.defense_weight)
+    if args.reward_mode == "exchange":
+        shaper = ExchangeRewardShaper(args.n_envs, config=env.table_config)
+    else:
+        shaper = BatchRewardShaper(args.n_envs, stage=args.stage,
+                                   defense_weight=args.defense_weight)
     vec = BatchVecEnv(env, shaper, total_steps=args.steps,
                       reward_scale=args.reward_scale)
 

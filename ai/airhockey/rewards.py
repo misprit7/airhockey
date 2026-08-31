@@ -489,3 +489,195 @@ class BatchRewardShaper:
             self._contact_count[goal_mask] = 0
 
         return shaped.astype(np.float32)
+
+
+# ---------------------------------------------------------------------------
+# Exchange-based rewards (outcomes, not states)
+# ---------------------------------------------------------------------------
+class ExchangeRewardShaper:
+    """Pay for SHOT OUTCOMES, not for standing anywhere.
+
+    The dense shapers above pay continuous income for states -- proximity,
+    goal-side alignment, puck progress. Under those, sac_v8's converged
+    policy was rational: park goal-side and collect, since a goal needs a
+    precise rarely-explored manoeuvre while alignment pays every step.
+    Reward decline with a healthy optimizer was the tell.
+
+    This shaper is the Air-Hockey-Sim scheme adapted to our tables: nothing
+    pays until the puck crosses the MIDLINE moving away (a shot). At that
+    instant the shot is scored once, by trajectory:
+
+      on_target   its path (through the MEASURED lossy-wall model) crosses
+                  the opponent goal line inside the mouth, opponent ignored
+      beats_opp   additionally, the opponent cannot reach the crossing point
+                  in time (crude reach model -- shaping, not physics)
+      vel bonus   proportional to shot speed: hard shots beat reaction time,
+                  and this is the term that finally pays for STRIKING
+
+    The EXCHANGE then ends -- on the goal, or when the puck comes back over
+    three-quarter table (blocked/returned), or on a timeout. The trainer
+    truncates those envs, so each shot is its own tight credit-assignment
+    unit instead of one event lost in a 20 s episode. Goals and concessions
+    keep flat terminal values; a small capped contact reward remains as the
+    only bootstrap (a policy that never touches the puck cannot discover
+    shooting).
+
+    compute() returns the reward array and sets `self.end_exchange` [N] for
+    the trainer to fold into truncation.
+    """
+
+    def __init__(self, n_envs: int, config=None,
+                 shot_on_target: float = 11.5,
+                 shot_beats_opp: float = 2.5,
+                 vel_bonus_per_ms: float = 0.5,
+                 goal_reward: float = 30.0,
+                 goal_penalty: float = -10.0,
+                 contact_reward: float = 0.5,
+                 max_contacts_per_episode: int = 5,
+                 exchange_timeout_steps: int = 200,
+                 opp_reach_speed: float = 3.0):
+        from airhockey.physics import TableConfig
+        cfg = config or TableConfig()
+        self.n_envs = n_envs
+        self.W = cfg.width
+        self.H = cfg.height
+        self.r = cfg.puck_radius
+        self.goal_half = cfg.goal_width / 2.0
+        self.e_n = cfg.wall_restitution
+        self.e_t = cfg.wall_tangential
+        self.shot_on_target = shot_on_target
+        self.shot_beats_opp = shot_beats_opp
+        self.vel_bonus_per_ms = vel_bonus_per_ms
+        self.goal_reward = goal_reward
+        self.goal_penalty = goal_penalty
+        self.contact_reward = contact_reward
+        self.max_contacts = max_contacts_per_episode
+        self.timeout = exchange_timeout_steps
+        self.opp_reach_speed = opp_reach_speed
+
+        self._prev_puck_y = np.full(n_envs, cfg.height / 4)
+        self._prev_puck_speed = np.zeros(n_envs)
+        self._contact_count = np.zeros(n_envs, dtype=np.int32)
+        self._shot_in_flight = np.zeros(n_envs, dtype=bool)
+        self._shot_age = np.zeros(n_envs, dtype=np.int32)
+        self._prev_score_agent = np.zeros(n_envs, dtype=np.int64)
+        self._prev_score_opp = np.zeros(n_envs, dtype=np.int64)
+        self.end_exchange = np.zeros(n_envs, dtype=bool)
+
+    # API compat with BatchRewardShaper
+    def set_progress(self, progress: float) -> None:
+        pass
+
+    def reset(self, obs, mask=None, info=None) -> None:
+        idx = slice(None) if mask is None else mask
+        if info is not None and "puck_y" in info:
+            self._prev_puck_y[idx] = info["puck_y"][idx]
+        self._prev_puck_speed[idx] = 0.0
+        self._contact_count[idx] = 0
+        self._shot_in_flight[idx] = False
+        self._shot_age[idx] = 0
+        if info is not None and "score_agent" in info:
+            self._prev_score_agent[idx] = info["score_agent"][idx]
+            self._prev_score_opp[idx] = info["score_opponent"][idx]
+        else:
+            self._prev_score_agent[idx] = 0
+            self._prev_score_opp[idx] = 0
+
+    def _predict_goal_crossing(self, x, y, vx, vy):
+        """Where the puck's free path crosses the opponent goal line.
+
+        Segments between side-wall bounces, each bounce applying the
+        MEASURED coefficients (normal e_n, tangential e_t) -- the same
+        model the heuristic bots aim with, and the reason a bank shot is
+        scored where it actually lands rather than where a mirror says.
+        Returns (x_at_goal [nan if never], time_to_goal).
+        """
+        x, y = x.copy(), y.copy()
+        vx, vy = vx.copy(), vy.copy()
+        t_total = np.zeros_like(x)
+        x_goal = np.full_like(x, np.nan)
+        active = vy > 1e-6
+        lo, hi = self.r, self.W - self.r
+        for _ in range(4):
+            if not active.any():
+                break
+            t_g = np.where(active, (self.H - y) / np.maximum(vy, 1e-9), np.inf)
+            x_lin = x + vx * t_g
+            direct = active & (x_lin >= lo) & (x_lin <= hi)
+            x_goal = np.where(direct, x_lin, x_goal)
+            t_total = np.where(direct, t_total + t_g, t_total)
+            active &= ~direct
+            with np.errstate(divide="ignore", invalid="ignore"):
+                t_w = np.where(vx > 1e-9, (hi - x) / vx,
+                               np.where(vx < -1e-9, (lo - x) / vx, np.inf))
+            t_w = np.clip(t_w, 0.0, None)
+            step = np.where(active & np.isfinite(t_w), t_w, 0.0)
+            x = x + vx * step
+            y = y + vy * step
+            t_total = t_total + step
+            bounced = active & np.isfinite(t_w)
+            vx = np.where(bounced, -vx * self.e_n, vx)
+            vy = np.where(bounced, vy * self.e_t, vy)
+            active &= bounced
+        return x_goal, t_total
+
+    def compute(self, obs, raw_rewards, actions=None, info=None):
+        assert info is not None and "puck_x" in info, \
+            "ExchangeRewardShaper needs true state in info"
+        px, py = info["puck_x"], info["puck_y"]
+        pvx, pvy = info["puck_vx"], info["puck_vy"]
+        pad_x, pad_y = info["pad_x"], info["pad_y"]
+
+        shaped = np.zeros(self.n_envs, dtype=np.float64)
+        self.end_exchange = np.zeros(self.n_envs, dtype=bool)
+
+        # Contact bootstrap (capped): the only non-outcome term.
+        dist = np.hypot(px - pad_x, py - pad_y)
+        speed = np.hypot(pvx, pvy)
+        hit = (dist < 0.25) & (speed - self._prev_puck_speed > 0.2) & (pvy > 0)
+        self._contact_count += hit.astype(np.int32)
+        shaped += np.where(hit & (self._contact_count <= self.max_contacts),
+                           self.contact_reward, 0.0)
+
+        # A shot: puck crosses the midline moving away from the agent.
+        crossed = ((self._prev_puck_y <= self.H / 2) & (py > self.H / 2)
+                   & (pvy > 0.1) & ~self._shot_in_flight)
+        if np.any(crossed):
+            x_goal, t_goal = self._predict_goal_crossing(px, py, pvx, pvy)
+            on_target = crossed & np.isfinite(x_goal) & \
+                (np.abs(x_goal - self.W / 2) < self.goal_half)
+            shaped += np.where(on_target, self.shot_on_target, 0.0)
+            # Crude reach model for the defender; shaping, not physics.
+            if "opp_x" in (info or {}):
+                ox = info["opp_x"]
+            else:
+                ox = np.full(self.n_envs, self.W / 2)
+            can_reach = np.abs(x_goal - ox) < 0.05 + self.opp_reach_speed * t_goal
+            shaped += np.where(on_target & ~can_reach, self.shot_beats_opp, 0.0)
+            shaped += np.where(on_target,
+                               self.vel_bonus_per_ms * speed, 0.0)
+            self._shot_in_flight |= crossed
+            self._shot_age[crossed] = 0
+
+        # Terminal outcomes, from the scoreboard.
+        goal_for = info["score_agent"] > self._prev_score_agent
+        goal_against = info["score_opponent"] > self._prev_score_opp
+        self._prev_score_agent[:] = info["score_agent"]
+        self._prev_score_opp[:] = info["score_opponent"]
+        shaped += np.where(goal_for, self.goal_reward, 0.0)
+        shaped += np.where(goal_against, self.goal_penalty, 0.0)
+
+        # Exchange ends: goal either way; or a shot in flight came back over
+        # three-quarter table (blocked/returned); or it timed out.
+        self._shot_age[self._shot_in_flight] += 1
+        returned = self._shot_in_flight & (pvy < 0) & (py < 0.75 * self.H)
+        timed_out = self._shot_in_flight & (self._shot_age > self.timeout)
+        self.end_exchange = goal_for | goal_against | returned | timed_out
+        self._shot_in_flight &= ~self.end_exchange
+
+        self._prev_puck_y[:] = py
+        self._prev_puck_speed[:] = speed
+        ended = self.end_exchange | goal_for | goal_against
+        if np.any(ended):
+            self._contact_count[ended] = 0
+        return shaped.astype(np.float32)
