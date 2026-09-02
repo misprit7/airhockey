@@ -240,8 +240,14 @@ def main():
     parser.add_argument("--num-samples", type=int, default=None, help="MPPI trajectory samples (default: 512, --fast: 128)")
     parser.add_argument("--mppi-iterations", type=int, default=None, help="MPPI refinement iterations (default: 6, --fast: 3)")
     parser.add_argument("--n-envs", type=int, default=32, help="Number of parallel environments")
-    parser.add_argument("--updates-per-step", type=int, default=1,
-                        help="Gradient updates per batch of env steps (default 1; try 4-8 for higher UTD)")
+    # 32, i.e. one gradient update per ENV transition (UTD 1), which is what
+    # the single-env March trainer did and what TD-MPC2 assumes. The default
+    # was 1 per VECTORISED step -- 1/32 of that -- and a 100k-step proximity
+    # stage produced ~3k updates and a flat reward curve. Same starvation
+    # that produced the first SAC run's 22k "fps".
+    parser.add_argument("--updates-per-step", type=int, default=32,
+                        help="gradient updates per vectorised step; 32 envs x "
+                             "1 = UTD 1.0")
     parser.add_argument("--curriculum-stage", type=str, default=None,
                         choices=list(CURRICULUM),
                         help="named stage from rewards.CURRICULUM: sets the "
