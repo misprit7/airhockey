@@ -8,6 +8,14 @@ against the goalie is the bar a policy has to clear to be worth deploying.
 
     python ai/bin/eval_policy.py curriculum_goalie
     python ai/bin/eval_policy.py curriculum_goalie --opponents idle,goalie,follow --games 32
+    python ai/bin/eval_policy.py _bench_sp1000k --vs curriculum_goalie   # head-to-head
+
+The scripted opponents cannot show self-play PROGRESS: a learner tuned for
++100/-50 against a live copy of itself learns to concede nothing first, and
+its goal rate against a stationary goalie then wobbles rather than climbs.
+`--vs` plays two checkpoints against each other on the same terms, the
+second one driven through the env's mirrored view exactly as train_selfplay
+drives its opponent, which is the comparison that picks a deploy candidate.
 """
 from __future__ import annotations
 
@@ -27,7 +35,9 @@ DEFAULT_OPPONENTS = ("goalie", "follow", "random")
 
 
 def run_match(agent, run_name: str, opponent: str, games: int, seconds: float,
-              seed: int) -> tuple[np.ndarray, np.ndarray]:
+              seed: int, rival=None) -> tuple[np.ndarray, np.ndarray]:
+    """`opponent` names a scripted policy, or "external" with `rival` an
+    agent that plays the far side through the mirrored observation."""
     import torch
 
     env = BatchAirHockeyEnv(
@@ -45,6 +55,14 @@ def run_match(agent, run_name: str, opponent: str, games: int, seconds: float,
     info: dict = {}
     for _ in range(n_steps):
         with torch.no_grad():
+            if rival is not None:
+                # Same path as train_selfplay.drive_opponent: the rival sees
+                # the table from its own end and its action lands there.
+                opp_act = rival.act(torch.from_numpy(env.mirror_obs(obs)).float(),
+                                    t0=t0, eval_mode=True)
+                tx, ty = env.mirror_action_to_opponent(opp_act.numpy())
+                env._ext_opp_target_x[:] = tx
+                env._ext_opp_target_y[:] = ty
             act = agent.act(torch.from_numpy(obs).float(), t0=t0, eval_mode=True)
         obs, _, _, _, info = env.step(act.numpy())
         t0 = torch.zeros(games, dtype=torch.bool)
@@ -71,6 +89,9 @@ def main() -> None:
                     help="same default as eval_heuristics so fixtures match")
     ap.add_argument("--iterations", type=int, default=3,
                     help="MPPI iterations at inference (training uses 6)")
+    ap.add_argument("--vs", metavar="RUN", default=None,
+                    help="head-to-head: this checkpoint plays the far side "
+                         "instead of the scripted opponents")
     ap.add_argument("--prior", action="store_true",
                     help="no planning: act from the policy prior alone. This "
                          "is the deployable mode -- 0.1 ms on a CPU against a "
@@ -84,6 +105,14 @@ def main() -> None:
     mode = "policy prior, no planning" if args.prior else f"{args.iterations} MPPI iterations"
     print(f"{args.run}: {args.games} games x {args.seconds:.0f} s per opponent, "
           f"seed {args.seed}, {mode}")
+    if args.vs:
+        rival = load_agent(args.vs, iterations=args.iterations)
+        if args.prior:
+            rival.cfg.mpc = False
+        run_match(agent, args.run, "external", args.games, args.seconds,
+                  args.seed, rival=rival)
+        print(f"  (far side: {args.vs})")
+        return
     for opp in args.opponents.split(","):
         run_match(agent, args.run, opp.strip(), args.games, args.seconds, args.seed)
 
