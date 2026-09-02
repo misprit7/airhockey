@@ -38,6 +38,8 @@ Robotic air hockey table that uses reinforcement learning trained in simulation,
     - `profile_loop.py` - Training loop profiler (per-component timing)
     - `eval_heuristics.py` - Tournament harness for the heuristic bots:
       each vs the scripted opponents, realistic sensing + DR, shared fixtures
+    - `eval_policy.py` - A trained policy on the SAME terms (90 s games, same
+      seed, same opponents) so its rows compare line-for-line with the bots'
   - `tests/` - Test suite
     - `test_batch_physics.py` - Vectorized physics correctness tests
     - `test_validation.py` - Reward shaping equivalence and env consistency tests
@@ -230,6 +232,7 @@ python ai/bin/profile_loop.py
 # Heuristic-bot tournament (the non-ML baseline a policy has to beat)
 python ai/bin/eval_heuristics.py
 python ai/bin/eval_heuristics.py --bots goalie,striker --opponents random
+python ai/bin/eval_policy.py curriculum_goalie          # a checkpoint on the same terms
 ```
 
 ## Hardware

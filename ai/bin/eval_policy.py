@@ -1,0 +1,84 @@
+#!/usr/bin/env python3
+"""A trained policy against the scripted opponents, on the tournament's terms.
+
+Same games as `eval_heuristics.py` -- 90 s, no early end on score, realistic
+sensing + domain randomisation, the same seed -- so a row here compares
+line-for-line with a row there. The heuristic striker's ~4 goals per game
+against the goalie is the bar a policy has to clear to be worth deploying.
+
+    python ai/bin/eval_policy.py curriculum_goalie
+    python ai/bin/eval_policy.py curriculum_goalie --opponents idle,goalie,follow --games 32
+"""
+from __future__ import annotations
+
+import argparse
+import sys
+import time
+from pathlib import Path
+
+import numpy as np
+
+sys.path.insert(0, str(Path(__file__).resolve().parents[1]))
+
+from airhockey.batch_env import BatchAirHockeyEnv, sensing_kwargs  # noqa: E402
+from airhockey.policy_loader import load_agent  # noqa: E402
+
+DEFAULT_OPPONENTS = ("goalie", "follow", "random")
+
+
+def run_match(agent, run_name: str, opponent: str, games: int, seconds: float,
+              seed: int) -> tuple[np.ndarray, np.ndarray]:
+    import torch
+
+    env = BatchAirHockeyEnv(
+        n_envs=games,
+        opponent_policy=opponent,
+        domain_randomize=True,
+        max_score=10 ** 6,
+        max_episode_time=seconds + 1.0,
+        **sensing_kwargs(True),
+    )
+    obs = env.reset(seed=seed)
+    t0 = torch.ones(games, dtype=torch.bool)
+    n_steps = int(round(seconds / env.action_dt))
+    wall = time.perf_counter()
+    info: dict = {}
+    for _ in range(n_steps):
+        with torch.no_grad():
+            act = agent.act(torch.from_numpy(obs).float(), t0=t0, eval_mode=True)
+        obs, _, _, _, info = env.step(act.numpy())
+        t0 = torch.zeros(games, dtype=torch.bool)
+
+    gf = info["score_agent"].astype(float)
+    ga = info["score_opponent"].astype(float)
+    w, d, l = int((gf > ga).sum()), int((gf == ga).sum()), int((gf < ga).sum())
+    print(f"  {run_name:<20s} vs {opponent:<7s}  "
+          f"GF {gf.mean():5.2f}  GA {ga.mean():5.2f}  "
+          f"{w}-{d}-{l}  ({time.perf_counter() - wall:.1f}s)", flush=True)
+    return gf, ga
+
+
+def main() -> None:
+    ap = argparse.ArgumentParser(
+        description=__doc__, formatter_class=argparse.RawDescriptionHelpFormatter)
+    ap.add_argument("run", help="run name under runs/ (loads runs/<run>/agent.pt)")
+    ap.add_argument("--opponents", default=",".join(DEFAULT_OPPONENTS))
+    ap.add_argument("--games", type=int, default=24,
+                    help="parallel games per matchup (default 24)")
+    ap.add_argument("--seconds", type=float, default=90.0,
+                    help="game length; every game runs the full clock")
+    ap.add_argument("--seed", type=int, default=7,
+                    help="same default as eval_heuristics so fixtures match")
+    ap.add_argument("--iterations", type=int, default=3,
+                    help="MPPI iterations at inference (training uses 6)")
+    args = ap.parse_args()
+
+    agent = load_agent(args.run, iterations=args.iterations)
+    print(f"{args.run}: {args.games} games x {args.seconds:.0f} s per opponent, "
+          f"seed {args.seed}, {args.iterations} MPPI iterations")
+    for opp in args.opponents.split(","):
+        run_match(agent, args.run, opp.strip(), args.games, args.seconds, args.seed)
+
+
+if __name__ == "__main__":
+    main()
