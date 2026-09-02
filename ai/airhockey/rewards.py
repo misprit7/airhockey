@@ -287,6 +287,17 @@ class BatchRewardShaper:
         shot_mix_weight: float | None = None,
         max_contacts_per_episode: int = 5,
         workspace: dict | None = None,
+        # Idle hygiene for the physical machine, paid ONLY while the puck is
+        # on the far half so play is untouched: a pull toward the centre of
+        # the box's y span (cables best balanced, accel headroom highest,
+        # and a neutral station to defend or attack from), and a tax on
+        # step-to-step action changes, because a target that dithers by a
+        # centimetre at 100 Hz is a stepper reversing direction 100 times a
+        # second for nothing. Per-step magnitudes are hundredths against
+        # goals at 100 and contact at 2, so they only decide what the
+        # paddle does when nothing else does.
+        home_weight: float = 0.0,
+        jitter_weight: float = 0.0,
     ):
         self.n_envs = n_envs
         self.stage = stage
@@ -297,6 +308,16 @@ class BatchRewardShaper:
         # distance either way). Distance to the puck's closest REACHABLE
         # point is what the paddle actually controls.
         self.workspace = workspace
+        self.home_weight = home_weight
+        self.jitter_weight = jitter_weight
+        if workspace is not None:
+            self._home_y = 0.5 * (workspace["min_y"] + workspace["max_y"])
+            self._home_span = 0.5 * (workspace["max_y"] - workspace["min_y"])
+        else:
+            self._home_y = _GOAL_CY / 4.0        # middle of the near half
+            self._home_span = _GOAL_CY / 4.0
+        self._prev_action = np.zeros((n_envs, 2))
+        self._has_prev_action = np.zeros(n_envs, dtype=bool)
         self.frame_stack = 1  # always 1 now
         self.proximity_k = proximity_k
         self.proximity_weight = _resolve(proximity_weight, "proximity", stage)
@@ -366,6 +387,7 @@ class BatchRewardShaper:
         else:
             self._prev_puck_y[idx] = obs[idx, 1]  # puck_y
         self._contact_count[idx] = 0
+        self._has_prev_action[idx] = False
         # Read puck velocity from info (truth) or obs (indices 2-3)
         puck_vx = obs[idx, 2]
         puck_vy = obs[idx, 3]
@@ -506,6 +528,20 @@ class BatchRewardShaper:
         # by goal_reward/goal_penalty above, so they must be carried here.
         if info is not None and "penalty" in info:
             shaped += info["penalty"]
+
+        # Idle hygiene, gated on the puck being on the far half.
+        if self.home_weight > 0 or self.jitter_weight > 0:
+            idle = puck_y > _GOAL_CY / 2.0
+            if self.home_weight > 0:
+                off_home = np.abs(pad_y - self._home_y) / self._home_span
+                shaped -= np.where(idle, self.home_weight * off_home, 0.0)
+            if self.jitter_weight > 0 and actions is not None:
+                a = np.asarray(actions)[:, :2]
+                delta = np.linalg.norm(a - self._prev_action, axis=1)
+                shaped -= np.where(idle & self._has_prev_action,
+                                   self.jitter_weight * delta, 0.0)
+                self._prev_action[:] = a
+                self._has_prev_action[:] = True
 
         # Update state
         self._prev_puck_y[:] = puck_y
@@ -759,7 +795,11 @@ CURRICULUM: dict[str, dict] = {
         opponent="external", episode_steps=3000, steps=3_000_000,
         proximity_weight=0.0, contact_reward=2.0, directed_hit_weight=1.0,
         puck_progress_weight=0.5, defense_weight=1.0, shot_placement_weight=2.0,
-        goal_reward=100.0, goal_penalty=-50.0, entropy_weight=0.0, shot_mix_weight=0.5),
+        goal_reward=100.0, goal_penalty=-50.0, entropy_weight=0.0, shot_mix_weight=0.5,
+        # Idle hygiene (see BatchRewardShaper): at most 0.005/step for
+        # sitting at the box edge and 0.005 per unit of action change, and
+        # only while the puck is on the far half.
+        home_weight=0.005, jitter_weight=0.005),
 }
 CURRICULUM_ORDER = ["proximity", "contact", "scoring", "goalie", "selfplay"]
 
@@ -768,7 +808,15 @@ _SHAPER_KEYS = ("proximity_weight", "contact_reward", "directed_hit_weight",
                 "goal_reward", "goal_penalty", "entropy_weight", "shot_mix_weight")
 
 
+# Batch-shaper-only terms (idle hygiene). Passed through only when a stage
+# sets them, so the scalar ShapedRewardWrapper -- which has no such terms --
+# keeps accepting every pretrain stage's kwargs.
+_IDLE_KEYS = ("home_weight", "jitter_weight")
+
+
 def curriculum_shaper_kwargs(name: str) -> dict:
     """The BatchRewardShaper / ShapedRewardWrapper kwargs for a named stage."""
     spec = CURRICULUM[name]
-    return {k: spec[k] for k in _SHAPER_KEYS}
+    out = {k: spec[k] for k in _SHAPER_KEYS}
+    out.update({k: spec[k] for k in _IDLE_KEYS if k in spec})
+    return out

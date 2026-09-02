@@ -188,7 +188,7 @@ def main():
 
     n_envs = args.n_envs
     env = make_env(args, n_envs)
-    shaper = BatchRewardShaper(n_envs, stage=STAGE_SCORING,
+    shaper = BatchRewardShaper(n_envs, stage=STAGE_SCORING, workspace=env._ws,
                                **curriculum_shaper_kwargs("selfplay"))
     episode_length = 3000          # 30 s at the 100 Hz action rate
     cfg = OmegaConf.merge(cfg, OmegaConf.create({
