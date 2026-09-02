@@ -71,11 +71,19 @@ def main() -> None:
                     help="same default as eval_heuristics so fixtures match")
     ap.add_argument("--iterations", type=int, default=3,
                     help="MPPI iterations at inference (training uses 6)")
+    ap.add_argument("--prior", action="store_true",
+                    help="no planning: act from the policy prior alone. This "
+                         "is the deployable mode -- 0.1 ms on a CPU against a "
+                         "10 ms tick, where even one MPPI iteration is 15 ms "
+                         "on a GPU -- so measure it on the same terms")
     args = ap.parse_args()
 
     agent = load_agent(args.run, iterations=args.iterations)
+    if args.prior:
+        agent.cfg.mpc = False
+    mode = "policy prior, no planning" if args.prior else f"{args.iterations} MPPI iterations"
     print(f"{args.run}: {args.games} games x {args.seconds:.0f} s per opponent, "
-          f"seed {args.seed}, {args.iterations} MPPI iterations")
+          f"seed {args.seed}, {mode}")
     for opp in args.opponents.split(","):
         run_match(agent, args.run, opp.strip(), args.games, args.seconds, args.seed)
 
