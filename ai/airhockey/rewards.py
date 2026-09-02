@@ -166,9 +166,17 @@ class ShapedRewardWrapper(gym.Wrapper):
         dist = np.hypot(puck_x - pad_x, puck_y - pad_y)
         puck_speed = np.hypot(puck_vx, puck_vy)
 
-        # Proximity
+        # Proximity, to the closest REACHABLE point of the puck (see
+        # BatchRewardShaper.workspace)
         if self.proximity_weight > 0:
-            shaped_reward += self.proximity_weight * float(np.exp(-self.proximity_k * dist))
+            ws = getattr(self.env.unwrapped, "_ws", None)
+            if ws is not None:
+                rx = min(max(puck_x, ws["min_x"]), ws["max_x"])
+                ry = min(max(puck_y, ws["min_y"]), ws["max_y"])
+                reach_dist = float(np.hypot(rx - pad_x, ry - pad_y))
+            else:
+                reach_dist = dist
+            shaped_reward += self.proximity_weight * float(np.exp(-self.proximity_k * reach_dist))
 
         # Contact + directed hit + shot placement
         if self._prev_puck_speed is not None and dist < 0.25:
@@ -278,9 +286,17 @@ class BatchRewardShaper:
         entropy_weight: float | None = None,
         shot_mix_weight: float | None = None,
         max_contacts_per_episode: int = 5,
+        workspace: dict | None = None,
     ):
         self.n_envs = n_envs
         self.stage = stage
+        # The reachable box (env._ws), for the proximity term. Measured
+        # distance to the puck is dominated by where the PUCK is: it spends
+        # most of a game outside the robot's box, and a policy that drives
+        # straight at it scores the same as a random one (0.55 m mean
+        # distance either way). Distance to the puck's closest REACHABLE
+        # point is what the paddle actually controls.
+        self.workspace = workspace
         self.frame_stack = 1  # always 1 now
         self.proximity_k = proximity_k
         self.proximity_weight = _resolve(proximity_weight, "proximity", stage)
@@ -392,9 +408,16 @@ class BatchRewardShaper:
         dist = np.hypot(puck_x - pad_x, puck_y - pad_y)
         puck_speed = np.hypot(puck_vx, puck_vy)
 
-        # Proximity
+        # Proximity, to the closest REACHABLE point of the puck
         if self.proximity_weight > 0:
-            shaped += aux_scale * self.proximity_weight * np.exp(-self.proximity_k * dist)
+            if self.workspace is not None:
+                ws = self.workspace
+                rx = np.clip(puck_x, ws["min_x"], ws["max_x"])
+                ry = np.clip(puck_y, ws["min_y"], ws["max_y"])
+                reach_dist = np.hypot(rx - pad_x, ry - pad_y)
+            else:
+                reach_dist = dist
+            shaped += aux_scale * self.proximity_weight * np.exp(-self.proximity_k * reach_dist)
 
         # Contact + directed hit + shot placement (only reward forward hits)
         speed_change = puck_speed - self._prev_puck_speed

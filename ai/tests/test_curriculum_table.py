@@ -61,3 +61,39 @@ def test_shaper_accepts_every_stage():
         if name == "proximity":
             # 0.2 m from the puck: 0.1 * exp(-3*0.2) = 0.055 per step
             assert abs(r[0] - 0.1 * np.exp(-0.6)) < 1e-6
+
+
+def test_proximity_has_headroom_a_policy_can_actually_earn():
+    """Distance to the puck is mostly about where the PUCK is: a go-to-puck
+    oracle scored the same proximity as a random policy (0.55 m mean
+    distance either way), so the stage was unlearnable as first written.
+    Distance to the puck's closest REACHABLE point is what the paddle
+    controls, and the oracle must clearly beat random on it."""
+    from airhockey.batch_env import BatchAirHockeyEnv, sensing_kwargs
+    rng = np.random.default_rng(0)
+
+    def run(policy):
+        env = BatchAirHockeyEnv(n_envs=8, agent_dynamics="ideal", opponent_policy="idle",
+                                max_episode_steps=1000, **sensing_kwargs(False))
+        sh = BatchRewardShaper(8, stage=STAGE_SCORING, workspace=env._ws,
+                               **curriculum_shaper_kwargs("proximity"))
+        obs = env.reset(seed=1)
+        e = env.engine
+        sh.reset(obs, info={"puck_x": e.puck_x, "puck_y": e.puck_y, "puck_vx": e.puck_vx,
+                            "puck_vy": e.puck_vy, "pad_x": e.paddle_agent_x,
+                            "pad_y": e.paddle_agent_y, "score_agent": e.score_agent,
+                            "score_opponent": e.score_opponent})
+        total = 0.0
+        lo, hi = env._action_low, env._action_high
+        for _ in range(300):
+            if policy == "oracle":
+                tgt = np.clip(np.stack([e.puck_x, e.puck_y], 1), lo, hi)
+                a = ((tgt - lo) / (hi - lo) * 2 - 1).astype(np.float32)
+            else:
+                a = rng.uniform(-1, 1, (8, 2)).astype(np.float32)
+            obs, raw, _, _, info = env.step(a)
+            total += sh.compute(obs, raw, actions=a, info=info).sum()
+        return total / 8
+
+    oracle, random = run("oracle"), run("random")
+    assert oracle > 2.5 * random, f"oracle {oracle:.1f} vs random {random:.1f}: no headroom"

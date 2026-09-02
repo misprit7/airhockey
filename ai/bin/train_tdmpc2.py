@@ -262,7 +262,10 @@ def main():
     parser.add_argument("--replan-every", type=int, default=1,
                         help="Action chunking: reuse the MPPI plan for K steps before "
                              "replanning. Must be <= horizon. Default 1 (replan every step).")
-    parser.add_argument("--batched-mppi", action="store_true",
+    parser.add_argument("--no-batched-mppi", dest="batched_mppi", action="store_false",
+                        help="plan each env separately (shares one MPPI warm start "
+                             "across envs; ablation only)")
+    parser.add_argument("--batched-mppi", action="store_true", default=True,
                         help="Use batched MPPI planning across all n_envs in a single GPU "
                              "call (requires act_batched method on agent).")
     parser.add_argument("--lr", type=float, default=None,
@@ -377,7 +380,7 @@ def main():
         frame_stack=frame_stack,
     )
     reward_shaper = BatchRewardShaper(n_envs, stage=stage, frame_stack=frame_stack,
-                                      **shaper_kwargs)
+                                      workspace=batch_env._ws, **shaper_kwargs)
 
     # Taken from the env, not written down again. The 13th feature (which
     # side this body is) was added and these two would silently have built a
@@ -441,10 +444,15 @@ def main():
     chunk_pos = [0] * n_envs               # next chunk index, 0 means "must replan"
     cached_plans = [None] * n_envs         # per-env [horizon, action_dim] tensor
     saved_prev_means = [None] * n_envs     # per-env warm-start (clone of agent._prev_mean)
-    use_batched_mppi = bool(args.batched_mppi) and hasattr(agent, "act_batched")
+    # The restored batched planner is agent.act() on (N, obs_dim) with a
+    # per-env t0 mask (tdmpc2._plan_batch). The old gate looked for a method
+    # named act_batched that the lost fork had, never found it, and fell back
+    # to per-env act() -- which shares ONE _prev_mean across all 32 envs, so
+    # every env's MPPI warm-started from its neighbour's plan.
+    use_batched_mppi = bool(args.batched_mppi) and hasattr(agent, "_plan_batch")
     if args.batched_mppi and not use_batched_mppi:
-        print("WARNING: --batched-mppi requested but agent has no act_batched method; "
-              "falling back to per-env act().")
+        print("WARNING: --batched-mppi requested but this tdmpc2 checkout has no "
+              "_plan_batch; falling back to per-env act().")
 
     # --- Training loop ---
     step = 0
@@ -486,7 +494,7 @@ def main():
         if step > cfg.seed_steps and use_batched_mppi:
             # Path A: one batched MPPI call across all envs.
             t0_mask = torch.tensor(t0_list, dtype=torch.bool)
-            batched_actions = agent.act_batched(obs_t, t0_mask)  # [N, A]
+            batched_actions = agent.act(obs_t, t0=t0_mask)  # [N, A], per-env warm starts
             for i in range(n_envs):
                 a = batched_actions[i].cpu()
                 actions_t.append(a)
@@ -582,7 +590,16 @@ def main():
                 print('Pretraining done.')
             else:
                 for _ in range(args.updates_per_step):
-                    agent.update(buffer)
+                    train_info = agent.update(buffer)
+                # The trainer logged only episode reward, so whether the WORLD
+                # MODEL was learning anything was unobservable. Log the losses
+                # every ~1000 vec steps.
+                if step % 1000 < n_envs and train_info is not None:
+                    for k, v in dict(train_info).items():
+                        try:
+                            logger.writer.add_scalar(f"loss/{k}", float(v), step)
+                        except (TypeError, ValueError):
+                            pass
 
         step += n_envs
 
