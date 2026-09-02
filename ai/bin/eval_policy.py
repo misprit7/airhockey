@@ -35,7 +35,7 @@ DEFAULT_OPPONENTS = ("goalie", "follow", "random")
 
 
 def run_match(agent, run_name: str, opponent: str, games: int, seconds: float,
-              seed: int, rival=None) -> tuple[np.ndarray, np.ndarray]:
+              seed: int, rival=None, human_body: bool = False) -> tuple[np.ndarray, np.ndarray]:
     """`opponent` names a scripted policy, or "external" with `rival` an
     agent that plays the far side through the mirrored observation."""
     import torch
@@ -43,6 +43,9 @@ def run_match(agent, run_name: str, opponent: str, games: int, seconds: float,
     env = BatchAirHockeyEnv(
         n_envs=games,
         opponent_policy=opponent,
+        # A rival checkpoint gets the robot's body, as in training; the
+        # scripted opponents keep the human model they were written for.
+        opponent_body="robot" if rival is not None and not human_body else "human",
         domain_randomize=True,
         max_score=10 ** 6,
         max_episode_time=seconds + 1.0,
@@ -58,7 +61,9 @@ def run_match(agent, run_name: str, opponent: str, games: int, seconds: float,
             if rival is not None:
                 # Same path as train_selfplay.drive_opponent: the rival sees
                 # the table from its own end and its action lands there.
-                opp_act = rival.act(torch.from_numpy(env.mirror_obs(obs)).float(),
+                view = (env.opponent_obs() if env.opponent_body == "robot"
+                        else env.mirror_obs(obs))
+                opp_act = rival.act(torch.from_numpy(view).float(),
                                     t0=t0, eval_mode=True)
                 tx, ty = env.mirror_action_to_opponent(opp_act.numpy())
                 env._ext_opp_target_x[:] = tx
@@ -92,6 +97,10 @@ def main() -> None:
     ap.add_argument("--vs", metavar="RUN", default=None,
                     help="head-to-head: this checkpoint plays the far side "
                          "instead of the scripted opponents")
+    ap.add_argument("--human-body", action="store_true",
+                    help="with --vs: give the rival the human model instead "
+                         "of the robot's body (how the ladder was measured "
+                         "before 2026-09-02)")
     ap.add_argument("--prior", action="store_true",
                     help="no planning: act from the policy prior alone. This "
                          "is the deployable mode -- 0.1 ms on a CPU against a "
@@ -110,8 +119,9 @@ def main() -> None:
         if args.prior:
             rival.cfg.mpc = False
         run_match(agent, args.run, "external", args.games, args.seconds,
-                  args.seed, rival=rival)
-        print(f"  (far side: {args.vs})")
+                  args.seed, rival=rival, human_body=args.human_body)
+        print(f"  (far side: {args.vs}, "
+              f"{'human model' if args.human_body else 'robot body'})")
         return
     for opp in args.opponents.split(","):
         run_match(agent, args.run, opp.strip(), args.games, args.seconds, args.seed)

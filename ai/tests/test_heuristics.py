@@ -394,7 +394,13 @@ def test_bridge_caps_match_the_randomised_machine():
     cap_v, cap_a = bridge.caps(obs)
     assert cap_v == pytest.approx(env._agent_dyn["max_speed"] * 1000.0, rel=1e-5)
     assert cap_a == pytest.approx(env._agent_dyn["max_accel"] * 1000.0, rel=1e-5)
-    assert cap_a.min() < cap_a.max()          # DR actually varied something
+    # The accel band is pinned now (dynamics.py, 2026-09-02), so prove the
+    # feature is live rather than a constant by moving one machine's cap.
+    env._agent_dyn["max_accel"][0] *= 0.5
+    obs = env.step(np.zeros((env.n_envs, env.action_dim), dtype=np.float32))[0]
+    _, cap_a = bridge.caps(obs)
+    assert cap_a == pytest.approx(env._agent_dyn["max_accel"] * 1000.0, rel=1e-5)
+    assert cap_a[0] < cap_a[1]
 
 
 def test_bridge_over_asking_gets_the_machine_cap():

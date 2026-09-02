@@ -107,14 +107,18 @@ def sim_to_table_mm(sim_x: float, sim_y: float, sim_width: float = 1.0,
 # tops out around 3.5 m/s. Speed is not the binding constraint; sampling it
 # down only taught the policy about machines that do not exist.
 #
-# ACCEL IS THE BINDING CONSTRAINT, so that is where the spread goes:
-# 10-60 m/s^2, absolute. The truth varies with position -- cdpr_config.h's
-# solve puts the table centre near 114 m/s^2 and the worst corner near 9 --
-# and the sim's single number cannot follow the pose, so the band brackets
-# most of the workspace instead. The firmware ceiling is 120; nothing here
+# ACCEL IS THE BINDING CONSTRAINT, and it WAS where the spread went:
+# 10-60 m/s^2, absolute, because the truth varies with position --
+# cdpr_config.h's solve puts the table centre near 114 m/s^2 and the worst
+# corner near 9 -- and a single number cannot follow the pose. Since
+# 2026-09-02 it is PINNED at the top of that band: the spread made the two
+# sides of self-play different machines every episode and cost the policy
+# capacity on bodies it will never drive. The observation still carries the
+# cap ratios ([13], [14]) as constants, so the band can be reopened without
+# changing the network's shape. The firmware ceiling is 120; nothing here
 # approaches it.
 AGENT_DR_SPEED_M_S = (MAX_SPEED_M_S, MAX_SPEED_M_S)   # pinned to the clamp
-AGENT_DR_ACCEL_M_S2 = (10.0, 60.0)
+AGENT_DR_ACCEL_M_S2 = (60.0, 60.0)                      # pinned, see above
 
 # Fraction-of-nominal spread for the OPPONENT (human) side only.
 DR_SPEED_RANGE = (0.5, 1.0)

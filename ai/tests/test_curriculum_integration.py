@@ -288,6 +288,7 @@ class TestDomainRandomization:
     """Per-env physics params differ when domain_randomize=True."""
 
     def test_dynamics_params_differ(self):
+        from airhockey.dynamics import AGENT_DR_ACCEL_M_S2, AGENT_DR_SPEED_M_S
         env = _make_env(domain_randomize=True)
         env.reset(seed=42)
 
@@ -299,11 +300,12 @@ class TestDomainRandomization:
         # Speed is deliberately NOT varied: it is the firmware clamp, the one
         # number in the actuator model that is not an estimate, and a run
         # showed the machine never approaches it anyway (accel binds first).
-        # Accel and time constant carry all the randomisation.
-        assert not np.all(accels == accels[0]), "max_accel should vary across envs"
+        # Accel was the randomised term until 2026-09-02, when its band was
+        # pinned at 60 (dynamics.py); the time constant still varies (it
+        # only matters to the "delayed" law, which the human side uses).
+        assert np.all(accels == AGENT_DR_ACCEL_M_S2[1]), "max_accel is pinned"
         assert not np.all(tcs == tcs[0]), "time_constant should vary across envs"
 
-        from airhockey.dynamics import AGENT_DR_ACCEL_M_S2, AGENT_DR_SPEED_M_S
         assert AGENT_DR_SPEED_M_S[0] == MAX_SPEED_M_S
         assert np.all(speeds == MAX_SPEED_M_S)
         assert np.all((accels >= AGENT_DR_ACCEL_M_S2[0])

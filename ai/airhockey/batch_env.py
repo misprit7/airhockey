@@ -84,7 +84,8 @@ class BatchAirHockeyEnv:
     #        capabilities, and only the robot is confined to the reachable
     #        workspace, so a policy that plays both in self-play cannot act
     #        correctly without knowing which it currently is. Always 1.0 in
-    #        production.
+    #        production -- and always 1.0 with opponent_body="robot", where
+    #        the far side is a copy of the machine (symmetric self-play).
     #   [13] MAX SPEED, [14] MAX ACCEL, as a ratio to the robot's nominal
     #        caps. Domain randomisation samples these per env, and they change
     #        the right play rather than just the execution: how early to commit
@@ -204,6 +205,16 @@ class BatchAirHockeyEnv:
         # The OPPONENT is deliberately left with the full half: it stands in
         # for a human, who can reach anywhere on their side.
         constrain_to_workspace: bool = True,
+        # Who the far side IS. "human" (default): the sparring partner
+        # described above -- its own dynamics law, its own caps, the whole
+        # half. "robot": an exact copy of the agent's body -- same law, same
+        # caps and the same per-env DR draw, the workspace box mirrored
+        # across the centre line -- so self-play is a game between two
+        # copies of one machine. The side flag then stays ROBOT_SIDE in both
+        # views (there is no other kind of body on the table), and
+        # opponent_obs() builds the far side's view natively: own paddle
+        # fresh, puck and rival through the camera, exactly as the agent's.
+        opponent_body: str = "human",      # "human" | "robot"
     ):
         self.n_envs = n_envs
         self.table_config = table_config or TableConfig()
@@ -278,6 +289,19 @@ class BatchAirHockeyEnv:
             [cfg.width - cfg.paddle_radius, cfg.height / 2 - cfg.paddle_radius]
         )
 
+        if opponent_body not in ("human", "robot"):
+            raise ValueError(f"unknown opponent_body {opponent_body!r}")
+        self.opponent_body = opponent_body
+        # The far side's reachable box: the agent's, reflected in the centre
+        # line. None for a human, who reaches the whole half.
+        self._ws_opp = None
+        if opponent_body == "robot" and self._ws is not None:
+            self._ws_opp = {
+                "min_x": self._ws["min_x"], "max_x": self._ws["max_x"],
+                "min_y": cfg.height - self._ws["max_y"],
+                "max_y": cfg.height - self._ws["min_y"],
+            }
+
         # Observation bounds
         vel_max = 10.0
         self.obs_high = np.array([
@@ -341,8 +365,10 @@ class BatchAirHockeyEnv:
             hist_depth = (max(self.HISTORY_PUCK_LAGS) if obs_mode == "history"
                           else 0)
             self._cam_ring_size = max_lag + hist_depth + 2
-            # Per-frame tracker report: puck x,y,vx,vy + opponent x,y
-            self._cam_ring = np.zeros((self._cam_ring_size, n_envs, 6))
+            # Per-frame tracker report: puck x,y,vx,vy + opponent x,y, and
+            # the agent paddle x,y so a robot-bodied far side can see its
+            # rival through the same camera (opponent_obs()).
+            self._cam_ring = np.zeros((self._cam_ring_size, n_envs, 8))
             self._cam_write = 0
             self._cam_lag = np.zeros(n_envs, dtype=np.int32)
             self._max_delay = 0                  # legacy ring off
@@ -371,10 +397,15 @@ class BatchAirHockeyEnv:
                                                      dynamics_max_speed,
                                                      dynamics_max_accel,
                                                      dynamics_time_constant)
-        self._opp_dyn = self._make_dynamics_state(opponent_dynamics, n_envs,
-                                                   OPPONENT_MAX_SPEED_M_S,
-                                                   OPPONENT_MAX_ACCEL_M_S2,
-                                                   dynamics_time_constant)
+        if opponent_body == "robot":
+            self.opponent_dynamics_type = agent_dynamics
+            self._opp_dyn = self._make_dynamics_state(
+                agent_dynamics, n_envs, dynamics_max_speed,
+                dynamics_max_accel, dynamics_time_constant)
+        else:
+            self._opp_dyn = self._make_dynamics_state(
+                opponent_dynamics, n_envs, OPPONENT_MAX_SPEED_M_S,
+                OPPONENT_MAX_ACCEL_M_S2, dynamics_time_constant)
 
         self._rng = np.random.default_rng()
         # The perception model ticks at the CAMERA rate, not the action
@@ -395,6 +426,13 @@ class BatchAirHockeyEnv:
         self._prev_agent_y = np.zeros(n_envs)
         self._prev_opp_x = np.zeros(n_envs)
         self._prev_opp_y = np.zeros(n_envs)
+        # For opponent_obs(): the far side's own paddle and, with the camera
+        # off, its rival. Kept apart from the agent's _prev_* so the two
+        # views can be built in either order within a step.
+        self._prev_own_opp_x = np.zeros(n_envs)
+        self._prev_own_opp_y = np.zeros(n_envs)
+        self._prev_rival_x = np.zeros(n_envs)
+        self._prev_rival_y = np.zeros(n_envs)
 
         # Puck-stuck detection: reset if speed < threshold for N consecutive steps
         self._puck_slow_count = np.zeros(n_envs, dtype=np.int32)
@@ -466,6 +504,17 @@ class BatchAirHockeyEnv:
         self.engine.paddle_agent_y[idx] = self._rng.uniform(
             ws["min_y"], ws["max_y"], size=n)
 
+    def _reset_opponent_into_workspace(self, mask: np.ndarray) -> None:
+        """The far side's counterpart, for a robot-bodied opponent."""
+        n = int(mask.sum())
+        if n == 0:
+            return
+        ws = self._ws_opp
+        self.engine.paddle_opp_x[mask] = self._rng.uniform(
+            ws["min_x"], ws["max_x"], size=n)
+        self.engine.paddle_opp_y[mask] = self._rng.uniform(
+            ws["min_y"], ws["max_y"], size=n)
+
     def reset(
         self,
         seed: int | None = None,
@@ -534,6 +583,11 @@ class BatchAirHockeyEnv:
             o["max_accel"][idx] = self._rng.uniform(
                 alo * o["nominal_accel"], ahi * o["nominal_accel"], size=n)
             o["time_constant"][idx] = self._rng.uniform(0.01, 0.04, size=n)
+            if self.opponent_body == "robot":
+                # One machine, two copies: the far side gets the SAME draw,
+                # not a second sample from the same band.
+                for key in ("max_speed", "max_accel", "time_constant"):
+                    o[key][idx] = a[key][idx]
 
         self._agent_dyn["x"][idx] = self.engine.paddle_agent_x[idx]
         self._agent_dyn["y"][idx] = self.engine.paddle_agent_y[idx]
@@ -561,6 +615,17 @@ class BatchAirHockeyEnv:
             self.engine.paddle_opp_x[corner_reset] = corners[picks, 0]
             self.engine.paddle_opp_y[corner_reset] = corners[picks, 1]
 
+        if self._ws_opp is not None:
+            self._reset_opponent_into_workspace(
+                resetting & ~goalie_reset & ~corner_reset)
+            # Scripted stations sit on the back wall, which a robot-bodied
+            # far side cannot reach: hold them at its box edge instead.
+            w = self._ws_opp
+            self.engine.paddle_opp_x[resetting] = np.clip(
+                self.engine.paddle_opp_x[resetting], w["min_x"], w["max_x"])
+            self.engine.paddle_opp_y[resetting] = np.clip(
+                self.engine.paddle_opp_y[resetting], w["min_y"], w["max_y"])
+
         self._opp_dyn["x"][idx] = self.engine.paddle_opp_x[idx]
         self._opp_dyn["y"][idx] = self.engine.paddle_opp_y[idx]
         self._opp_dyn["vx"][idx] = 0.0
@@ -583,6 +648,8 @@ class BatchAirHockeyEnv:
                 self._cam_ring[f, idx, 3] = 0.0
                 self._cam_ring[f, idx, 4] = e.paddle_opp_x[idx]
                 self._cam_ring[f, idx, 5] = e.paddle_opp_y[idx]
+                self._cam_ring[f, idx, 6] = e.paddle_agent_x[idx]
+                self._cam_ring[f, idx, 7] = e.paddle_agent_y[idx]
             lo, hi = self._cam_latency_range
             n_r = self.n_envs if mask is None else int(mask.sum())
             if hi > 0:
@@ -598,6 +665,10 @@ class BatchAirHockeyEnv:
         self._prev_agent_y[idx] = self.engine.paddle_agent_y[idx]
         self._prev_opp_x[idx] = self.engine.paddle_opp_x[idx]
         self._prev_opp_y[idx] = self.engine.paddle_opp_y[idx]
+        self._prev_own_opp_x[idx] = self.engine.paddle_opp_x[idx]
+        self._prev_own_opp_y[idx] = self.engine.paddle_opp_y[idx]
+        self._prev_rival_x[idx] = self.engine.paddle_agent_x[idx]
+        self._prev_rival_y[idx] = self.engine.paddle_agent_y[idx]
 
         # Pre-fill camera delay buffer for reset envs
         if self._max_delay > 0:
@@ -873,6 +944,10 @@ class BatchAirHockeyEnv:
         m[:, 9] = cfg.height - obs[:, 5]    # pad_y → opp_y (flipped)
         m[:, 10] = obs[:, 6]                # pad_vx → opp_vx
         m[:, 11] = -obs[:, 7]               # pad_vy → opp_vy (negated)
+        if self.opponent_body == "robot":
+            # Two copies of one body: the flag and the caps are the same on
+            # both sides, and swapping them would be wrong, not symmetric.
+            return m
         # FLIP the side flag rather than pinning it to HUMAN. Whoever looks
         # through a mirrored view is the other side -- so mirroring the
         # robot's view yields the human's, and mirroring that yields the
@@ -893,6 +968,58 @@ class BatchAirHockeyEnv:
                                  self._opp_dyn[key],
                                  self._agent_dyn[key]) / ref
         return m
+
+    def opponent_obs(self) -> np.ndarray:
+        """The far side's OWN view, for a robot-bodied opponent.
+
+        mirror_obs() hands the far side the agent's report turned round,
+        which gives it its own paddle through the camera (stale) and its
+        rival's fresh -- the opposite of what each side actually has. This
+        builds the view the way _make_obs_direct builds the agent's: own
+        paddle fresh from the controller, puck and rival through the same
+        camera at the same latency, then reflected into the far side's frame
+        so one policy can drive either end. Kinematic obs only, and the
+        legacy whole-obs delay ring is not applied (realistic sensing
+        carries the latency).
+        """
+        if self.opponent_body != "robot":
+            raise ValueError("opponent_obs() is for opponent_body='robot'; "
+                             "a human far side is viewed via mirror_obs()")
+        if self.obs_mode != "kinematic":
+            raise NotImplementedError("opponent_obs() is kinematic-only")
+        e = self.engine
+        cfg = self.table_config
+        dt = self.action_dt
+        own_vx = (e.paddle_opp_x - self._prev_own_opp_x) / dt
+        own_vy = (e.paddle_opp_y - self._prev_own_opp_y) / dt
+        self._prev_own_opp_x[:] = e.paddle_opp_x
+        self._prev_own_opp_y[:] = e.paddle_opp_y
+        if self._perception is not None:
+            newest = (self._cam_write - 1) % self._cam_ring_size
+            idx = (newest - self._cam_lag) % self._cam_ring_size
+            prev = (idx - 1) % self._cam_ring_size
+            seen = self._cam_ring[idx, self._env_idx]
+            before = self._cam_ring[prev, self._env_idx]
+            px, py, pvx, pvy = seen[:, 0], seen[:, 1], seen[:, 2], seen[:, 3]
+            rx, ry = seen[:, 6], seen[:, 7]
+            rvx = (seen[:, 6] - before[:, 6]) / self._cam_dt
+            rvy = (seen[:, 7] - before[:, 7]) / self._cam_dt
+        else:
+            px, py, pvx, pvy = e.puck_x, e.puck_y, e.puck_vx, e.puck_vy
+            rx, ry = e.paddle_agent_x, e.paddle_agent_y
+            rvx = (e.paddle_agent_x - self._prev_rival_x) / dt
+            rvy = (e.paddle_agent_y - self._prev_rival_y) / dt
+        self._prev_rival_x[:] = e.paddle_agent_x
+        self._prev_rival_y[:] = e.paddle_agent_y
+        h = cfg.height
+        return np.column_stack([
+            px, h - py, pvx, -pvy,
+            e.paddle_opp_x, h - e.paddle_opp_y, own_vx, -own_vy,
+            rx, h - ry, rvx, -rvy,
+            np.full(self.n_envs, self.ROBOT_SIDE),
+            self._opp_dyn["max_speed"] / MAX_SPEED_M_S,
+            self._opp_dyn["max_accel"] / MAX_ACCEL_M_S2,
+        ]).astype(np.float32)
 
     def mirror_action_to_opponent(self, actions: np.ndarray) -> tuple[np.ndarray, np.ndarray]:
         """Convert [N, 2] normalized actions from opponent's mirrored perspective
@@ -1026,6 +1153,11 @@ class BatchAirHockeyEnv:
         target_x[ext] = self._ext_opp_target_x[ext]
         target_y[ext] = self._ext_opp_target_y[ext]
 
+        if self._ws_opp is not None:
+            # The same cap the agent's targets get in step(): the profile
+            # chases the nearest reachable point, as the firmware would.
+            target_x = np.clip(target_x, self._ws_opp["min_x"], self._ws_opp["max_x"])
+            target_y = np.clip(target_y, self._ws_opp["min_y"], self._ws_opp["max_y"])
         return self._update_dynamics(self._opp_dyn, target_x, target_y, dt)
 
     def _clamp_to_half(
@@ -1033,6 +1165,9 @@ class BatchAirHockeyEnv:
     ) -> tuple[np.ndarray, np.ndarray]:
         cfg = self.table_config
         r = cfg.paddle_radius
+        if not agent and self._ws_opp is not None:
+            return (np.clip(x, self._ws_opp["min_x"], self._ws_opp["max_x"]),
+                    np.clip(y, self._ws_opp["min_y"], self._ws_opp["max_y"]))
         if agent and self._ws is not None:
             # The machine's own limit, not the table's. The firmware clamps
             # here too; doing it in the sim means the policy learns the
@@ -1064,6 +1199,8 @@ class BatchAirHockeyEnv:
         self._cam_ring[w, :, 3] = pvy
         self._cam_ring[w, :, 4] = e.paddle_opp_x
         self._cam_ring[w, :, 5] = e.paddle_opp_y
+        self._cam_ring[w, :, 6] = e.paddle_agent_x
+        self._cam_ring[w, :, 7] = e.paddle_agent_y
         self._cam_write = (w + 1) % self._cam_ring_size
 
     def _camera_read(self):

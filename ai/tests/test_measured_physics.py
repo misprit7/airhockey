@@ -280,9 +280,11 @@ def test_agent_speed_is_pinned_to_the_firmware_clamp():
     dyn = e._agent_dyn
     assert np.all(dyn["max_speed"] == MAX_SPEED_M_S), "speed must be pinned"
     lo, hi = AGENT_DR_ACCEL_M_S2
-    assert (lo, hi) == (10.0, 60.0)
-    assert dyn["max_accel"].min() >= lo and dyn["max_accel"].max() <= hi
-    assert dyn["max_accel"].std() > 5.0, "accel band not actually sampled"
+    # Pinned at the top of the former 10-60 band since 2026-09-02: the
+    # spread made every self-play episode a game between two different
+    # machines. The feature stays in the observation as a constant.
+    assert (lo, hi) == (60.0, 60.0)
+    assert np.all(dyn["max_accel"] == hi), "accel must be pinned"
 
 
 def test_randomisation_does_not_erase_the_side_asymmetry():
@@ -407,26 +409,29 @@ def test_cap_features_report_the_body_the_policy_is_driving():
     np.testing.assert_allclose(obs[:, 14], 1.0, atol=1e-6)
 
 
-def test_cap_features_track_domain_randomisation():
-    """The whole point: with DR on, envs differ and the policy can see it.
-
-    A constant feature would be worse than no feature -- it would look like the
-    policy had been told its limits while telling it nothing.
+def test_cap_features_report_the_caps_in_force():
+    """The features are the caps actually driving the body, not a copy of
+    nominal. Both bands are pinned now (speed at the clamp, accel at 60 --
+    see dynamics.py), so under DR the features are constants: 1.0 and 3.0.
+    The slots stay so the band can be reopened without reshaping the
+    network, and this test would catch a feature that stopped tracking the
+    cap when it does.
     """
     from airhockey.batch_env import BatchAirHockeyEnv
-    from airhockey.dynamics import MAX_ACCEL_M_S2, MAX_SPEED_M_S
+    from airhockey.dynamics import (AGENT_DR_ACCEL_M_S2, MAX_ACCEL_M_S2,
+                                    MAX_SPEED_M_S)
     e = BatchAirHockeyEnv(n_envs=512, domain_randomize=True)
     obs = e.reset(seed=3)
-    # Speed is pinned to the firmware clamp, so its feature is a constant
-    # 1.0 on the robot -- it still earns its slot by reading 1.25 on the
-    # mirrored human side. Accel carries the per-env variation.
     np.testing.assert_allclose(obs[:, 13], 1.0, atol=1e-6)
-    assert obs[:, 14].std() > 0.05, "accel feature is constant under DR"
-    # And they are the caps actually in force, not a redundant copy of nominal.
+    np.testing.assert_allclose(obs[:, 14], AGENT_DR_ACCEL_M_S2[1] / MAX_ACCEL_M_S2, rtol=1e-6)
     np.testing.assert_allclose(
         obs[:, 13], e._agent_dyn["max_speed"] / MAX_SPEED_M_S, rtol=1e-6)
     np.testing.assert_allclose(
         obs[:, 14], e._agent_dyn["max_accel"] / MAX_ACCEL_M_S2, rtol=1e-6)
+    # Still live: a cap set by hand shows up in the next observation.
+    e._agent_dyn["max_accel"][:] = 0.5 * MAX_ACCEL_M_S2
+    obs = e.step(np.zeros((512, 2)))[0]
+    np.testing.assert_allclose(obs[:, 14], 0.5, rtol=1e-6)
 
 
 def test_mirrored_view_reports_the_human_caps():

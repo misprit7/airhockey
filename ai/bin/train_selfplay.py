@@ -67,6 +67,9 @@ def make_env(args, n_envs):
         agent_dynamics="profile" if args.dynamics else "ideal",
         opponent_dynamics="delayed" if args.dynamics else "ideal",
         opponent_policy="external",
+        # Symmetric by default: the far side is a copy of the machine, not
+        # the human model, so the learner is always playing itself.
+        opponent_body="robot" if args.symmetric else "human",
         action_dt=1 / 100,
         max_episode_time=30.0,
         max_score=7,
@@ -87,8 +90,9 @@ def _truth_info(env):
 def drive_opponent(env, opponent, obs, t0_mask):
     """The opponent is the mirrored self: plan on the mirrored view, map the
     action back into the far half."""
+    view = env.opponent_obs() if env.opponent_body == "robot" else env.mirror_obs(obs)
     with torch.no_grad():
-        opp_obs = torch.from_numpy(env.mirror_obs(obs)).float()
+        opp_obs = torch.from_numpy(view).float()
         opp_act = opponent.act(opp_obs, t0=t0_mask, eval_mode=True)
     tx, ty = env.mirror_action_to_opponent(opp_act.numpy())
     env._ext_opp_target_x[:] = tx
@@ -136,6 +140,12 @@ def main():
     parser.add_argument("--no-dynamics", dest="dynamics", action="store_false")
     parser.add_argument("--realistic-sensing", action="store_true", default=True)
     parser.add_argument("--no-realistic-sensing", dest="realistic_sensing",
+                        action="store_false")
+    parser.add_argument("--symmetric", action="store_true", default=True,
+                        help="far side is a copy of the robot's body "
+                             "(default); --human-opponent restores the "
+                             "human model as the sparring partner")
+    parser.add_argument("--human-opponent", dest="symmetric",
                         action="store_false")
     parser.add_argument("--domain-randomize", action="store_true", default=True)
     parser.add_argument("--no-domain-randomize", dest="domain_randomize",
@@ -200,6 +210,7 @@ def main():
     print(f"\nSelf-Play TD-MPC2 Training (March recipe, new environment)")
     print(f"  Steps: {args.steps:,}   Parallel envs: {n_envs}")
     print(f"  Opponent update: every {args.opponent_update_freq:,} steps")
+    print(f"  Far side: {'copy of self (robot body, mirrored workspace)' if args.symmetric else 'human model'}")
     print(f"  Planning horizon: {args.horizon}   Goals: +{GOAL_REWARD:.0f} / {GOAL_PENALTY:.0f}")
     print(f"  Sensing: {'on' if args.realistic_sensing else 'off'}   "
           f"DR: {'on' if args.domain_randomize else 'off'}   obs {env.obs_dim} dims")

@@ -347,6 +347,18 @@ exists only locally. Do not `git pull --rebase` it away.
   - Contact reward: +5 on paddle-puck contact.
 - **Action space normalization**: Actions must be normalized to [-1, 1]. This is critical for learning; using raw position coordinates causes action saturation and kills gradients.
 - **VecNormalize**: Hurts SAC performance. Do not use it.
+- **Symmetric self-play (2026-09-02)**: `BatchAirHockeyEnv(opponent_body="robot")`
+  makes the far side an exact copy of the machine — same profile law, same
+  caps and DR draw, the workspace box mirrored, side flag ROBOT on both
+  views — and `opponent_obs()` builds its view natively (own paddle fresh,
+  rival through the camera). `train_selfplay.py` uses it by default
+  (`--human-opponent` restores the human model). Before this the sparring
+  partner was the human model, which the learner had never been in the
+  body of, and it played far worse than the robot. The robot's accel DR
+  band is pinned at 60 m/s² (was 10–60); the cap features stay in the
+  observation as constants so the band can be reopened without reshaping
+  the network. `eval_policy.py A --vs B` plays two checkpoints on equal
+  bodies; `--human-body` reproduces the pre-change ladder.
 - **Training throughput**: SAC's bottleneck is gradient updates, not environment stepping. Using `train_freq=32` with `gradient_steps=4` gives roughly 3x speedup over the default.
 - **Episode init**: Puck should start heading toward the agent so it encounters the puck quickly and gets reward signal faster.
 - **Network size**: 128x128 MLP is sufficient for basic play. Will likely need larger networks for strategic/competitive play.
