@@ -1,31 +1,38 @@
 #!/bin/bash
-# Full training pipeline: pretrain on idle opponent, then self-play
-set -e
+# Five-stage curriculum, then self-play. Each stage resumes the previous
+# checkpoint; stage budgets, opponents and reward weights come from
+# rewards.CURRICULUM (one table, used by both trainers).
+#
+#   bash ai/bin/run_full_pipeline.sh            # default budgets
+#   PREFIX=curr2 bash ai/bin/run_full_pipeline.sh
+#
+# train_tdmpc2.py can core-dump at interpreter teardown (background eval
+# thread vs torch shutdown) AFTER saving, so each stage is judged by its
+# checkpoint, not its exit code.
+cd "$(dirname "$0")/../.."
+export PYTHONPATH=ai PYTHONUNBUFFERED=1
+PREFIX=${PREFIX:-curriculum}
 
-# Navigate to ai/ directory
-cd "$(dirname "$0")/.."
-source .venv/bin/activate
-export PYTHONUNBUFFERED=1
+budget() { python3 -c "from airhockey.rewards import CURRICULUM as C; print(C['$1']['steps'])"; }
 
-echo "=== Phase 1: Pretrain TD-MPC2 (500k steps) ==="
-python bin/train_tdmpc2.py \
-    --steps 500000 \
-    --model-size 5 \
-    --horizon 5 \
-    --run-name tdmpc2_pretrain \
-    --record-freq 50000
+prev=""
+for stage in proximity contact scoring goalie; do
+    run="${PREFIX}_${stage}"
+    steps=$(budget $stage)
+    echo "=== Stage $stage: $steps steps ($run) ==="
+    resume=""
+    [ -n "$prev" ] && resume="--resume runs/$prev/agent.pt"
+    python3 ai/bin/train_tdmpc2.py --curriculum-stage $stage --steps $steps \
+        --model-size 5 --horizon 5 --run-name $run --record-freq 50000 $resume || true
+    if [ ! -f runs/$run/agent.pt ]; then
+        echo "stage $stage produced no checkpoint — aborting"; exit 1
+    fi
+    prev=$run
+done
 
-echo ""
-echo "=== Phase 2: Self-play (5M steps, 32 parallel envs) ==="
-python bin/train_selfplay.py \
-    --resume runs/tdmpc2_pretrain/agent.pt \
-    --steps 5000000 \
-    --n-envs 32 \
-    --model-size 5 \
-    --horizon 5 \
-    --run-name selfplay_v1 \
-    --record-freq 50000 \
-    --opponent-update-freq 50000
-
-echo ""
-echo "=== Pipeline complete! ==="
+steps=$(budget selfplay)
+echo "=== Stage selfplay: $steps steps (${PREFIX}_selfplay) ==="
+python3 ai/bin/train_selfplay.py --resume runs/$prev/agent.pt --steps $steps \
+    --n-envs 32 --model-size 5 --horizon 5 --run-name ${PREFIX}_selfplay \
+    --record-freq 50000 --opponent-update-freq 50000
+echo "=== Pipeline complete ==="

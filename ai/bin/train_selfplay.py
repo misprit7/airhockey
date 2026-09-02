@@ -48,13 +48,17 @@ from tdmpc2 import TDMPC2  # noqa: E402
 
 from airhockey.batch_env import BatchAirHockeyEnv, sensing_kwargs  # noqa: E402
 from airhockey.recorder import FrameData, Recorder  # noqa: E402
-from airhockey.rewards import BatchRewardShaper, STAGE_SCORING  # noqa: E402
+from airhockey.rewards import (BatchRewardShaper, STAGE_SCORING,  # noqa: E402
+                               CURRICULUM, curriculum_shaper_kwargs)
 
 warnings.filterwarnings('ignore')
 torch.backends.cudnn.benchmark = True
 
-GOAL_REWARD = 100.0
-GOAL_PENALTY = -50.0
+# Weights come from the named curriculum's self-play stage so the pretrain
+# stages and this one share one table (rewards.CURRICULUM).
+_SP = CURRICULUM["selfplay"]
+GOAL_REWARD = _SP["goal_reward"]
+GOAL_PENALTY = _SP["goal_penalty"]
 
 
 def make_env(args, n_envs):
@@ -175,7 +179,7 @@ def main():
     n_envs = args.n_envs
     env = make_env(args, n_envs)
     shaper = BatchRewardShaper(n_envs, stage=STAGE_SCORING,
-                               goal_reward=GOAL_REWARD, goal_penalty=GOAL_PENALTY)
+                               **curriculum_shaper_kwargs("selfplay"))
     episode_length = 3000          # 30 s at the 100 Hz action rate
     cfg = OmegaConf.merge(cfg, OmegaConf.create({
         "obs_shape": {"state": [env.obs_dim]},

@@ -689,3 +689,63 @@ class ExchangeRewardShaper:
         if np.any(ended):
             self._contact_count[ended] = 0
         return shaped.astype(np.float32)
+
+
+# ---------------------------------------------------------------------------
+# Named curriculum for the pretrain -> self-play pipeline
+# ---------------------------------------------------------------------------
+# Five stages, each rewarding ONE thing loudly enough to be the signal:
+#
+#   proximity   get to the puck             (idle opponent)
+#   contact     hit it forward              (idle)
+#   scoring     put it in                   (idle)
+#   goalie      put it past a blocker       (env's stationary goalie)
+#   selfplay    win games                   (latest self, see train_selfplay)
+#
+# Magnitudes were the problem with the old 4-stage table: contact 0.1 next
+# to a 160-point goal is nothing, so every dense term was noise and the only
+# real signal was a sparse goal -- which is how three trainers learned to
+# loiter. Here each stage's target term is O(1..10) per event and the goal
+# terms enter only once a stage is ABOUT goals. In self-play a goal is worth
+# ~50 clean contacts, not ~1600.
+#
+# Per-step scale check: proximity 0.1/step over a 10 s (1000-step) episode
+# caps at 100; contact 5 x 5 capped hits = 25 max; a goal 100.
+CURRICULUM: dict[str, dict] = {
+    "proximity": dict(
+        opponent="idle", episode_steps=1000, steps=200_000,
+        proximity_weight=0.1, contact_reward=0.0, directed_hit_weight=0.0,
+        puck_progress_weight=0.0, defense_weight=0.0, shot_placement_weight=0.0,
+        goal_reward=0.0, goal_penalty=0.0, entropy_weight=0.0, shot_mix_weight=0.0),
+    "contact": dict(
+        opponent="idle", episode_steps=1000, steps=300_000,
+        proximity_weight=0.02, contact_reward=5.0, directed_hit_weight=2.0,
+        puck_progress_weight=0.0, defense_weight=0.0, shot_placement_weight=0.0,
+        goal_reward=0.0, goal_penalty=0.0, entropy_weight=0.0, shot_mix_weight=0.0),
+    "scoring": dict(
+        opponent="idle", episode_steps=2000, steps=500_000,
+        proximity_weight=0.0, contact_reward=2.0, directed_hit_weight=1.0,
+        puck_progress_weight=0.5, defense_weight=0.5, shot_placement_weight=2.0,
+        goal_reward=100.0, goal_penalty=-20.0, entropy_weight=0.0, shot_mix_weight=0.5),
+    "goalie": dict(
+        opponent="goalie", episode_steps=2000, steps=500_000,
+        proximity_weight=0.0, contact_reward=2.0, directed_hit_weight=1.0,
+        puck_progress_weight=0.5, defense_weight=0.5, shot_placement_weight=2.0,
+        goal_reward=100.0, goal_penalty=-20.0, entropy_weight=0.0, shot_mix_weight=0.5),
+    "selfplay": dict(
+        opponent="external", episode_steps=3000, steps=3_000_000,
+        proximity_weight=0.0, contact_reward=2.0, directed_hit_weight=1.0,
+        puck_progress_weight=0.5, defense_weight=1.0, shot_placement_weight=2.0,
+        goal_reward=100.0, goal_penalty=-50.0, entropy_weight=0.0, shot_mix_weight=0.5),
+}
+CURRICULUM_ORDER = ["proximity", "contact", "scoring", "goalie", "selfplay"]
+
+_SHAPER_KEYS = ("proximity_weight", "contact_reward", "directed_hit_weight",
+                "puck_progress_weight", "defense_weight", "shot_placement_weight",
+                "goal_reward", "goal_penalty", "entropy_weight", "shot_mix_weight")
+
+
+def curriculum_shaper_kwargs(name: str) -> dict:
+    """The BatchRewardShaper / ShapedRewardWrapper kwargs for a named stage."""
+    spec = CURRICULUM[name]
+    return {k: spec[k] for k in _SHAPER_KEYS}

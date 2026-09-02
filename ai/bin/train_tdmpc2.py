@@ -43,6 +43,7 @@ from airhockey.recorder import Recorder
 from airhockey.rewards import (
     BatchRewardShaper, ShapedRewardWrapper,
     STAGE_SCORING, STAGE_OPPONENT, STAGE_NAMES,
+    CURRICULUM, curriculum_shaper_kwargs,
 )
 
 warnings.filterwarnings('ignore')
@@ -146,9 +147,10 @@ class SimpleLogger:
         return self.Video()
 
 
-def record_game(agent, env_factory, step, recordings_dir, run_name, stage=STAGE_SCORING, frame_stack=1):
+def record_game(agent, env_factory, step, recordings_dir, run_name, stage=STAGE_SCORING, frame_stack=1,
+                opponent=None):
     """Record a game for the web UI."""
-    opponent_policy = STAGE_OPPONENT.get(stage, "idle")
+    opponent_policy = opponent or STAGE_OPPONENT.get(stage, "idle")
     if opponent_policy == "external":
         opponent_policy = "idle"  # can't use external agent for recording
     inner_env = AirHockeyEnv(
@@ -177,7 +179,7 @@ def record_game(agent, env_factory, step, recordings_dir, run_name, stage=STAGE_
     if recording:
         rec = Recorder()
         rec._current = recording
-        filename = f"{run_name}_s{stage}_step_{step:07d}.json"
+        filename = f"{run_name}_step_{step:07d}.json"
         recordings_dir.mkdir(parents=True, exist_ok=True)
         rec.save(recordings_dir / filename)
         score = f"{info['score_agent']}-{info['score_opponent']}"
@@ -240,6 +242,11 @@ def main():
     parser.add_argument("--n-envs", type=int, default=32, help="Number of parallel environments")
     parser.add_argument("--updates-per-step", type=int, default=1,
                         help="Gradient updates per batch of env steps (default 1; try 4-8 for higher UTD)")
+    parser.add_argument("--curriculum-stage", type=str, default=None,
+                        choices=list(CURRICULUM),
+                        help="named stage from rewards.CURRICULUM: sets the "
+                             "opponent, episode length and every reward "
+                             "weight; overrides --stage")
     parser.add_argument("--stage", type=int, default=2, choices=[1, 2, 3, 4],
                         help="Curriculum stage (1-4, default 2 for backwards compat)")
     parser.add_argument("--frame-stack", type=int, default=1,
@@ -337,8 +344,18 @@ def main():
     # teleports the paddle, which trains a policy to command positions no
     # actuator can reach; it stays available with --no-dynamics for ablations.
     dyn_type = "profile" if args.dynamics else "ideal"
-    opponent_policy = STAGE_OPPONENT[stage]
     frame_stack = args.frame_stack
+    if args.curriculum_stage:
+        spec = CURRICULUM[args.curriculum_stage]
+        opponent_policy = spec["opponent"]
+        episode_steps = spec["episode_steps"]
+        shaper_kwargs = curriculum_shaper_kwargs(args.curriculum_stage)
+        stage_label = args.curriculum_stage
+    else:
+        opponent_policy = STAGE_OPPONENT[stage]
+        episode_steps = None
+        shaper_kwargs = {}
+        stage_label = f"{stage} — {STAGE_NAMES[stage]}"
     batch_env = BatchAirHockeyEnv(
         n_envs=n_envs,
         agent_dynamics=dyn_type,
@@ -349,10 +366,12 @@ def main():
         **sensing_kwargs(args.realistic_sensing),
         action_dt=1 / 100,
         max_episode_time=30.0,
+        max_episode_steps=episode_steps,
         max_score=7,
         frame_stack=frame_stack,
     )
-    reward_shaper = BatchRewardShaper(n_envs, stage=stage, frame_stack=frame_stack)
+    reward_shaper = BatchRewardShaper(n_envs, stage=stage, frame_stack=frame_stack,
+                                      **shaper_kwargs)
 
     # Taken from the env, not written down again. The 13th feature (which
     # side this body is) was added and these two would silently have built a
@@ -367,7 +386,7 @@ def main():
     set_seed(cfg.seed)
 
     print(f"TD-MPC2 Training")
-    print(f"  Stage: {stage} — {STAGE_NAMES[stage]}")
+    print(f"  Stage: {stage_label}")
     print(f"  Opponent: {opponent_policy}")
     print(f"  Steps: {args.steps:,}")
     print(f"  Parallel envs: {n_envs} (batch vectorized)")
@@ -576,6 +595,7 @@ def main():
                 agent_copy = copy.deepcopy(agent)
                 fut = executor.submit(
                     record_game, agent_copy, None, step, recordings_dir, args.run_name, stage,
+                    opponent=opponent_policy,
                     frame_stack=frame_stack,
                 )
                 pending_futures.append(fut)
@@ -589,7 +609,8 @@ def main():
 
     # Final
     logger.finish(agent)
-    record_game(agent, None, step, recordings_dir, args.run_name, stage, frame_stack=frame_stack)
+    record_game(agent, None, step, recordings_dir, args.run_name, stage, frame_stack=frame_stack,
+                opponent=opponent_policy)
     executor.shutdown(wait=True)
     print(f"\nTraining complete!")
 

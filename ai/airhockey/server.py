@@ -309,7 +309,10 @@ async def live_game(ws: WebSocket):
         # 100 Hz: the measured 7.7 ms loop latency is shorter than a 60 Hz
         # step, so at 60 the delay cannot be represented at all.
         action_dt=1 / 100,
-        still_puck=True,     # a human is driving — see AirHockeyEnv
+        # A moving start, as in training: the robot's box does not include
+        # the table centre, so a puck parked dead centre is unreachable and
+        # the game never begins. Also re-enables the stuck-puck relaunch.
+        still_puck=False,
     )
     obs, info = env.reset()
 
