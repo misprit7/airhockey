@@ -1,23 +1,34 @@
-"""Self-play training with TD-MPC2 and parallel environments.
+#!/usr/bin/env python3
+"""Self-play training with TD-MPC2 -- the March methodology on the NEW env.
 
-The agent trains against frozen copies of itself. Both agent and opponent
-use full MPPI planning. Multiple environments run in parallel.
+The recipe that produced selfplay_v2 (2026-03-27, the reference "it worked"
+run), kept knob for knob:
+  * resume from a pretrained agent (train_tdmpc2.py, 500k vs scripted)
+  * the opponent is the agent's OWN latest checkpoint, reloaded every 50k
+    steps -- no Elo pool, no mix, no handicap
+  * stage-2 auxiliary shaping with goals at +100 / -50, constant
+  * 30 s games to 7, horizon 5, 5M-parameter model, 32 envs
+  * one gradient update per vectorised step (March's UTD)
 
-Usage:
-    python bin/train_selfplay.py --resume runs/tdmpc2_pretrain/agent.pt
-    python bin/train_selfplay.py --resume runs/tdmpc2_pretrain/agent.pt --steps 5000000 --n-envs 32
+What changed is only the WORLD it runs in, deliberately: measured physics,
+the firmware motion law inside the cable workspace, the human-model
+opponent body, 200 Hz camera sensing with latency/noise/blind spot, and
+domain randomisation -- i.e. BatchAirHockeyEnv's defaults plus
+sensing_kwargs(True). The March envs were 32 scalar AirHockeyEnvs stepped
+in a Python loop; this steps one batch env and plans both sides in one
+batched MPPI call, which changes speed, not data.
+
+    python ai/bin/train_selfplay.py --resume runs/classic_pretrain/agent.pt
 """
 
 from __future__ import annotations
 
 import os
 os.environ['LAZY_LEGACY_OP'] = '0'
-os.environ['TORCHDYNAMO_INLINE_INBUILT_NN_MODULES'] = '1'
 
 import argparse
 import sys
 import warnings
-from collections import defaultdict
 from pathlib import Path
 from time import time
 
@@ -29,71 +40,86 @@ from torch.utils.tensorboard import SummaryWriter
 TDMPC2_DIR = Path(__file__).resolve().parent.parent.parent.parent / "tdmpc2" / "tdmpc2"
 sys.path.insert(0, str(TDMPC2_DIR))
 
-from common.parser import cfg_to_dataclass
-from common.seed import set_seed
-from common.buffer import Buffer
-from common import MODEL_SIZE
-from tdmpc2 import TDMPC2
+from common.parser import cfg_to_dataclass  # noqa: E402
+from common.seed import set_seed  # noqa: E402
+from common.buffer import Buffer  # noqa: E402
+from common import MODEL_SIZE  # noqa: E402
+from tdmpc2 import TDMPC2  # noqa: E402
 
-from airhockey.dynamics import ProfileDynamics, DelayedDynamics, IdealDynamics
-from airhockey.env import AirHockeyEnv
-from airhockey.recorder import Recorder
-from airhockey.rewards import ShapedRewardWrapper, STAGE_SCORING
+from airhockey.batch_env import BatchAirHockeyEnv, sensing_kwargs  # noqa: E402
+from airhockey.recorder import FrameData, Recorder  # noqa: E402
+from airhockey.rewards import BatchRewardShaper, STAGE_SCORING  # noqa: E402
 
 warnings.filterwarnings('ignore')
 torch.backends.cudnn.benchmark = True
-torch.set_float32_matmul_precision('high')
+
+GOAL_REWARD = 100.0
+GOAL_PENALTY = -50.0
 
 
-def make_selfplay_env(use_dynamics=True):
-    dynamics = ProfileDynamics() if use_dynamics else IdealDynamics()
-    inner = AirHockeyEnv(
-        agent_dynamics=dynamics,
-        opponent_dynamics=ProfileDynamics() if use_dynamics else IdealDynamics(),
+def make_env(args, n_envs):
+    return BatchAirHockeyEnv(
+        n_envs=n_envs,
+        agent_dynamics="profile" if args.dynamics else "ideal",
+        opponent_dynamics="delayed" if args.dynamics else "ideal",
         opponent_policy="external",
-        record=False,
         action_dt=1 / 100,
         max_episode_time=30.0,
         max_score=7,
+        domain_randomize=args.domain_randomize,
+        **sensing_kwargs(args.realistic_sensing),
     )
-    wrapped = ShapedRewardWrapper(inner, stage=STAGE_SCORING, goal_reward=100.0, goal_penalty=-50.0)
-    return wrapped, inner
 
 
-def record_game(agent, opponent, step, recordings_dir, run_name, use_dynamics=True):
-    """Record a self-play game for the web UI."""
-    inner = AirHockeyEnv(
-        agent_dynamics=ProfileDynamics(),
-        opponent_dynamics=ProfileDynamics(),
-        opponent_policy="external",
-        record=True,
-        action_dt=1 / 100,
-        max_episode_time=30.0,
-        max_score=7,
-    )
-    wrapped = ShapedRewardWrapper(inner, stage=STAGE_SCORING, goal_reward=100.0, goal_penalty=-50.0)
-    obs, _ = wrapped.reset()
-    obs_t = torch.from_numpy(obs).float()
+def _truth_info(env):
+    e = env.engine
+    return {"puck_x": e.puck_x, "puck_y": e.puck_y, "puck_vx": e.puck_vx,
+            "puck_vy": e.puck_vy, "pad_x": e.paddle_agent_x,
+            "pad_y": e.paddle_agent_y, "opp_x": e.paddle_opp_x,
+            "opp_y": e.paddle_opp_y, "score_agent": e.score_agent,
+            "score_opponent": e.score_opponent}
+
+
+def drive_opponent(env, opponent, obs, t0_mask):
+    """The opponent is the mirrored self: plan on the mirrored view, map the
+    action back into the far half."""
+    with torch.no_grad():
+        opp_obs = torch.from_numpy(env.mirror_obs(obs)).float()
+        opp_act = opponent.act(opp_obs, t0=t0_mask, eval_mode=True)
+    tx, ty = env.mirror_action_to_opponent(opp_act.numpy())
+    env._ext_opp_target_x[:] = tx
+    env._ext_opp_target_y[:] = ty
+
+
+def record_game(agent, opponent, step, recordings_dir, run_name, args):
+    env = make_env(args, 1)
+    obs = env.reset(seed=int(step) % 99_991)
+    rec = Recorder()
+    rec.start_episode()
+    e = env.engine
     done, t = False, 0
-    while not done:
+    t0 = torch.ones(1, dtype=torch.bool)
+    while not done and t < 9000:
+        drive_opponent(env, opponent, obs, t0)
         with torch.no_grad():
-            action = agent.act(obs_t, t0=(t == 0), eval_mode=True)
-            opp_obs = torch.from_numpy(inner.mirror_obs(obs)).float()
-            opp_action = opponent.act(opp_obs, t0=(t == 0), eval_mode=True)
-            tx, ty = inner.mirror_action_to_opponent(opp_action.numpy())
-            inner.set_opponent_action(tx, ty)
-        obs, _, terminated, truncated, info = wrapped.step(action.numpy())
-        obs_t = torch.from_numpy(obs).float()
-        done = terminated or truncated
+            a = agent.act(torch.from_numpy(obs).float(), t0=t0, eval_mode=True)
+        obs, _, term, trunc, _ = env.step(a.numpy())
+        t0 = torch.zeros(1, dtype=torch.bool)
+        done = bool(term[0] or trunc[0])
+        rec.record(FrameData(
+            time=float(e.time[0]),
+            puck_x=float(e.puck_x[0]), puck_y=float(e.puck_y[0]),
+            puck_vx=float(e.puck_vx[0]), puck_vy=float(e.puck_vy[0]),
+            agent_x=float(e.paddle_agent_x[0]), agent_y=float(e.paddle_agent_y[0]),
+            opponent_x=float(e.paddle_opp_x[0]), opponent_y=float(e.paddle_opp_y[0]),
+            score_agent=int(e.score_agent[0]), score_opponent=int(e.score_opponent[0]),
+        ))
         t += 1
-    recording = inner.get_recording()
-    if recording:
-        rec = Recorder()
-        rec._current = recording
-        recordings_dir.mkdir(parents=True, exist_ok=True)
-        rec.save(recordings_dir / f"{run_name}_step_{step:07d}.json")
-        score = f"{info['score_agent']}-{info['score_opponent']}"
-        print(f"Recorded game at step {step:,}: {score}")
+    recordings_dir.mkdir(parents=True, exist_ok=True)
+    rec.save(recordings_dir / f"{run_name}_step_{step:07d}.json",
+             metadata={"step": int(step), "algo": "TD-MPC2", "opponent": "self"})
+    print(f"Recorded game at step {step:,}: "
+          f"{int(e.score_agent[0])}-{int(e.score_opponent[0])}")
 
 
 def main():
@@ -104,24 +130,27 @@ def main():
     parser.add_argument("--model-size", type=int, default=5)
     parser.add_argument("--dynamics", action="store_true", default=True)
     parser.add_argument("--no-dynamics", dest="dynamics", action="store_false")
+    parser.add_argument("--realistic-sensing", action="store_true", default=True)
+    parser.add_argument("--no-realistic-sensing", dest="realistic_sensing",
+                        action="store_false")
+    parser.add_argument("--domain-randomize", action="store_true", default=True)
+    parser.add_argument("--no-domain-randomize", dest="domain_randomize",
+                        action="store_false")
     parser.add_argument("--run-name", type=str, default="selfplay")
     parser.add_argument("--record-freq", type=int, default=50_000)
     parser.add_argument("--opponent-update-freq", type=int, default=50_000)
     parser.add_argument("--horizon", type=int, default=5)
+    parser.add_argument("--updates-per-iter", type=int, default=1,
+                        help="gradient updates per vectorised step; March "
+                             "used 1 (i.e. one update per n_envs transitions)")
     args = parser.parse_args()
 
-    run_dir = Path("runs") / args.run_name
+    root = Path(__file__).resolve().parents[2]
+    run_dir = root / "runs" / args.run_name
     run_dir.mkdir(parents=True, exist_ok=True)
-    # The web UI's replay tab reads ai/recordings (server.py RECORDINGS_DIR).
-    # This was Path("recordings"), i.e. relative to WHEREVER the trainer was
-    # launched from -- recordings landed at the repo root and the UI never
-    # listed them.
-    recordings_dir = Path(__file__).resolve().parents[1] / "recordings"
-    log_dir = run_dir / "logs"
-    log_dir.mkdir(exist_ok=True)
-    writer = SummaryWriter(str(log_dir))
+    recordings_dir = root / "ai" / "recordings"
+    writer = SummaryWriter(str(run_dir / "logs"))
 
-    # Build config
     from omegaconf import OmegaConf
     base_cfg = OmegaConf.load(str(TDMPC2_DIR / "config.yaml"))
     overrides = OmegaConf.create({
@@ -143,177 +172,142 @@ def main():
             cfg[k] = v
     cfg.bin_size = (cfg.vmax - cfg.vmin) / (cfg.num_bins - 1)
 
-    # Create one env to get shapes
-    sample_wrapped, sample_inner = make_selfplay_env(args.dynamics)
-    obs_shape = sample_inner.observation_space.shape
-    action_dim = sample_inner.action_space.shape[0]
-    episode_length = 1800
-
+    n_envs = args.n_envs
+    env = make_env(args, n_envs)
+    shaper = BatchRewardShaper(n_envs, stage=STAGE_SCORING,
+                               goal_reward=GOAL_REWARD, goal_penalty=GOAL_PENALTY)
+    episode_length = 3000          # 30 s at the 100 Hz action rate
     cfg = OmegaConf.merge(cfg, OmegaConf.create({
-        "obs_shape": {"state": list(obs_shape)},
-        "action_dim": action_dim,
+        "obs_shape": {"state": [env.obs_dim]},
+        "action_dim": env.action_dim,
         "episode_length": episode_length,
         "seed_steps": max(1000, 5 * episode_length),
     }))
     cfg = cfg_to_dataclass(cfg)
     set_seed(cfg.seed)
 
-    # Load agents
     print(f"Loading agent from {args.resume}")
     agent = TDMPC2(cfg)
     agent.load(args.resume)
     opponent = TDMPC2(cfg)
     opponent.load(args.resume)
-
     buffer = Buffer(cfg)
 
-    # Create parallel environments
-    n_envs = args.n_envs
-    envs = []  # list of (wrapped, inner) pairs
-    for _ in range(n_envs):
-        envs.append(make_selfplay_env(args.dynamics))
-
-    print(f"\nSelf-Play TD-MPC2 Training")
-    print(f"  Steps: {args.steps:,}")
-    print(f"  Parallel envs: {n_envs}")
+    print(f"\nSelf-Play TD-MPC2 Training (March recipe, new environment)")
+    print(f"  Steps: {args.steps:,}   Parallel envs: {n_envs}")
     print(f"  Opponent update: every {args.opponent_update_freq:,} steps")
-    print(f"  Planning horizon: {args.horizon}")
-    print(f"  Goal reward: +100 / Goal conceded: -50")
-    print(f"  Output: {run_dir}")
-    print()
+    print(f"  Planning horizon: {args.horizon}   Goals: +{GOAL_REWARD:.0f} / {GOAL_PENALTY:.0f}")
+    print(f"  Sensing: {'on' if args.realistic_sensing else 'off'}   "
+          f"DR: {'on' if args.domain_randomize else 'off'}   obs {env.obs_dim} dims")
+    print(f"  Output: {run_dir}\n")
 
-    # Per-env state
-    obs_list = []
-    tds_list = []
-    t0_list = []
-    for wrapped, inner in envs:
-        obs, _ = wrapped.reset()
-        obs_t = torch.from_numpy(obs).float()
-        obs_list.append(obs_t)
-        rand_act = torch.from_numpy(inner.action_space.sample().astype(np.float32))
-        tds_list.append([TensorDict(
-            obs=obs_t.unsqueeze(0).cpu(),
-            action=torch.full_like(rand_act, float('nan')).unsqueeze(0),
-            reward=torch.tensor(float('nan')).unsqueeze(0),
-            terminated=torch.tensor(float('nan')).unsqueeze(0),
-        batch_size=(1,))])
-        t0_list.append(True)
+    obs = env.reset(seed=cfg.seed)
+    shaper.reset(obs, info=_truth_info(env))
+    t0_mask = torch.ones(n_envs, dtype=torch.bool)
+
+    def fresh_td(o):
+        return TensorDict(
+            obs=torch.from_numpy(o).float().unsqueeze(0),
+            action=torch.full((1, env.action_dim), float('nan')),
+            reward=torch.tensor([float('nan')]),
+            terminated=torch.tensor([float('nan')]),
+            batch_size=(1,))
+    tds = [[fresh_td(obs[i])] for i in range(n_envs)]
 
     step = 0
-    start_time = time()
-    last_record_step = 0
-    last_opponent_update = 0
-    opponent_version = 0
-    wins, losses, draws = 0, 0, 0
+    start = time()
+    last_record = 0
+    last_opp_update = 0
+    opp_version = 0
+    wins = losses = draws = 0
+    pretrained = False
 
     while step <= cfg.steps:
-        # Update opponent
-        if step > 0 and step // args.opponent_update_freq > last_opponent_update // args.opponent_update_freq:
-            last_opponent_update = step
-            opponent_version += 1
-            ckpt = run_dir / f"agent_step_{step}.pt"
+        if step > 0 and step // args.opponent_update_freq > last_opp_update // args.opponent_update_freq:
+            last_opp_update = step
+            opp_version += 1
+            ckpt = run_dir / f"agent_step_{step:07d}.pt"
             agent.save(ckpt)
             agent.save(run_dir / "agent.pt")
             opponent.load(ckpt)
-            print(f"[Step {step:,}] Updated opponent to version {opponent_version}")
+            print(f"[Step {step:,}] Updated opponent to version {opp_version}")
 
-        # Step all envs
-        for i, (wrapped, inner) in enumerate(envs):
-            obs_t = obs_list[i]
-            is_t0 = t0_list[i]
-
-            # Opponent plans
+        drive_opponent(env, opponent, obs, t0_mask)
+        if step > cfg.seed_steps:
             with torch.no_grad():
-                opp_obs = torch.from_numpy(inner.mirror_obs(obs_t.numpy())).float()
-                opp_action = opponent.act(opp_obs, t0=is_t0, eval_mode=True)
-                tx, ty = inner.mirror_action_to_opponent(opp_action.numpy())
-                inner.set_opponent_action(tx, ty)
+                actions = agent.act(torch.from_numpy(obs).float(), t0=t0_mask)
+        else:
+            actions = torch.from_numpy(
+                np.random.uniform(-1, 1, (n_envs, env.action_dim)).astype(np.float32))
+        act_np = actions.numpy().astype(np.float32)
 
-            # Agent plans
-            if step > cfg.seed_steps:
-                action = agent.act(obs_t, t0=is_t0)
-            else:
-                action = torch.from_numpy(inner.action_space.sample().astype(np.float32))
+        next_obs, raw, term, trunc, info = env.step(act_np)
+        shaped = shaper.compute(next_obs, raw, actions=act_np, info=info)
+        done = term | trunc
 
-            obs, reward, terminated, truncated, info = wrapped.step(action.numpy())
-            done = terminated or truncated
-            obs_t_new = torch.from_numpy(obs).float()
+        for i in range(n_envs):
+            tds[i].append(TensorDict(
+                obs=torch.from_numpy(next_obs[i]).float().unsqueeze(0),
+                action=actions[i].unsqueeze(0),
+                reward=torch.tensor([float(shaped[i])], dtype=torch.float32),
+                terminated=torch.tensor([float(term[i])]),
+                batch_size=(1,)))
 
-            tds_list[i].append(TensorDict(
-                obs=obs_t_new.unsqueeze(0).cpu(),
-                action=action.unsqueeze(0),
-                reward=torch.tensor(reward, dtype=torch.float32).unsqueeze(0),
-                terminated=torch.tensor(float(terminated)).unsqueeze(0),
-            batch_size=(1,)))
-
-            if done:
-                # Log episode
-                ep_reward = torch.tensor([td['reward'] for td in tds_list[i][1:]]).sum()
-                score_a = inner.engine.state.score_agent
-                score_o = inner.engine.state.score_opponent
-                if score_a > score_o: wins += 1
-                elif score_o > score_a: losses += 1
+        if np.any(done):
+            for i in np.where(done)[0]:
+                ep_reward = float(sum(float(td['reward'][0]) for td in tds[i][1:]))
+                sa, so = int(info["score_agent"][i]), int(info["score_opponent"][i])
+                if sa > so: wins += 1
+                elif so > sa: losses += 1
                 else: draws += 1
+                writer.add_scalar('train/episode_reward', ep_reward, step)
+                writer.add_scalar('train/win_rate',
+                                  wins / max(wins + losses + draws, 1), step)
+                writer.add_scalar('train/opponent_version', opp_version, step)
+                buffer.add(torch.cat(tds[i]))
+            reset_obs = env.auto_reset(term, trunc)
+            if reset_obs is not None:
+                next_obs = reset_obs
+                shaper.reset(next_obs, mask=done, info=_truth_info(env))
+                for i in np.where(done)[0]:
+                    tds[i] = [fresh_td(next_obs[i])]
+        t0_mask = torch.from_numpy(done.copy())
+        obs = next_obs
 
-                writer.add_scalar('train/episode_reward', ep_reward.item(), step)
-                writer.add_scalar('train/win_rate', wins / max(wins + losses + draws, 1), step)
-                writer.add_scalar('train/opponent_version', opponent_version, step)
-
-                # Add to buffer
-                buffer.add(torch.cat(tds_list[i]))
-
-                # Reset
-                obs, _ = wrapped.reset()
-                obs_t_new = torch.from_numpy(obs).float()
-                rand_act = torch.from_numpy(inner.action_space.sample().astype(np.float32))
-                tds_list[i] = [TensorDict(
-                    obs=obs_t_new.unsqueeze(0).cpu(),
-                    action=torch.full_like(rand_act, float('nan')).unsqueeze(0),
-                    reward=torch.tensor(float('nan')).unsqueeze(0),
-                    terminated=torch.tensor(float('nan')).unsqueeze(0),
-                batch_size=(1,))]
-                t0_list[i] = True
-            else:
-                t0_list[i] = False
-
-            obs_list[i] = obs_t_new
-
-        # Update agent (once per batch of env steps)
-        total_episodes = wins + losses + draws
-        if step >= cfg.seed_steps and total_episodes >= 2:
-            if not hasattr(main, '_pretrained'):
-                num_updates = min(step, 5000)  # Pretrain on seed data
-                print(f'Pretraining agent on seed data ({num_updates} updates)...')
-                for _ in range(num_updates):
+        total_eps = wins + losses + draws
+        if step >= cfg.seed_steps and total_eps >= 2:
+            if not pretrained:
+                n_up = min(step, 5000)
+                print(f'Pretraining agent on seed data ({n_up} updates)...')
+                for _ in range(n_up):
                     agent.update(buffer)
-                main._pretrained = True
+                pretrained = True
                 print('Pretraining done.')
             else:
-                agent.update(buffer)
+                for _ in range(args.updates_per_iter):
+                    agent.update(buffer)
 
-        step += n_envs  # Each iteration steps all envs
+        step += n_envs
 
-        # Logging
-        elapsed = time() - start_time
-        fps = step / max(elapsed, 1)
-        if step % 10000 < n_envs * 2:
-            wr = wins / max(wins + losses + draws, 1) * 100
-            print(f"[Train] step={step:,} fps={fps:.0f} W/L/D={wins}/{losses}/{draws} WR={wr:.0f}% opp_v{opponent_version}")
+        if step % 10000 < n_envs:
+            fps = step / max(time() - start, 1)
+            wr = wins / max(total_eps, 1) * 100
+            print(f"[Train] step={step:,} fps={fps:.0f} W/L/D={wins}/{losses}/{draws} "
+                  f"WR={wr:.0f}% opp_v{opp_version}")
             writer.add_scalar('train/fps', fps, step)
             writer.flush()
 
-        # Record
-        if step > 0 and step // args.record_freq > last_record_step // args.record_freq:
-            last_record_step = step
-            record_game(agent, opponent, step, recordings_dir, args.run_name, args.dynamics)
+        if step > 0 and step // args.record_freq > last_record // args.record_freq:
+            last_record = step
+            record_game(agent, opponent, step, recordings_dir, args.run_name, args)
 
-    # Final
     agent.save(run_dir / "agent_final.pt")
     agent.save(run_dir / "agent.pt")
-    record_game(agent, opponent, step, recordings_dir, args.run_name, args.dynamics)
+    record_game(agent, opponent, step, recordings_dir, args.run_name, args)
     writer.close()
     total = wins + losses + draws
-    print(f"\nSelf-play complete! W={wins} L={losses} D={draws} WR={wins/max(total,1)*100:.0f}%")
+    print(f"\nSelf-play complete! W={wins} L={losses} D={draws} "
+          f"WR={wins / max(total, 1) * 100:.0f}%")
     print(f"Final model: {run_dir / 'agent_final.pt'}")
 
 
