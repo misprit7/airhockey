@@ -39,16 +39,44 @@ def list_checkpoints() -> list[dict]:
     return out
 
 
+def resolve_checkpoint(run_name: str) -> Path:
+    """The checkpoint a run name means.
+
+        <run>     runs/<run>/agent.pt, else the newest runs/<run>/agent_step_*.pt
+                  (a run still training has only step files)
+        latest    the newest checkpoint of any run, skipping runs whose name
+                  starts with "_" (benchmark copies of other runs' files)
+    """
+    runs = _REPO_ROOT / "runs"
+    if run_name == "latest":
+        cands = [c for d in runs.iterdir() if d.is_dir() and not d.name.startswith("_")
+                 for c in list(d.glob("agent_step_*.pt")) + list(d.glob("agent.pt"))]
+        if not cands:
+            raise FileNotFoundError(f"no checkpoints under {runs}")
+        return max(cands, key=lambda c: c.stat().st_mtime)
+    d = runs / run_name
+    if (d / "agent.pt").exists():
+        return d / "agent.pt"
+    steps = sorted(d.glob("agent_step_*.pt"))
+    if steps:
+        return steps[-1]
+    raise FileNotFoundError(d / "agent.pt")
+
+
 def load_agent(run_name: str, iterations: int | None = 3,
-               model_size: int = DEFAULT_MODEL_SIZE):
-    """Build a TDMPC2 agent and load runs/<run_name>/agent.pt into it.
+               model_size: int = DEFAULT_MODEL_SIZE,
+               ckpt: str | Path | None = None):
+    """Build a TDMPC2 agent and load a checkpoint into it.
+
+    run_name resolves through resolve_checkpoint() unless `ckpt` names the
+    file directly.
 
     iterations: MPPI iterations for inference. The training default of 6
     costs ~13 ms per plan, which stalls an interactive 60 fps loop with two
     agents; 3 halves that for a modest quality cost. Pass None to keep the
     training default.
     """
-    ckpt = _REPO_ROOT / "runs" / run_name / "agent.pt"
+    ckpt = Path(ckpt) if ckpt is not None else resolve_checkpoint(run_name)
     if not ckpt.exists():
         raise FileNotFoundError(ckpt)
 

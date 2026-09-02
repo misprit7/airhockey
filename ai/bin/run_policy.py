@@ -10,6 +10,13 @@
     # Neither camera nor robot. Synthetic puck through the whole chain.
     python ai/bin/run_policy.py --selftest
 
+    # A trained checkpoint. `latest` is the newest checkpoint of any run;
+    # --plan N adds N MPPI iterations (GPU) on top of the policy prior.
+    python ai/bin/run_policy.py --policy tdmpc2:latest --opponent
+    python ai/bin/run_policy.py --policy tdmpc2:curriculum_selfplay_home --plan 1
+
+    # Everything at once -- master, camera, policy -- see ai/bin/play.sh.
+
     # MOVES THE ROBOT. Needs sw/build/cdpr_master running, and ONLY that.
     # THE FIRST LIVE RUN OF ANY NEW POLICY GOES THROUGH --gentle. The opening
     # command is the dangerous one: the paddle is wherever ENABLE left it and
@@ -605,14 +612,43 @@ def _bot_config(caps: Caps):
     )
 
 
-def load_policy(spec: str, caps: Caps):
+def _load_tdmpc2(name: str, caps: Caps, plan_iters: int, device: str | None):
+    """A TD-MPC2 checkpoint through airhockey.deploy.TDMPC2Policy.
+
+    Prints the resolved checkpoint, the mode, the measured cost per decision
+    against the tick, and the cap gap between training and this run, so the
+    operator reads all of it BEFORE the first live command.
+    """
+    from airhockey.deploy import TDMPC2Policy   # noqa: PLC0415
+
+    try:
+        policy = TDMPC2Policy(name, caps.speed_max, caps.accel_max,
+                              plan_iterations=plan_iters, device=device)
+    except FileNotFoundError as e:
+        raise SystemExit(f"no checkpoint for tdmpc2:{name} ({e})") from None
+    print(policy.describe(caps.speed_max, caps.accel_max))
+    ms = policy.warm_up()
+    budget = 10.0
+    verdict = ("fits" if ms < 0.5 * budget else
+               "TIGHT" if ms < budget else "DOES NOT FIT -- use --plan 0")
+    print(f"  cost: {ms:.2f} ms per decision against a {budget:.0f} ms tick "
+          f"({verdict})")
+    return policy
+
+
+def load_policy(spec: str, caps: Caps, plan_iters: int = 0,
+                device: str | None = None):
     """Turn a --policy string into a callable(obs) -> Command or 4-tuple.
 
         heuristic:<name>   a bot from ai/airhockey/heuristics.py
         builtin:<name>     one of BUILTIN_BOTS, above
+        tdmpc2:<run>       a checkpoint (runs/<run>, or `latest`), via
+                           airhockey.deploy
         sac:<run>          NOT IMPLEMENTED -- see _load_sac
     """
     kind, _, name = spec.partition(":")
+    if kind == "tdmpc2":
+        return _load_tdmpc2(name, caps, plan_iters, device)
     if kind == "sac":
         return _load_sac(name, caps)
     if kind == "builtin":
@@ -622,7 +658,7 @@ def load_policy(spec: str, caps: Caps):
         return BUILTIN_BOTS[name](caps)
     if kind != "heuristic":
         raise SystemExit(f"unknown policy kind {kind!r} "
-                         "(heuristic: / builtin: / sac:)")
+                         "(heuristic: / builtin: / tdmpc2: / sac:)")
 
     # Imported lazily so that --selftest, and therefore `pytest ai`, does not
     # depend on the heuristics module loading.
@@ -993,7 +1029,9 @@ def run(args) -> int:
     import track_mallet as tm                    # noqa: PLC0415
 
     caps = Caps(speed_max=args.speed, accel_max=args.accel)
-    policy = load_policy(args.policy, caps)
+    # getattr: the tests drive run() with a hand-built Namespace.
+    policy = load_policy(args.policy, caps, getattr(args, "plan", 0),
+                         getattr(args, "device", None))
 
     client = None
     if args.live:
@@ -1273,9 +1311,16 @@ def main() -> int:
                     help="synthetic puck through the whole chain; no camera, "
                          "no robot")
     ap.add_argument("--policy", default="builtin:hold",
-                    help="heuristic:<name> | builtin:<name> | sac:<run>. "
-                         "--list shows the names. The default sits still on "
-                         "purpose.")
+                    help="heuristic:<name> | builtin:<name> | tdmpc2:<run> "
+                         "| tdmpc2:latest. --list shows the names. The "
+                         "default sits still on purpose.")
+    ap.add_argument("--plan", type=int, default=0,
+                    help="tdmpc2 only: MPPI iterations per decision (0 = the "
+                         "policy prior alone, ~0.1 ms; each iteration is "
+                         "several ms on a GPU and the tick is 10 ms)")
+    ap.add_argument("--device", default=None,
+                    help="tdmpc2 only: torch device (default: cpu for the "
+                         "prior, cuda for planning when available)")
     ap.add_argument("--list", action="store_true",
                     help="print the available policies and exit")
     ap.add_argument("--opponent", action="store_true",
@@ -1330,6 +1375,7 @@ def main() -> int:
             print(f"  builtin:{n}")
         for n in list_heuristics():
             print(f"  heuristic:{n}")
+        print("  tdmpc2:<run>       a checkpoint under runs/ (or tdmpc2:latest)")
         print("  sac:<run>          not implemented — see _load_sac()")
         return 0
 

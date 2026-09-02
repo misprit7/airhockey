@@ -25,6 +25,12 @@ Robotic air hockey table that uses reinforcement learning trained in simulation,
       No sim dependency: the same objects run off `vision/bin/puck_stream.py`.
       Wall bounces use the MEASURED rail coefficients rather than specular
       reflection, so a one-bounce prediction lands where the puck does.
+    - `deploy.py` - The OTHER direction: a tracker report in table mm -> the
+      15-dim kinematic observation a checkpoint trained on (same estimators
+      as the sim's tracker model) -> the action back to a target in mm.
+      `ReportEncoder` is checkpoint-free and tested against the env's own
+      observation; `TDMPC2Policy` adds the agent. Prior-only fits the 10 ms
+      tick on a CPU; `--plan N` adds MPPI on the GPU and prints its cost.
     - `heuristic_bridge.py` - SimBridge: BatchAirHockeyEnv history obs <-> the
       mm interface above. Reads observations only, never engine state — a bot
       scored against ground truth is scored on a table that does not exist.
@@ -40,6 +46,11 @@ Robotic air hockey table that uses reinforcement learning trained in simulation,
       each vs the scripted opponents, realistic sensing + DR, shared fixtures
     - `eval_policy.py` - A trained policy on the SAME terms (90 s games, same
       seed, same opponents) so its rows compare line-for-line with the bots'
+    - `run_policy.py` - Drives the table from a policy: heuristic bots or a
+      TD-MPC2 checkpoint (`--policy tdmpc2:<run>|latest`, via
+      `airhockey/deploy.py`). Dry-run by default; `--live` moves the robot.
+    - `play.sh` - Turn it on and it plays: starts `cdpr_master`, the camera
+      and `run_policy.py --live` in one command; Ctrl-C brakes and stops all.
   - `tests/` - Test suite
     - `test_batch_physics.py` - Vectorized physics correctness tests
     - `test_validation.py` - Reward shaping equivalence and env consistency tests
@@ -267,6 +278,13 @@ make -C vision                   # snap (Spinnaker capture)
 pio run -d fw                    # Teensy firmware
 pio run -d fw -t upload          # flash it
 make -C fw/test                  # host tests for the motion profile
+
+# Play with the trained policy (from the repo root)
+bash ai/bin/play.sh --gentle                    # FIRST run of a new checkpoint
+bash ai/bin/play.sh                             # full caps
+bash ai/bin/play.sh --dry                       # camera + policy, commands nothing
+POLICY=tdmpc2:curriculum_goalie bash ai/bin/play.sh --plan 1
+python ai/bin/run_policy.py --policy tdmpc2:latest --opponent   # dry-run, no master
 
 # Puck tracking / goalie demo
 vision/build/blobtrack --probe                  # report achievable frame rate
