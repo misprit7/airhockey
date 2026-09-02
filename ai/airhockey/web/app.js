@@ -701,19 +701,96 @@ document.querySelectorAll(".mode-btn").forEach((btn) => {
 // Replay
 let activeRecordingPath = null;
 
+// Replay menu: grouped by RUN, newest run first, newest step first inside a
+// run. Groups remember whether you opened them across the 5 s refresh, so the
+// list does not fold shut under your pointer.
+const openRuns = new Set();
+let openRunsInitialised = false;
+
+function fmtStep(step) {
+    if (step === null || step === undefined) return "";
+    if (step >= 1_000_000) return `${(step / 1_000_000).toFixed(1)}M`;
+    if (step >= 1_000) return `${Math.round(step / 1_000)}k`;
+    return String(step);
+}
+
+function fmtDate(iso) {
+    const d = new Date(iso);
+    if (isNaN(d)) return "";
+    const now = new Date();
+    const hm = d.toLocaleTimeString([], { hour: "2-digit", minute: "2-digit" });
+    const sameDay = d.toDateString() === now.toDateString();
+    if (sameDay) return `today ${hm}`;
+    const yest = new Date(now); yest.setDate(now.getDate() - 1);
+    if (d.toDateString() === yest.toDateString()) return `yesterday ${hm}`;
+    return `${d.toLocaleDateString([], { month: "short", day: "numeric" })} ${hm}`;
+}
+
 async function loadRecordingsList() {
     try {
         const resp = await fetch("/api/recordings");
         const recordings = await resp.json();
         const list = document.getElementById("recording-list");
+
+        // Group by run, keeping the server's newest-first order for runs.
+        const groups = new Map();
+        for (const rec of recordings) {
+            const key = rec.run || rec.name;
+            if (!groups.has(key)) groups.set(key, []);
+            groups.get(key).push(rec);
+        }
+        for (const items of groups.values()) {
+            items.sort((a, b) => (b.step ?? 0) - (a.step ?? 0) || b.mtime - a.mtime);
+        }
+        if (!openRunsInitialised && groups.size) {
+            // First paint: open the run that holds the active replay, else the
+            // newest run, so the list is never a wall of closed headers.
+            const active = recordings.find((r) => r.path === activeRecordingPath);
+            openRuns.add(active ? (active.run || active.name) : groups.keys().next().value);
+            openRunsInitialised = true;
+        }
+
         list.innerHTML = "";
-        recordings.forEach((rec) => {
+        for (const [run, items] of groups) {
             const li = document.createElement("li");
-            li.textContent = rec.label || rec.name;
-            if (rec.path === activeRecordingPath) li.classList.add("active");
-            li.addEventListener("click", () => loadRecording(rec.path, li));
+            li.className = "run-group" + (openRuns.has(run) ? " open" : "");
+
+            const head = document.createElement("div");
+            head.className = "run-head";
+            const newest = items[0];
+            const algo = newest.metadata && newest.metadata.algo ? newest.metadata.algo : "";
+            head.innerHTML =
+                `<span class="run-caret">\u25B8</span>` +
+                `<span class="run-name">${run}</span>` +
+                (algo ? `<span class="run-algo">${algo}</span>` : "") +
+                `<span class="run-meta">${items.length} \u00B7 ${fmtDate(newest.date)}</span>`;
+            head.addEventListener("click", () => {
+                if (openRuns.has(run)) openRuns.delete(run); else openRuns.add(run);
+                li.classList.toggle("open");
+            });
+            li.appendChild(head);
+
+            const ul = document.createElement("ul");
+            ul.className = "run-items";
+            for (const rec of items) {
+                const it = document.createElement("li");
+                it.className = "rec";
+                if (rec.path === activeRecordingPath) it.classList.add("active");
+                const step = rec.step !== null && rec.step !== undefined ? `@ ${fmtStep(rec.step)}` : rec.name;
+                const score = rec.score ? `${rec.score[0]}\u2013${rec.score[1]}` : "";
+                const opp = rec.metadata && rec.metadata.opponent ? `vs ${rec.metadata.opponent}` : "";
+                const dur = rec.duration_s ? `${Math.round(rec.duration_s)}s` : "";
+                it.innerHTML =
+                    `<span class="rec-step">${step}</span>` +
+                    `<span class="rec-score">${score}</span>` +
+                    `<span class="rec-meta">${[opp, dur, fmtDate(rec.date)].filter(Boolean).join(" \u00B7 ")}</span>`;
+                it.title = rec.name;
+                it.addEventListener("click", () => loadRecording(rec.path, it));
+                ul.appendChild(it);
+            }
+            li.appendChild(ul);
             list.appendChild(li);
-        });
+        }
     } catch (e) {
         console.error("Failed to load recordings", e);
     }
@@ -730,7 +807,7 @@ async function loadRecording(path, li) {
         puckTrail = [];
 
         activeRecordingPath = path;
-        document.querySelectorAll("#recording-list li").forEach((l) => l.classList.remove("active"));
+        document.querySelectorAll("#recording-list li.rec").forEach((l) => l.classList.remove("active"));
         li.classList.add("active");
 
         const controls = document.getElementById("replay-controls");

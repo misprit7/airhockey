@@ -284,31 +284,103 @@ button:active {
 
 #recording-list {
     list-style: none;
-    max-height: 150px;
+    max-height: 340px;
     overflow-y: auto;
     display: flex;
     flex-direction: column;
-    gap: 4px;
+    gap: 3px;
 }
 
-#recording-list li {
-    padding: 8px 10px;
+/* One row per RUN; its recordings fold out beneath it. */
+#recording-list .run-group {
     background: var(--surface);
+    border-radius: var(--r);
+    border: 1px solid transparent;
+}
+#recording-list .run-head {
+    display: grid;
+    grid-template-columns: 10px 1fr auto;
+    grid-template-areas: "caret name algo" ". meta meta";
+    column-gap: 6px;
+    row-gap: 1px;
+    padding: 7px 10px;
+    font-size: 12px;
+    cursor: pointer;
+    color: var(--ink-2);
+    user-select: none;
+}
+#recording-list .run-head:hover { background: var(--surface-hi); }
+#recording-list .run-caret {
+    grid-area: caret;
+    color: var(--ink-4);
+    transition: transform 0.12s;
+    align-self: center;
+}
+#recording-list .run-group.open .run-caret { transform: rotate(90deg); }
+#recording-list .run-name {
+    grid-area: name;
+    font-weight: 700;
+    color: var(--ink);
+    overflow-wrap: anywhere;
+    line-height: 1.25;
+}
+#recording-list .run-algo {
+    grid-area: algo;
+    font-size: 9px;
+    font-weight: 800;
+    letter-spacing: 0.1em;
+    text-transform: uppercase;
+    color: var(--blue);
+    align-self: start;
+    padding-top: 2px;
+}
+#recording-list .run-meta {
+    grid-area: meta;
+    font-size: 10px;
+    color: var(--ink-4);
+    font-variant-numeric: tabular-nums;
+}
+
+#recording-list .run-items {
+    list-style: none;
+    display: none;
+    flex-direction: column;
+    gap: 2px;
+    padding: 0 6px 6px 6px;
+}
+#recording-list .run-group.open .run-items { display: flex; }
+
+#recording-list li.rec {
+    display: grid;
+    grid-template-columns: auto 1fr;
+    grid-template-areas: "step score" "meta meta";
+    align-items: baseline;
+    column-gap: 8px;
+    padding: 5px 8px;
     border-radius: var(--r);
     font-size: 12px;
     cursor: pointer;
     border: 1px solid transparent;
-    transition: all 0.15s;
+    color: var(--ink-2);
+    font-variant-numeric: tabular-nums;
 }
-
-#recording-list li:hover {
+#recording-list li.rec:hover {
     border-color: var(--line-hi);
     background: var(--surface-hi);
 }
-
-#recording-list li.active {
+#recording-list li.rec.active {
     border-color: var(--blue);
     color: var(--ink);
+}
+#recording-list .rec-step { grid-area: step; font-weight: 700; color: var(--ink); }
+#recording-list .rec-score { grid-area: score; color: var(--amber); }
+#recording-list .rec-meta {
+    grid-area: meta;
+    font-size: 10px;
+    color: var(--ink-4);
+    overflow: hidden;
+    text-overflow: ellipsis;
+    white-space: nowrap;
 }
 
 #replay-controls {

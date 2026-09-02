@@ -68,21 +68,66 @@ def _recording_label(stem: str) -> str:
     return stem
 
 
+# One parse per file per mtime: the list refreshes every 5 s in the UI and a
+# recording is ~700 KB of JSON, so re-reading every file on every poll would
+# turn a directory of a few hundred games into a seconds-long request.
+_REC_CACHE: dict[str, tuple[float, dict]] = {}
+
+
+def _recording_entry(f: Path) -> dict:
+    st = f.stat()
+    cached = _REC_CACHE.get(f.name)
+    if cached and cached[0] == st.st_mtime:
+        return cached[1]
+    stem = f.stem
+    run, step, opponent = stem, None, None
+    if "_step_" in stem:
+        run, tail = stem.rsplit("_step_", 1)
+        try:
+            step = int(tail)
+        except ValueError:
+            pass
+    elif "_vs_" in stem:
+        # Benchmark games ("<run>_vs_<opponent>") file under their run
+        # rather than each becoming a one-item group of its own.
+        run, opponent = stem.rsplit("_vs_", 1)
+    entry = {
+        "name": stem, "path": f.name, "label": _recording_label(stem),
+        "run": run, "step": step,
+        "mtime": st.st_mtime,
+        "date": time.strftime("%Y-%m-%dT%H:%M:%S", time.localtime(st.st_mtime)),
+        "size": st.st_size,
+    }
+    try:
+        data = json.loads(f.read_text(), parse_constant=lambda _c: None)
+        if isinstance(data, dict) and "columns" in data:
+            cols = data["columns"]
+            n = len(cols[data["fields"][0]])
+            entry["frames"] = n
+            if n and "time" in cols:
+                entry["duration_s"] = round(float(cols["time"][-1]), 1)
+            if n and "score_agent" in cols and "score_opponent" in cols:
+                entry["score"] = [int(cols["score_agent"][-1]),
+                                  int(cols["score_opponent"][-1])]
+            if "metadata" in data:
+                entry["metadata"] = data["metadata"]
+        elif isinstance(data, list):
+            entry["frames"] = len(data)
+    except Exception:            # noqa: BLE001 — a corrupt file still lists
+        pass
+    if opponent and "opponent" not in entry.get("metadata", {}):
+        entry.setdefault("metadata", {})["opponent"] = opponent
+    _REC_CACHE[f.name] = (st.st_mtime, entry)
+    return entry
+
+
 @app.get("/api/recordings")
 async def list_recordings():
-    files = sorted(RECORDINGS_DIR.glob("*.json"), key=lambda f: f.stat().st_mtime, reverse=True)
-    result = []
-    for f in files:
-        entry = {"name": f.stem, "path": f.name, "label": _recording_label(f.stem)}
-        # Extract metadata (stage info) if present
-        try:
-            data = json.loads(f.read_text())
-            if isinstance(data, dict) and "metadata" in data:
-                entry["metadata"] = data["metadata"]
-        except Exception:
-            pass
-        result.append(entry)
-    return result
+    """Every recording with the metadata the replay menu groups and sorts
+    by: run name, training step, wall-clock date, final score, duration."""
+    files = sorted(RECORDINGS_DIR.glob("*.json"),
+                   key=lambda f: f.stat().st_mtime, reverse=True)
+    return [_recording_entry(f) for f in files]
 
 
 @app.get("/api/recordings/{filename}")
