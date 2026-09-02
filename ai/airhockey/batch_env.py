@@ -712,10 +712,12 @@ class BatchAirHockeyEnv:
         slow = puck_speed < 0.05
         self._puck_slow_count = np.where(slow, self._puck_slow_count + 1, 0)
         stuck = self._puck_slow_count >= 120
+        stuck_penalty = np.zeros(self.n_envs)
         if np.any(stuck):
             # Penalize if puck stalled on agent's side (agent should have hit it)
             on_agent_side = stuck & (self.engine.puck_y < self.table_config.height / 2)
             rewards[on_agent_side] -= 0.5
+            stuck_penalty = np.where(on_agent_side, -0.5, 0.0)
 
             n_stuck = int(stuck.sum())
             rng = self._rng
@@ -766,6 +768,13 @@ class BatchAirHockeyEnv:
             # Worth watching in training: if it does not fall over time, the
             # policy is not learning the boundary, just paying the fine.
             "ws_overshoot": ws_overshoot,
+            # The NON-goal part of the raw reward (workspace fine + stuck-puck
+            # penalty). Every shaper builds its output from zero and detects
+            # goals from the scoreboard, so these two only ever lived in the
+            # raw array -- which no trainer feeds to the learner. Exposed here
+            # so shapers can carry them; until 2026-09-01 no policy ever saw
+            # the overshoot fine it was supposedly being trained with.
+            "penalty": -self.WS_PENALTY_PER_UNIT * ws_overshoot + stuck_penalty,
         }
 
         return obs, rewards, terminated, truncated, info

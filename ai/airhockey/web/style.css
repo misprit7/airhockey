@@ -60,8 +60,11 @@ body {
 
 /* --- Sidebar (desktop) --- */
 #sidebar {
-    width: 260px;
-    padding: 26px 20px;
+    /* Twice the old 260: the sidebar carries the controls, the limits, the
+       replay menu and the reward readout, and at 260 the limit rows had
+       their unit labels running into the scale buttons. */
+    width: 520px;
+    padding: 26px 24px;
     background: var(--board);
     border-right: 1px solid var(--line);
     display: flex;
@@ -284,7 +287,7 @@ button:active {
 
 #recording-list {
     list-style: none;
-    max-height: 340px;
+    max-height: 440px;
     overflow-y: auto;
     display: flex;
     flex-direction: column;
@@ -775,18 +778,20 @@ canvas {
 .limit-row {
     display: flex;
     align-items: center;
-    gap: 4px;
-    font: 11px ui-monospace, Menlo, monospace;
+    gap: 8px;
+    font: 12px ui-monospace, Menlo, monospace;
     color: var(--ink-2);
 }
-.limit-row .lim-name { width: 34px; flex-shrink: 0; }
-.limit-row .lim-unit { width: 42px; flex-shrink: 0; color: var(--ink-4); }
-.limit-row input { flex: 1; min-width: 0; }
+.limit-row .lim-name { width: 48px; flex-shrink: 0; }
+/* Sized to its text, never a fixed box: "mm/s²" at 42px was what bled
+   into the ÷2 / ×2 buttons. */
+.limit-row .lim-unit { flex-shrink: 0; min-width: 52px; white-space: nowrap; color: var(--ink-4); }
+.limit-row input { flex: 1; min-width: 72px; }
 .lim-scale {
-    padding: 3px 6px;
-    font-size: 11px;
+    padding: 4px 10px;
+    font-size: 12px;
     flex-shrink: 0;
-    min-width: 30px;
+    min-width: 40px;
 }
 #limit-msg {
     font: 11px ui-monospace, Menlo, monospace;

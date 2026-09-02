@@ -478,6 +478,12 @@ class BatchRewardShaper:
         if self.entropy_weight > 0 and actions is not None:
             shaped += self.entropy_weight * (1.0 - np.mean(actions ** 2, axis=1))
 
+        # Env-side penalties (workspace overshoot fine, stuck puck). They are
+        # in raw_rewards too, but raw is otherwise goals-only and superseded
+        # by goal_reward/goal_penalty above, so they must be carried here.
+        if info is not None and "penalty" in info:
+            shaped += info["penalty"]
+
         # Update state
         self._prev_puck_y[:] = puck_y
         self._prev_puck_speed[:] = puck_speed
@@ -666,6 +672,8 @@ class ExchangeRewardShaper:
         self._prev_score_opp[:] = info["score_opponent"]
         shaped += np.where(goal_for, self.goal_reward, 0.0)
         shaped += np.where(goal_against, self.goal_penalty, 0.0)
+        if "penalty" in info:
+            shaped += info["penalty"]
 
         # Exchange ends: goal either way; or a shot in flight came back over
         # three-quarter table (blocked/returned); or it timed out.

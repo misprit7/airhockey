@@ -757,3 +757,27 @@ def test_history_mode_with_sensing_off_is_clean_truth():
     obs, *_ = e.step(np.zeros((2, 4), dtype=np.float32))
     # newest frame is exactly truth
     np.testing.assert_allclose(obs[0, 0], e.engine.puck_x[0], atol=1e-6)
+
+
+def test_the_workspace_fine_actually_reaches_the_learner():
+    """Shapers build from zero and take goals from the scoreboard, so the
+    overshoot fine and stuck penalty -- which live only in the raw reward
+    -- were computed and then discarded by every trainer. The env now hands
+    them over in info["penalty"] and the shapers carry them."""
+    from airhockey.batch_env import BatchAirHockeyEnv
+    from airhockey.rewards import BatchRewardShaper, STAGE_SCORING
+    e = BatchAirHockeyEnv(n_envs=2, agent_dynamics="ideal")
+    obs = e.reset(seed=0)
+    e.engine.puck_x[:], e.engine.puck_y[:] = 0.5, 1.5
+    e.engine.puck_vx[:], e.engine.puck_vy[:] = 0.0, 0.0
+    sh = BatchRewardShaper(2, stage=STAGE_SCORING)
+    sh.reset(obs, info={"puck_x": e.engine.puck_x, "puck_y": e.engine.puck_y,
+                        "puck_vx": e.engine.puck_vx, "puck_vy": e.engine.puck_vy,
+                        "pad_x": e.engine.paddle_agent_x, "pad_y": e.engine.paddle_agent_y,
+                        "score_agent": e.engine.score_agent, "score_opponent": e.engine.score_opponent})
+    # env0 commands the far unreachable corner; env1 stays inside the box
+    acts = np.array([[1.0, -1.0], [0.0, 0.0]], dtype=np.float32)
+    obs, raw, _, _, info = e.step(acts)
+    shaped = sh.compute(obs, raw, actions=acts, info=info)
+    assert info["penalty"][0] < 0 and info["penalty"][1] == 0
+    assert shaped[0] < shaped[1], "the fine did not reach the shaped reward"
