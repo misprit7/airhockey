@@ -288,14 +288,13 @@ class BatchRewardShaper:
         max_contacts_per_episode: int = 5,
         workspace: dict | None = None,
         # Idle hygiene for the physical machine, paid ONLY while the puck is
-        # on the far half so play is untouched: a pull toward the centre of
-        # the box's y span (cables best balanced, accel headroom highest,
-        # and a neutral station to defend or attack from), and a tax on
-        # step-to-step action changes, because a target that dithers by a
-        # centimetre at 100 Hz is a stepper reversing direction 100 times a
-        # second for nothing. Per-step magnitudes are hundredths against
-        # goals at 100 and contact at 2, so they only decide what the
-        # paddle does when nothing else does.
+        # on the far half so play is untouched: a pull toward being centred
+        # in front of the goal (paddle x at the goal's centre; depth is left
+        # to the policy), and a tax on step-to-step action changes, because
+        # a target that dithers by a centimetre at 100 Hz is a stepper
+        # reversing direction 100 times a second for nothing. Per-step
+        # magnitudes are hundredths against goals at 100 and contact at 2,
+        # so they only decide what the paddle does when nothing else does.
         home_weight: float = 0.0,
         jitter_weight: float = 0.0,
     ):
@@ -310,12 +309,11 @@ class BatchRewardShaper:
         self.workspace = workspace
         self.home_weight = home_weight
         self.jitter_weight = jitter_weight
+        self._home_x = _GOAL_CX                  # centred in front of the goal
         if workspace is not None:
-            self._home_y = 0.5 * (workspace["min_y"] + workspace["max_y"])
-            self._home_span = 0.5 * (workspace["max_y"] - workspace["min_y"])
+            self._home_span = 0.5 * (workspace["max_x"] - workspace["min_x"])
         else:
-            self._home_y = _GOAL_CY / 4.0        # middle of the near half
-            self._home_span = _GOAL_CY / 4.0
+            self._home_span = _TABLE_W / 2.0
         self._prev_action = np.zeros((n_envs, 2))
         self._has_prev_action = np.zeros(n_envs, dtype=bool)
         self.frame_stack = 1  # always 1 now
@@ -533,7 +531,7 @@ class BatchRewardShaper:
         if self.home_weight > 0 or self.jitter_weight > 0:
             idle = puck_y > _GOAL_CY / 2.0
             if self.home_weight > 0:
-                off_home = np.abs(pad_y - self._home_y) / self._home_span
+                off_home = np.abs(pad_x - self._home_x) / self._home_span
                 shaped -= np.where(idle, self.home_weight * off_home, 0.0)
             if self.jitter_weight > 0 and actions is not None:
                 a = np.asarray(actions)[:, :2]

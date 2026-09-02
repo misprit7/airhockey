@@ -1,5 +1,6 @@
-"""Idle hygiene in self-play: a tiny pull to the box's y-centre and a tax on
-action dithering, paid only while the puck is on the far half.
+"""Idle hygiene in self-play: a tiny pull to being centred in front of the
+goal and a tax on action dithering, paid only while the puck is on the far
+half.
 
 The point is the physical machine: when the puck is away the policy used to
 be free to park on the box edge and jitter its target, which on the table is
@@ -29,25 +30,27 @@ def _shaper(n=4, **kw):
     return BatchRewardShaper(n, workspace=_WS, **zeros, **kw)
 
 
-def _obs(puck_y, pad_y, n=4):
+def _obs(puck_y, pad_x, n=4):
     o = np.zeros((n, 15), dtype=np.float32)
     o[:, 0] = 0.5
     o[:, 1] = puck_y
-    o[:, 4] = 0.5
-    o[:, 5] = pad_y
+    o[:, 4] = pad_x
+    o[:, 5] = 0.5 * (_WS["min_y"] + _WS["max_y"])
     return o
 
 
-def test_home_term_pulls_to_the_box_centre_only_when_the_puck_is_away():
-    y_home = 0.5 * (_WS["min_y"] + _WS["max_y"])
+_X_HOME = 0.5      # the goal's centre x (table width / 2)
+
+
+def test_home_term_pulls_to_the_goal_centre_only_when_the_puck_is_away():
     far, near = 0.8 * _H, 0.2 * _H
     for puck_y, expect_pull in ((far, True), (near, False)):
         sh = _shaper()
-        sh.reset(_obs(puck_y, y_home))
-        at_home = sh.compute(_obs(puck_y, y_home), np.zeros(4), actions=np.zeros((4, 2)))
+        sh.reset(_obs(puck_y, _X_HOME))
+        at_home = sh.compute(_obs(puck_y, _X_HOME), np.zeros(4), actions=np.zeros((4, 2)))
         sh = _shaper()
-        sh.reset(_obs(puck_y, _WS["max_y"]))
-        at_edge = sh.compute(_obs(puck_y, _WS["max_y"]), np.zeros(4), actions=np.zeros((4, 2)))
+        sh.reset(_obs(puck_y, _WS["max_x"]))
+        at_edge = sh.compute(_obs(puck_y, _WS["max_x"]), np.zeros(4), actions=np.zeros((4, 2)))
         if expect_pull:
             assert np.all(at_home == 0.0)
             np.testing.assert_allclose(at_edge, -0.005, atol=1e-7)
@@ -60,14 +63,13 @@ def test_jitter_term_taxes_action_change_only_when_the_puck_is_away():
     rng = np.random.default_rng(0)
     for puck_y, expect_tax in ((far, True), (near, False)):
         sh = _shaper()
-        y_home = 0.5 * (_WS["min_y"] + _WS["max_y"])
-        sh.reset(_obs(puck_y, y_home))
+        sh.reset(_obs(puck_y, _X_HOME))
         # First step after a reset: nothing to compare against, no tax.
-        first = sh.compute(_obs(puck_y, y_home), np.zeros(4), actions=np.ones((4, 2)))
+        first = sh.compute(_obs(puck_y, _X_HOME), np.zeros(4), actions=np.ones((4, 2)))
         assert np.all(first == 0.0)
-        steady = sh.compute(_obs(puck_y, y_home), np.zeros(4), actions=np.ones((4, 2)))
+        steady = sh.compute(_obs(puck_y, _X_HOME), np.zeros(4), actions=np.ones((4, 2)))
         assert np.all(steady == 0.0)
-        flip = sh.compute(_obs(puck_y, y_home), np.zeros(4), actions=-np.ones((4, 2)))
+        flip = sh.compute(_obs(puck_y, _X_HOME), np.zeros(4), actions=-np.ones((4, 2)))
         if expect_tax:
             np.testing.assert_allclose(flip, -0.005 * np.sqrt(8.0), atol=1e-6)
         else:
@@ -90,7 +92,7 @@ def test_idle_terms_are_small_against_play():
             assert stage.get("jitter_weight", 0.0) == 0.0
 
 
-def test_shaper_without_a_workspace_uses_the_half_centre():
+def test_shaper_without_a_workspace_still_centres_on_the_goal():
     sh = BatchRewardShaper(2, home_weight=0.005, jitter_weight=0.0,
                            proximity_weight=0.0, contact_reward=0.0,
                            directed_hit_weight=0.0, puck_progress_weight=0.0,
@@ -98,6 +100,8 @@ def test_shaper_without_a_workspace_uses_the_half_centre():
                            shot_placement_weight=0.0, entropy_weight=0.0,
                            shot_mix_weight=0.0)
     far = 0.8 * _H
-    o = _obs(far, _H / 4.0, n=2)
+    o = _obs(far, _X_HOME, n=2)
     sh.reset(o)
     assert np.all(sh.compute(o, np.zeros(2), actions=np.zeros((2, 2))) == 0.0)
+    o = _obs(far, 0.0, n=2)                     # the side rail: full pull
+    np.testing.assert_allclose(sh.compute(o, np.zeros(2), actions=np.zeros((2, 2))), -0.005, atol=1e-7)
