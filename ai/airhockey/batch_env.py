@@ -407,6 +407,18 @@ class BatchAirHockeyEnv:
                 opponent_dynamics, n_envs, OPPONENT_MAX_SPEED_M_S,
                 OPPONENT_MAX_ACCEL_M_S2, dynamics_time_constant)
 
+        # The firmware keeps the cart's PATH inside the box, not only its
+        # target (motionProfileContain); the sim's profile body gets the same
+        # box, in mm, so the two agree by construction.
+        if self._ws is not None:
+            self._agent_dyn["bounds_mm"] = tuple(
+                1000.0 * v for v in (self._ws["min_x"], self._ws["max_x"],
+                                     self._ws["min_y"], self._ws["max_y"]))
+        if self._ws_opp is not None:
+            self._opp_dyn["bounds_mm"] = tuple(
+                1000.0 * v for v in (self._ws_opp["min_x"], self._ws_opp["max_x"],
+                                     self._ws_opp["min_y"], self._ws_opp["max_y"]))
+
         self._rng = np.random.default_rng()
         # The perception model ticks at the CAMERA rate, not the action
         # rate: its 6-frame slope window then spans 30 ms like the real
@@ -480,6 +492,9 @@ class BatchAirHockeyEnv:
             "nominal_accel": max_accel,
             # Jerk ramp, seconds. Matches MOTION_ACCEL_RAMP_S in the firmware.
             "ramp_s": 0.003,
+            # (x_min, x_max, y_min, y_max) in mm for the profile law's path
+            # containment; set by the constructor once the boxes are known.
+            "bounds_mm": None,
         }
 
     def _reset_agent_into_workspace(self, mask: np.ndarray | None) -> None:
@@ -1069,7 +1084,8 @@ class BatchAirHockeyEnv:
                     (target_x * 1000.0).astype(np.float32),
                     (target_y * 1000.0).astype(np.float32),
                     v_cap * 1000.0, a_cap * 1000.0,
-                    dyn["ramp_s"], dt / substeps, substeps)
+                    dyn["ramp_s"], dt / substeps, substeps,
+                    bounds=dyn.get("bounds_mm"))
             dyn["x"] = cart.x.astype(np.float64) / 1000.0
             dyn["y"] = cart.y.astype(np.float64) / 1000.0
             dyn["vx"] = cart.vx.astype(np.float64) / 1000.0

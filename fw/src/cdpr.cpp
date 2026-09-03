@@ -364,8 +364,13 @@ void CDPR::tick() {
   float px = cartX_, py = cartY_;
   float pvx = velX_, pvy = velY_;
   float pax = accX_, pay = accY_;
-  limitFlags_ = motionProfileAdvance(px, py, pvx, pvy, pax, pay, tx, ty,
-                                     velLimit_, accelLimit_, accelRamp_, dt_);
+  // Bounded: the target is clamped into the box in setTarget(), and the
+  // PATH is clamped here -- a vector profile turning at speed otherwise
+  // swings outside it (see motionProfileContain).
+  limitFlags_ = motionProfileAdvanceBounded(px, py, pvx, pvy, pax, pay, tx, ty,
+                                            velLimit_, accelLimit_, accelRamp_,
+                                            dt_, WS_MIN_X, WS_MAX_X,
+                                            WS_MIN_Y, WS_MAX_Y);
   velX_ = pvx;
   velY_ = pvy;
   accX_ = pax;

@@ -85,6 +85,9 @@ class _Lib:
             f32, f32,                          # per-cart caps
             ctypes.c_float, u8,
         ]
+        lib.motion_advance_batch_bounded.restype = None
+        lib.motion_advance_batch_bounded.argtypes = (
+            lib.motion_advance_batch.argtypes + [ctypes.c_float] * 4)
         lib.motion_trace.restype = None
         # px py vx vy ax ay tx ty vMax aMax rampS = 11 floats after dt.
         lib.motion_trace.argtypes = [
@@ -124,20 +127,33 @@ class CartState:
 
 
 def advance(state: CartState, target_x, target_y, v_max, a_max,
-            ramp_s: float, dt: float, substeps: int) -> None:
+            ramp_s: float, dt: float, substeps: int,
+            bounds: tuple[float, float, float, float] | None = None) -> None:
     """Advance every cart `substeps` ticks of `dt` toward its target, in place.
 
     Caps are per-cart so domain randomisation can vary them across the batch.
+    `bounds` = (x_min, x_max, y_min, y_max) in mm keeps the PATH inside a box
+    the way the firmware does (motionProfileContain); without it the cart
+    can swing outside the box while turning at speed, which the machine
+    cannot do and the paddle would be driven into the rail.
     """
     n = len(state)
     tx = np.ascontiguousarray(target_x, dtype=np.float32)
     ty = np.ascontiguousarray(target_y, dtype=np.float32)
     vm = np.ascontiguousarray(np.broadcast_to(v_max, (n,)), dtype=np.float32)
     am = np.ascontiguousarray(np.broadcast_to(a_max, (n,)), dtype=np.float32)
-    _Lib.get().motion_advance_batch(
-        n, int(substeps), ctypes.c_float(dt),
-        state.x, state.y, state.vx, state.vy, state.ax, state.ay,
-        tx, ty, vm, am, ctypes.c_float(ramp_s), state.flags)
+    lib = _Lib.get()
+    if bounds is None:
+        lib.motion_advance_batch(
+            n, int(substeps), ctypes.c_float(dt),
+            state.x, state.y, state.vx, state.vy, state.ax, state.ay,
+            tx, ty, vm, am, ctypes.c_float(ramp_s), state.flags)
+    else:
+        lib.motion_advance_batch_bounded(
+            n, int(substeps), ctypes.c_float(dt),
+            state.x, state.y, state.vx, state.vy, state.ax, state.ay,
+            tx, ty, vm, am, ctypes.c_float(ramp_s), state.flags,
+            *[ctypes.c_float(float(b)) for b in bounds])
 
 
 def trace(ticks: int, every: int, dt: float, start, target,

@@ -67,6 +67,39 @@ void motion_advance_batch(int n, int substeps, float dt,
   }
 }
 
+// As above, and keep every cart inside one box. Scalar bounds per call: the
+// simulator advances each side's carts in a call of their own, and the two
+// sides have different boxes (the robot's, and its mirror for a robot-bodied
+// far side).
+void motion_advance_batch_bounded(int n, int substeps, float dt,
+                                  float *px, float *py,
+                                  float *vx, float *vy,
+                                  float *ax, float *ay,
+                                  const float *tx, const float *ty,
+                                  const float *vMax, const float *aMax,
+                                  float rampS, uint8_t *flags,
+                                  float xMin, float xMax, float yMin, float yMax) {
+  for (int i = 0; i < n; i++) {
+    uint8_t f = 0;
+    float x = px[i], y = py[i];
+    float ux = vx[i], uy = vy[i];
+    float axi = ax[i], ayi = ay[i];
+    const float txi = tx[i], tyi = ty[i];
+    const float vm = vMax[i], am = aMax[i];
+    for (int s = 0; s < substeps; s++) {
+      f |= motionProfileAdvanceBounded(x, y, ux, uy, axi, ayi, txi, tyi,
+                                       vm, am, rampS, dt, xMin, xMax, yMin, yMax);
+    }
+    px[i] = x;
+    py[i] = y;
+    vx[i] = ux;
+    vy[i] = uy;
+    ax[i] = axi;
+    ay[i] = ayi;
+    if (flags) flags[i] = f;
+  }
+}
+
 // Single cart, many ticks, recording the trajectory. This is what the
 // tick-divergence test drives: run the same move at the firmware's 20 us and
 // at a candidate simulator tick, and compare. Writes n_out samples strided

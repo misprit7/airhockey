@@ -269,6 +269,63 @@ int main() {
            100 * MAX_VELOCITY_MM_S / (TICK_RATE_HZ / COUNTS_PER_MM));
   }
 
+  // ── 3b. PATH CONTAINMENT ────────────────────────────────────────────────
+  //
+  // A learned policy's commands flip between the box's two back corners
+  // every few ticks. The target is always inside the box; the cart, turning
+  // at speed, was not: at 12000 / 60000 the cart model swung 105 mm past the
+  // end rail on the rig (2026-09-02). Replays that stream through the law
+  // with and without containment.
+  {
+    printf("3b. Path containment: corner-flipping targets at 12000 / 60000\n");
+    const float v = MAX_VELOCITY_MM_S, a = 60000.0f;
+    float worstOut[2] = {0, 0};
+    int worstStep[2] = {0, 0};
+    for (int bounded = 0; bounded < 2; bounded++) {
+      float x = cx, y = cy, vx = 0, vy = 0, ax_ = 0, ay_ = 0;
+      int32_t counts[NUM_MOTORS];
+      float ref[NUM_MOTORS];
+      for (int i = 0; i < NUM_MOTORS; i++) {
+        ref[i] = cableLength(i, x, y, MALLET_THETA_RAD);
+        counts[i] = 0;
+      }
+      const long ticks = (long)(5.0f * TICK_RATE_HZ);     // 5 s
+      for (long t = 0; t < ticks; t++) {
+        // Flip every 15 ms between the two back corners, like the log.
+        const bool low = ((t / (long)(0.015f * TICK_RATE_HZ)) % 2) == 0;
+        const float tx = WS_MAX_X, ty = low ? WS_MIN_Y : WS_MAX_Y;
+        if (bounded)
+          motionProfileAdvanceBounded(x, y, vx, vy, ax_, ay_, tx, ty, v, a,
+                                      MOTION_ACCEL_RAMP_S, DT,
+                                      WS_MIN_X, WS_MAX_X, WS_MIN_Y, WS_MAX_Y);
+        else
+          motionProfileAdvance(x, y, vx, vy, ax_, ay_, tx, ty, v, a,
+                               MOTION_ACCEL_RAMP_S, DT);
+        float out = 0;
+        if (x > WS_MAX_X) out = x - WS_MAX_X;
+        if (x < WS_MIN_X) out = fmaxf(out, WS_MIN_X - x);
+        if (y > WS_MAX_Y) out = fmaxf(out, y - WS_MAX_Y);
+        if (y < WS_MIN_Y) out = fmaxf(out, WS_MIN_Y - y);
+        if (out > worstOut[bounded]) worstOut[bounded] = out;
+        for (int i = 0; i < NUM_MOTORS; i++) {
+          const float len = cableLength(i, x, y, MALLET_THETA_RAD);
+          const int32_t want = (int32_t)lroundf((len - ref[i]) * COUNTS_PER_MM);
+          const int32_t err = want - counts[i];
+          const int ae = abs((int)err);
+          if (ae > worstStep[bounded]) worstStep[bounded] = ae;
+          if (err != 0) counts[i] += (err > 0) ? 1 : -1;
+        }
+      }
+    }
+    printf("   unbounded law: cart left the box by up to %.0f mm\n", worstOut[0]);
+    printf("   bounded law:   cart left the box by up to %.2f mm, worst counts"
+           " owed %d\n\n", worstOut[1], worstStep[1]);
+    check(worstOut[0] > 20.0f, "the unbounded law should leave the box here "
+          "(else this test no longer exercises the case)");
+    check(worstOut[1] <= 0.001f, "CART LEFT THE BOX with containment on");
+    check(worstStep[1] <= 1, "MOTORS WOULD DESYNC under containment");
+  }
+
   // ── 4. Short moves, where the braking curve does the work ───────────────
   {
     printf("4. Short moves (braking curve, never reaches the speed cap)\n");

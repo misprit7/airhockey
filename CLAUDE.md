@@ -88,6 +88,13 @@ Robotic air hockey table that uses reinforcement learning trained in simulation,
     runtime: `RAMP <ms>` over serial. Cost at the 3 ms default is +7% on a
     500 mm move and +39% on a 25 mm one -- tune against the cable's measured
     ringing period, not from the bench.
+    Also PATH-CONTAINED (2026-09-03): `motionProfileContain` clamps the
+    cart's position to the box every tick and drops the outward velocity
+    and acceleration on a clamped axis. Before, only the TARGET was clamped;
+    a vector profile turning at speed has radius v²/a and swung 105 mm past
+    the end rail at 12 m/s / 60 m/s² on the first live run of a learned
+    policy. The simulator's profile body runs the same bounded law
+    (`motion.advance(..., bounds=)`), so sim and firmware agree.
   - `test/` - Host tests for the pure-math parts. `make -C fw/test` builds
     and runs them; no Teensy involved. The one that matters is the step
     synchronisation check — it drives the real profile through the real

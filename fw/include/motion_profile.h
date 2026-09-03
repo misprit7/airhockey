@@ -211,3 +211,42 @@ inline uint8_t motionProfileAdvance(float &px, float &py, float &vx, float &vy,
   }
   return flags;
 }
+
+// ── Path containment ──────────────────────────────────────────────────────
+//
+// The law above knows the target and nothing else. The target is always
+// clamped into the reachable box, but the PATH was not: this is a vector
+// profile, and a cart arriving at the box edge at speed with the target
+// suddenly on the other side turns with radius v^2/a. At 6 m/s under a
+// 60 m/s^2 cap that is 600 mm, and on the rig the cart model swung 105 mm
+// past the end rail while the paddle was driven into it (2026-09-02, the
+// first live run of a learned policy, whose commands flip corner to corner).
+// The simulator never showed it because it clamps the PADDLE every substep.
+//
+// So the box is enforced on the position too, here, in the law, so the
+// firmware and the simulator agree by construction. On a clamped axis the
+// outward velocity and acceleration components are dropped: the profile is
+// then at rest against the wall rather than winding up into it, and the
+// next move starts from a true state.
+inline void motionProfileContain(float &px, float &py, float &vx, float &vy,
+                                 float &ax, float &ay,
+                                 float xMin, float xMax, float yMin, float yMax) {
+  if (px < xMin) { px = xMin; if (vx < 0.0f) vx = 0.0f; if (ax < 0.0f) ax = 0.0f; }
+  else if (px > xMax) { px = xMax; if (vx > 0.0f) vx = 0.0f; if (ax > 0.0f) ax = 0.0f; }
+  if (py < yMin) { py = yMin; if (vy < 0.0f) vy = 0.0f; if (ay < 0.0f) ay = 0.0f; }
+  else if (py > yMax) { py = yMax; if (vy > 0.0f) vy = 0.0f; if (ay > 0.0f) ay = 0.0f; }
+}
+
+// motionProfileAdvance, then keep the cart inside [xMin,xMax] x [yMin,yMax].
+// This is what CDPR::tick() runs and what the simulator's profile body runs.
+inline uint8_t motionProfileAdvanceBounded(float &px, float &py, float &vx,
+                                           float &vy, float &ax, float &ay,
+                                           float tx, float ty, float vMax,
+                                           float aMax, float rampS, float dt,
+                                           float xMin, float xMax,
+                                           float yMin, float yMax) {
+  const uint8_t flags = motionProfileAdvance(px, py, vx, vy, ax, ay, tx, ty,
+                                             vMax, aMax, rampS, dt);
+  motionProfileContain(px, py, vx, vy, ax, ay, xMin, xMax, yMin, yMax);
+  return flags;
+}
