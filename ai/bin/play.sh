@@ -6,8 +6,10 @@
 #   bash ai/bin/play.sh --gentle        # FIRST RUN OF ANY NEW CHECKPOINT
 #   bash ai/bin/play.sh --dry           # camera + policy, commands nothing
 #   POLICY=tdmpc2:curriculum_goalie bash ai/bin/play.sh --plan 1
+#   MASTER_ARGS="--tension 1.5" bash ai/bin/play.sh --gentle
 #
-# Everything after the script's own flags goes to ai/bin/run_policy.py.
+# Everything after the script's own flags goes to ai/bin/run_policy.py;
+# MASTER_ARGS goes to cdpr_master (its default pretension is 0 = slack).
 #
 # What happens, in order: build anything missing; start sw/build/cdpr_master
 # (which must run ALONE -- it opens the SC-Hub USB port; stop `activate` and
@@ -20,6 +22,7 @@ cd "$(dirname "$0")/../.."
 export PYTHONPATH=ai PYTHONUNBUFFERED=1
 
 POLICY=${POLICY:-tdmpc2:latest}
+MASTER_ARGS=${MASTER_ARGS:-}
 LIVE=1
 for a in "$@"; do
     case "$a" in
@@ -57,8 +60,9 @@ PY
         echo "hardware mode) is running. Stop it, or run without this launcher."
         exit 1
     fi
-    echo "starting cdpr_master..."
-    sw/build/cdpr_master &
+    echo "starting cdpr_master ${MASTER_ARGS}..."
+    # shellcheck disable=SC2086
+    sw/build/cdpr_master ${MASTER_ARGS} > /dev/null &
     MASTER_PID=$!
     for _ in $(seq 1 100); do
         python3 - <<'PY' 2>/dev/null && break
