@@ -17,6 +17,10 @@
 # with --live, which measures the paddle with the camera, ENABLEs the drives
 # and starts the 100 Hz loop. Ctrl-C brakes the paddle in place, then the
 # master is stopped, which de-energizes the drives.
+#
+# Logs: logs/run_policy/<stamp>.log (everything printed) and
+# <stamp>.ticks.csv (what the policy saw and did, per tick); the master's
+# own logs/cdpr_master.log is copied to a stamped name on exit.
 set -u
 cd "$(dirname "$0")/../.."
 export PYTHONPATH=ai PYTHONUNBUFFERED=1
@@ -46,6 +50,9 @@ cleanup() {
         kill -0 "$MASTER_PID" 2>/dev/null && kill -INT "$MASTER_PID" 2>/dev/null
         wait "$MASTER_PID" 2>/dev/null
     fi
+    if [ -f logs/cdpr_master.log ]; then
+        cp logs/cdpr_master.log "logs/cdpr_master-$(date +%Y%m%d-%H%M%S).log"
+    fi
 }
 trap cleanup EXIT
 
@@ -62,6 +69,9 @@ PY
     fi
     echo "starting cdpr_master ${MASTER_ARGS}..."
     # shellcheck disable=SC2086
+    # The master writes logs/cdpr_master.log itself (overwritten per run);
+    # cleanup() keeps a stamped copy next to the runner's session log.
+    mkdir -p logs
     sw/build/cdpr_master ${MASTER_ARGS} > /dev/null &
     MASTER_PID=$!
     for _ in $(seq 1 100); do

@@ -49,6 +49,10 @@ Robotic air hockey table that uses reinforcement learning trained in simulation,
     - `run_policy.py` - Drives the table from a policy: heuristic bots or a
       TD-MPC2 checkpoint (`--policy tdmpc2:<run>|latest`, via
       `airhockey/deploy.py`). Dry-run by default; `--live` moves the robot.
+      Every session logs to `logs/run_policy/<stamp>.log` (all output) and
+      `<stamp>.ticks.csv` (per tick: what the policy saw, the encoded obs,
+      what it asked, what was sent, caps, lag, cost). The master keeps
+      `logs/cdpr_master.log`; `play.sh` stamps a copy on exit.
     - `play.sh` - Turn it on and it plays: starts `cdpr_master`, the camera
       and `run_policy.py --live` in one command; Ctrl-C brakes and stops all.
   - `tests/` - Test suite

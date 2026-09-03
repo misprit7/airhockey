@@ -731,12 +731,131 @@ def _load_sac(run: str, caps: Caps):
         f"layout cannot be guessed.")
 
 
+# ── Session log ─────────────────────────────────────────────────────────
+#
+# Two files per session under --log-dir (default logs/run_policy/):
+#
+#   <stamp>.log        everything printed, plus the startup context (args,
+#                      checkpoint, git commit) -- the terminal, kept.
+#   <stamp>.ticks.csv  one row per command tick: what the policy was SHOWN
+#                      (puck fix and history depth, own mallet and where it
+#                      came from, opponent, the encoded observation when the
+#                      policy is a checkpoint), what it ASKED for, what was
+#                      SENT after the clamp, the caps in force, the lag and
+#                      the tick's cost breakdown.
+#
+# The point of the second file: a bad move on the table is either a bad
+# observation or a bad decision, and without the observation as the policy
+# saw it there is no telling which. 100 rows a second, ~1 MB a minute.
+# The master keeps its own logs/cdpr_master.log.
+
+
+class _Tee:
+    """stdout that also lands in a file. Line-flushed to the file so a
+    crash keeps everything up to the line before it."""
+
+    def __init__(self, stream, fh):
+        self._s, self._f = stream, fh
+
+    def write(self, data):
+        self._s.write(data)
+        self._f.write(data)
+        if "\n" in data:
+            self._f.flush()
+        return len(data)
+
+    def flush(self):
+        self._s.flush()
+        self._f.flush()
+
+    def __getattr__(self, name):
+        return getattr(self._s, name)
+
+
+TICK_COLUMNS = [
+    "t_cam", "t_wall", "lag_ms", "blind",
+    "puck_x", "puck_y", "puck_n", "puck_age_ms",
+    "mallet_x", "mallet_y", "mallet_src",
+    "opp_x", "opp_y",
+    *[f"obs{k}" for k in range(15)],
+    "raw_x", "raw_y", "raw_speed", "raw_accel",
+    "cmd_x", "cmd_y", "cmd_speed", "cmd_accel", "flags",
+    "limits_speed", "limits_accel",
+    "track_ms", "io_ms", "policy_ms",
+]
+
+
+class SessionLog:
+    def __init__(self, log_dir: Path, stamp: str | None = None):
+        import datetime                    # noqa: PLC0415
+
+        log_dir.mkdir(parents=True, exist_ok=True)
+        stamp = stamp or datetime.datetime.now().strftime("%Y%m%d-%H%M%S")
+        self.path = log_dir / f"{stamp}.log"
+        self.ticks_path = log_dir / f"{stamp}.ticks.csv"
+        self._fh = open(self.path, "w")
+        self._ticks = open(self.ticks_path, "w")
+        self._ticks.write(",".join(TICK_COLUMNS) + "\n")
+        self.n_rows = 0
+        self._prev_stdout = None
+
+    def capture_stdout(self) -> None:
+        self._prev_stdout = sys.stdout
+        sys.stdout = _Tee(sys.stdout, self._fh)
+
+    def context(self, args) -> None:
+        import subprocess                  # noqa: PLC0415
+
+        try:
+            rev = subprocess.run(["git", "rev-parse", "--short", "HEAD"],
+                                 capture_output=True, text=True, cwd=ROOT,
+                                 timeout=5).stdout.strip()
+        except Exception:                  # noqa: BLE001
+            rev = "?"
+        print(f"[log] {self.path}")
+        print(f"[log] ticks -> {self.ticks_path}")
+        print(f"[log] git {rev}   args {vars(args)}")
+
+    def tick(self, row: dict) -> None:
+        vals = []
+        for c in TICK_COLUMNS:
+            v = row.get(c)
+            if v is None:
+                vals.append("")
+            elif isinstance(v, float):
+                vals.append(f"{v:.4f}")
+            else:
+                vals.append(str(v))
+        self._ticks.write(",".join(vals) + "\n")
+        self.n_rows += 1
+        if self.n_rows % 100 == 0:
+            self._ticks.flush()
+
+    def close(self) -> None:
+        if self._prev_stdout is not None:
+            sys.stdout = self._prev_stdout
+            self._prev_stdout = None
+        for fh in (self._fh, self._ticks):
+            try:
+                fh.flush()
+                fh.close()
+            except Exception:              # noqa: BLE001
+                pass
+
+
 # ── The tick ────────────────────────────────────────────────────────────
 
 
 def plan(policy, report: ReportBuilder, t: float, caps: Caps,
          prev: tuple[float, float] | None):
     """One command decision. No I/O, so the tests can call it directly."""
+    action, flags, _raw = plan_detail(policy, report, t, caps, prev)
+    return action, flags
+
+
+def plan_detail(policy, report: ReportBuilder, t: float, caps: Caps,
+                prev: tuple[float, float] | None):
+    """plan(), plus what the policy asked for BEFORE the clamp."""
     raw = policy(report.observation(t, mallet_fallback=prev))
     # heuristics bots return a Command; the builtins and anything simpler
     # return the same four numbers as a tuple.
@@ -747,7 +866,9 @@ def plan(policy, report: ReportBuilder, t: float, caps: Caps,
         raise TypeError(f"policy returned {raw!r}; expected a 4-tuple "
                         "(x_mm, y_mm, speed_mm_s, accel_mm_s2) or a "
                         "heuristics.Command")
-    return clamp_action(Action(*(float(v) for v in raw)), caps, prev)
+    asked = Action(*(float(v) for v in raw))
+    action, flags = clamp_action(asked, caps, prev)
+    return action, flags, asked
 
 
 # ── Selftest ────────────────────────────────────────────────────────────
@@ -1030,6 +1151,11 @@ def run(args) -> int:
 
     caps = Caps(speed_max=args.speed, accel_max=args.accel)
     # getattr: the tests drive run() with a hand-built Namespace.
+    log_dir = getattr(args, "log_dir", None)
+    slog = SessionLog(Path(log_dir)) if log_dir else None
+    if slog is not None:
+        slog.capture_stdout()
+        slog.context(args)
     policy = load_policy(args.policy, caps, getattr(args, "plan", 0),
                          getattr(args, "device", None))
 
@@ -1181,8 +1307,9 @@ def run(args) -> int:
                 continue
 
             w0 = time.perf_counter()
-            action, flags = plan(policy, report, t, caps, prev)
-            cost["policy"] += time.perf_counter() - w0
+            action, flags, asked = plan_detail(policy, report, t, caps, prev)
+            tick_policy = time.perf_counter() - w0
+            cost["policy"] += tick_policy
             if flags:
                 n_clamped += 1
             prev = (action.x_mm, action.y_mm)
@@ -1199,7 +1326,13 @@ def run(args) -> int:
                 except Exception as e:      # noqa: BLE001
                     print(f"command failed: {e}")
                     break
-            cost["io"] += time.perf_counter() - w0
+            tick_io = time.perf_counter() - w0
+            cost["io"] += tick_io
+
+            if slog is not None:
+                slog.tick(_tick_row(t, report, lag, watchdog, policy, asked,
+                                    action, flags, committer, cost, tick_io,
+                                    tick_policy))
 
             if t - last_print > 0.5:
                 last_print = t
@@ -1209,7 +1342,47 @@ def run(args) -> int:
     finally:
         stream.close()
         _shutdown(client, args, prev)
+        if slog is not None:
+            print(f"[log] {slog.n_rows} ticks -> {slog.ticks_path}")
+            slog.close()
     return 0
+
+
+def _tick_row(t, report: ReportBuilder, lag, watchdog, policy, asked: Action,
+              action: Action, flags, committer, cost, tick_io, tick_policy):
+    st = report.staleness(t)
+    hist = report.observation(t)[OBS_PUCK]
+    if (report.controller_mallet is not None
+            and t - report.t_controller <= STALE_S):
+        m, src = report.controller_mallet, "controller"
+    elif report.mallet is not None and t - report.t_mallet <= STALE_S:
+        m, src = report.mallet, "camera"
+    else:
+        m, src = (None, None), "fallback"
+    opp = report.opponent if t - report.t_opponent <= STALE_S else (None, None)
+    row = {
+        "t_cam": t, "t_wall": time.time(), "lag_ms": 1000.0 * lag.lag,
+        "blind": int(watchdog.blind),
+        "puck_x": hist[0][0] if hist else None,
+        "puck_y": hist[0][1] if hist else None,
+        "puck_n": len(hist),
+        "puck_age_ms": None if math.isinf(st["puck"]) else 1000.0 * st["puck"],
+        "mallet_x": m[0], "mallet_y": m[1], "mallet_src": src,
+        "opp_x": opp[0], "opp_y": opp[1],
+        "raw_x": asked.x_mm, "raw_y": asked.y_mm,
+        "raw_speed": asked.speed_mm_s, "raw_accel": asked.accel_mm_s2,
+        "cmd_x": action.x_mm, "cmd_y": action.y_mm,
+        "cmd_speed": action.speed_mm_s, "cmd_accel": action.accel_mm_s2,
+        "flags": "+".join(flags),
+        "limits_speed": committer.speed, "limits_accel": committer.accel,
+        "track_ms": 1000.0 * cost["track"] / max(cost["frames"], 1),
+        "io_ms": 1000.0 * tick_io, "policy_ms": 1000.0 * tick_policy,
+    }
+    obs = getattr(policy, "last_obs", None)
+    if obs is not None:
+        for k, v in enumerate(obs[:15]):
+            row[f"obs{k}"] = float(v)
+    return row
 
 
 def _cost_line(cost: dict) -> str:
@@ -1395,7 +1568,14 @@ def main() -> int:
                          "lengthen the stop, not shorten it.")
     ap.add_argument("--no-enable", action="store_true",
                     help="assume the drives are already energized")
+    ap.add_argument("--log-dir", default=str(ROOT / "logs" / "run_policy"),
+                    help="session logs go here (a .log of everything printed "
+                         "and a .ticks.csv of what the policy saw and did, "
+                         "one row per tick). See SessionLog.")
+    ap.add_argument("--no-log", action="store_true", help="write no session log")
     args = ap.parse_args()
+    if args.no_log:
+        args.log_dir = None
 
     if args.list:
         for n in sorted(BUILTIN_BOTS):

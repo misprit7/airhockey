@@ -209,6 +209,8 @@ class TDMPC2Policy:
         self.speed_mm_s = float(speed_mm_s)
         self.accel_mm_s2 = float(accel_mm_s2)
         self.last_ms = 0.0
+        self.last_obs = None
+        self.last_action = None
         self.reset()
 
     def reset(self) -> None:
@@ -232,8 +234,13 @@ class TDMPC2Policy:
     def __call__(self, report) -> Command:
         w = time.perf_counter()
         obs = self.encoder.encode(report)
-        x_mm, y_mm = self.target_mm(self.act(obs))
+        action = self.act(obs)
+        x_mm, y_mm = self.target_mm(action)
         self.last_ms = 1000.0 * (time.perf_counter() - w)
+        # Kept for the session log: a bad move is a bad observation or a
+        # bad decision, and only this tells them apart.
+        self.last_obs = obs
+        self.last_action = action
         return Command(float(x_mm), float(y_mm), self.speed_mm_s, self.accel_mm_s2)
 
     # ── Load-time diagnostics ──────────────────────────────────────────

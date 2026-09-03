@@ -804,3 +804,25 @@ def test_default_is_dry_run():
     src = (_ROOT / "ai" / "bin" / "run_policy.py").read_text()
     assert '"--dry-run"' not in src, \
         "a --dry-run flag would imply live is the default; it must not be"
+
+
+def test_dry_run_loop_writes_a_session_log(monkeypatch, capsys, tmp_path):
+    """A session leaves two files: everything printed, and one row per tick
+    of what the policy saw and did -- the only way to tell a bad observation
+    from a bad decision after the fact."""
+    stream = _install_fake_camera(monkeypatch)
+    assert rp.run(_loop_args(log_dir=str(tmp_path))) == 0
+    assert stream.closed
+    out = capsys.readouterr().out
+    logs = sorted(tmp_path.glob("*.log"))
+    ticks = sorted(tmp_path.glob("*.ticks.csv"))
+    assert len(logs) == 1 and len(ticks) == 1
+    text = logs[0].read_text()
+    assert "[log] git" in text and "WOULD SEND" in text, "the log must hold what was printed"
+    rows = ticks[0].read_text().splitlines()
+    assert rows[0] == ",".join(rp.TICK_COLUMNS)
+    assert len(rows) > 50, f"only {len(rows) - 1} tick rows"
+    first = dict(zip(rp.TICK_COLUMNS, rows[1].split(",")))
+    assert first["mallet_src"] in ("camera", "controller", "fallback")
+    assert first["cmd_x"] and first["cmd_speed"]
+    assert f"[log] {logs[0]}" in out
