@@ -281,6 +281,7 @@ int main() {
     const float v = MAX_VELOCITY_MM_S, a = 60000.0f;
     float worstOut[2] = {0, 0};
     int worstStep[2] = {0, 0};
+    float worstDv[2] = {0, 0};        // largest single-tick |dv|, mm/s
     for (int bounded = 0; bounded < 2; bounded++) {
       float x = cx, y = cy, vx = 0, vy = 0, ax_ = 0, ay_ = 0;
       int32_t counts[NUM_MOTORS];
@@ -294,6 +295,7 @@ int main() {
         // Flip every 15 ms between the two back corners, like the log.
         const bool low = ((t / (long)(0.015f * TICK_RATE_HZ)) % 2) == 0;
         const float tx = WS_MAX_X, ty = low ? WS_MIN_Y : WS_MAX_Y;
+        const float pvx = vx, pvy = vy;
         if (bounded)
           motionProfileAdvanceBounded(x, y, vx, vy, ax_, ay_, tx, ty, v, a,
                                       MOTION_ACCEL_RAMP_S, DT,
@@ -301,6 +303,8 @@ int main() {
         else
           motionProfileAdvance(x, y, vx, vy, ax_, ay_, tx, ty, v, a,
                                MOTION_ACCEL_RAMP_S, DT);
+        const float dv = sqrtf((vx - pvx) * (vx - pvx) + (vy - pvy) * (vy - pvy));
+        if (dv > worstDv[bounded]) worstDv[bounded] = dv;
         float out = 0;
         if (x > WS_MAX_X) out = x - WS_MAX_X;
         if (x < WS_MIN_X) out = fmaxf(out, WS_MIN_X - x);
@@ -317,13 +321,28 @@ int main() {
         }
       }
     }
-    printf("   unbounded law: cart left the box by up to %.0f mm\n", worstOut[0]);
-    printf("   bounded law:   cart left the box by up to %.2f mm, worst counts"
-           " owed %d\n\n", worstOut[1], worstStep[1]);
+    // The accel cap per tick, and the residual the backstop may eat: the
+    // same aMax*ramp/2 bound the speed backstop carries.
+    const float dvCap = a * DT;
+    const float dvBackstop = a * MOTION_ACCEL_RAMP_S * 0.5f;
+    printf("   unbounded law: cart left the box by up to %.0f mm, worst tick"
+           " |dv| %.1f mm/s (cap %.1f)\n", worstOut[0], worstDv[0], dvCap);
+    printf("   bounded law:   cart left the box by up to %.2f mm, worst tick"
+           " |dv| %.1f mm/s (cap %.1f, backstop allowance %.0f), worst counts"
+           " owed %d\n\n", worstOut[1], worstDv[1], dvCap, dvBackstop,
+           worstStep[1]);
     check(worstOut[0] > 20.0f, "the unbounded law should leave the box here "
           "(else this test no longer exercises the case)");
     check(worstOut[1] <= 0.001f, "CART LEFT THE BOX with containment on");
     check(worstStep[1] <= 1, "MOTORS WOULD DESYNC under containment");
+    // What the backstop may take in one tick: the jerk-lag residual. The
+    // acceleration slews over `ramp`, so the accel vector can keep pointing
+    // into the wall for up to that long after the demand reversed --
+    // aMax*ramp of velocity at the very worst, half that typically. Anything
+    // beyond it is a hard stop dressed as containment.
+    check(worstDv[1] <= a * MOTION_ACCEL_RAMP_S,
+          "WALL STOP EXCEEDED THE JERK-LAG RESIDUAL: containment is a hard "
+          "stop, not a brake");
   }
 
   // ── 4. Short moves, where the braking curve does the work ───────────────

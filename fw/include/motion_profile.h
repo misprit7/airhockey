@@ -95,11 +95,26 @@ constexpr float MOTION_VEL_EPS_MM_S = 0.5f;
 // overshoot it catches is bounded by aMax*ramp/2, ~180 mm/s at the ceiling,
 // and the step-rate headroom is 6850. If it ever fires hard, the ramp is too
 // long for the accel cap and the profile shape is not what you think.
+// Wall braking: the fastest outward speed on one axis that can still stop
+// before the wall `d` away under the accel cap -- the same braking curve the
+// approach to a target rides, with the same backed-off gain. Zero at and
+// beyond the wall.
+inline float motionWallSpeed(float d, float aMax) {
+  if (d <= 0.0f) return 0.0f;
+  return MOTION_APPROACH_GAIN * sqrtf(2.0f * aMax * d);
+}
+
 inline uint8_t motionProfileStep(float px, float py, float vx, float vy,
                                  float ax, float ay, float tx, float ty,
                                  float vMax, float aMax, float rampS, float dt,
                                  float &vxOut, float &vyOut,
-                                 float &axOut, float &ayOut) {
+                                 float &axOut, float &ayOut,
+                                 bool walls = false,
+                                 float xMin = 0.0f, float xMax = 0.0f,
+                                 float yMin = 0.0f, float yMax = 0.0f) {
+  // `walls` is an explicit flag rather than infinite bounds: the host build
+  // of this law is compiled with -ffast-math, under which a comparison
+  // against INFINITY is not something to build a branch on.
   uint8_t flags = 0;
 
   const float ex = tx - px;
@@ -121,6 +136,22 @@ inline uint8_t motionProfileStep(float px, float py, float vx, float vy,
     vdy = ey * scale;
   }
 
+  // Walls, when given: the desired velocity may not carry the cart into one
+  // faster than it can brake. The target is always inside the box, so on a
+  // straight run this never binds; it binds in a TURN at the edge, where
+  // the target has flipped and the old heading points through the wall. A
+  // hard clamp alone there is an instantaneous stop -- infinite decel on
+  // that axis, the impulsive load the jerk ramp exists to avoid; this makes
+  // the wall a place the profile brakes into, and leaves the clamp in
+  // motionProfileContain as a backstop for the residual, exactly like the
+  // speed backstop below.
+  if (walls) {
+    if (vdx > 0.0f) { const float w = motionWallSpeed(xMax - px, aMax); if (vdx > w) vdx = w; }
+    else if (vdx < 0.0f) { const float w = motionWallSpeed(px - xMin, aMax); if (vdx < -w) vdx = -w; }
+    if (vdy > 0.0f) { const float w = motionWallSpeed(yMax - py, aMax); if (vdy > w) vdy = w; }
+    else if (vdy < 0.0f) { const float w = motionWallSpeed(py - yMin, aMax); if (vdy < -w) vdy = -w; }
+  }
+
   // Desired acceleration: proportional to the velocity error, NOT the error
   // divided by dt. See MOTION_VEL_TAU_MULT — dividing by dt saturates and
   // makes this a relay, which the jerk slew below then turns into a limit
@@ -130,9 +161,27 @@ inline uint8_t motionProfileStep(float px, float py, float vx, float vy,
   float ady = (vdy - vy) / tau;
   const float adMag = sqrtf(adx * adx + ady * ady);
   if (adMag > aMax) {
-    const float s = aMax / adMag;
-    adx *= s;
-    ady *= s;
+    // Over budget. Uniform scaling is right on the open table, but at a
+    // wall it starves the one component that must not be starved: a cart
+    // reversing along the wall at full cap keeps none of the budget for
+    // braking into it, arrives at speed, and the backstop stops it dead.
+    // So an axis that is braking toward a wall gets its demand first, and
+    // the other axis takes what is left of the circle.
+    const bool brakeX = walls && ((vx > 0.0f && adx < 0.0f) ||
+                                  (vx < 0.0f && adx > 0.0f));
+    const bool brakeY = walls && ((vy > 0.0f && ady < 0.0f) ||
+                                  (vy < 0.0f && ady > 0.0f));
+    if (brakeX != brakeY) {
+      float &pri = brakeX ? adx : ady;
+      float &sec = brakeX ? ady : adx;
+      if (fabsf(pri) > aMax) pri = (pri > 0.0f) ? aMax : -aMax;
+      const float left = sqrtf(fmaxf(0.0f, aMax * aMax - pri * pri));
+      if (fabsf(sec) > left) sec = (sec > 0.0f) ? left : -left;
+    } else {
+      const float s = aMax / adMag;
+      adx *= s;
+      ady *= s;
+    }
     flags |= MOTION_LIMIT_ACCEL;
   }
 
@@ -224,10 +273,13 @@ inline uint8_t motionProfileAdvance(float &px, float &py, float &vx, float &vy,
 // The simulator never showed it because it clamps the PADDLE every substep.
 //
 // So the box is enforced on the position too, here, in the law, so the
-// firmware and the simulator agree by construction. On a clamped axis the
-// outward velocity and acceleration components are dropped: the profile is
-// then at rest against the wall rather than winding up into it, and the
-// next move starts from a true state.
+// firmware and the simulator agree by construction. The working part is
+// the wall braking in motionProfileStep (the desired velocity may not carry
+// the cart into a wall faster than it can stop); this clamp is the backstop
+// for the jerk-lag residual. On a clamped axis the outward velocity and
+// acceleration components are dropped: the profile is then at rest against
+// the wall rather than winding up into it, and the next move starts from a
+// true state.
 inline void motionProfileContain(float &px, float &py, float &vx, float &vy,
                                  float &ax, float &ay,
                                  float xMin, float xMax, float yMin, float yMax) {
@@ -245,8 +297,31 @@ inline uint8_t motionProfileAdvanceBounded(float &px, float &py, float &vx,
                                            float aMax, float rampS, float dt,
                                            float xMin, float xMax,
                                            float yMin, float yMax) {
-  const uint8_t flags = motionProfileAdvance(px, py, vx, vy, ax, ay, tx, ty,
-                                             vMax, aMax, rampS, dt);
+  float nvx, nvy, nax, nay;
+  const uint8_t flags = motionProfileStep(px, py, vx, vy, ax, ay, tx, ty,
+                                          vMax, aMax, rampS, dt,
+                                          nvx, nvy, nax, nay,
+                                          true, xMin, xMax, yMin, yMax);
+  vx = nvx;
+  vy = nvy;
+  ax = nax;
+  ay = nay;
+  const float rx = tx - px;
+  const float ry = ty - py;
+  if (rx * rx + ry * ry < MOTION_POS_EPS_MM * MOTION_POS_EPS_MM &&
+      vx * vx + vy * vy < MOTION_VEL_EPS_MM_S * MOTION_VEL_EPS_MM_S) {
+    px = tx;
+    py = ty;
+    vx = 0.0f;
+    vy = 0.0f;
+    ax = 0.0f;
+    ay = 0.0f;
+  } else {
+    px += vx * dt;
+    py += vy * dt;
+  }
+  // Backstop only: with the wall braking above, what this catches is the
+  // jerk-lag residual, bounded like the speed backstop by aMax*ramp/2.
   motionProfileContain(px, py, vx, vy, ax, ay, xMin, xMax, yMin, yMax);
   return flags;
 }
