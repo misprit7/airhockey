@@ -155,6 +155,15 @@ def main():
     parser.add_argument("--record-freq", type=int, default=50_000)
     parser.add_argument("--opponent-update-freq", type=int, default=50_000)
     parser.add_argument("--horizon", type=int, default=5)
+    parser.add_argument("--pi-smooth", type=float, default=0.1,
+                        help="temporal-smoothness coefficient on the policy "
+                             "prior (TD-MPC2 pi_smooth_coef): pulls the "
+                             "prior's mean toward the previous action, which "
+                             "the observation carries. 0 disables.")
+    parser.add_argument("--reset-prior", action="store_true",
+                        help="re-initialise the policy prior head on resume "
+                             "(policy_loader.reset_prior): a prior saturated "
+                             "by long training cannot be regularised back")
     parser.add_argument("--updates-per-iter", type=int, default=1,
                         help="gradient updates per vectorised step; March "
                              "used 1 (i.e. one update per n_envs transitions)")
@@ -180,6 +189,7 @@ def main():
         "discount_max": 0.99, "rho": 0.7,
         "task_title": "Air Hockey Self-Play",
         "multitask": False, "tasks": ["airhockey-selfplay"], "task_dim": 0,
+        "pi_smooth_coef": args.pi_smooth,
     })
     cfg = OmegaConf.merge(base_cfg, overrides)
     if args.model_size in MODEL_SIZE:
@@ -204,6 +214,10 @@ def main():
     print(f"Loading agent from {args.resume}")
     agent = TDMPC2(cfg)
     load_checkpoint(agent, args.resume)
+    if args.reset_prior:
+        from airhockey.policy_loader import reset_prior   # noqa: PLC0415
+        reset_prior(agent)
+        print("  prior head re-initialised (--reset-prior)")
     opponent = TDMPC2(cfg)
     load_checkpoint(opponent, args.resume)
     buffer = Buffer(cfg)
@@ -212,6 +226,7 @@ def main():
     print(f"  Steps: {args.steps:,}   Parallel envs: {n_envs}")
     print(f"  Opponent update: every {args.opponent_update_freq:,} steps")
     print(f"  Far side: {'copy of self (robot body, mirrored workspace)' if args.symmetric else 'human model'}")
+    print(f"  Prior smoothness (pi_smooth_coef): {args.pi_smooth}")
     print(f"  Planning horizon: {args.horizon}   Goals: +{GOAL_REWARD:.0f} / {GOAL_PENALTY:.0f}")
     print(f"  Sensing: {'on' if args.realistic_sensing else 'off'}   "
           f"DR: {'on' if args.domain_randomize else 'off'}   obs {env.obs_dim} dims")

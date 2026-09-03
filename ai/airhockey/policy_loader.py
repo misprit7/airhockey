@@ -147,3 +147,24 @@ def load_checkpoint(agent, path) -> None:
             raise ValueError(f"{path}: trained on {have}-wide observations, "
                              f"this build has {want}")
     agent.load({"model": sd})
+
+
+def reset_prior(agent) -> None:
+    """Re-initialise the policy prior head (the planner and value model stay).
+
+    A prior trained for millions of steps under the tanh-squashed entropy
+    bonus ends up with pre-squash means in the hundreds: bang-bang by
+    construction, and immovable by any regulariser at a learning-rate-sized
+    step. The prior is cheap to relearn from Q; the world model and Q are
+    what the checkpoint is worth.
+    """
+    import torch.nn as nn                                  # noqa: PLC0415
+
+    def init(m):
+        if isinstance(m, nn.Linear):
+            nn.init.orthogonal_(m.weight, gain=0.5)
+            if m.bias is not None:
+                nn.init.zeros_(m.bias)
+    agent.model._pi.apply(init)
+    if hasattr(agent, "pi_optim"):
+        agent.pi_optim.state.clear()
