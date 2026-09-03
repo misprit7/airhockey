@@ -297,6 +297,14 @@ class BatchRewardShaper:
         # so they only decide what the paddle does when nothing else does.
         home_weight: float = 0.0,
         jitter_weight: float = 0.0,
+        # Smoothness DURING PLAY, ungated: a tax on step-to-step action
+        # change everywhere. The idle jitter term above only bites with the
+        # puck away; on the table the policy flipped its target corner to
+        # corner on a quarter of all ticks, puck near or far, and a
+        # 60 m/s^2 body followed it (2026-09-02). A strike is one large
+        # change and stays cheap against contact (2) and a goal (100); a
+        # policy that flips every few ticks pays every time.
+        smooth_weight: float = 0.0,
     ):
         self.n_envs = n_envs
         self.stage = stage
@@ -309,6 +317,7 @@ class BatchRewardShaper:
         self.workspace = workspace
         self.home_weight = home_weight
         self.jitter_weight = jitter_weight
+        self.smooth_weight = smooth_weight
         self._home_x = _GOAL_CX                  # centred in front of the goal
         if workspace is not None:
             self._home_span = 0.5 * (workspace["max_x"] - workspace["min_x"])
@@ -527,17 +536,18 @@ class BatchRewardShaper:
         if info is not None and "penalty" in info:
             shaped += info["penalty"]
 
-        # Idle hygiene, gated on the puck being on the far half.
-        if self.home_weight > 0 or self.jitter_weight > 0:
+        # Idle hygiene (gated on the puck being on the far half) and
+        # smoothness during play (ungated).
+        if self.home_weight > 0 or self.jitter_weight > 0 or self.smooth_weight > 0:
             idle = puck_y > _GOAL_CY / 2.0
             if self.home_weight > 0:
                 off_home = np.abs(pad_x - self._home_x) / self._home_span
                 shaped -= np.where(idle, self.home_weight * off_home, 0.0)
-            if self.jitter_weight > 0 and actions is not None:
+            if (self.jitter_weight > 0 or self.smooth_weight > 0) and actions is not None:
                 a = np.asarray(actions)[:, :2]
                 delta = np.linalg.norm(a - self._prev_action, axis=1)
-                shaped -= np.where(idle & self._has_prev_action,
-                                   self.jitter_weight * delta, 0.0)
+                rate = self.smooth_weight + np.where(idle, self.jitter_weight, 0.0)
+                shaped -= np.where(self._has_prev_action, rate * delta, 0.0)
                 self._prev_action[:] = a
                 self._has_prev_action[:] = True
 
@@ -795,9 +805,11 @@ CURRICULUM: dict[str, dict] = {
         puck_progress_weight=0.5, defense_weight=1.0, shot_placement_weight=2.0,
         goal_reward=100.0, goal_penalty=-50.0, entropy_weight=0.0, shot_mix_weight=0.5,
         # Idle hygiene (see BatchRewardShaper): at most 0.005/step for
-        # sitting at the box edge and 0.005 per unit of action change, and
-        # only while the puck is on the far half.
-        home_weight=0.005, jitter_weight=0.005),
+        # sitting off the goal's centre line while the puck is on the far
+        # half. Smoothness during play: 0.02 per unit of action change,
+        # everywhere -- a full corner-to-corner flip costs 0.057, one strike
+        # is cheap, flipping every few ticks is not.
+        home_weight=0.005, jitter_weight=0.0, smooth_weight=0.02),
 }
 CURRICULUM_ORDER = ["proximity", "contact", "scoring", "goalie", "selfplay"]
 
@@ -809,7 +821,7 @@ _SHAPER_KEYS = ("proximity_weight", "contact_reward", "directed_hit_weight",
 # Batch-shaper-only terms (idle hygiene). Passed through only when a stage
 # sets them, so the scalar ShapedRewardWrapper -- which has no such terms --
 # keeps accepting every pretrain stage's kwargs.
-_IDLE_KEYS = ("home_weight", "jitter_weight")
+_IDLE_KEYS = ("home_weight", "jitter_weight", "smooth_weight")
 
 
 def curriculum_shaper_kwargs(name: str) -> dict:

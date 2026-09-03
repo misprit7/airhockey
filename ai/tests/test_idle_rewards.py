@@ -76,6 +76,28 @@ def test_jitter_term_taxes_action_change_only_when_the_puck_is_away():
             assert np.all(flip == 0.0)
 
 
+def test_smoothness_taxes_action_change_everywhere_but_one_strike_stays_cheap():
+    kw = curriculum_shaper_kwargs("selfplay")
+    assert kw["smooth_weight"] > 0
+    zeros = dict(proximity_weight=0.0, contact_reward=0.0, directed_hit_weight=0.0,
+                 puck_progress_weight=0.0, goal_reward=0.0, goal_penalty=0.0,
+                 defense_weight=0.0, shot_placement_weight=0.0, entropy_weight=0.0,
+                 shot_mix_weight=0.0, home_weight=0.0, jitter_weight=0.0)
+    sh = BatchRewardShaper(4, workspace=_WS, smooth_weight=kw["smooth_weight"], **zeros)
+    near = 0.2 * _H                                   # puck on the robot's half: play
+    sh.reset(_obs(near, _X_HOME))
+    sh.compute(_obs(near, _X_HOME), np.zeros(4), actions=np.ones((4, 2)))
+    steady = sh.compute(_obs(near, _X_HOME), np.zeros(4), actions=np.ones((4, 2)))
+    flip = sh.compute(_obs(near, _X_HOME), np.zeros(4), actions=-np.ones((4, 2)))
+    assert np.all(steady == 0.0)
+    np.testing.assert_allclose(flip, -kw["smooth_weight"] * np.sqrt(8.0), atol=1e-6)
+    # One full flip (a strike) costs well under a tenth of a contact; a
+    # policy flipping on a quarter of its ticks pays more than a goal per
+    # 30 s episode.
+    assert kw["smooth_weight"] * np.sqrt(8.0) < 0.1 * kw["contact_reward"]
+    assert 0.25 * 3000 * kw["smooth_weight"] * np.sqrt(8.0) > 0.3 * kw["goal_reward"]
+
+
 def test_idle_terms_are_small_against_play():
     """A full second of maximal dithering at the box edge with the puck away
     costs less than one contact; a whole 30 s episode of it costs less than
@@ -90,6 +112,7 @@ def test_idle_terms_are_small_against_play():
         if name != "selfplay":
             assert stage.get("home_weight", 0.0) == 0.0
             assert stage.get("jitter_weight", 0.0) == 0.0
+            assert stage.get("smooth_weight", 0.0) == 0.0
 
 
 def test_shaper_without_a_workspace_still_centres_on_the_goal():

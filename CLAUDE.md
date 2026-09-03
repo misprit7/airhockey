@@ -394,6 +394,12 @@ exists only locally. Do not `git pull --rebase` it away.
   observation as constants so the band can be reopened without reshaping
   the network. `eval_policy.py A --vs B` plays two checkpoints on equal
   bodies; `--human-body` reproduces the pre-change ladder.
+- **Smoothness (2026-09-03)**: the self-play stage taxes step-to-step action
+  change everywhere (`smooth_weight` 0.02/unit; a full corner-to-corner flip
+  costs 0.057) plus a tiny idle pull to the goal's centre line while the
+  puck is away. The first live run showed the prior flipping its target
+  corner to corner on a quarter of all ticks; the sim's body followed it,
+  the table's could not.
 - **Training throughput**: SAC's bottleneck is gradient updates, not environment stepping. Using `train_freq=32` with `gradient_steps=4` gives roughly 3x speedup over the default.
 - **Episode init**: Puck should start heading toward the agent so it encounters the puck quickly and gets reward signal faster.
 - **Network size**: 128x128 MLP is sufficient for basic play. Will likely need larger networks for strategic/competitive play.
