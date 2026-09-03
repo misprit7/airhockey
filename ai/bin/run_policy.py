@@ -785,6 +785,11 @@ TICK_COLUMNS = [
     "t_cam", "t_wall", "lag_ms", "blind",
     "puck_x", "puck_y", "puck_n", "puck_age_ms",
     "mallet_x", "mallet_y", "mallet_src",
+    # Both views of the own mallet, always: the controller's is step counts
+    # through the cable model, the camera's is measured, and the gap between
+    # them is the only evidence of the belief parting company with the
+    # paddle (it read 2023 mm, past the rail, at 60 m/s^2).
+    "ctl_mallet_x", "ctl_mallet_y", "cam_mallet_x", "cam_mallet_y",
     "opp_x", "opp_y",
     *[f"obs{k}" for k in range(15)],
     "raw_x", "raw_y", "raw_speed", "raw_accel",
@@ -1377,6 +1382,10 @@ def _tick_row(t, report: ReportBuilder, lag, watchdog, policy, asked: Action,
         "puck_n": len(hist),
         "puck_age_ms": None if math.isinf(st["puck"]) else 1000.0 * st["puck"],
         "mallet_x": m[0], "mallet_y": m[1], "mallet_src": src,
+        "ctl_mallet_x": report.controller_mallet[0] if report.controller_mallet else None,
+        "ctl_mallet_y": report.controller_mallet[1] if report.controller_mallet else None,
+        "cam_mallet_x": report.mallet[0] if report.mallet else None,
+        "cam_mallet_y": report.mallet[1] if report.mallet else None,
         "opp_x": opp[0], "opp_y": opp[1],
         "raw_x": asked.x_mm, "raw_y": asked.y_mm,
         "raw_speed": asked.speed_mm_s, "raw_accel": asked.accel_mm_s2,
