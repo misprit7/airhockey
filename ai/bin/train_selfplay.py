@@ -230,12 +230,12 @@ def main():
     tds = [[fresh_td(obs[i])] for i in range(n_envs)]
 
     step = 0
+    updating = False
     start = time()
     last_record = 0
     last_opp_update = 0
     opp_version = 0
     wins = losses = draws = 0
-    pretrained = False
 
     while step <= cfg.steps:
         if step > 0 and step // args.opponent_update_freq > last_opp_update // args.opponent_update_freq:
@@ -248,12 +248,14 @@ def main():
             print(f"[Step {step:,}] Updated opponent to version {opp_version}")
 
         drive_opponent(env, opponent, obs, t0_mask)
-        if step > cfg.seed_steps:
-            with torch.no_grad():
-                actions = agent.act(torch.from_numpy(obs).float(), t0=t0_mask)
-        else:
-            actions = torch.from_numpy(
-                np.random.uniform(-1, 1, (n_envs, env.action_dim)).astype(np.float32))
+        # No random seeding: this script always RESUMES a trained agent, and
+        # the March recipe's 15k steps of uniform-random targets (a
+        # bang-bang random walk at 60 m/s^2) followed by a 5000-update
+        # burst on that data was an off-policy shock at every restart -- and
+        # every "50k checkpoint" of a resumed run was the starting weights,
+        # because nothing had updated yet.
+        with torch.no_grad():
+            actions = agent.act(torch.from_numpy(obs).float(), t0=t0_mask)
         act_np = actions.numpy().astype(np.float32)
 
         next_obs, raw, term, trunc, info = env.step(act_np)
@@ -290,17 +292,16 @@ def main():
         obs = next_obs
 
         total_eps = wins + losses + draws
-        if step >= cfg.seed_steps and total_eps >= 2:
-            if not pretrained:
-                n_up = min(step, 5000)
-                print(f'Pretraining agent on seed data ({n_up} updates)...')
-                for _ in range(n_up):
-                    agent.update(buffer)
-                pretrained = True
-                print('Pretraining done.')
-            else:
-                for _ in range(args.updates_per_iter):
-                    agent.update(buffer)
+        # The buffer stores whole episodes, so the first update waits for
+        # the first games to finish (~96k env steps at 32 envs x 30 s, or
+        # sooner when a game reaches 7). From then on, the recipe's one
+        # update per vectorised step.
+        if total_eps >= 2:
+            if not updating:
+                updating = True
+                print(f"[Step {step:,}] first games in the buffer -- updates begin")
+            for _ in range(args.updates_per_iter):
+                agent.update(buffer)
 
         step += n_envs
 
