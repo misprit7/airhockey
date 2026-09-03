@@ -395,9 +395,11 @@ exists only locally. Do not `git pull --rebase` it away.
   the network. `eval_policy.py A --vs B` plays two checkpoints on equal
   bodies; `--human-body` reproduces the pre-change ladder.
 - **Smoothness (2026-09-03)**: the self-play stage taxes step-to-step action
-  change everywhere (`smooth_weight` 0.02/unit; a full corner-to-corner flip
-  costs 0.057) plus a tiny idle pull to the goal's centre line while the
-  puck is away. The first live run showed the prior flipping its target
+  change everywhere (`smooth_weight` 0.2/unit; a full corner-to-corner flip
+  costs 0.57, sized to TD-MPC2's value-bin resolution -- 0.02 was invisible
+  to the two-hot heads) plus a tiny idle pull to the goal's centre line
+  while the puck is away. The previous action is in the observation so the
+  term is learnable from a frame. The first live run showed the prior flipping its target
   corner to corner on a quarter of all ticks; the sim's body followed it,
   the table's could not.
 - **Training throughput**: SAC's bottleneck is gradient updates, not environment stepping. Using `train_freq=32` with `gradient_steps=4` gives roughly 3x speedup over the default.

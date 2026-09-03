@@ -806,10 +806,15 @@ CURRICULUM: dict[str, dict] = {
         goal_reward=100.0, goal_penalty=-50.0, entropy_weight=0.0, shot_mix_weight=0.5,
         # Idle hygiene (see BatchRewardShaper): at most 0.005/step for
         # sitting off the goal's centre line while the puck is on the far
-        # half. Smoothness during play: 0.02 per unit of action change,
-        # everywhere -- a full corner-to-corner flip costs 0.057, one strike
-        # is cheap, flipping every few ticks is not.
-        home_weight=0.005, jitter_weight=0.0, smooth_weight=0.02),
+        # half. Smoothness during play: 0.2 per unit of action change,
+        # everywhere -- a full corner-to-corner flip costs 0.57. That is
+        # deliberately on the scale of TD-MPC2's value bins: 0.02/unit was
+        # tried first and the flip rate did not fall in 300k steps, because
+        # the two-hot reward and Q heads (101 symlog bins) cannot resolve a
+        # 0.057 difference next to contacts at 2 and goals at 100. One
+        # strike per exchange costs a quarter of a contact; flipping every
+        # four ticks costs four goals an episode.
+        home_weight=0.005, jitter_weight=0.0, smooth_weight=0.2),
 }
 CURRICULUM_ORDER = ["proximity", "contact", "scoring", "goalie", "selfplay"]
 

@@ -91,11 +91,12 @@ def test_smoothness_taxes_action_change_everywhere_but_one_strike_stays_cheap():
     flip = sh.compute(_obs(near, _X_HOME), np.zeros(4), actions=-np.ones((4, 2)))
     assert np.all(steady == 0.0)
     np.testing.assert_allclose(flip, -kw["smooth_weight"] * np.sqrt(8.0), atol=1e-6)
-    # One full flip (a strike) costs well under a tenth of a contact; a
-    # policy flipping on a quarter of its ticks pays more than a goal per
-    # 30 s episode.
-    assert kw["smooth_weight"] * np.sqrt(8.0) < 0.1 * kw["contact_reward"]
-    assert 0.25 * 3000 * kw["smooth_weight"] * np.sqrt(8.0) > 0.3 * kw["goal_reward"]
+    # One full flip (a strike) costs less than half a contact but more
+    # than one of TD-MPC2's value bins (~0.2), so the heads can see it; a
+    # policy flipping on a quarter of its ticks pays goals per episode.
+    flip = kw["smooth_weight"] * np.sqrt(8.0)
+    assert 0.2 < flip < 0.5 * kw["contact_reward"]
+    assert 0.25 * 3000 * flip > kw["goal_reward"]
 
 
 def test_idle_terms_are_small_against_play():
