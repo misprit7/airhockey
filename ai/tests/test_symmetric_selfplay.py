@@ -140,9 +140,12 @@ def test_a_game_and_its_reflection_are_the_same_game():
         # a few 1e-4 m/s.
         np.testing.assert_allclose(view[0], obs[1], atol=1e-3, err_msg=f"step {k}")
         np.testing.assert_allclose(view[1], obs[0], atol=1e-3, err_msg=f"step {k}")
-        # And the world itself is the reflection.
-        assert abs(en.puck_x[0] - en.puck_x[1]) < 3e-5
-        assert abs(en.puck_y[0] - (h - en.puck_y[1])) < 3e-5
+        # And the world itself is the reflection. 0.1 mm: the profile law
+        # runs in float32 millimetres, whose rounding differs between y
+        # and 2000-y, and paddle-puck contacts amplify that over a game.
+        # A real asymmetry is millimetres, not microns.
+        assert abs(en.puck_x[0] - en.puck_x[1]) < 1e-4
+        assert abs(en.puck_y[0] - (h - en.puck_y[1])) < 1e-4
         assert abs(en.paddle_agent_x[0] - en.paddle_opp_x[1]) < 1e-5
         assert abs(en.paddle_agent_y[0] - (h - en.paddle_opp_y[1])) < 1e-5
     assert steps >= 50, f"only {steps} steps before a goal; fixture too short"
