@@ -260,6 +260,37 @@ bool ClearPath::readEncoders(double posn[4], unsigned res[4], double trq[4]) {
 }
 
 
+int ClearPath::checkDrives(char *why, size_t why_len) {
+  if (!connected_ || !port_) return -1;
+  for (unsigned i = 0; i < port_->NodeCount() && i < 4; i++) {
+    try {
+      INode &n = port_->Nodes(i);
+      n.Status.RT.Refresh();
+      const mnStatusReg st = n.Status.RT.Value();
+      if (st.cpm.Enabled && !st.cpm.AlertPresent) continue;
+      // Something is wrong with this one. Say what the drive says.
+      char alerts[256] = "";
+      try {
+        n.Status.Alerts.Refresh();
+        alertReg a = n.Status.Alerts.Value();
+        if (a.isInAlert()) a.StateStr(alerts, sizeof(alerts));
+      } catch (mnErr &) {
+      }
+      snprintf(why, why_len, "%s%s%s",
+               st.cpm.Enabled ? "alert present" : "NOT ENABLED (shut down)",
+               alerts[0] ? ": " : "", alerts);
+      return (int)i;
+    } catch (mnErr &err) {
+      // Could not even read it: treat as a fault. A drive that stops
+      // answering is not one to keep pulling against.
+      snprintf(why, why_len, "status read failed: 0x%08x %s", err.ErrorCode,
+               err.ErrorMsg);
+      return (int)i;
+    }
+  }
+  return -1;
+}
+
 bool ClearPath::pollHealth(double torque_warn_pct) {
   if (!connected_ || !port_ || !enabled_) return false;
   bool reported = false;

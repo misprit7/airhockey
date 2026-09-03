@@ -59,6 +59,15 @@ public:
   // fighting, which no position readout will show you.
   bool pollHealth(double torque_warn_pct = 35.0);
 
+  // The fast check. Every drive's own enabled/alert bits, one register read
+  // per node, no torque, no printing. Returns -1 when all four are enabled
+  // and alert-free, else the index of the first that is not, with what it
+  // says about itself in `why`. This is the only way to catch ONE drive
+  // shutting down (overload, tracking, bus) while the other three carry on
+  // -- which on a cable robot drags the paddle off the plane and lets the
+  // slack cable wrap. Cheap enough to call many times a second.
+  int checkDrives(char *why, size_t why_len);
+
   // Read each drive's own encoder.
   //
   // This is the only measurement of where the motors ACTUALLY are. The

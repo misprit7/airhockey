@@ -95,7 +95,13 @@ Robotic air hockey table that uses reinforcement learning trained in simulation,
     step a tick can emit.
 - `sw/` - Host-side support for the physical robot
   - `bin/cdpr_master.cpp` - Bridge: energizes the ClearPath servos, forwards
-    commands to the Teensy over serial, serves TCP
+    commands to the Teensy over serial, serves TCP. Runs a DRIVE FAULT
+    WATCHDOG (2026-09-02): a thread polls every drive's enabled/alert bits
+    every 20 ms and, the moment one has shut down (overload, tracking, bus),
+    disables all four and STOPs the Teensy, then answers every CMD with
+    `ERR fault ...` until the next ENABLE. Before this, one overloaded
+    motor stopped while the other three kept pulling. The Teensy has no
+    feedback wire from the drives, so this is the only place it can live.
   - `bin/` - Standalone diagnostics: `test_motor`, `scan_motors`, `activate`,
     `retract_test`, `calibrate` (passive encoder capture)
   - `lib/clearpath.{h,cpp}` - Minimal ClearPath connect/enable/disable

@@ -826,3 +826,17 @@ def test_dry_run_loop_writes_a_session_log(monkeypatch, capsys, tmp_path):
     assert first["mallet_src"] in ("camera", "controller", "fallback")
     assert first["cmd_x"] and first["cmd_speed"]
     assert f"[log] {logs[0]}" in out
+
+
+def test_a_single_stall_does_not_trip_the_lag_warning():
+    """The first LIMITS push measured 32 ms on the rig and the loop caught up
+    within four ticks. One stall is not a backlog."""
+    m = rp.LagMonitor()
+    for k in range(100):
+        m.update(k * 0.005, k * 0.005)
+    m.update(100 * 0.005, 100 * 0.005 + 0.032)          # the stall
+    assert m.warn_once() is None
+    for k in range(101, 140):
+        m.update(k * 0.005, k * 0.005 + max(0.0, 0.032 - (k - 100) * 0.008))
+    assert m.warn_once() is None, "a stall that recovered must not warn"
+    assert m.peak == pytest.approx(0.032)

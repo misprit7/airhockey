@@ -397,6 +397,12 @@ class LagMonitor:
     """
 
     WARN_S = 0.025      # 2.5 command ticks; below this it is jitter
+    # SUSTAINED, not instantaneous: the first LIMITS push is two Teensy
+    # round trips and measured 32 ms on the rig, after which the loop had
+    # caught up within four ticks. One such stall used to trip a warning
+    # that said "and growing" about a lag that was already gone. A real
+    # backlog stays over the line frame after frame.
+    SUSTAIN_FRAMES = 40     # 200 ms of camera frames over the line
 
     def __init__(self):
         self._t_cam0: float | None = None
@@ -404,22 +410,25 @@ class LagMonitor:
         self.lag = 0.0
         self.peak = 0.0
         self.warned = False
+        self._over = 0
 
     def update(self, t_cam: float, t_wall: float) -> float:
         if self._t_cam0 is None:
             self._t_cam0, self._t_wall0 = t_cam, t_wall
         self.lag = (t_wall - self._t_wall0) - (t_cam - self._t_cam0)
         self.peak = max(self.peak, self.lag)
+        self._over = self._over + 1 if self.lag >= self.WARN_S else 0
         return self.lag
 
     def warn_once(self) -> str | None:
-        """The message to print the first time the loop falls behind."""
-        if self.warned or self.lag < self.WARN_S:
+        """The message to print the first time the loop STAYS behind."""
+        if self.warned or self._over < self.SUSTAIN_FRAMES:
             return None
         self.warned = True
-        return (f"WARNING: {1000 * self.lag:.0f} ms behind the camera and "
-                f"growing. Frames are queueing in the blobtrack pipe, so the "
-                f"puck the policy sees is that old. Lower --cmd-hz or --fps.")
+        return (f"WARNING: {1000 * self.lag:.0f} ms behind the camera for "
+                f"{self._over} frames and not recovering. Frames are queueing "
+                f"in the blobtrack pipe, so the puck the policy sees is that "
+                f"old. Lower --cmd-hz or --fps.")
 
 
 # ── Safety clamp ────────────────────────────────────────────────────────
@@ -1465,7 +1474,17 @@ def _shutdown(client, args, prev):
             bx, by = geom.clamp_to_workspace(bx, by)
         except Exception:      # noqa: BLE001
             bx, by = prev if prev is not None else (geom.HOME_X, geom.HOME_Y)
-        client.command_position(bx, by, 0.0)   # 0 = leave the cap alone
+        try:
+            client.command_position(bx, by, 0.0)   # 0 = leave the cap alone
+        except RuntimeError as e:
+            if "fault" in str(e):
+                # The master already stopped the Teensy and dropped every
+                # drive; there is nothing left to brake.
+                print(f"\n{e}\n  The master has disabled all drives. "
+                      "Nothing is moving. Re-ENABLE after the drive cools.")
+                client.close()
+                return
+            raise
         time.sleep(BRAKE_SETTLE_S)
         where = f"({bx:.0f}, {by:.0f})"
 

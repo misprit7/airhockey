@@ -7,6 +7,9 @@
 #include <ctime>
 #include <string>
 #include <mutex>
+#include <atomic>
+#include <thread>
+#include <chrono>
 #include <unistd.h>
 #include <sys/socket.h>
 #include <netinet/in.h>
@@ -159,7 +162,61 @@ static bool parseStatus(const char *line, TeensyStatus &st) {
 
 // ── TCP command handling ────────────────────────────────────────────────
 
-static bool g_motors_enabled = false;
+static std::atomic<bool> g_motors_enabled{false};
+
+// ── Drive fault watchdog ────────────────────────────────────────────────
+//
+// WHY: one ClearPath overloaded mid-game and shut itself down; the other
+// three kept following their step pulses. On a cable robot that is the
+// worst case -- three cables pulling against a slack fourth drag the paddle
+// off the plane and the slack cable wraps. The Teensy cannot know: it
+// drives step/dir open-loop and has no feedback wire from the drives. The
+// only party that can see a drive quit is this process, over the SC-Hub.
+//
+// So a thread polls every drive's own enabled/alert bits at FAULT_POLL_MS.
+// The moment one is not enabled, it DISABLES ALL FOUR right there (that is
+// the urgent part: take the torque out of the three that are winning) and
+// tells the Teensy to STOP. The main loop then reports it, refuses every
+// motion command until the next ENABLE, and the client's next CMD comes
+// back "ERR fault", which is how run_policy learns to exit.
+//
+// sFoundation is documented thread-safe; the wrapper's calls are serialised
+// through g_robot_mutex anyway, so the watchdog never reads a drive in the
+// middle of ENABLE's own disable/clear/enable dance and mistakes it for a
+// fault (it only polls while g_motors_enabled, which ENABLE sets last).
+static const int FAULT_POLL_MS = 20;
+static std::mutex g_robot_mutex;
+static std::atomic<bool> g_fault{false};
+static std::atomic<int> g_fault_node{-1};
+static char g_fault_why[512] = "";
+static std::atomic<bool> g_fault_unreported{false};
+
+static void faultWatchdog(ClearPath *robot, int teensy_fd) {
+    char why[512];
+    while (!g_stop) {
+        std::this_thread::sleep_for(std::chrono::milliseconds(FAULT_POLL_MS));
+        if (!g_motors_enabled || g_fault) continue;
+        int bad;
+        {
+            std::lock_guard<std::mutex> lock(g_robot_mutex);
+            bad = robot->checkDrives(why, sizeof(why));
+            if (bad < 0) continue;
+            // Torque off everything NOW, before anything else.
+            robot->disable();
+        }
+        snprintf(g_fault_why, sizeof(g_fault_why), "%s", why);
+        g_fault_node = bad;
+        g_fault = true;
+        g_motors_enabled = false;
+        // Stop the step generator. A bare write: the main thread owns the
+        // reads on this fd, and the "OK STOP" it swallows is harmless.
+        const char stop[] = "STOP\n";
+        ssize_t ignored = write(teensy_fd, stop, sizeof(stop) - 1);
+        (void)ignored;
+        g_fault_unreported = true;
+    }
+}
+
 
 // Startup pretension in mm. 0 = leave the cables slack.
 // Override with --tension <mm>.
@@ -230,6 +287,13 @@ static int handleCommand(const char *line, ClearPath &robot, int client_fd, int 
 
     if (strncmp(line, "ENABLE", 6) == 0) {
         logf("  ENABLE\n");
+        if (g_fault) {
+            logf("  clearing fault on motor %d (%s)\n", g_fault_node.load(),
+                 g_fault_why);
+            g_fault = false;
+            g_fault_node = -1;
+        }
+        std::lock_guard<std::mutex> lock(g_robot_mutex);
 
         // 1. Enable sFoundation motors (torque on, no motion commands)
         if (!robot.enable()) {
@@ -334,14 +398,18 @@ static int handleCommand(const char *line, ClearPath &robot, int client_fd, int 
 
     } else if (strncmp(line, "DISABLE", 7) == 0) {
         logf("  DISABLE\n");
+        std::lock_guard<std::mutex> lock(g_robot_mutex);
 
         // 1. Stop Teensy motion controller
         sendTeensy(teensy_fd, "STOP\n");
         waitTeensyOK(teensy_fd);
 
-        // 2. Release tension
-        sendTeensy(teensy_fd, "RELEASE\n");
-        waitTeensyOK(teensy_fd, 10000);
+        // 2. Release tension -- unless a drive has faulted, in which case
+        // RELEASE would be three motors moving against a dead fourth.
+        if (!g_fault) {
+            sendTeensy(teensy_fd, "RELEASE\n");
+            waitTeensyOK(teensy_fd, 10000);
+        }
 
         // 3. Disable sFoundation motors
         robot.disable();
@@ -356,6 +424,13 @@ static int handleCommand(const char *line, ClearPath &robot, int client_fd, int 
         // changes. Dropping it here silently left the machine running at the
         // firmware's stepper-limited maximum instead of what the caller asked
         // for.
+        if (g_fault) {
+            snprintf(resp, sizeof(resp),
+                     "ERR fault: motor %d %s -- all drives disabled, "
+                     "re-ENABLE to clear\n", g_fault_node.load(), g_fault_why);
+            write(client_fd, resp, strlen(resp));
+            return 1;
+        }
         if (!g_motors_enabled) {
             snprintf(resp, sizeof(resp), "ERR motors not enabled\n");
             write(client_fd, resp, strlen(resp));
@@ -610,14 +685,27 @@ int main(int argc, char *argv[]) {
     char ser_buf[4096];
     int ser_len = 0;
 
+    std::thread watchdog(faultWatchdog, &robot, teensy_fd);
+
     double lastHealth = 0;
     while (!g_stop) {
-        // Watch the servos a few times a second while they run. Cheap, and
-        // it is the only feedback path that exists — the Teensy has none.
+        if (g_fault_unreported.exchange(false)) {
+            logf("\n!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!\n"
+                 "!!  DRIVE FAULT: motor %d %s\n"
+                 "!!  All four drives disabled and the Teensy stopped, so the\n"
+                 "!!  other three could not keep pulling. Re-ENABLE to clear;\n"
+                 "!!  an RMS overload will not clear until the drive has cooled.\n"
+                 "!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!\n\n",
+                 g_fault_node.load(), g_fault_why);
+        }
+        // Watch the servos a few times a second while they run: torque and
+        // the human-readable alert dump. The fast enabled/alert check is
+        // the watchdog thread's.
         if (g_motors_enabled) {
             double now = (double)time(NULL);
             if (now - lastHealth >= 1.0) {
                 lastHealth = now;
+                std::lock_guard<std::mutex> lock(g_robot_mutex);
                 robot.pollHealth();
             }
         }
@@ -736,8 +824,10 @@ int main(int argc, char *argv[]) {
 
     // ── Shutdown ──
     logf("\nShutting down...\n");
+    watchdog.join();
 
     if (g_motors_enabled) {
+        std::lock_guard<std::mutex> lock(g_robot_mutex);
         sendTeensy(teensy_fd, "STOP\n");
         usleep(50000);
         sendTeensy(teensy_fd, "RELEASE\n");
