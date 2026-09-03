@@ -188,6 +188,8 @@ class AirHockeyEnv(gym.Env):
         self._prev_agent_y = state.paddle_agent.y
         self._prev_opp_x = state.paddle_opponent.x
         self._prev_opp_y = state.paddle_opponent.y
+        self._last_action = np.zeros(2, dtype=np.float32)
+        self._last_opp_action = np.zeros(2, dtype=np.float32)
 
         self._obs_buffer.clear()
         obs = self._make_obs(state)
@@ -212,6 +214,7 @@ class AirHockeyEnv(gym.Env):
         # clip to [-1, 1] and rescale to real position bounds.
         action = np.nan_to_num(action, nan=0.0, posinf=1.0, neginf=-1.0)
         action = np.clip(action, -1.0, 1.0)
+        self._last_action = np.asarray(action[:2], dtype=np.float32)
         real_action = self._action_low + (action + 1.0) * 0.5 * (self._action_high - self._action_low)
         target_x, target_y = float(real_action[0]), float(real_action[1])
 
@@ -342,6 +345,7 @@ class AirHockeyEnv(gym.Env):
         dyn = self.opponent_dynamics if was_robot else self.agent_dynamics
         mirrored[13] = getattr(dyn, "max_speed", MAX_SPEED_M_S) / MAX_SPEED_M_S
         mirrored[14] = getattr(dyn, "max_accel", MAX_ACCEL_M_S2) / MAX_ACCEL_M_S2
+        mirrored[15:17] = self._last_opp_action if was_robot else self._last_action
         return mirrored
 
     def mirror_action_to_opponent(self, action: np.ndarray) -> tuple[float, float]:
@@ -416,7 +420,13 @@ class AirHockeyEnv(gym.Env):
             # through BatchAirHockeyEnv.mirror_obs.
             self.ROBOT_SIDE,
             *self._cap_features(),
+            *self._last_action,
         ], dtype=np.float32)
+
+    def note_opponent_action(self, action: np.ndarray) -> None:
+        """The far side's normalised action this step, for its mirrored
+        view's previous-action features. Scripted opponents never call it."""
+        self._last_opp_action = np.clip(np.asarray(action, dtype=np.float32)[:2], -1.0, 1.0)
 
     def _cap_features(self) -> tuple[float, float]:
         """Own speed/accel caps, as a ratio to the robot's nominal.

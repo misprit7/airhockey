@@ -791,7 +791,7 @@ TICK_COLUMNS = [
     # paddle (it read 2023 mm, past the rail, at 60 m/s^2).
     "ctl_mallet_x", "ctl_mallet_y", "cam_mallet_x", "cam_mallet_y",
     "opp_x", "opp_y",
-    *[f"obs{k}" for k in range(15)],
+    *[f"obs{k}" for k in range(17)],
     "raw_x", "raw_y", "raw_speed", "raw_accel",
     "cmd_x", "cmd_y", "cmd_speed", "cmd_accel", "flags",
     "limits_speed", "limits_accel",
@@ -1398,7 +1398,7 @@ def _tick_row(t, report: ReportBuilder, lag, watchdog, policy, asked: Action,
     }
     obs = getattr(policy, "last_obs", None)
     if obs is not None:
-        for k, v in enumerate(obs[:15]):
+        for k, v in enumerate(obs[:17]):
             row[f"obs{k}"] = float(v)
     return row
 

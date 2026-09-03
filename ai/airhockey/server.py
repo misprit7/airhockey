@@ -604,6 +604,7 @@ async def live_game(ws: WebSocket):
                         torch.from_numpy(env.mirror_obs(obs)).float(),
                         t0=opp_t0, eval_mode=True)
                 opp_t0 = False
+                env.note_opponent_action(oa.numpy().reshape(-1))
                 tx, ty = env.mirror_action_to_opponent(oa.numpy())
                 env.set_opponent_action(tx, ty)
 

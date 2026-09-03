@@ -409,7 +409,8 @@ def main():
     agent = TDMPC2(cfg)
     if args.resume is not None:
         print(f"[resume] loading weights from {args.resume}")
-        agent.load(args.resume)
+        from airhockey.policy_loader import load_checkpoint   # noqa: PLC0415
+        load_checkpoint(agent, args.resume)
     buffer = Buffer(cfg)
     logger = SimpleLogger(cfg)
 

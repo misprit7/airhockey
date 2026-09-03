@@ -48,6 +48,7 @@ from tdmpc2 import TDMPC2  # noqa: E402
 
 from airhockey.batch_env import BatchAirHockeyEnv, sensing_kwargs  # noqa: E402
 from airhockey.recorder import FrameData, Recorder  # noqa: E402
+from airhockey.policy_loader import load_checkpoint  # noqa: E402
 from airhockey.rewards import (BatchRewardShaper, STAGE_SCORING,  # noqa: E402
                                CURRICULUM, curriculum_shaper_kwargs)
 
@@ -202,9 +203,9 @@ def main():
 
     print(f"Loading agent from {args.resume}")
     agent = TDMPC2(cfg)
-    agent.load(args.resume)
+    load_checkpoint(agent, args.resume)
     opponent = TDMPC2(cfg)
-    opponent.load(args.resume)
+    load_checkpoint(opponent, args.resume)
     buffer = Buffer(cfg)
 
     print(f"\nSelf-Play TD-MPC2 Training (March recipe, new environment)")

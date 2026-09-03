@@ -73,7 +73,7 @@ def test_both_views_carry_the_robot_flag_and_constant_caps():
     np.testing.assert_allclose(obs[:, 13], 1.0)
     np.testing.assert_allclose(obs[:, 14], AGENT_DR_ACCEL_M_S2[1] / MAX_ACCEL_M_S2)
     own = e.opponent_obs()
-    np.testing.assert_allclose(own[:, 12:], obs[:, 12:])
+    np.testing.assert_allclose(own[:, 12:15], obs[:, 12:15])
 
 
 def _mirror_state(e, src, dst):

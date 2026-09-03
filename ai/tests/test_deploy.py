@@ -88,7 +88,9 @@ def test_encoder_matches_the_simulators_observation():
                 n_checked += 1
             assert got[12] == 1.0
             np.testing.assert_allclose(got[13:], obs[0, 13:])
-        obs = env.step(np.array([[0.2 * np.sin(k / 20.0), -0.5]]))[0]
+        a = np.array([[0.2 * np.sin(k / 20.0), -0.5]], dtype=np.float32)
+        obs = env.step(a)[0]
+        enc.last_action = a[0]              # what a policy would have set
         t += env.action_dt
     assert n_checked > 150
 

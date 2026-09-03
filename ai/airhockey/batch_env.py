@@ -99,7 +99,14 @@ class BatchAirHockeyEnv:
     # feature for them would be informative in sim and a fixed lie on the
     # table. The policy has to read the opponent off their motion, as it will
     # have to for real.
-    OBS_DIM = 15
+    #   [15] [16] PREVIOUS ACTION of the body being observed, normalised,
+    #        zero after a reset. Added 2026-09-03 for the smoothness term:
+    #        a reward on step-to-step action change is unlearnable from a
+    #        frame that does not carry the previous step. Older 15-wide
+    #        checkpoints are loaded with zero weight on these two inputs
+    #        (policy_loader.load_checkpoint), so they behave exactly as
+    #        before until training grows them.
+    OBS_DIM = 17
     ROBOT_SIDE = 1.0
     HUMAN_SIDE = 0.0
 
@@ -314,6 +321,7 @@ class BatchAirHockeyEnv:
             # human side's accel at the top of its DR band (1.125 x 80).
             OPPONENT_MAX_SPEED_M_S / MAX_SPEED_M_S,
             DR_ACCEL_RANGE[1] * OPPONENT_MAX_ACCEL_M_S2 / MAX_ACCEL_M_S2,
+            1.0, 1.0,                                     # previous action
         ], dtype=np.float32)
 
         # ── Sensing ─────────────────────────────────────────────────────
@@ -445,6 +453,8 @@ class BatchAirHockeyEnv:
         self._prev_own_opp_y = np.zeros(n_envs)
         self._prev_rival_x = np.zeros(n_envs)
         self._prev_rival_y = np.zeros(n_envs)
+        # The far side's previous normalised action, for its view.
+        self._prev_opp_action = np.zeros((n_envs, 2), dtype=np.float32)
 
         # Puck-stuck detection: reset if speed < threshold for N consecutive steps
         self._puck_slow_count = np.zeros(n_envs, dtype=np.int32)
@@ -684,6 +694,7 @@ class BatchAirHockeyEnv:
         self._prev_own_opp_y[idx] = self.engine.paddle_opp_y[idx]
         self._prev_rival_x[idx] = self.engine.paddle_agent_x[idx]
         self._prev_rival_y[idx] = self.engine.paddle_agent_y[idx]
+        self._prev_opp_action[idx] = 0.0
 
         # Pre-fill camera delay buffer for reset envs
         if self._max_delay > 0:
@@ -959,6 +970,13 @@ class BatchAirHockeyEnv:
         m[:, 9] = cfg.height - obs[:, 5]    # pad_y → opp_y (flipped)
         m[:, 10] = obs[:, 6]                # pad_vx → opp_vx
         m[:, 11] = -obs[:, 7]               # pad_vy → opp_vy (negated)
+        # The previous action follows the body too. Which body the incoming
+        # view is depends on the flag; with two robot bodies the flag cannot
+        # say, so the far side's is written -- that path is for scripted
+        # opponents that never look, and opponent_obs() is the real one.
+        was_robot = obs[:, 12] > (self.ROBOT_SIDE + self.HUMAN_SIDE) * 0.5
+        m[:, 15:17] = np.where(was_robot[:, None], self._prev_opp_action,
+                               self._prev_action[:, :2])
         if self.opponent_body == "robot":
             # Two copies of one body: the flag and the caps are the same on
             # both sides, and swapping them would be wrong, not symmetric.
@@ -1034,12 +1052,14 @@ class BatchAirHockeyEnv:
             np.full(self.n_envs, self.ROBOT_SIDE),
             self._opp_dyn["max_speed"] / MAX_SPEED_M_S,
             self._opp_dyn["max_accel"] / MAX_ACCEL_M_S2,
+            self._prev_opp_action[:, 0], self._prev_opp_action[:, 1],
         ]).astype(np.float32)
 
     def mirror_action_to_opponent(self, actions: np.ndarray) -> tuple[np.ndarray, np.ndarray]:
         """Convert [N, 2] normalized actions from opponent's mirrored perspective
         to real table coordinates in opponent's half."""
         actions = np.clip(actions, -1.0, 1.0)
+        self._prev_opp_action[:] = actions[:, :2]
         cfg = self.table_config
         r = cfg.paddle_radius
         x = r + (actions[:, 0] + 1.0) * 0.5 * (cfg.width - 2 * r)
@@ -1311,6 +1331,7 @@ class BatchAirHockeyEnv:
             np.full(self.n_envs, self.ROBOT_SIDE),
             self._agent_dyn["max_speed"] / MAX_SPEED_M_S,
             self._agent_dyn["max_accel"] / MAX_ACCEL_M_S2,
+            self._prev_action[:, 0], self._prev_action[:, 1],
         ]).astype(np.float32)
 
     def _get_delayed_obs(self, current_obs: np.ndarray) -> np.ndarray:

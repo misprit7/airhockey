@@ -195,7 +195,7 @@ goals conceded from 0.10 to 0.04 per game.
 
 ## Key Design Decisions
 - **Physics are general-purpose**: Support configurable camera delay, motor dynamics models, friction, restitution, etc. Goal is to closely match real-world behavior.
-- **Observation space**: Puck (pos + vel), own paddle (pos + vel), opponent paddle (pos + vel) — all in 2D. Camera delay is applied to observations to simulate real sensing latency.
+- **Observation space**: Puck (pos + vel), own paddle (pos + vel), opponent paddle (pos + vel) — all in 2D — then a side flag, two cap ratios (constants since the band was pinned), and the PREVIOUS ACTION (2026-09-03: needed for the smoothness term to be learnable from a frame). 17 dims. Older 15-wide checkpoints load with zero weight on the new inputs (`policy_loader.load_checkpoint`). Camera delay is applied to observations to simulate real sensing latency.
 - **Action space**: Target (x, y) position for the paddle. Motor dynamics model converts this to actual paddle movement.
 - **Web UI**: Real-time visualization over WebSocket for debugging. Binds to 0.0.0.0 for access over Tailscale. Not used during training. Defaults to replay mode showing most recent recording. Has instant/realistic physics toggle for manual play.
   - **Camera view** (`vision_service.py`) identifies three things and labels

@@ -56,7 +56,7 @@ PUCK_VELOCITY_WINDOW_S = 0.030
 # planner is told it is a fresh episode.
 RESYNC_GAP_S = 0.100
 
-OBS_DIM = 15
+OBS_DIM = 17
 
 
 def mm_velocity_to_sim(vx_mm_s: float, vy_mm_s: float,
@@ -98,6 +98,9 @@ class ReportEncoder:
         self._own_prev: tuple[float, float] | None = None
         self._opp_prev: tuple[float, float] | None = None
         self._puck_last: tuple[float, float] | None = None
+        # The previous action, as the env carries it: zero after a reset,
+        # then whatever the policy last emitted (the caller sets it).
+        self.last_action = np.zeros(2, dtype=np.float32)
 
     def _to_sim(self, x_mm: float, y_mm: float) -> tuple[float, float]:
         return table_mm_to_sim(x_mm, y_mm, self.width, self.half_h)
@@ -151,7 +154,8 @@ class ReportEncoder:
         return np.array([px, py, pvx, pvy,
                          ox, oy, ovx, ovy,
                          qx, qy, qvx, qvy,
-                         self.side, *self.cap_features], dtype=np.float32)
+                         self.side, *self.cap_features,
+                         *self.last_action], dtype=np.float32)
 
 
 class TDMPC2Policy:
@@ -235,6 +239,7 @@ class TDMPC2Policy:
         w = time.perf_counter()
         obs = self.encoder.encode(report)
         action = self.act(obs)
+        self.encoder.last_action = np.clip(action, -1.0, 1.0).astype(np.float32)
         x_mm, y_mm = self.target_mm(action)
         self.last_ms = 1000.0 * (time.perf_counter() - w)
         # Kept for the session log: a bad move is a bad observation or a

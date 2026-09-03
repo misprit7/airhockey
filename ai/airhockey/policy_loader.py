@@ -118,5 +118,32 @@ def load_agent(run_name: str, iterations: int | None = 3,
         cfg.iterations = iterations
 
     agent = TDMPC2(cfg)
-    agent.load(str(ckpt))
+    load_checkpoint(agent, ckpt)
     return agent
+
+
+def load_checkpoint(agent, path) -> None:
+    """agent.load(), accepting checkpoints trained on a NARROWER observation.
+
+    New observation features (the previous action, 2026-09-03) get zero
+    weight in the encoder's first layer, so the loaded policy computes
+    exactly what it did before until training grows those columns. The
+    layer norm sits on that layer's OUTPUT, so zero columns change nothing.
+    """
+    import torch                                        # noqa: PLC0415
+
+    sd = torch.load(str(path), map_location="cpu", weights_only=False)
+    sd = sd["model"] if "model" in sd else sd
+    key = "_encoder.state.0.weight"
+    if key in sd:
+        want = agent.model.state_dict()[key].shape[1]
+        have = sd[key].shape[1]
+        if have < want:
+            pad = torch.zeros(sd[key].shape[0], want - have, dtype=sd[key].dtype)
+            sd[key] = torch.cat([sd[key], pad], dim=1)
+            print(f"[load] observation widened {have} -> {want}: the new inputs "
+                  f"start at zero weight")
+        elif have > want:
+            raise ValueError(f"{path}: trained on {have}-wide observations, "
+                             f"this build has {want}")
+    agent.load({"model": sd})
