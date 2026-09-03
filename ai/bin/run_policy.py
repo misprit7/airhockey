@@ -1097,6 +1097,10 @@ def run(args) -> int:
     last_print = 0.0
     warned_disagree = False
     t_wall = time.time()
+    # Where the tick goes, so a loop that falls behind the camera says WHY:
+    # tracking per frame, the master round trips per tick, the policy per
+    # tick. Windowed per status line.
+    cost = {"track": 0.0, "io": 0.0, "policy": 0.0, "frames": 0, "ticks": 0}
     try:
         for _seq, t, blobs in stream:
             if _stop:
@@ -1107,6 +1111,7 @@ def run(args) -> int:
             if msg:
                 print(msg)
 
+            w0 = time.perf_counter()
             puck = tracker.update(t, blobs)
             # n_markers is 0 on a coasted frame. Only a real fix is history;
             # see ReportBuilder for why the coast must not be.
@@ -1119,10 +1124,13 @@ def run(args) -> int:
                 got = opp.update(blobs)
                 if got is not None:
                     report.add_opponent(t, got[0], got[1])
+            cost["track"] += time.perf_counter() - w0
+            cost["frames"] += 1
 
             if t < next_cmd:
                 continue
             next_cmd = t + period
+            cost["ticks"] += 1
 
             # The CONTROLLER's own position, preferred over the camera for
             # the report's `mallet`. Cheap enough to do every tick: the
@@ -1131,11 +1139,13 @@ def run(args) -> int:
             # unlike CMD and LIMITS this is a localhost round trip with no
             # serial in it at all.
             if client is not None:
+                w0 = time.perf_counter()
                 try:
                     px, py, _vx, _vy = client.get_position()
                     report.set_controller_mallet(t, px, py)
                 except Exception:      # noqa: BLE001
                     pass               # no status yet; the camera covers it
+                cost["io"] += time.perf_counter() - w0
                 d = report.mallet_disagreement(t)
                 if d is not None and d > MALLET_DISAGREE_WARN_MM \
                         and not warned_disagree:
@@ -1167,13 +1177,16 @@ def run(args) -> int:
                     last_print = t
                     _status(t, report, action, committer, flags, n_clamped,
                             report.n_frames / max(time.time() - t_wall, 1e-9),
-                            args.live, lag, watchdog)
+                            args.live, lag, watchdog, _cost_line(cost))
                 continue
 
+            w0 = time.perf_counter()
             action, flags = plan(policy, report, t, caps, prev)
+            cost["policy"] += time.perf_counter() - w0
             if flags:
                 n_clamped += 1
             prev = (action.x_mm, action.y_mm)
+            w0 = time.perf_counter()
             committer.maybe_commit(t, action.speed_mm_s, action.accel_mm_s2)
             if client is not None:
                 try:
@@ -1186,20 +1199,33 @@ def run(args) -> int:
                 except Exception as e:      # noqa: BLE001
                     print(f"command failed: {e}")
                     break
+            cost["io"] += time.perf_counter() - w0
 
             if t - last_print > 0.5:
                 last_print = t
                 _status(t, report, action, committer, flags, n_clamped,
                         report.n_frames / max(time.time() - t_wall, 1e-9),
-                        args.live, lag, watchdog)
+                        args.live, lag, watchdog, _cost_line(cost))
     finally:
         stream.close()
         _shutdown(client, args, prev)
     return 0
 
 
+def _cost_line(cost: dict) -> str:
+    """Per-frame tracking and per-tick I/O and policy cost over the window,
+    then reset the window. Against a 5 ms frame and a 10 ms tick."""
+    f, k = max(cost["frames"], 1), max(cost["ticks"], 1)
+    line = (f"track {1000 * cost['track'] / f:.2f}ms/frame  "
+            f"io {1000 * cost['io'] / k:.2f}  policy {1000 * cost['policy'] / k:.2f}ms/tick")
+    for key in ("track", "io", "policy"):
+        cost[key] = 0.0
+    cost["frames"] = cost["ticks"] = 0
+    return line
+
+
 def _status(t, report, action, committer, flags, n_clamped, rate, live, lag,
-            watchdog):
+            watchdog, cost_line: str = ""):
     st = report.staleness(t)
     # Through observation() rather than off the deque, so the operator is
     # shown exactly the history a policy would be given -- expired the same
@@ -1224,7 +1250,8 @@ def _status(t, report, action, committer, flags, n_clamped, rate, live, lag,
           f"  -> {target} @ {caps}"
           f"  {'' if live else 'WOULD SEND  '}"
           f"clamped {n_clamped}"
-          + (f"  [{','.join(flags)}]" if flags else ""))
+          + (f"  [{','.join(flags)}]" if flags else "")
+          + (f"  | {cost_line}" if cost_line else ""))
 
 
 # A stop from the 8000 mm/s cap at the 24000 mm/s^2 one takes v/a = 0.33 s,

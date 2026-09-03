@@ -194,6 +194,11 @@ class TDMPC2Policy:
         if device is None:
             device = "cuda" if (self.plan and torch.cuda.is_available()) else "cpu"
         self.device = torch.device(device)
+        if self.device.type == "cpu":
+            # A 15-in MLP does not want 16 intra-op threads: the pool's
+            # wake-ups cost more than the matmuls, and in the 100 Hz loop
+            # they contend with the tracker for the same cores.
+            torch.set_num_threads(1)
         self.agent.model.to(self.device)
         self.agent.device = self.device
         for k in ("_prev_mean", "_prev_mean_batch"):
