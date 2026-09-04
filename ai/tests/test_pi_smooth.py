@@ -47,12 +47,14 @@ def test_pi_smooth_pulls_the_prior_toward_the_previous_action():
     reset_prior(agent)
 
     def dist():
-        # Measured in the pre-squash space, where the regulariser acts; the
-        # squashed prior is saturated on these checkpoints and would not
-        # show a small move.
         with torch.no_grad():
             _, info = agent.model.pi(zs, None)
-        return float(((info["mean_raw"] - torch.atanh(prev.clamp(-0.95, 0.95))) ** 2).sum(-1).mean())
+        return float(((info["mean"] - prev) ** 2).sum(-1).mean())
+
+    def raw_mag():
+        with torch.no_grad():
+            _, info = agent.model.pi(zs, None)
+        return float(info["mean_raw"].abs().max())
 
     before = dist()
     agent.model.train()
@@ -62,6 +64,7 @@ def test_pi_smooth_pulls_the_prior_toward_the_previous_action():
     assert "pi_smooth" in info.keys()
     after = dist()
     assert after < 0.9 * before, f"prior did not move toward the previous action: {before:.3f} -> {after:.3f}"
+    assert raw_mag() < 3.0, "the anti-saturation hinge should keep the pre-squash mean bounded"
 
 
 @pytest.mark.skipif(_latest() is None, reason="no checkpoint under runs/")

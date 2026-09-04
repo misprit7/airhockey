@@ -247,6 +247,7 @@ def main():
 
     step = 0
     updating = False
+    train_info = None
     start = time()
     last_record = 0
     last_opp_update = 0
@@ -317,7 +318,12 @@ def main():
                 updating = True
                 print(f"[Step {step:,}] first games in the buffer -- updates begin")
             for _ in range(args.updates_per_iter):
-                agent.update(buffer)
+                train_info = agent.update(buffer)
+            if step % 10000 < n_envs and train_info is not None:
+                for k in ("pi_loss", "pi_smooth", "pi_scale", "pi_entropy",
+                          "value_loss", "reward_loss", "consistency_loss", "total_loss"):
+                    if k in train_info.keys():
+                        writer.add_scalar(f"loss/{k}", float(train_info[k]), step)
 
         step += n_envs
 
