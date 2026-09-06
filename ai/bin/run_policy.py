@@ -308,15 +308,29 @@ class ReportBuilder:
 
     def _own_mallet(self, t: float, stale_s: float,
                     fallback: tuple[float, float] | None):
-        """Controller, then camera, then the last command, then HOME.
+        """Controller, then camera, then the last command, then HOME --
+        EXCEPT that the camera wins when both are fresh and they disagree.
+
+        The controller's position is step counts through the cable model:
+        exact while the drives follow the step stream, and fiction once they
+        do not. On 2026-09-05 at 24000 mm/s^2 it sat 250-500 mm from the
+        camera after fast moves, the drives having fallen behind, and the
+        policy planned from that fiction. Above MALLET_DISAGREE_WARN_MM the
+        measurement is the truth and the belief is the error.
 
         Never None: heuristics.TrackerReport looks this up with
         obj["mallet"] and would raise on one.
         """
-        if (self.controller_mallet is not None
-                and t - self.t_controller <= stale_s):
+        ctl_fresh = (self.controller_mallet is not None
+                     and t - self.t_controller <= stale_s)
+        cam_fresh = self.mallet is not None and t - self.t_mallet <= stale_s
+        if ctl_fresh and cam_fresh:
+            gap = math.hypot(self.mallet[0] - self.controller_mallet[0],
+                             self.mallet[1] - self.controller_mallet[1])
+            return self.mallet if gap > MALLET_DISAGREE_WARN_MM else self.controller_mallet
+        if ctl_fresh:
             return self.controller_mallet
-        if self.mallet is not None and t - self.t_mallet <= stale_s:
+        if cam_fresh:
             return self.mallet
         return fallback or (geom.HOME_X, geom.HOME_Y)
 
@@ -474,6 +488,68 @@ def clamp_action(action: Action, caps: Caps,
         flags.append("accel")
 
     return Action(cx, cy, cv, ca), flags
+
+
+# ── Following-error governor ────────────────────────────────────────────
+
+
+class FollowGovernor:
+    """Lower the cap ceilings when the paddle stops following the steps.
+
+    The one measurement the rig has of whether the drives keep up is the
+    gap between the camera's paddle and the controller's: near zero while
+    they follow, tens to hundreds of millimetres when they do not. On
+    2026-09-05 the gap was under 20 mm below 2 m/s, 40-80 mm at 3-5 m/s,
+    and motor 2 hit an RMS overload. A fixed cap is a guess about the
+    machine; this closes the loop on it. When the gap exceeds `tol_mm`
+    while the paddle is moving, both ceilings drop by `cut` (never below
+    the floors); after `recover_s` of small gaps they creep back up by
+    `grow` toward the ceilings the operator set.
+    """
+
+    def __init__(self, caps: "Caps", tol_mm: float = 40.0, cut: float = 0.75,
+                 grow: float = 1.1, recover_s: float = 5.0,
+                 floor_speed: float = 1000.0, floor_accel: float = 4000.0):
+        self.ceiling = caps
+        self.speed = caps.speed_max
+        self.accel = caps.accel_max
+        self.tol_mm = tol_mm
+        self.cut, self.grow, self.recover_s = cut, grow, recover_s
+        self.floor_speed, self.floor_accel = floor_speed, floor_accel
+        self._t_last_bad = float("-inf")
+        self._t_last_change = float("-inf")
+        self.n_cuts = 0
+        self.n_raises = 0
+
+    def update(self, t: float, gap_mm: float | None, moving: bool) -> str | None:
+        """Returns a message when a ceiling changes."""
+        if gap_mm is not None and gap_mm > self.tol_mm and moving:
+            self._t_last_bad = t
+            if t - self._t_last_change > 0.25:          # one cut per stall
+                ns = max(self.floor_speed, self.speed * self.cut)
+                na = max(self.floor_accel, self.accel * self.cut)
+                if (ns, na) != (self.speed, self.accel):
+                    self.speed, self.accel = ns, na
+                    self._t_last_change = t
+                    self.n_cuts += 1
+                    return (f"paddle {gap_mm:.0f} mm behind the controller -- "
+                            f"caps cut to {ns:.0f} mm/s, {na:.0f} mm/s^2")
+            return None
+        if (t - self._t_last_bad > self.recover_s
+                and t - self._t_last_change > self.recover_s
+                and (self.speed < self.ceiling.speed_max
+                     or self.accel < self.ceiling.accel_max)):
+            self.speed = min(self.ceiling.speed_max, self.speed * self.grow)
+            self.accel = min(self.ceiling.accel_max, self.accel * self.grow)
+            self._t_last_change = t
+            self.n_raises += 1
+            return f"caps back up to {self.speed:.0f} mm/s, {self.accel:.0f} mm/s^2"
+        return None
+
+    def clamp(self, action: "Action") -> "Action":
+        return Action(action.x_mm, action.y_mm,
+                      min(action.speed_mm_s, self.speed),
+                      min(action.accel_mm_s2, self.accel))
 
 
 # ── Cap commitment ──────────────────────────────────────────────────────
@@ -1221,6 +1297,8 @@ def run(args) -> int:
     committer = CapCommitter(client, min_interval_s=args.limits_interval)
     lag = LagMonitor()
     watchdog = PuckWatchdog(args.puck_timeout)
+    governor = (None if getattr(args, "no_governor", False)
+                else FollowGovernor(caps, tol_mm=getattr(args, "follow_tol", 40.0)))
 
     stream = BlobStream(fps=args.fps, exposure=args.exposure, gain=args.gain,
                         threshold=args.threshold)
@@ -1326,6 +1404,14 @@ def run(args) -> int:
             cost["policy"] += tick_policy
             if flags:
                 n_clamped += 1
+            if governor is not None:
+                gap = report.mallet_disagreement(t)
+                moving = prev is not None and math.hypot(
+                    action.x_mm - prev[0], action.y_mm - prev[1]) > 5.0
+                msg = governor.update(t, gap, moving)
+                if msg:
+                    print(("" if args.live else "[DRY RUN] ") + msg)
+                action = governor.clamp(action)
             prev = (action.x_mm, action.y_mm)
             w0 = time.perf_counter()
             committer.maybe_commit(t, action.speed_mm_s, action.accel_mm_s2)
@@ -1596,6 +1682,11 @@ def main() -> int:
                          "lengthen the stop, not shorten it.")
     ap.add_argument("--no-enable", action="store_true",
                     help="assume the drives are already energized")
+    ap.add_argument("--follow-tol", type=float, default=40.0,
+                    help="camera-vs-controller paddle gap, mm, above which the "
+                         "governor cuts the caps (see FollowGovernor)")
+    ap.add_argument("--no-governor", action="store_true",
+                    help="keep the caps fixed whatever the paddle does")
     ap.add_argument("--log-dir", default=str(ROOT / "logs" / "run_policy"),
                     help="session logs go here (a .log of everything printed "
                          "and a .ticks.csv of what the policy saw and did, "

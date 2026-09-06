@@ -205,3 +205,23 @@ def test_runner_drives_a_checkpoint_through_its_own_clamp():
             prev = (action.x_mm, action.y_mm)
         n += 1
     assert policy.last_ms < 5.0
+
+
+def test_a_scored_puck_reads_as_the_sims_post_goal_state():
+    """A fix inside a goal mouth is out of play: the encoder reports a puck
+    at the centre at rest, as the sim does after a goal, rather than a puck
+    at the rail for the policy to chase."""
+    from airhockey.deploy import puck_out_of_play
+    enc = ReportEncoder()
+    centre_y = 0.5 * (geom.RAIL_MIN_Y + geom.RAIL_MAX_Y)
+    assert puck_out_of_play(2023.0, centre_y)                       # in the robot's goal
+    assert puck_out_of_play(geom.RAIL_MIN_X - 6.0, centre_y)        # in the far goal
+    assert not puck_out_of_play(1900.0, centre_y)                   # in front of it
+    assert not puck_out_of_play(2005.0, centre_y)                   # on the line, still play
+    assert not puck_out_of_play(2010.0, centre_y + 400.0)           # end rail, not the mouth
+    o = enc.encode({"puck": [(2023.0, centre_y, 1.0)], "mallet": (geom.HOME_X, geom.HOME_Y),
+                    "opponent": None, "t_s": 1.0})
+    np.testing.assert_allclose(o[:4], [enc.width / 2.0, enc.half_h, 0.0, 0.0])
+    # And it does not become the "last seen" fix that a dropout would hold.
+    o = enc.encode({"puck": [], "mallet": (geom.HOME_X, geom.HOME_Y), "opponent": None, "t_s": 1.01})
+    np.testing.assert_allclose(o[:2], [enc.width / 2.0, enc.half_h])

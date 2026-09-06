@@ -56,6 +56,22 @@ PUCK_VELOCITY_WINDOW_S = 0.030
 # planner is told it is a fresh episode.
 RESYNC_GAP_S = 0.100
 
+# Out of play: a fix inside either goal mouth. The sim never shows the
+# policy a puck sitting in a goal -- a goal resets it to the centre at once
+# -- and on the table the policy chased a scored puck along the rail at full
+# caps until a drive overloaded (2026-09-05). Such a fix is reported as the
+# sim's post-goal state instead: a puck at the centre, at rest.
+GOAL_MOUTH_MARGIN_MM = 30.0     # sideways slack on the mouth
+GOAL_LINE_TOL_MM = 5.0          # the sim scores when the CENTRE crosses the line
+
+
+def puck_out_of_play(x_mm: float, y_mm: float) -> bool:
+    beyond_end = (x_mm > geom.RAIL_MAX_X - GOAL_LINE_TOL_MM
+                  or x_mm < geom.RAIL_MIN_X + GOAL_LINE_TOL_MM)
+    centre_y = 0.5 * (geom.RAIL_MIN_Y + geom.RAIL_MAX_Y)
+    in_mouth = abs(y_mm - centre_y) < 0.5 * geom.GOAL_WIDTH_MM + GOAL_MOUTH_MARGIN_MM
+    return beyond_end and in_mouth
+
 OBS_DIM = 17
 
 
@@ -118,6 +134,9 @@ class ReportEncoder:
 
         # Puck: the tracker's fix and the same 30 ms slope the sim models.
         est = estimate_velocity(rep.puck, window_s=PUCK_VELOCITY_WINDOW_S)
+        if est is not None and puck_out_of_play(est.x_mm, est.y_mm):
+            est = None
+            self._puck_last = None          # a scored puck is not "last seen"
         if est is not None:
             px, py = self._to_sim(est.x_mm, est.y_mm)
             pvx, pvy = mm_velocity_to_sim(est.vx_mm_s, est.vy_mm_s,
@@ -172,7 +191,7 @@ class TDMPC2Policy:
 
     def __init__(self, run: str, speed_mm_s: float, accel_mm_s2: float,
                  plan_iterations: int = 0, device: str | None = None,
-                 ckpt: str | Path | None = None):
+                 ckpt: str | Path | None = None, plan_smooth: float | None = None):
         import torch                                        # noqa: PLC0415
 
         from airhockey.batch_env import BatchAirHockeyEnv   # noqa: PLC0415
@@ -190,8 +209,9 @@ class TDMPC2Policy:
         self.width, self.half_h = env.table_config.width, env.table_config.height / 2.0
 
         self.ckpt = Path(ckpt) if ckpt is not None else resolve_checkpoint(run)
+        kw = {} if plan_smooth is None else {"plan_smooth": plan_smooth}
         self.agent = load_agent(run, iterations=max(1, plan_iterations),
-                                ckpt=self.ckpt)
+                                ckpt=self.ckpt, **kw)
         self.plan = plan_iterations > 0
         if not self.plan:
             self.agent.cfg.mpc = False

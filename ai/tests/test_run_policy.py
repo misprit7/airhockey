@@ -840,3 +840,50 @@ def test_a_single_stall_does_not_trip_the_lag_warning():
         m.update(k * 0.005, k * 0.005 + max(0.0, 0.032 - (k - 100) * 0.008))
     assert m.warn_once() is None, "a stall that recovered must not warn"
     assert m.peak == pytest.approx(0.032)
+
+
+# ── The camera wins over a controller that has lost the paddle ──────────
+
+def test_camera_wins_over_a_disagreeing_controller():
+    """The controller's position is step counts through the cable model:
+    truth while the drives follow, fiction once they fall behind (250-500 mm
+    on 2026-09-05). Past the disagreement threshold the measurement is the
+    mallet."""
+    r = rp.ReportBuilder()
+    r.add_mallet(1.0, 1500.0, 500.0)
+    r.set_controller_mallet(1.0, 1510.0, 505.0)           # 11 mm: controller
+    assert r.observation(1.0)[rp.OBS_MALLET] == (1510.0, 505.0)
+    r.set_controller_mallet(1.0, 1700.0, 505.0)           # 200 mm: camera
+    assert r.observation(1.0)[rp.OBS_MALLET] == (1500.0, 500.0)
+
+
+# ── Following-error governor ─────────────────────────────────────────────
+
+def test_governor_cuts_caps_when_the_paddle_falls_behind_and_restores_them():
+    caps = rp.Caps(speed_max=8000.0, accel_max=24000.0)
+    g = rp.FollowGovernor(caps, tol_mm=40.0, recover_s=1.0)
+    assert g.update(0.0, 10.0, True) is None
+    msg = g.update(0.1, 120.0, True)
+    assert msg and "cut" in msg
+    assert g.speed == pytest.approx(6000.0) and g.accel == pytest.approx(18000.0)
+    # Another cut needs a fresh stall, not the same one on the next tick.
+    assert g.update(0.11, 120.0, True) is None
+    assert g.update(0.5, 120.0, True) is not None
+    # A big gap while NOT moving is the aftermath, not a new stall.
+    assert g.update(0.9, 300.0, False) is None
+    # Quiet for recover_s: caps creep back, never past the ceiling.
+    assert g.update(1.0, 5.0, True) is None
+    msg = g.update(2.1, 5.0, True)
+    assert msg and "back up" in msg
+    for k in range(20):
+        g.update(2.2 + 1.1 * k, 5.0, True)
+    assert g.speed == pytest.approx(caps.speed_max) and g.accel == pytest.approx(caps.accel_max)
+    a = g.clamp(rp.Action(1500.0, 500.0, 12000.0, 60000.0))
+    assert a.speed_mm_s == caps.speed_max and a.accel_mm_s2 == caps.accel_max
+
+
+def test_governor_never_goes_below_its_floors():
+    g = rp.FollowGovernor(rp.Caps(speed_max=8000.0, accel_max=24000.0))
+    for k in range(40):
+        g.update(0.3 * k, 500.0, True)
+    assert g.speed == pytest.approx(g.floor_speed) and g.accel == pytest.approx(g.floor_accel)
