@@ -349,3 +349,27 @@ tdmpc2:run2_selfplay --plan 3 --shot-type mix` after restarting the master
 (rebuilt 12:11 for the per-command ACCEL). Watch the status line for
 `shed` and `badfix`, and the tick log's cmd_accel column for how the
 accel command is being used.
+
+
+# Run 3 (started 18:21, self-play only, from run 2's final checkpoint)
+
+Two changes on the user's read of run 2 ("still doesn't control the puck;
+the accel tax should cut more than half"):
+
+- **Patience floor 0.2, and it now scales the GOAL a shot produces.** Run 2
+  scaled only the ~10-point hit rewards and left the 100-point goal whole,
+  so an instant slap that scored still paid full price and the policy
+  learned to shoot sooner. The patience of the agent's last hit in a
+  possession now multiplies the goal it leads to: 20 from an instant
+  slap, 100 after 1.5 s of control; the discounted patient route pays
+  4-6x the instant one at any plausible goal probability. Logged as
+  `shots/goal_patience_sum` over `shots/goals`.
+- **Accel cost 0.04 per step** (0.02 in the pretrain stages; run 2's 0.02
+  settled the mean fraction at 0.52).
+
+`train_selfplay.py --resume runs/run2_selfplay/agent.pt --steps 1500000
+--run-name run3_selfplay`, log `logs/run3.log`, ~1.5 h. The value
+function was trained under the old scale and re-adapts; the first 200k
+steps are not representative. Watch `shots/patience_sum / shots/on_target`
+climbing above 0.7, `shots/traps` above zero, and the mean accel fraction
+below 0.4.
