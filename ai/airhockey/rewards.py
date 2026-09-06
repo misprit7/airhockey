@@ -1025,36 +1025,41 @@ CURRICULUM: dict[str, dict] = {
     # shot-type request (shot_type_reward on a match) and the opponent mix.
     "contact": dict(
         opponent="idle", episode_s=10.0, steps=150_000,
-        proximity_weight=0.02, contact_reward=5.0, directed_hit_weight=0.5,
+        proximity_weight=0.02, contact_reward=5.0, directed_hit_weight=0.25,
         puck_progress_weight=0.0, defense_weight=0.0, shot_placement_weight=0.0,
         goal_reward=0.0, goal_penalty=0.0, entropy_weight=0.0, shot_mix_weight=0.0,
-        on_target_reward=10.0, shot_speed_weight=1.0),
+        on_target_reward=15.0, shot_speed_weight=1.0),
     # Run 2 (2026-09-06): the accel the action asks for is taxed from the
     # scoring stage on, and the hit rewards ramp with how long the puck has
     # been on the robot's side (patience_s, floor 0.5) -- run 1 never
     # stopped the puck and drove the paddle 33 m in 20 s on the table.
     "scoring": dict(
         opponent="idle", episode_s=20.0, steps=250_000, fuzz_p=0.2,
-        proximity_weight=0.0, contact_reward=2.0, directed_hit_weight=0.5,
-        puck_progress_weight=0.5, defense_weight=0.5, shot_placement_weight=1.0,
-        goal_reward=100.0, goal_penalty=-20.0, entropy_weight=0.0, shot_mix_weight=0.5,
-        on_target_reward=10.0, shot_speed_weight=1.0,
+        proximity_weight=0.0, contact_reward=2.0, directed_hit_weight=0.25,
+        puck_progress_weight=0.5, defense_weight=0.5, shot_placement_weight=0.5,
+        goal_reward=100.0, goal_penalty=-20.0, entropy_weight=0.0, shot_mix_weight=0.0,
+        on_target_reward=15.0, shot_speed_weight=1.0,
         trap_reward=2.0, controlled_shot_bonus=1.5,
         accel_cost_weight=0.02, patience_s=1.5, patience_floor=0.2, patience_on_goals=True),
     "goalie": dict(
         opponent="goalie", episode_s=20.0, steps=250_000, fuzz_p=0.2,
-        proximity_weight=0.0, contact_reward=2.0, directed_hit_weight=0.5,
-        puck_progress_weight=0.5, defense_weight=0.5, shot_placement_weight=1.0,
-        goal_reward=100.0, goal_penalty=-20.0, entropy_weight=0.0, shot_mix_weight=0.5,
-        on_target_reward=10.0, shot_speed_weight=1.0,
+        proximity_weight=0.0, contact_reward=2.0, directed_hit_weight=0.25,
+        puck_progress_weight=0.5, defense_weight=0.5, shot_placement_weight=0.5,
+        goal_reward=100.0, goal_penalty=-20.0, entropy_weight=0.0, shot_mix_weight=0.0,
+        on_target_reward=15.0, shot_speed_weight=1.0,
         trap_reward=2.0, controlled_shot_bonus=1.5,
         accel_cost_weight=0.02, patience_s=1.5, patience_floor=0.2, patience_on_goals=True),
+    # Run 3 also stops paying for OFF-TARGET shots in self-play: contact,
+    # directed hit, shot placement (credit for a near miss) and the bank/
+    # straight mix are gone, puck progress is a tenth, and the on-target
+    # reward is 15 (+1/m/s). A miss now earns nothing beyond the accel it
+    # cost; an on-target shot ~20. Runs 1-2 landed 35-45% of shots.
     "selfplay": dict(
         opponent="external", episode_s=30.0, steps=3_000_000, fuzz_p=0.2,
-        proximity_weight=0.0, contact_reward=2.0, directed_hit_weight=0.5,
-        puck_progress_weight=0.5, defense_weight=1.0, shot_placement_weight=1.0,
-        goal_reward=100.0, goal_penalty=-50.0, entropy_weight=0.0, shot_mix_weight=0.5,
-        on_target_reward=10.0, shot_speed_weight=1.0,
+        proximity_weight=0.0, contact_reward=0.0, directed_hit_weight=0.0,
+        puck_progress_weight=0.1, defense_weight=1.0, shot_placement_weight=0.0,
+        goal_reward=100.0, goal_penalty=-50.0, entropy_weight=0.0, shot_mix_weight=0.0,
+        on_target_reward=15.0, shot_speed_weight=1.0,
         trap_reward=2.0, controlled_shot_bonus=1.5,
         # Run 3: full accel for a whole 30 s episode costs 60 (run 2's 0.02
         # settled the mean fraction at 0.52; the user wants it lower), and
