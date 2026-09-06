@@ -681,10 +681,17 @@ function setMode(next) {
         "hidden", next !== "sim");
     if (next === "sim") refreshAgentList();
 
+    // The hardware limits mean nothing while watching a recording, and on a
+    // phone they pushed the recording list below the fold: switching to
+    // Replay appeared to do nothing.
+    document.getElementById("limits-panel").classList.toggle(
+        "hidden", next === "replay");
+
     const replayPanel = document.getElementById("replay-panel");
     if (mode === "replay") {
         replayPanel.classList.remove("hidden");
         loadRecordingsList();
+        if (isPhone()) replayPanel.scrollIntoView({ block: "start" });
         // Auto-refresh recording list every 5 seconds
         if (recordingsRefreshTimer) clearInterval(recordingsRefreshTimer);
         recordingsRefreshTimer = setInterval(loadRecordingsList, 5000);
@@ -799,7 +806,14 @@ async function loadRecordingsList() {
     }
 }
 
+function isPhone() {
+    return window.matchMedia("(max-width: 700px)").matches;
+}
+
 async function loadRecording(path, li) {
+    // On a phone the sidebar covers two thirds of the screen; a tapped
+    // recording is there to be watched, so the sidebar gets out of the way.
+    if (isPhone()) closeSidebar();
     try {
         const resp = await fetch(`/api/recordings/${path}`);
         const data = await resp.json();

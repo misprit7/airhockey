@@ -523,6 +523,15 @@ canvas {
         right: 0;
     }
 
+    /* Nothing in a 260 px slide-over may widen it: the hardware limit rows
+       (name, field, unit, ÷2, ×2) ran 284 px and gave the whole sidebar a
+       horizontal scroll. The scale buttons wrap to a second line instead,
+       and the panel clips whatever else tries. */
+    #sidebar { overflow-x: hidden; }
+    .limit-row { flex-wrap: wrap; }
+    .limit-row .lim-name { width: 44px; }
+    .limit-row .lim-unit { min-width: 40px; }
+
     .hidden-mobile:not(.open) {
         /* still in DOM but off-screen via positioning above */
     }
