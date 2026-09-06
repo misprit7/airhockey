@@ -441,6 +441,12 @@ class BatchRewardShaper:
         accel_cost_weight: float = 0.0,
         patience_s: float = 0.0,
         patience_floor: float = 1.0,
+        # Run 3: the GOAL a shot produces is scaled by the patience of the
+        # hit that produced it. Run 2 scaled only the hit rewards (~10) and
+        # left the goal (100) whole, so an instant slap that scored still
+        # paid full price and the policy learned to shoot sooner, not
+        # later (patience multiplier 0.76 -> 0.62 over the run).
+        patience_on_goals: bool = False,
         config=None,
     ):
         self.n_envs = n_envs
@@ -448,6 +454,10 @@ class BatchRewardShaper:
         self.accel_cost_weight = accel_cost_weight
         self.patience_s = patience_s
         self.patience_floor = patience_floor
+        self.patience_on_goals = patience_on_goals
+        # The patience multiplier at the agent's last hit of the current
+        # possession; 1.0 when it has not hit (a relaunch, an own goal).
+        self._last_hit_patience = np.ones(n_envs)
         from airhockey.physics import TableConfig    # noqa: PLC0415
         cfg = config or TableConfig()
         self._cfg = cfg
@@ -467,7 +477,8 @@ class BatchRewardShaper:
         # Counters for the trainer's logs: traps, on-target shots and
         # type matches since the last read.
         self.stats = {"traps": 0, "on_target": 0, "type_matched": 0, "shots": 0,
-                      "patience_sum": 0.0, "accel_frac_sum": 0.0, "steps": 0}
+                      "patience_sum": 0.0, "accel_frac_sum": 0.0, "steps": 0,
+                      "goal_patience_sum": 0.0, "goals": 0}
         # The reachable box (env._ws), for the proximity term. Measured
         # distance to the puck is dominated by where the PUCK is: it spends
         # most of a game outside the robot's box, and a policy that drives
@@ -560,6 +571,7 @@ class BatchRewardShaper:
         self._trapped[idx] = False
         self._shot_paid[idx] = False
         self._visit_max_speed[idx] = 0.0
+        self._last_hit_patience[idx] = 1.0
         # Read puck velocity from info (truth) or obs (indices 2-3)
         puck_vx = obs[idx, 2]
         puck_vy = obs[idx, 3]
@@ -625,6 +637,10 @@ class BatchRewardShaper:
         speed_change = puck_speed - self._prev_puck_speed
         hit = (dist < 0.25) & (speed_change > 0.2) & (puck_vy > 0)  # forward hits only
 
+        # Remember how patient each hit was, for the goal it may produce.
+        if np.any(hit):
+            self._last_hit_patience = np.where(hit, patience, self._last_hit_patience)
+
         # Track contacts and enforce per-episode cap
         self._contact_count += hit.astype(np.int32)
         contact_ok = self._contact_count <= self.max_contacts_per_episode
@@ -673,6 +689,7 @@ class BatchRewardShaper:
             self._trapped[entered] = False
             self._shot_paid[entered] = False
             self._visit_max_speed[entered] = 0.0
+            self._last_hit_patience[entered] = 1.0
         self._in_half[:] = in_half
         self._visit_max_speed = np.where(in_half, np.maximum(self._visit_max_speed, puck_speed),
                                          self._visit_max_speed)
@@ -743,7 +760,11 @@ class BatchRewardShaper:
             goal_for = raw_rewards > 0
             goal_against = raw_rewards < 0
         if self.goal_reward > 0:
-            shaped += np.where(goal_for, self.goal_reward, 0.0)
+            goal_scale = self._last_hit_patience if self.patience_on_goals else 1.0
+            shaped += np.where(goal_for, self.goal_reward * goal_scale, 0.0)
+            if self.patience_on_goals and np.any(goal_for):
+                self.stats["goal_patience_sum"] += float(self._last_hit_patience[goal_for].sum())
+                self.stats["goals"] += int(goal_for.sum())
         if self.goal_penalty != 0:
             ramped_penalty = self.goal_penalty * self._penalty_ramp
             shaped += np.where(goal_against, ramped_penalty, 0.0)
@@ -796,6 +817,7 @@ class BatchRewardShaper:
             self._trapped[goal_mask] = False
             self._shot_paid[goal_mask] = False
             self._visit_max_speed[goal_mask] = 0.0
+            self._last_hit_patience[goal_mask] = 1.0
 
         return shaped.astype(np.float32)
 
@@ -1018,7 +1040,7 @@ CURRICULUM: dict[str, dict] = {
         goal_reward=100.0, goal_penalty=-20.0, entropy_weight=0.0, shot_mix_weight=0.5,
         on_target_reward=10.0, shot_speed_weight=1.0,
         trap_reward=2.0, controlled_shot_bonus=1.5,
-        accel_cost_weight=0.01, patience_s=1.5, patience_floor=0.5),
+        accel_cost_weight=0.02, patience_s=1.5, patience_floor=0.2, patience_on_goals=True),
     "goalie": dict(
         opponent="goalie", episode_s=20.0, steps=250_000, fuzz_p=0.2,
         proximity_weight=0.0, contact_reward=2.0, directed_hit_weight=0.5,
@@ -1026,7 +1048,7 @@ CURRICULUM: dict[str, dict] = {
         goal_reward=100.0, goal_penalty=-20.0, entropy_weight=0.0, shot_mix_weight=0.5,
         on_target_reward=10.0, shot_speed_weight=1.0,
         trap_reward=2.0, controlled_shot_bonus=1.5,
-        accel_cost_weight=0.01, patience_s=1.5, patience_floor=0.5),
+        accel_cost_weight=0.02, patience_s=1.5, patience_floor=0.2, patience_on_goals=True),
     "selfplay": dict(
         opponent="external", episode_s=30.0, steps=3_000_000, fuzz_p=0.2,
         proximity_weight=0.0, contact_reward=2.0, directed_hit_weight=0.5,
@@ -1034,9 +1056,11 @@ CURRICULUM: dict[str, dict] = {
         goal_reward=100.0, goal_penalty=-50.0, entropy_weight=0.0, shot_mix_weight=0.5,
         on_target_reward=10.0, shot_speed_weight=1.0,
         trap_reward=2.0, controlled_shot_bonus=1.5,
-        # Full accel for a whole 30 s episode costs 30 -- a goal is 100 and
-        # a controlled on-target shot ~20 -- so it is spent, not defaulted.
-        accel_cost_weight=0.02, patience_s=1.5, patience_floor=0.5,
+        # Run 3: full accel for a whole 30 s episode costs 60 (run 2's 0.02
+        # settled the mean fraction at 0.52; the user wants it lower), and
+        # patience floors at 0.2 ON THE GOAL AS WELL: a goal from an instant
+        # slap pays 20, one from a shot after 1.5 s of control pays 100.
+        accel_cost_weight=0.04, patience_s=1.5, patience_floor=0.2, patience_on_goals=True,
         # The env draws a shot type per possession (shot_types=True) and
         # the far side is drawn per episode from opponent_mix.
         shot_type_reward=10.0, shot_types=True,
@@ -1076,7 +1100,8 @@ _IDLE_KEYS = ("home_weight", "jitter_weight", "smooth_weight")
 # Shot-outcome terms, likewise batch-only and passed through only when set.
 _OUTCOME_KEYS = ("on_target_reward", "shot_speed_weight", "trap_reward",
                  "controlled_shot_bonus", "shot_type_reward",
-                 "accel_cost_weight", "patience_s", "patience_floor")
+                 "accel_cost_weight", "patience_s", "patience_floor",
+                 "patience_on_goals")
 
 
 def curriculum_episode_steps(name: str, action_dt: float = ACTION_DT) -> int:

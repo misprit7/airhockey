@@ -163,10 +163,10 @@ def test_patience_beats_the_discount_by_design():
     control must be worth more, discounted, than the instant one."""
     steps = round(1.5 / ACTION_DT)
     discounted_patient = 1.0 * 0.995 ** steps
-    assert discounted_patient > 0.5 * 1.2      # floor 0.5, with a margin
+    assert discounted_patient > 0.2 * 3.0      # floor 0.2, with a wide margin
     kw = R.curriculum_shaper_kwargs("selfplay")
-    assert kw["patience_s"] == 1.5 and kw["patience_floor"] == 0.5
-    assert kw["accel_cost_weight"] == 0.02
+    assert kw["patience_s"] == 1.5 and kw["patience_floor"] == 0.2
+    assert kw["accel_cost_weight"] == 0.04 and kw["patience_on_goals"] is True
     assert R.curriculum_env_kwargs("proximity")["action_mode"] == "profile_a"
     assert R.curriculum_env_kwargs("selfplay")["action_mode"] == "profile_a"
     assert "accel_cost_weight" not in R.curriculum_shaper_kwargs("contact")
@@ -238,3 +238,29 @@ def test_a_three_dim_policy_commands_its_accel_through_the_runner():
     o = enc.encode(_rep(geom.HOME_X, 1.0))
     assert o[17] == pytest.approx(-1.0)
     assert callable(getattr(TDMPC2Policy, "__call__"))
+
+
+def test_a_goal_from_an_instant_slap_pays_the_floor_and_a_patient_one_pays_whole():
+    def goal_after(t_side, on_goals=True):
+        sh = _shaper(goal_reward=100.0, patience_s=1.5, patience_floor=0.2,
+                     patience_on_goals=on_goals)
+        obs = np.zeros((1, 22), dtype=np.float32)
+        slow = _info(0.5, 0.35, 0.0, -0.5, t_side)
+        sh.reset(obs, info=slow)
+        sh.compute(obs, np.zeros(1), info=slow)
+        sh.compute(obs, np.zeros(1), info=_info(0.5, 0.40, 0.0, 4.0, t_side))   # the hit
+        sh.compute(obs, np.zeros(1), info=_info(0.5, 1.5, 0.0, 4.0, t_side))    # in flight
+        goal = _info(0.5, 1.0, 0.0, 1.0, 0.0)
+        goal["score_agent"] = np.array([1])
+        return float(sh.compute(obs, np.zeros(1), info=goal)[0])
+    assert goal_after(0.0) == pytest.approx(20.0)
+    assert goal_after(0.75) == pytest.approx(60.0)
+    assert goal_after(1.5) == pytest.approx(100.0)
+    assert goal_after(0.0, on_goals=False) == pytest.approx(100.0)
+    # A goal with no hit of the agent's behind it (a relaunch drifting in)
+    # is paid whole.
+    sh = _shaper(goal_reward=100.0, patience_s=1.5, patience_floor=0.2, patience_on_goals=True)
+    obs = np.zeros((1, 22), dtype=np.float32)
+    sh.reset(obs, info=_info(0.5, 1.5, 0.0, 1.0))
+    goal = _info(0.5, 1.9, 0.0, 1.0); goal["score_agent"] = np.array([1])
+    assert float(sh.compute(obs, np.zeros(1), info=goal)[0]) == pytest.approx(100.0)
