@@ -191,6 +191,29 @@ a judgement call, and `ACTION_HZ` is one constant if it goes the other
 way -- but training and the table must agree, so it is decided before
 the run, not after.
 
+**Why the old policy oscillated on the table (2026-09-06, after the
+tracking test cleared the drives).** It is the planner, and the sim does
+it too. Same checkpoint, sim, puck parked on the far side, nothing
+moving: under MPPI the target jumps >300 mm on 17-22% of ticks (3 or 6
+iterations) and the paddle sweeps 120-140 mm per half second at 60 m/s²,
+up to 460 mm; the prior alone never jumps. TD-MPC2 executes one SAMPLED
+elite even in eval mode, and on a flat value landscape the elites are
+random samples. Executing the elite mean (`plan_eval_mean`, now the
+eval/deploy default) cuts static jumps 20% -> 1% at 3 iterations and,
+in play vs the goalie, doubles goals (0.75 -> 1.56 per 20 s; 0.88 -> 1.62
+at 6 iterations). What it does not fix: the paddle still wanders at
+~1 m/s when idle, because the value landscape has no station in it --
+the idle reward (0.005/step) is invisible to the two-hot value bins. For
+the retrain that is the argument for a visible idle term or the parked
+planner action-change cost; a deployment-only alternative is the prior
+while the puck is away and the planner during an exchange.
+
+Still open: in the 12/60 play session the camera put the paddle 200-440
+mm from the controller's position, which the tracking test at the same
+caps does not reproduce (26 mm p90). The runner's tracker (blobtrack,
+200 Hz) and the test's (vision service, 50 Hz) are different pipelines;
+the next live session should log both before trusting either.
+
 ## Gate before the run
 
 - [x] Full test suite green (on the system Python; the venv's tensordict

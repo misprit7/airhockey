@@ -219,6 +219,12 @@ goals conceded from 0.10 to 0.04 per game.
   12.6 ms eager / 6.3 ms under CUDA graphs on the 4090 (cost is launch-bound,
   samples are free); `PLAN_ITERATIONS = 6` for training and the table.
   Sensing latency is unaffected — the camera model ticks on its own 200 Hz.
+  `PLAN_EVAL_MEAN = True`: eval and deploy execute the MPPI elite MEAN,
+  not a sampled elite (local TD-MPC2 flag `plan_eval_mean`). Stock
+  TD-MPC2 samples an elite even in eval mode; on a flat value landscape
+  that is a random target every tick, which is what the 2026-09-05 table
+  runs showed and the sim reproduces on a static scene. Halves the target
+  jumps and doubled goals vs the goalie in sim.
 - **Observation space**: Puck (pos + vel), own paddle (pos + vel), opponent paddle (pos + vel) — all in 2D — then a side flag, two cap ratios (constants since the band was pinned), the PREVIOUS ACTION (2026-09-03: needed for the smoothness term to be learnable from a frame), and the SHOT TYPE REQUESTED (2026-09-06: one-hot bank-left / bank-right / straight, all zero = no preference; x = 0 rail is LEFT facing the far goal). 20 dims. Older 15- and 17-wide checkpoints load with zero weight on the new inputs (`policy_loader.load_checkpoint`). Camera delay is applied to observations to simulate real sensing latency.
 - **Retrain (2026-09-06, `ai/RETRAIN.md` is the checklist)**: accel pinned
   at the nominal 20 m/s² (the drives follow 20-24, not 60); rewards pay

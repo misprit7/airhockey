@@ -78,6 +78,16 @@ PLAN_SMOOTH_COEF = 0.0   # parked: see memory; planner cost code stays inert
 # The cost is launch-bound, not compute-bound: 128 samples cost the same as
 # 512, so the knobs that matter are iterations and horizon.
 PLAN_ITERATIONS = 6
+# Execute the elite MEAN in eval mode, not a sampled elite (local TD-MPC2
+# flag plan_eval_mean). Stock MPPI draws one elite trajectory even in eval
+# mode, and on a flat value landscape -- the puck parked far away, nothing
+# to gain -- the elites are random samples, so the executed target is a
+# random point in the box every tick. Measured 2026-09-06 on the smooth6
+# checkpoint, static scene: 20% of ticks jumped >300 mm with a sampled
+# elite, 1% with the mean at 3 iterations. In play vs the goalie: GF/20 s
+# 0.75 -> 1.56 at 3 iterations, 0.88 -> 1.62 at 6, jumps 25% -> 11%.
+# Training collection (eval_mode=False) is untouched.
+PLAN_EVAL_MEAN = True
 
 
 def load_agent(run_name: str, iterations: int | None = PLAN_ITERATIONS,
@@ -135,6 +145,7 @@ def load_agent(run_name: str, iterations: int | None = PLAN_ITERATIONS,
     if iterations is not None:
         cfg.iterations = iterations
     cfg.plan_smooth_coef = float(plan_smooth)
+    cfg.plan_eval_mean = bool(PLAN_EVAL_MEAN)
     from airhockey.batch_env import BatchAirHockeyEnv   # noqa: PLC0415
     cfg.prev_action_start = BatchAirHockeyEnv.PREV_ACTION_IDX   # obs [15:17]
 
