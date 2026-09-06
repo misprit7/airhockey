@@ -771,7 +771,7 @@ def _bot_config(caps: Caps):
 
 
 def _load_tdmpc2(name: str, caps: Caps, plan_iters: int, device: str | None,
-                 shot_mode: str = "none"):
+                 shot_mode: str = "none", cmd_hz: float = ACTION_HZ):
     """A TD-MPC2 checkpoint through airhockey.deploy.TDMPC2Policy.
 
     Prints the resolved checkpoint, the mode, the measured cost per decision
@@ -788,7 +788,11 @@ def _load_tdmpc2(name: str, caps: Caps, plan_iters: int, device: str | None,
         raise SystemExit(f"no checkpoint for tdmpc2:{name} ({e})") from None
     print(policy.describe(caps.speed_max, caps.accel_max))
     ms = policy.warm_up()
-    budget = 1000.0 / ACTION_HZ
+    budget = 1000.0 / cmd_hz
+    if abs(cmd_hz - ACTION_HZ) > 1e-6:
+        print(f"  NOTE: commanding at {cmd_hz:.0f} Hz; checkpoints trained since "
+              f"2026-09-06 expect {ACTION_HZ:.0f} Hz (dynamics.ACTION_HZ). Older ones "
+              f"(smooth6 and before) were trained at 100 Hz and want --cmd-hz 100.")
     verdict = ("fits" if ms < 0.5 * budget else
                "TIGHT" if ms < budget else "DOES NOT FIT -- use --plan 0")
     print(f"  cost: {ms:.2f} ms per decision against a {budget:.0f} ms tick "
@@ -797,7 +801,8 @@ def _load_tdmpc2(name: str, caps: Caps, plan_iters: int, device: str | None,
 
 
 def load_policy(spec: str, caps: Caps, plan_iters: int = 0,
-                device: str | None = None, shot_mode: str = "none"):
+                device: str | None = None, shot_mode: str = "none",
+                cmd_hz: float = ACTION_HZ):
     """Turn a --policy string into a callable(obs) -> Command or 4-tuple.
 
         heuristic:<name>   a bot from ai/airhockey/heuristics.py
@@ -808,7 +813,7 @@ def load_policy(spec: str, caps: Caps, plan_iters: int = 0,
     """
     kind, _, name = spec.partition(":")
     if kind == "tdmpc2":
-        return _load_tdmpc2(name, caps, plan_iters, device, shot_mode)
+        return _load_tdmpc2(name, caps, plan_iters, device, shot_mode, cmd_hz)
     if kind == "sac":
         return _load_sac(name, caps)
     if kind == "builtin":
@@ -1323,7 +1328,8 @@ def run(args) -> int:
         slog.context(args)
     policy = load_policy(args.policy, caps, getattr(args, "plan", 0),
                          getattr(args, "device", None),
-                         shot_mode=getattr(args, "shot_type", "none"))
+                         shot_mode=getattr(args, "shot_type", "none"),
+                         cmd_hz=float(getattr(args, "cmd_hz", ACTION_HZ)))
 
     client = None
     if args.live:
