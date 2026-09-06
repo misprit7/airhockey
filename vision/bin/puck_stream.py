@@ -68,6 +68,75 @@ MARKER_REJECT_PX = 16.0
 OUTSIDE_MM = 40.0
 
 
+class FrameReader:
+    """Parse blob lines from a file object on a thread, so the pipe never
+    backs up and the consumer can always take the NEWEST frame.
+
+    A consumer slower than the camera used to leave frames queued in the
+    pipe, and the pipe said nothing about it: every frame then arrived in
+    order, late, and a policy acted on a puck that had moved on (the
+    2026-09-05 sessions ran up to 0.3 s behind). Here the thread drains
+    the pipe as fast as it comes; `batches()` hands over everything that
+    arrived since the last call, so the caller can track every frame
+    cheaply and decide on the last one, knowing how many it skipped.
+    """
+
+    def __init__(self, fileobj):
+        import threading
+        self._f = fileobj
+        self._q: deque = deque()
+        self._cv = threading.Condition()
+        self._eof = False
+        self.dropped_lines = 0
+        self._thread = threading.Thread(target=self._pump, daemon=True)
+        self._thread.start()
+
+    @staticmethod
+    def parse(line: str):
+        f = line.split()
+        n = int(f[3])
+        pts = np.empty((n, 3), dtype=np.float64)
+        for i in range(n):
+            pts[i] = (float(f[4 + 3 * i]), float(f[5 + 3 * i]),
+                      float(f[6 + 3 * i]))
+        return int(f[1]), int(f[2]) * 1e-6, pts
+
+    def _pump(self) -> None:
+        try:
+            for line in self._f:
+                if not line.startswith("F"):
+                    continue
+                try:
+                    frame = self.parse(line)
+                except (ValueError, IndexError):
+                    self.dropped_lines += 1
+                    continue
+                with self._cv:
+                    self._q.append(frame)
+                    self._cv.notify()
+        finally:
+            with self._cv:
+                self._eof = True
+                self._cv.notify_all()
+
+    def batches(self):
+        """Yield lists of frames: everything queued, oldest first. Blocks
+        until at least one frame exists; ends at EOF."""
+        while True:
+            with self._cv:
+                while not self._q and not self._eof:
+                    self._cv.wait(0.5)
+                if not self._q:
+                    return
+                batch = list(self._q)
+                self._q.clear()
+            yield batch
+
+    def __iter__(self):
+        for batch in self.batches():
+            yield from batch
+
+
 class BlobStream:
     """Lines of blob coordinates from the C++ tracker."""
 
@@ -86,18 +155,13 @@ class BlobStream:
             raise RuntimeError(f"unexpected header from blobtrack: {header!r}")
         _, w, h = header.split()
         self.width, self.height = int(w), int(h)
+        self._reader = FrameReader(self.p.stdout)
 
     def __iter__(self):
-        for line in self.p.stdout:
-            if not line.startswith("F"):
-                continue
-            f = line.split()
-            n = int(f[3])
-            pts = np.empty((n, 3), dtype=np.float64)
-            for i in range(n):
-                pts[i] = (float(f[4 + 3 * i]), float(f[5 + 3 * i]),
-                          float(f[6 + 3 * i]))
-            yield int(f[1]), int(f[2]) * 1e-6, pts
+        return iter(self._reader)
+
+    def batches(self):
+        return self._reader.batches()
 
     def close(self):
         try:

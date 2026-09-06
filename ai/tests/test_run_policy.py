@@ -894,3 +894,72 @@ def test_governor_never_goes_below_its_floors():
     for k in range(40):
         g.update(0.3 * k, 500.0, True)
     assert g.speed == pytest.approx(g.floor_speed) and g.accel == pytest.approx(g.floor_accel)
+
+
+# ── Backlog shedding and the lag gate on the camera's own-mallet ─────────
+
+def test_shedder_counts_decisions_skipped_inside_a_batch_and_warns_once_a_second():
+    sh = rp.FrameShedder(period_s=0.02, warn_every_s=1.0)
+    # one frame per batch: a loop that keeps up sheds nothing
+    assert sh.note_batch([0.000], 0.0, 100.0) is None
+    assert sh.note_batch([0.005], 0.0, 100.0) is None
+    # four frames (15 ms) queued: under one tick, tracked but no decision lost
+    assert sh.note_batch([0.010, 0.015, 0.020, 0.025], 0.02, 100.1) is None
+    assert sh.skipped == 0 and sh.frames == 3
+    # 60 ms of frames in one batch: three ticks' worth of decisions skipped
+    msg = sh.note_batch([0.100 + 0.005 * k for k in range(13)], 0.09, 100.2)
+    assert msg and "skipped 3 decision" in msg and "90 ms" in msg
+    assert sh.skipped == 3 and sh.take_pending() == 3 and sh.take_pending() == 0
+    # the next backlog within the same second is counted but not printed...
+    assert sh.note_batch([0.300 + 0.005 * k for k in range(9)], 0.08, 100.5) is None
+    assert sh.skipped == 5
+    # ...and surfaces in the next warning, a second later
+    msg = sh.note_batch([0.500 + 0.005 * k for k in range(5)], 0.06, 101.3)
+    assert msg and "skipped 3 decision" in msg and "6 skipped so far" in msg
+
+
+def test_batches_wraps_a_plain_frame_stream_one_per_batch():
+    frames = [(0, 0.0, None), (1, 0.005, None), (2, 0.010, None)]
+    assert list(rp._batches(frames)) == [[f] for f in frames]
+
+    class WithBatches:
+        def batches(self):
+            yield frames[:2]
+            yield frames[2:]
+    assert list(rp._batches(WithBatches())) == [frames[:2], frames[2:]]
+
+
+def test_camera_own_mallet_is_refused_when_the_loop_is_behind():
+    """A camera fix the loop reached late says where the paddle WAS. Above
+    CAM_OWN_MAX_LAG_S the live controller position wins even when the two
+    disagree; below it the camera wins as before."""
+    r = rp.ReportBuilder()
+    r.add_mallet(1.0, 1500.0, 500.0)
+    r.set_controller_mallet(1.0, 1700.0, 505.0)           # 200 mm apart
+    assert r.observation(1.0, lag_s=0.0)[rp.OBS_MALLET] == (1500.0, 500.0)
+    assert r.observation(1.0, lag_s=0.02)[rp.OBS_MALLET] == (1500.0, 500.0)
+    assert r.observation(1.0, lag_s=0.1)[rp.OBS_MALLET] == (1700.0, 505.0)
+    # with no controller reading the camera is still the only answer
+    r2 = rp.ReportBuilder()
+    r2.add_mallet(1.0, 1500.0, 500.0)
+    assert r2.observation(1.0, lag_s=0.3)[rp.OBS_MALLET] == (1500.0, 500.0)
+
+
+def test_frame_reader_hands_over_everything_queued_since_the_last_batch():
+    import io
+    import time as _time
+    puck_stream = pytest.importorskip("puck_stream")
+    lines = "".join(f"F {k} {5000 * k} 1 {100.0 + k} {200.0} {9.0}\n" for k in range(6))
+    lines = "# header 1440 1080\n" + lines + "garbage line\n" + "F 6 30000 0\n"
+    reader = puck_stream.FrameReader(io.StringIO(lines))
+    for _ in range(50):
+        if reader._eof:
+            break
+        _time.sleep(0.01)
+    batches = list(reader.batches())
+    frames = [f for b in batches for f in b]
+    assert [f[0] for f in frames] == list(range(7))
+    assert frames[1][1] == pytest.approx(0.005) and frames[1][2].shape == (1, 3)
+    assert frames[6][2].shape == (0, 3)
+    # everything that had queued came in one go once the consumer arrived
+    assert len(batches[0]) >= 1 and sum(len(b) for b in batches) == 7

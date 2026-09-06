@@ -132,6 +132,15 @@ GENTLE_ACCEL = 2000.0
 # camera is good to ~1 mm and the controller integrates step counts through
 # the cable model, so anything this far apart is the MODEL, not noise.
 MALLET_DISAGREE_WARN_MM = 25.0
+# The camera may stand in for the controller's own-mallet position ONLY
+# when the loop is current: a camera fix from a frame the loop reached
+# 0.1-0.3 s late is where the paddle WAS, and a 60 m/s^2 body steered from
+# there overshoots and oscillates (2026-09-05, 12/60 session: the "gap" that
+# read as the drives falling behind was 18 mm whenever the lag was under
+# 50 ms and 200-340 mm whenever it was not). The controller's position is
+# read live and does not go stale with the loop.
+CAM_OWN_MAX_LAG_S = 0.030
+SHED_WARN_EVERY_S = 1.0
 
 
 @dataclass(frozen=True)
@@ -280,7 +289,7 @@ class ReportBuilder:
     def frame(self) -> None:
         self.n_frames += 1
 
-    def observation(self, t: float, stale_s: float = STALE_S,
+    def observation(self, t: float, stale_s: float = STALE_S, lag_s: float = 0.0,
                     mallet_fallback: tuple[float, float] | None = None) -> dict:
         """The dict handed to the policy.
 
@@ -301,14 +310,14 @@ class ReportBuilder:
         self._expire(t)
         return {
             OBS_PUCK: list(self.puck),
-            OBS_MALLET: self._own_mallet(t, stale_s, mallet_fallback),
+            OBS_MALLET: self._own_mallet(t, stale_s, mallet_fallback, lag_s),
             OBS_OPPONENT: (self.opponent
                            if t - self.t_opponent <= stale_s else None),
             OBS_TIME: t,
         }
 
     def _own_mallet(self, t: float, stale_s: float,
-                    fallback: tuple[float, float] | None):
+                    fallback: tuple[float, float] | None, lag_s: float = 0.0):
         """Controller, then camera, then the last command, then HOME --
         EXCEPT that the camera wins when both are fresh and they disagree.
 
@@ -319,12 +328,18 @@ class ReportBuilder:
         policy planned from that fiction. Above MALLET_DISAGREE_WARN_MM the
         measurement is the truth and the belief is the error.
 
+        The camera wins only while the LOOP is current (lag_s under
+        CAM_OWN_MAX_LAG_S): a camera fix the loop reached late says where
+        the paddle was, and the controller, read live, says where it is.
+
         Never None: heuristics.TrackerReport looks this up with
         obj["mallet"] and would raise on one.
         """
         ctl_fresh = (self.controller_mallet is not None
                      and t - self.t_controller <= stale_s)
         cam_fresh = self.mallet is not None and t - self.t_mallet <= stale_s
+        if ctl_fresh and cam_fresh and lag_s > CAM_OWN_MAX_LAG_S:
+            return self.controller_mallet
         if ctl_fresh and cam_fresh:
             gap = math.hypot(self.mallet[0] - self.controller_mallet[0],
                              self.mallet[1] - self.controller_mallet[1])
@@ -441,9 +456,66 @@ class LagMonitor:
             return None
         self.warned = True
         return (f"WARNING: {1000 * self.lag:.0f} ms behind the camera for "
-                f"{self._over} frames and not recovering. Frames are queueing "
-                f"in the blobtrack pipe, so the puck the policy sees is that "
-                f"old. Lower --cmd-hz or --fps.")
+                f"{self._over} frames and not recovering. The loop is shedding "
+                f"decisions to stay on the newest frame; the puck it sees is "
+                f"still that old. Lower --cmd-hz, --fps or --plan.")
+
+
+class FrameShedder:
+    """Account for decisions skipped when the loop acts on the newest frame.
+
+    The stream hands over every frame that arrived since the last batch;
+    all of them are tracked (cheap) and ONE decision is made, on the
+    newest. Frames that would have carried a decision of their own in a
+    loop that kept up are the ones being shed, and the operator is told,
+    at most once a second, how many and how far behind the loop is.
+    """
+
+    def __init__(self, period_s: float, warn_every_s: float = SHED_WARN_EVERY_S):
+        self.period = period_s
+        self.warn_every = warn_every_s
+        self.skipped = 0          # decisions, total
+        self.frames = 0           # frames tracked without a decision, total
+        self._pending = 0         # decisions skipped since the last tick row
+        self._since_warn = 0
+        self._last_warn: float | None = None
+
+    def note_batch(self, batch_times, lag_s: float, t_wall: float) -> str | None:
+        """Called once per batch with its frame times, oldest first."""
+        n = len(batch_times)
+        if n <= 1:
+            return None
+        span = batch_times[-1] - batch_times[0]
+        k = int((span + 1e-9) / self.period)   # ticks that passed inside the batch
+        self.frames += n - 1
+        if k <= 0:
+            return None
+        self.skipped += k
+        self._pending += k
+        self._since_warn += k
+        if self._last_warn is not None and t_wall - self._last_warn < self.warn_every:
+            return None
+        self._last_warn = t_wall
+        msg = (f"WARNING: {1000 * lag_s:.0f} ms behind the camera: skipped "
+               f"{self._since_warn} decision(s) on queued frames, acting on the "
+               f"newest ({self.skipped} skipped so far)")
+        self._since_warn = 0
+        return msg
+
+    def take_pending(self) -> int:
+        n, self._pending = self._pending, 0
+        return n
+
+
+def _batches(stream):
+    """Frames grouped by arrival: the stream's own batches() when it has
+    one (BlobStream), else one frame per batch (tests, replays)."""
+    fn = getattr(stream, "batches", None)
+    if callable(fn):
+        yield from fn()
+        return
+    for frame in stream:
+        yield [frame]
 
 
 # ── Safety clamp ────────────────────────────────────────────────────────
@@ -861,7 +933,7 @@ class _Tee:
 
 
 TICK_COLUMNS = [
-    "t_cam", "t_wall", "lag_ms", "blind",
+    "t_cam", "t_wall", "lag_ms", "skipped", "blind",
     "puck_x", "puck_y", "puck_n", "puck_age_ms",
     "mallet_x", "mallet_y", "mallet_src",
     # Both views of the own mallet, always: the controller's is step counts
@@ -947,9 +1019,9 @@ def plan(policy, report: ReportBuilder, t: float, caps: Caps,
 
 
 def plan_detail(policy, report: ReportBuilder, t: float, caps: Caps,
-                prev: tuple[float, float] | None):
+                prev: tuple[float, float] | None, lag_s: float = 0.0):
     """plan(), plus what the policy asked for BEFORE the clamp."""
-    raw = policy(report.observation(t, mallet_fallback=prev))
+    raw = policy(report.observation(t, mallet_fallback=prev, lag_s=lag_s))
     # heuristics bots return a Command; the builtins and anything simpler
     # return the same four numbers as a tuple.
     as_tuple = getattr(raw, "as_tuple", None)
@@ -1326,31 +1398,39 @@ def run(args) -> int:
     # tracking per frame, the master round trips per tick, the policy per
     # tick. Windowed per status line.
     cost = {"track": 0.0, "io": 0.0, "policy": 0.0, "frames": 0, "ticks": 0}
+    shedder = FrameShedder(period)
     try:
-        for _seq, t, blobs in stream:
+        for batch in _batches(stream):
             if _stop:
                 break
-            report.frame()
-            lag.update(t, time.time())
+            # Track EVERY frame that arrived (the estimators want them all,
+            # and tracking is cheap); decide once, on the newest, below.
+            w0 = time.perf_counter()
+            for _seq, t, blobs in batch:
+                report.frame()
+                puck = tracker.update(t, blobs)
+                # n_markers is 0 on a coasted frame. Only a real fix is
+                # history; see ReportBuilder for why the coast must not be.
+                if puck is not None and tracker.n_markers > 0:
+                    report.add_puck(t, puck[0], puck[1])
+                got = own.update(blobs)
+                if got is not None:
+                    report.add_mallet(t, got[0], got[1])
+                if opp is not None:
+                    got = opp.update(blobs)
+                    if got is not None:
+                        report.add_opponent(t, got[0], got[1])
+            cost["track"] += time.perf_counter() - w0
+            cost["frames"] += len(batch)
+            t = batch[-1][1]
+            now = time.time()
+            lag.update(t, now)
             msg = lag.warn_once()
             if msg:
                 print(msg)
-
-            w0 = time.perf_counter()
-            puck = tracker.update(t, blobs)
-            # n_markers is 0 on a coasted frame. Only a real fix is history;
-            # see ReportBuilder for why the coast must not be.
-            if puck is not None and tracker.n_markers > 0:
-                report.add_puck(t, puck[0], puck[1])
-            got = own.update(blobs)
-            if got is not None:
-                report.add_mallet(t, got[0], got[1])
-            if opp is not None:
-                got = opp.update(blobs)
-                if got is not None:
-                    report.add_opponent(t, got[0], got[1])
-            cost["track"] += time.perf_counter() - w0
-            cost["frames"] += 1
+            msg = shedder.note_batch([f[1] for f in batch], lag.lag, now)
+            if msg:
+                print(msg)
 
             if t < next_cmd:
                 continue
@@ -1402,11 +1482,13 @@ def run(args) -> int:
                     last_print = t
                     _status(t, report, action, committer, flags, n_clamped,
                             report.n_frames / max(time.time() - t_wall, 1e-9),
-                            args.live, lag, watchdog, _cost_line(cost))
+                            args.live, lag, watchdog, _cost_line(cost),
+                            shedder.skipped)
                 continue
 
             w0 = time.perf_counter()
-            action, flags, asked = plan_detail(policy, report, t, caps, prev)
+            action, flags, asked = plan_detail(policy, report, t, caps, prev,
+                                               lag_s=lag.lag)
             tick_policy = time.perf_counter() - w0
             cost["policy"] += tick_policy
             if flags:
@@ -1439,13 +1521,14 @@ def run(args) -> int:
             if slog is not None:
                 slog.tick(_tick_row(t, report, lag, watchdog, policy, asked,
                                     action, flags, committer, cost, tick_io,
-                                    tick_policy))
+                                    tick_policy, shedder.take_pending()))
 
             if t - last_print > 0.5:
                 last_print = t
                 _status(t, report, action, committer, flags, n_clamped,
                         report.n_frames / max(time.time() - t_wall, 1e-9),
-                        args.live, lag, watchdog, _cost_line(cost))
+                        args.live, lag, watchdog, _cost_line(cost),
+                        shedder.skipped)
     finally:
         stream.close()
         _shutdown(client, args, prev)
@@ -1456,12 +1539,13 @@ def run(args) -> int:
 
 
 def _tick_row(t, report: ReportBuilder, lag, watchdog, policy, asked: Action,
-              action: Action, flags, committer, cost, tick_io, tick_policy):
+              action: Action, flags, committer, cost, tick_io, tick_policy,
+              skipped: int = 0):
     st = report.staleness(t)
     hist = report.observation(t)[OBS_PUCK]
     # The same choice _own_mallet makes, so the column says what the policy
     # was actually given (it used to say "controller" whenever one was fresh).
-    m = report.observation(t)[OBS_MALLET]
+    m = report.observation(t, lag_s=lag.lag)[OBS_MALLET]
     if report.controller_mallet is not None and tuple(m) == tuple(report.controller_mallet):
         src = "controller"
     elif report.mallet is not None and tuple(m) == tuple(report.mallet):
@@ -1471,6 +1555,7 @@ def _tick_row(t, report: ReportBuilder, lag, watchdog, policy, asked: Action,
     opp = report.opponent if t - report.t_opponent <= STALE_S else (None, None)
     row = {
         "t_cam": t, "t_wall": time.time(), "lag_ms": 1000.0 * lag.lag,
+        "skipped": skipped,
         "blind": int(watchdog.blind),
         "puck_x": hist[0][0] if hist else None,
         "puck_y": hist[0][1] if hist else None,
@@ -1511,7 +1596,7 @@ def _cost_line(cost: dict) -> str:
 
 
 def _status(t, report, action, committer, flags, n_clamped, rate, live, lag,
-            watchdog, cost_line: str = ""):
+            watchdog, cost_line: str = "", skipped: int = 0):
     st = report.staleness(t)
     # Through observation() rather than off the deque, so the operator is
     # shown exactly the history a policy would be given -- expired the same
@@ -1536,6 +1621,7 @@ def _status(t, report, action, committer, flags, n_clamped, rate, live, lag,
           f"  -> {target} @ {caps}"
           f"  {'' if live else 'WOULD SEND  '}"
           f"clamped {n_clamped}"
+          + (f"  shed {skipped}" if skipped else "")
           + (f"  [{','.join(flags)}]" if flags else "")
           + (f"  | {cost_line}" if cost_line else ""))
 
