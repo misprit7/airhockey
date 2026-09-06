@@ -305,4 +305,20 @@ Changes, all implemented and tested (`ai/tests/test_run2_changes.py`,
 Not changed: on-target 10 + 1/m/s, trap 2, controlled 1.5x, shot type 10,
 idle pull 0.05, action-change tax 0.2, opponent mix, fuzz.
 
-Start it with `PREFIX=run2 bash ai/bin/run_full_pipeline.sh`.
+**Run 1 finished 12:24** (`runs/retrain40_selfplay2/agent_final.pt`;
+`runs/retrain40_try/agent.pt` is the 1.95M snapshot used on the table).
+Final self-play tallies over 1731 games: vs copy of self 129 W / 207 L /
+688 D (0.22 for, 0.32 against per game); vs sniper 292 / 16 / 40 (4.02 /
+1.22); vs weak goalie 284 / 3 / 72 (1.55 / 0.01). On target ~40%, type
+matched ~10%, traps 0 throughout.
+
+**Run 2 started 12:26**: `PREFIX=run2 bash ai/bin/run_full_pipeline.sh`,
+log `logs/run2.log`, runs `runs/run2_*`. Budgets 100k / 150k / 250k /
+250k / 3M at UTD 0.5 in the pretrain. What to read in the self-play
+stage: `shots/traps` and `shots/patience_sum` (patience actually paid),
+`shots/accel_frac_sum / shots/steps` (the mean accel fraction asked for:
+1.0 means the tax is being ignored, ~0.3 means idling is cheap), and the
+per-opponent lines. First table run: the master must be restarted for
+the per-command ACCEL (rebuilt 12:11); then
+`python ai/bin/run_policy.py --live --gentle --opponent --policy
+tdmpc2:run2_selfplay --plan 3 --shot-type mix`.
