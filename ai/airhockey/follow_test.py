@@ -96,6 +96,15 @@ LOST_REST_P50_MM = 25.0
 ENC_FIT_MIN_TRAVEL_MM = 20.0
 ENC_GAIN_TOL = 0.05     # |gain| this far from 1 = step scale mismatch
 ENC_REST_MM = 5.0       # drive vs steps at rest beyond this = lost position
+# The encoders are read in their own ~40 ms round trip AFTER the step
+# counts, one node after another, so each motor's reading is some tens of
+# ms staler than the steps it is compared with -- 60-120 mm of apparent
+# lag at 3 m/s of cable that the drive never had (2026-09-06: it read as
+# motors 2 and 3 lagging 100 mm). The fit searches a per-motor time shift
+# in this window and scores the residual AFTER it.
+ENC_LAG_SEARCH_S = 0.08
+ENC_LAG_STEP_S = 0.002
+ARRIVE_TAIL = 0.4       # arrival is judged on the last 40% of a move's dwell
 
 
 @dataclass(frozen=True)
@@ -193,6 +202,7 @@ ROW_FIELDS = (
     "ctl_x", "ctl_y", "ctl_vx", "ctl_vy", "c0", "c1", "c2", "c3",
     "cam_t", "cam_x", "cam_y",
     "enc0", "enc1", "enc2", "enc3", "trq0", "trq1", "trq2", "trq3", "enc_ms",
+    "enc_t",
 )
 
 
@@ -319,7 +329,7 @@ class FollowTest:
                     "c0": s["c0"] - c_zero[0], "c1": s["c1"] - c_zero[1],
                     "c2": s["c2"] - c_zero[2], "c3": s["c3"] - c_zero[3],
                     "cam_t": None, "cam_x": None, "cam_y": None,
-                    "enc_ms": None,
+                    "enc_ms": None, "enc_t": None,
                 }
                 for m in range(4):
                     row[f"enc{m}"] = None
@@ -340,7 +350,9 @@ class FollowTest:
                     except Exception:                # noqa: BLE001
                         e = None
                     if e is not None:
-                        row["enc_ms"] = round(1000.0 * (self.clock() - e0), 2)
+                        e1 = self.clock()
+                        row["enc_ms"] = round(1000.0 * (e1 - e0), 2)
+                        row["enc_t"] = 0.5 * (e0 + e1) - t0   # the read's midpoint
                         if enc_zero is None:
                             enc_zero = list(e["posn"])
                         for m in range(4):
@@ -495,11 +507,22 @@ def summarize(rows: list[dict], segs: list[Segment], camera: bool = True) -> dic
                 d_cam = np.hypot(cxm[cm] - seg.x, cym[cm] - seg.y)
                 hitc = np.nonzero(d_cam < ARRIVE_MM)[0]
                 t_cam = ct[cm][hitc[0]] if len(hitc) else None
+                # Arrival needs the camera to have SEEN the end of the move:
+                # a tracker that lost the marker cluster near a rail has
+                # no opinion, and must not read as a drive that never got
+                # there (2026-09-06: four such moves scored a good run as
+                # lagging).
+                tail = ct[cm] >= ts[-1] - ARRIVE_TAIL * (ts[-1] - ts[0])
                 if t_ctl is not None and t_cam is not None:
                     entry["arrive_lag_ms"] = _r(1000.0 * (t_cam - t_ctl), 0)
                 elif t_ctl is not None and seg.kind == "move":
                     entry["arrive_lag_ms"] = None
-                    entry["cam_never_arrived"] = True
+                    if tail.any():
+                        entry["cam_never_arrived"] = True
+                    else:
+                        entry["cam_lost"] = True
+            elif seg.kind == "move":
+                entry["cam_lost"] = True
         per_seg.append(entry)
     out["segments"] = per_seg
     lags = [e["arrive_lag_ms"] for e in per_seg
@@ -508,26 +531,48 @@ def summarize(rows: list[dict], segs: list[Segment], camera: bool = True) -> dic
     out["arrive_lag_max_ms"] = _r(max(lags), 0) if lags else None
     out["moves_cam_never_arrived"] = sum(
         1 for e in per_seg if e.get("cam_never_arrived"))
+    lost_moves = [e["name"] for e in per_seg if e.get("cam_lost")]
+    out["moves_cam_lost"] = len(lost_moves)
+    if lost_moves:
+        out["notes"].append("camera lost the paddle on " + ", ".join(lost_moves)
+                            + " -- not scored for arrival")
 
     # ── drives vs Teensy ────────────────────────────────────────────
     enc = []
     enc_rows = [(i, r) for i, r in enumerate(rows) if r.get("enc0") is not None
                 or r.get("enc1") is not None]
+    # Step counts as a time series per motor, to be read at the ENCODER's
+    # own read time rather than the row's.
+    steps_t = t
     for m in range(4):
         pairs = [(i, r[f"enc{m}"]) for i, r in enc_rows if r.get(f"enc{m}") is not None]
-        e = {"motor": m, "gain": None, "rest_mm": None, "moving_mm": None,
-             "trq_peak_pct": None}
+        e = {"motor": m, "gain": None, "lag_ms": None, "rest_mm": None,
+             "moving_mm": None, "trq_peak_pct": None}
         trq = [r[f"trq{m}"] for _, r in enc_rows if r.get(f"trq{m}") is not None]
         if trq:
             e["trq_peak_pct"] = _r(max(abs(v) for v in trq))
         if len(pairs) >= 5:
             idx = np.array([i for i, _ in pairs])
             enc_mm = np.array([v for _, v in pairs], dtype=float)
-            step_mm = np.array([counts_to_cable_mm(rows[i][f"c{m}"]) for i in idx])
-            if step_mm.max() - step_mm.min() >= ENC_FIT_MIN_TRAVEL_MM:
-                gain, offset = np.polyfit(step_mm, enc_mm, 1)
-                resid = np.abs(enc_mm - (gain * step_mm + offset))
+            step_series = np.array([counts_to_cable_mm(r[f"c{m}"]) for r in rows])
+            # When the read was: logged from 2026-09-06; older logs get the
+            # row time plus half the round trip.
+            t_enc = np.array([
+                rows[i]["enc_t"] if rows[i].get("enc_t") is not None
+                else t[i] + 0.002 + 0.5 * (rows[i].get("enc_ms") or 0.0) / 1000.0
+                for i in idx], dtype=float)
+            if step_series.max() - step_series.min() >= ENC_FIT_MIN_TRAVEL_MM:
+                best = None
+                for lag in np.arange(0.0, ENC_LAG_SEARCH_S + 1e-9, ENC_LAG_STEP_S):
+                    st = np.interp(t_enc - lag, steps_t, step_series)
+                    gain, offset = np.polyfit(st, enc_mm, 1)
+                    resid = enc_mm - (gain * st + offset)
+                    rms = float(np.sqrt(np.mean(resid ** 2)))
+                    if best is None or rms < best[0]:
+                        best = (rms, lag, gain, np.abs(resid))
+                _rms, lag, gain, resid = best
                 e["gain"] = _r(gain, 3)
+                e["lag_ms"] = _r(1000.0 * lag, 0)
                 rest_m = settled[idx]
                 e["rest_mm"] = _r(resid[rest_m].max()) if rest_m.any() else None
                 mov_m = moving[idx]
@@ -556,7 +601,7 @@ def summarize(rows: list[dict], segs: list[Segment], camera: bool = True) -> dic
     elif (out["gap_moving_p90_mm"] or 0.0) > CLOSE_MOVING_P90_MM \
             or out["gap_rest_p50_mm"] > CLOSE_REST_P50_MM \
             or (out["arrive_lag_p50_ms"] or 0.0) > CLOSE_ARRIVE_LAG_MS \
-            or out["moves_cam_never_arrived"]:
+            or out["moves_cam_never_arrived"] > 1:
         out["verdict"] = "lagging"
     else:
         out["verdict"] = "close"
@@ -600,7 +645,8 @@ def format_summary(s: dict) -> str:
     encs = s.get("encoders") or []
     if any(e.get("gain") is not None for e in encs):
         lines.append("drives vs steps  " + "  ".join(
-            f"m{e['motor']} x{e['gain']:+.3f} rest {e['rest_mm']:.1f}"
+            f"m{e['motor']} x{e['gain']:+.3f} rest {e['rest_mm']:.1f} "
+            f"move {e['moving_mm']:.0f} (read {e['lag_ms']:.0f} ms late)"
             if e.get("gain") is not None else f"m{e['motor']} --"
             for e in encs))
     if any(e.get("trq_peak_pct") is not None for e in encs):

@@ -20,20 +20,28 @@ Status key: `[ ]` not started, `[~]` in progress, `[x]` done and tested,
       episode lengths (specified in seconds, not steps), trainers, eval,
       deploy `--cmd-hz`, stuck-puck timer.
 - [x] Runner defaults (`run_policy.Caps`) follow the same constants.
-- [ ] Tracking test WITH the camera at 12 / 20. The six runs of 2026-09-06
-      00:44-00:48 were all camera-less (the camera was not running when
-      Run was pressed), so they score drives-vs-steps only. What they say:
-      at 0.2 m/s every drive's encoder moves exactly 1.000 mm per mm of
-      steps (signs +,-,+,-), so the 800 counts/rev step input is
-      confirmed on all four. At speed the drives lag their steps unevenly:
-      p90 of |encoder - steps| while moving, mm, per motor 0..3 --
-      20 m/s²: 13 / 26 / 53 / 63; 40: 16-18 / 36-45 / 54-65 / 80;
-      60: 21 / 41 / 69 / 102. Motors 2 and 3 (the near-side pair) lag
-      three to five times motors 0 and 1, and are still 5-22 mm off in
-      the rest windows after fast moves, while peaking at only 18-47% of
-      torque (motor 3: 19%). A drive that lags 100 mm of cable at a fifth
-      of its torque is not torque-limited; look at its ClearView tune /
-      torque limit before blaming the physics.
+- [x] Tracking test WITH the camera at 12 / 20 (2026-09-06 00:58): **CLOSE**.
+      Camera-vs-controller gap 4 mm p50 / 13 mm p90 at speed, 0 mm at
+      rest, arrival lag 2 ms, camera latency 5 ms. At 12 / 40: CLOSE,
+      6 / 21 mm. At 12 / 60: CLOSE by a hair, 8 / 26 mm against the 30 mm
+      line, max 68 mm on the flips. The first scoring called all three
+      LAGGING for a bad reason: the camera lost the marker cluster on four
+      moves near the robot-end rail (x -250, y +250, corner ++, corner +-)
+      and "never arrived" was counted against the drives. Those moves are
+      now reported as unseen, not late. Re-judge any run with
+      `python ai/bin/follow_test_rescore.py logs/follow_test/<stamp>.csv`.
+- [x] Encoders vs steps: gains 1.003-1.010 on all four (the 800 counts/rev
+      step input is right), residual 1-5 mm at rest, 9-40 mm moving. The
+      earlier reading of "motors 2 and 3 lag 100 mm" was an artefact: the
+      ENC round trip takes ~40 ms and follows the STATUS read, so each
+      encoder was compared with steps up to 20 ms younger -- 60-120 mm at
+      3 m/s. The fit now searches the read lag per motor (0-20 ms found)
+      and scores the residual after it. RETRACTED: nothing points at a
+      drive tune.
+- [x] Pipeline dry run: `train_tdmpc2.py --curriculum-stage contact` for
+      8k steps then `train_selfplay.py` for 20k steps at 8 envs, scratch
+      names `_smoke_*`: both trained, recorded games, logged per-opponent
+      results (vs external, vs sniper) and the shot counters.
 
 Thoughts: the thermal budget is a separate constraint from following. At
 24 m/s² the drives tripped RMS overload within ~30 s of bang-bang play, and
@@ -175,6 +183,6 @@ move (half the decisions per second, each twice as expensive).
 
 - [x] Full test suite green (on the system Python; the venv's tensordict
       is stale, see memory).
-- [ ] Tracking test run on the rig at 12 m/s, 20 m/s² -> CLOSE.
-- [ ] `run_full_pipeline.sh` dry check with a tiny step budget.
+- [x] Tracking test run on the rig at 12 m/s, 20 m/s² -> CLOSE.
+- [x] `run_full_pipeline.sh` dry check with a tiny step budget (both trainers, scratch names).
 - [ ] User go-ahead.
