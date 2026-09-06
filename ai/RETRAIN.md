@@ -42,18 +42,22 @@ out all the time, the fix is a duty cost (parked with the smoothness work),
 not a lower cap. The tracking test at 20 m/s² is worth running before the
 training run so the number is measured rather than argued.
 
+Items 2-6 below are implemented and unit-tested (`ai/tests/
+test_retrain_changes.py`, 20 tests; full suite green on the system Python).
+The `[ ]` boxes that remain are things only a training run can tell.
+
 ## 2. On-target shots pay much more than forward hits
 
-- [ ] Shared predictor `rewards.predict_shot(x, y, vx, vy, cfg)`: the puck's
+- [x] Shared predictor `rewards.predict_shot(x, y, vx, vy, cfg)`: the puck's
       free path through the MEASURED lossy-wall model (normal 0.785,
       tangential 0.66, up to 4 rail bounces), returning where it crosses the
       far goal line, when, how many rails it touched and which rail first.
       Lifted from `ExchangeRewardShaper._predict_goal_crossing` so both
       shapers and the shot-type term share one definition of "on target".
-- [ ] `on_target_reward` (10) paid at the hit for the FIRST on-target shot
+- [x] `on_target_reward` (10) paid at the hit for the FIRST on-target shot
       of a possession, in every stage that rewards forward hits (contact,
       scoring, goalie, selfplay). Proximity stage unchanged.
-- [ ] Shot speed: `shot_speed_weight` (1.0 per m/s) paid ONLY on on-target
+- [x] Shot speed: `shot_speed_weight` (1.0 per m/s) paid ONLY on on-target
       shots, so speed matters when aimed and not otherwise. The old
       `directed_hit_weight * vy` (any forward hit) drops to 0.5.
 
@@ -64,15 +68,15 @@ on-target shots optimistic; the speed term and the goal reward cover it.
 
 ## 3. Control the puck before shooting; shot speed
 
-- [ ] Possession tracking per env in the shaper: begins when the puck enters
+- [x] Possession tracking per env in the shaper: begins when the puck enters
       the agent's half, ends when it leaves (a shot) or on a goal/reset.
-- [ ] `trap_reward` (2.0), once per possession, the first time the puck is
+- [x] `trap_reward` (2.0), once per possession, the first time the puck is
       brought under 0.3 m/s within reach of the paddle after arriving
       faster than 0.8 m/s. A puck that was already at rest earns nothing.
-- [ ] `controlled_shot_bonus`: the on-target reward is multiplied by 1.5
+- [x] `controlled_shot_bonus`: the on-target reward is multiplied by 1.5
       when the possession included a trap, so stop-then-shoot beats the
       instant slap when both are on target.
-- [ ] Env: the stuck-puck relaunch currently fires after 1.2 s of a slow
+- [x] Env: the stuck-puck relaunch currently fires after 1.2 s of a slow
       puck ANYWHERE, which yanks a controlled puck away from the paddle
       and fines the agent for it. Change to: 1.2 s if no paddle is within
       reach, 3 s if one is, so control is possible but not indefinite.
@@ -85,32 +89,33 @@ the trap rate in the eval, not just the score.
 
 ## 4. Shot types on demand (self-play)
 
-- [ ] Observation grows 17 -> 20: one-hot `[bank_left, bank_right,
+- [x] Observation grows 17 -> 20: one-hot `[bank_left, bank_right,
       straight]`, all zero = no preference. Left/right are the robot's
       view facing the opponent (sim x = 0 rail is LEFT).
-- [ ] Per possession the env draws one of the four with probability 1/4
+- [x] Per possession the env draws one of the four with probability 1/4
       each (self-play stage only; zeros in the pretrain stages). The far
       side draws its own when it is a copy of the robot.
-- [ ] `shot_type_reward` (10) paid when the first on-target shot of the
+- [x] `shot_type_reward` (10) paid when the first on-target shot of the
       possession matches: straight = no rail, bank left/right = the first
       rail touched is that side. No preference: nothing extra.
-- [ ] `policy_loader.load_checkpoint` pads any narrower checkpoint to the
+- [x] `policy_loader.load_checkpoint` pads any narrower checkpoint to the
       current width (was 15 -> 17 only). Scalar `AirHockeyEnv` (UI) grows
       to 20 with zeros. `deploy.ReportEncoder` takes a shot type;
       `run_policy --shot-type none|left|right|straight|mix`.
 
 ## 5. Opponent mix in self-play
 
-- [ ] Per episode the far side is drawn from a mix, default
+- [x] Per episode the far side is drawn from a mix, default
       60% copy of self, 20% `sniper`, 20% `weak_goalie` (flag on
       `train_selfplay.py`). The env re-draws each env's opponent at reset.
-- [ ] `sniper`: scripted, on a FREE body (human model, high caps, not the
-      robot's accel), waits on its line and, when the puck is on its half
-      and hittable, strikes through it at a random point in the mouth,
-      sometimes off a rail. Puck leaves at 8-11 m/s.
-- [ ] `weak_goalie`: scripted, slow body (2 m/s, 15 m/s²), tracks puck x
+- [x] `sniper`: scripted, on a FREE body (first-order lag, 5-8 m/s strike
+      at 300 m/s², not the robot's accel), waits on its line and, when the
+      puck is on its half and hittable, strikes through it at a random
+      point in the mouth, a third of the time off a rail. Puck leaves at
+      8-12 m/s; against an open net it scores about once every 8 s.
+- [x] `weak_goalie`: scripted, slow body (2 m/s, 15 m/s²), tracks puck x
       near its line with a dead zone, never shoots.
-- [ ] Win rate logged per opponent kind; the recorded games stay vs self.
+- [x] Win rate logged per opponent kind; the recorded games stay vs self.
 
 Thoughts: mixing opponents changes what `train/win_rate` means; the
 per-kind rates are what to read. The sniper is also the only thing in
@@ -119,15 +124,15 @@ the blocking is learned against.
 
 ## 6. Sensing fuzz (mild)
 
-- [ ] 20% of episodes get 1-2 windows (0.3-1.5 s) where the camera does
+- [x] 20% of episodes get 1-2 windows (0.3-1.5 s) where the camera does
       not see the opponent's mallet: the observation shows the deploy
       encoder's fallback (parked at the far-side default, at rest), and
       the velocity is zeroed on both edges of the window as the encoder
       does. Applies to both views.
-- [ ] The same episodes get 1-3 puck dropouts of 50-150 ms, injected into
+- [x] The same episodes get 1-3 puck dropouts of 50-150 ms, injected into
       `PuckPerception` as forced blindness, so the existing coast model
       handles them exactly as it handles the IR blind spot.
-- [ ] Parity fix: after the 150 ms coast expires the sim kept reporting
+- [x] Parity fix: after the 150 ms coast expires the sim kept reporting
       the last velocity; the deploy encoder reports zero. Sim now zeroes.
 
 ## 7. Control rate vs planner depth vs real-time cost
@@ -168,7 +173,7 @@ move (half the decisions per second, each twice as expensive).
 
 ## Gate before the run
 
-- [ ] Full test suite green (on the system Python; the venv's tensordict
+- [x] Full test suite green (on the system Python; the venv's tensordict
       is stale, see memory).
 - [ ] Tracking test run on the rig at 12 m/s, 20 m/s² -> CLOSE.
 - [ ] `run_full_pipeline.sh` dry check with a tiny step budget.
