@@ -232,7 +232,28 @@ steps at 50 Hz. Settings frozen at commit e4fd2c5: 12 m/s, 40 m/s²
 pinned, 50 Hz, 6 MPPI iterations, elite mean at eval, obs 20, the reward
 table in `rewards.CURRICULUM`, opponent mix 60/20/20, fuzz 20%.
 
-Things to read while it runs (tensorboard on `runs/retrain40_selfplay/logs`):
+**Self-play restarted at 09:55 as `retrain40_selfplay2`** from
+`runs/retrain40_selfplay/agent_step_0400000.pt` (2.6M steps to go), with
+the trainer speedups measured by `ai/bin/profile_selfplay.py`: at 32 envs
+the two planner calls were 93% of an iteration (290 ms each, 6 iterations
+x 512 samples, fp32 eager) and compute-bound; TF32 matmuls (1.5x), 256
+collection samples (1.9x) and CUDA graphs on both batched planners (1.4x)
+take a planner call to 75 ms and the iteration 3.2x. Eval and the table
+keep 512 samples. The replay buffer restarted empty (updates resume once
+two games are in, ~50k steps). Log `logs/retrain40_selfplay2.log`,
+tensorboard `runs/retrain40_selfplay2/logs`. The pretrain stages and the
+first 400k self-play steps ran at ~100 env-steps/s.
+
+Observed at 340-400k (before the restart): shots ~40% on target, type
+matched ~9%, the sniper beaten 30-6 but scoring 2.3 per game on the
+robot, the weak goalie conceding only 1.3 per game -- and TRAPS = 0. The
+policy never stops the puck. At 50 Hz with discount 0.99 a half-second
+of control costs ~22% of a reward and the controlled shot only pays 3-5
+more than an instant one, so stop-then-shoot loses the arithmetic. For a
+next run: trap_reward and controlled_shot_bonus several times larger, or
+a longer discount.
+
+Things to read while it runs (tensorboard on `runs/retrain40_selfplay2/logs`):
 `vs_external/win_rate`, `vs_sniper/goals_against_per_game` (blocking),
 `vs_weak_goalie/goals_for_per_game` (shooting), `shots/on_target`,
 `shots/traps`, `shots/type_matched`. First table run: `--plan 6` at the
