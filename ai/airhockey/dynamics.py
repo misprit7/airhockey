@@ -502,12 +502,15 @@ class HardwareDynamics(MotorDynamics):
                 print(f"HardwareDynamics: command failed: {e}")
         return self.x, self.y
 
-    def _read_state(self) -> None:
-        """One STATUS round trip instead of POS: the step counts come back
-        for free and they are the only record of what the machine believes
-        per cable, which is what a position disagreement has to be traced
-        through."""
-        s = self.client.get_status()
+    def absorb_status(self, s: dict) -> None:
+        """Take a STATUS reply as the controller's current belief.
+
+        Split from `_read_state` so something else holding the socket --
+        the tracking test, which owns it for the duration of its run -- can
+        keep this object's view current without a second connection. The
+        master serves one client and the protocol is one reply per command,
+        so two readers on one socket would swap each other's answers.
+        """
         self._hw_x_mm, self._hw_y_mm = s["x"], s["y"]
         self._hw_counts = [s["c0"], s["c1"], s["c2"], s["c3"]]
         self._speed_limit = s.get("speed_limit")
@@ -515,6 +518,14 @@ class HardwareDynamics(MotorDynamics):
         self._limit_flags = s.get("limit_flags", 0)
         self._usage = {k: s.get(k) for k in
                        ("speed_frac", "accel_frac", "speed_peak", "accel_peak")}
+        self.x, self.y = self._mm_to_sim(self._hw_x_mm, self._hw_y_mm)
+
+    def _read_state(self) -> None:
+        """One STATUS round trip instead of POS: the step counts come back
+        for free and they are the only record of what the machine believes
+        per cable, which is what a position disagreement has to be traced
+        through."""
+        self.absorb_status(self.client.get_status())
         # The drives' own encoders, at a slower cadence — this is a separate
         # serial round trip to four nodes and does not need to keep up with
         # the command rate.

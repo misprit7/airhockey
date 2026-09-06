@@ -56,6 +56,7 @@ DISPLAY_W = 1080
 # resolution is spent almost entirely on nothing.
 JPEG_QUALITY = 75
 TARGET_FPS = 12.0
+BOOST_JPEG_EVERY = 4        # while boosted: keep the browser stream alive, cheaply
 
 # Overlay colours (BGR).
 C_FIELD = (90, 200, 90)
@@ -183,6 +184,8 @@ class VisionService:
         self._lock = threading.Lock()
         self._jpeg: bytes | None = None
         self._pose: tuple[float, float, float] | None = None
+        self._pose_t = 0.0          # time.time() the frame arrived
+        self._boost = False         # unpaced, JPEG only every few frames
         self._puck: dict | None = None
         self._player: dict | None = None
         self._note: str | None = None
@@ -220,6 +223,27 @@ class VisionService:
         here instead of opening the camera a second time."""
         with self._lock:
             return self._pose
+
+    def latest_pose_stamped(self):
+        """(t, x_mm, y_mm, theta_rad) or None, `t` on time.time().
+
+        The stamp is when the frame ARRIVED, after exposure and transfer,
+        so it trails the paddle by a few ms; a consumer comparing against
+        another clock (the tracking test) fits that lag out rather than
+        trusting the stamp to the millisecond."""
+        with self._lock:
+            if self._pose is None:
+                return None
+            return (self._pose_t, *self._pose)
+
+    def set_boost(self, on: bool) -> None:
+        """Run the tracker as fast as the camera and CPU allow.
+
+        The browser stream is paced to TARGET_FPS because it cannot use
+        more, and the JPEG is the expensive part of each frame. While the
+        tracking test runs, the pose is what matters: pacing is dropped and
+        the JPEG is refreshed only every BOOST_JPEG_EVERY frames."""
+        self._boost = bool(on)
 
     def latest_puck(self):
         """{'x','y','theta','n'} in grid mm, or None. `n` is how many of the
@@ -277,6 +301,7 @@ class VisionService:
             return
 
         last = time.time()
+        frame_i = 0
         try:
             while not self._stop.is_set():
                 img = stream.grab()
@@ -295,10 +320,16 @@ class VisionService:
                 paddle_xy = None if pose is None else pose["centre"]
                 puck, player = _detect_loose(cands, K, dist, rvec, tvec,
                                              paddle_xy)
-                jpeg = self._annotate(img, known_px, pose, note, tm,
-                                      K, dist, rvec, tvec, puck, player)
+                boost = self._boost
+                frame_i += 1
+                if not boost or frame_i % BOOST_JPEG_EVERY == 0:
+                    jpeg = self._annotate(img, known_px, pose, note, tm,
+                                          K, dist, rvec, tvec, puck, player)
+                else:
+                    jpeg = None
                 with self._lock:
-                    self._jpeg = jpeg
+                    if jpeg is not None:
+                        self._jpeg = jpeg
                     self._note = note
                     self._puck = puck
                     self._player = player
@@ -307,11 +338,14 @@ class VisionService:
                         self._pose = (float(pose["centre"][0]),
                                       float(pose["centre"][1]),
                                       float(pose["theta"]))
+                        self._pose_t = now
                 # Pace it: the tracker does not need every frame, and the
-                # browser cannot use them.
-                slack = 1.0 / TARGET_FPS - (time.time() - now)
-                if slack > 0:
-                    self._stop.wait(slack)
+                # browser cannot use them -- unless a test is sampling the
+                # pose, when every frame is a data point.
+                if not boost:
+                    slack = 1.0 / TARGET_FPS - (time.time() - now)
+                    if slack > 0:
+                        self._stop.wait(slack)
         except Exception as e:                       # noqa: BLE001
             self._error = f"{type(e).__name__}: {e}"
         finally:

@@ -113,15 +113,15 @@
                 <h3 title="The trajectory profile lives on the Teensy. These push the caps to it at runtime, and the indicator says which one the last tick actually hit — a move that is accel-limited the whole way never reached its speed cap, so raising the speed would do nothing.">Motion limits &#9432;</h3>
                 <div class="limit-row">
                     <span class="lim-name">speed</span>
-                    <input type="number" id="lim-speed" min="1" step="10" value="200">
-                    <span class="lim-unit">mm/s</span>
+                    <input type="number" id="lim-speed" min="0.01" step="0.5" value="12">
+                    <span class="lim-unit">m/s</span>
                     <button class="lim-scale" data-for="lim-speed" data-mul="0.5">&divide;2</button>
                     <button class="lim-scale" data-for="lim-speed" data-mul="2">&times;2</button>
                 </div>
                 <div class="limit-row">
                     <span class="lim-name">accel</span>
-                    <input type="number" id="lim-accel" min="1" step="50" value="400">
-                    <span class="lim-unit">mm/s&sup2;</span>
+                    <input type="number" id="lim-accel" min="0.01" step="1" value="20">
+                    <span class="lim-unit">m/s&sup2;</span>
                     <button class="lim-scale" data-for="lim-accel" data-mul="0.5">&divide;2</button>
                     <button class="lim-scale" data-for="lim-accel" data-mul="2">&times;2</button>
                 </div>
@@ -144,6 +144,10 @@
                     <span class="gauge-pct" id="pct-accel">&mdash;</span>
                 </div>
                 <button id="btn-reset-peaks" title="Zero the peak markers. The peaks are tracked on the Teensy at 50 kHz, not sampled here at 10 Hz, so they catch transients the readout never sees.">Reset peaks</button>
+                <h3 title="A fixed sequence of moves at the caps applied above: holds, single-axis moves, the four corners, then full-height flips every 300 ms and short twitches every 100 ms, the policy's own style. Throughout, three accounts of the paddle are compared: the Teensy's step counts, the drives' encoders, and the camera. CLOSE = they agree at speed and at rest. LAGGING = agree at rest only; the drives fall behind the steps and catch up when the move ends. LOST = disagree even at rest; the cable model is wrong or a drive lost position. Needs Hardware ON; the camera is optional but without it only drives-vs-steps is scored. Every run is logged to logs/follow_test/.">Tracking test &#9432;</h3>
+                <button id="btn-follow-test">Run tracking test</button>
+                <div id="follow-test-msg"></div>
+                <pre id="follow-test-result" class="hidden"></pre>
             </div>
             <div id="replay-panel" class="hidden">
                 <h3>Recordings</h3>

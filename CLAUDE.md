@@ -34,6 +34,22 @@ Robotic air hockey table that uses reinforcement learning trained in simulation,
     - `heuristic_bridge.py` - SimBridge: BatchAirHockeyEnv history obs <-> the
       mm interface above. Reads observations only, never engine state — a bot
       scored against ground truth is scored on a table that does not exist.
+    - `follow_test.py` - The TRACKING TEST (2026-09-06): a fixed move
+      sequence (holds, single-axis moves, corners, then 300 ms full-height
+      flips and 100 ms twitches in the policy's own style) run at whatever
+      caps are applied, sampling three accounts of the paddle at 100 Hz:
+      Teensy step counts, the drives' encoders, and the camera. Verdict
+      CLOSE / LAGGING (drives fall behind at speed, catch up at rest) /
+      LOST (disagree even at rest: model or slipped cable). The camera's
+      latency is fitted out but the search is bounded at 30 ms, because a
+      wider fit absorbed a 50 ms drive lag and called it close. Also fits
+      encoder-mm per step-mm per motor, which is the direct check on the
+      unverified 800 counts/rev step input. Run from the web UI's Motion
+      limits panel ("Run tracking test", Hardware ON; camera optional);
+      samples + summary land in `logs/follow_test/<stamp>.{csv,json}`.
+      While it runs it OWNS the master socket — the UI's mouse path,
+      limits and peak reset are gated until it finishes. Unit-tested
+      against the firmware's profile body in virtual time.
     - `web/` - Browser-based visualization UI
   - `bin/` - Training scripts
     - `train.py` - SAC curriculum training

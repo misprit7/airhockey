@@ -385,6 +385,7 @@ function connect() {
                 hwPosition = null;
             }
             updateLimitState(msg.hw);
+            updateFollowTest(msg.follow_test);
             if (mode === "sim") updateScoreboard(msg);
         } else if (msg.type === "game_over") {
             document.getElementById("status").textContent = `Game Over! ${msg.score_agent}-${msg.score_opponent}`;
@@ -397,6 +398,8 @@ function connect() {
                 msg.instant ? "Physics: Instant" : "Physics: Realistic";
         } else if (msg.type === "limits") {
             showLimitResult(msg);
+        } else if (msg.type === "follow_test") {
+            showFollowTest(msg);
         } else if (msg.type === "players") {
             if (msg.error) {
                 document.getElementById("status").textContent =
@@ -1014,11 +1017,14 @@ setMode(mode);
     const btn = document.getElementById("btn-limits");
     if (!btn) return;
 
+    // The fields are in m/s and m/s²; the firmware speaks mm. Convert at
+    // the edge, in both directions, so the number you read is the number
+    // the training config uses (12 m/s, 60 m/s²) and not a thousand times it.
     const apply = () => {
         if (!ws || ws.readyState !== 1) return;
         ws.send(JSON.stringify({ type: "set_limits",
-                                 speed: parseFloat(sp.value),
-                                 accel: parseFloat(ac.value) }));
+                                 speed: parseFloat(sp.value) * 1000,
+                                 accel: parseFloat(ac.value) * 1000 }));
     };
     btn.addEventListener("click", apply);
 
@@ -1028,12 +1034,15 @@ setMode(mode);
     document.querySelectorAll(".lim-scale").forEach((b) => {
         b.addEventListener("click", () => {
             const el = document.getElementById(b.dataset.for);
-            el.value = Math.max(1, Math.round(parseFloat(el.value)
-                                              * parseFloat(b.dataset.mul)));
+            el.value = Math.max(0.01, Math.round(parseFloat(el.value)
+                                                 * parseFloat(b.dataset.mul)
+                                                 * 100) / 100);
             apply();
         });
     });
 })();
+
+const fmtM = (mm) => (mm / 1000).toFixed(2).replace(/\.?0+$/, "");
 
 function showLimitResult(m) {
     const el = document.getElementById("limit-msg");
@@ -1050,19 +1059,19 @@ function showLimitResult(m) {
     // never touched.
     const clamped = [];
     if (m.clamped_speed) {
-        document.getElementById("lim-speed").value = Math.round(m.speed);
-        clamped.push(`speed to ${Math.round(m.speed)} mm/s`);
+        document.getElementById("lim-speed").value = fmtM(m.speed);
+        clamped.push(`speed to ${fmtM(m.speed)} m/s`);
     }
     if (m.clamped_accel) {
-        document.getElementById("lim-accel").value = Math.round(m.accel);
-        clamped.push(`accel to ${Math.round(m.accel)} mm/s\u00b2`);
+        document.getElementById("lim-accel").value = fmtM(m.accel);
+        clamped.push(`accel to ${fmtM(m.accel)} m/s\u00b2`);
     }
     if (clamped.length) {
         el.textContent = `firmware clamped ${clamped.join(", ")}`;
         el.className = "bad";
     } else {
-        el.textContent = `applied ${Math.round(m.speed)} mm/s, `
-            + `${Math.round(m.accel)} mm/s\u00b2`;
+        el.textContent = `applied ${fmtM(m.speed)} m/s, `
+            + `${fmtM(m.accel)} m/s\u00b2`;
         el.className = "";
     }
 }
@@ -1089,15 +1098,15 @@ function updateLimitState(hw) {
             mark.style.display = "block";
             mark.style.left = `calc(${Math.min(100, peak * 100)}% - 1px)`;
             mark.title = `peak ${Math.round(peak * 100)}%`
-                + (limit ? ` = ${(peak * limit).toFixed(0)} ${unit}` : "");
+                + (limit ? ` = ${(peak * limit / 1000).toFixed(2)} ${unit}` : "");
         }
     };
     if (!hw) {
         set("speed", null); set("accel", null);
         return;
     }
-    set("speed", hw.speed_frac, hw.speed_peak, hw.speed_limit, "mm/s");
-    set("accel", hw.accel_frac, hw.accel_peak, hw.accel_limit, "mm/s\u00b2");
+    set("speed", hw.speed_frac, hw.speed_peak, hw.speed_limit, "m/s");
+    set("accel", hw.accel_frac, hw.accel_peak, hw.accel_limit, "m/s\u00b2");
 }
 
 (() => {
@@ -1109,6 +1118,66 @@ function updateLimitState(hw) {
         }
     });
 })();
+
+// \u2500\u2500 tracking test \u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500
+// One button: starts the fixed sequence, or stops it while it runs. The
+// verdict and its numbers land in the <pre> below it; the full samples go
+// to logs/follow_test/ on the server, and the last line says where.
+let followTestRunning = false;
+
+(() => {
+    const b = document.getElementById("btn-follow-test");
+    if (!b) return;
+    b.addEventListener("click", () => {
+        if (!ws || ws.readyState !== 1) return;
+        if (mode === "replay") setMode("control");
+        ws.send(JSON.stringify({ type: "follow_test",
+                                 action: followTestRunning ? "stop" : "start" }));
+    });
+})();
+
+function setFollowTestRunning(on) {
+    followTestRunning = on;
+    const b = document.getElementById("btn-follow-test");
+    if (b) b.textContent = on ? "Stop tracking test" : "Run tracking test";
+}
+
+function updateFollowTest(p) {
+    // Progress rides on the frame message while the test runs.
+    if (!p) return;
+    const el = document.getElementById("follow-test-msg");
+    if (!el) return;
+    const est = p.estimate_s ? ` of ~${Math.round(p.estimate_s)} s` : "";
+    const gap = p.gap_mm === null || p.gap_mm === undefined
+        ? "" : `   camera gap ${Math.round(p.gap_mm)} mm`;
+    el.textContent = `${p.i}/${p.n} ${p.segment}   ${p.elapsed_s.toFixed(1)} s${est}${gap}`;
+    el.className = "";
+}
+
+function showFollowTest(msg) {
+    const el = document.getElementById("follow-test-msg");
+    const out = document.getElementById("follow-test-result");
+    if (!el || !out) return;
+    if (msg.state === "started") {
+        setFollowTestRunning(true);
+        out.classList.add("hidden");
+        el.textContent = msg.camera
+            ? `running ${msg.segments} segments`
+            : `running ${msg.segments} segments \u2014 camera OFF, drives vs steps only`;
+        el.className = msg.camera ? "" : "bad";
+    } else if (msg.state === "done") {
+        setFollowTestRunning(false);
+        const v = msg.summary && msg.summary.verdict;
+        el.textContent = `verdict: ${v}`;
+        el.className = v === "close" ? "" : "bad";
+        out.textContent = msg.text || JSON.stringify(msg.summary, null, 1);
+        out.classList.remove("hidden");
+    } else {
+        setFollowTestRunning(false);
+        el.textContent = msg.error || "tracking test failed";
+        el.className = "bad";
+    }
+}
 
 // ── zoom / pan, shared by the tracker view and the state view ──────
 //

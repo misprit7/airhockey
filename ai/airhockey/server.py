@@ -17,6 +17,7 @@ from airhockey.dynamics import (DelayedDynamics, HardwareDynamics,  # noqa: F401
                                 ProfileDynamics,
                                 IdealDynamics, table_mm_to_sim)
 from airhockey.env import AirHockeyEnv
+from airhockey.follow_test import FollowTest, format_summary
 from airhockey.recorder import Recorder
 from airhockey.vision_service import SERVICE as VISION
 
@@ -298,6 +299,10 @@ async def live_game(ws: WebSocket):
     def _policy(run_name):
         return policy_cache[run_name]
     hardware_dynamics = None
+    follow_test = None      # airhockey.follow_test.FollowTest while it runs
+
+    def _testing():
+        return follow_test is not None and follow_test.running
     # The UI drives the SAME control law the Teensy runs, so what you see
     # dragging the mouse is what the machine will do -- jerk-limited, with the
     # firmware's parking rule. A first-order lag looked close and was not.
@@ -412,6 +417,10 @@ async def live_game(ws: WebSocket):
                                 use_hardware = False
                                 hardware_dynamics = None
                         else:
+                            if follow_test is not None:
+                                follow_test.stop(join_s=2.0)
+                                follow_test = None
+                                VISION.set_boost(False)
                             if hardware_dynamics:
                                 try:
                                     hardware_dynamics.client.disable()
@@ -430,6 +439,9 @@ async def live_game(ws: WebSocket):
                         if not hd:
                             await ws.send_json({"type": "limits",
                                                 "error": "hardware is off"})
+                        elif _testing():
+                            await ws.send_json({"type": "limits",
+                                                "error": "tracking test running"})
                         else:
                             try:
                                 r = hd.set_limits(
@@ -440,16 +452,51 @@ async def live_game(ws: WebSocket):
                                 await ws.send_json({"type": "limits",
                                                     "error": str(e)})
                     elif msg_type == "reset_peaks":
-                        if hardware_dynamics:
+                        if hardware_dynamics and not _testing():
                             try:
                                 hardware_dynamics.reset_peaks()
                             except Exception as e:      # noqa: BLE001
                                 print(f"reset_peaks failed: {e}")
+                    elif msg_type == "follow_test":
+                        # The fixed move sequence, scored three ways (see
+                        # airhockey/follow_test.py). It OWNS the master
+                        # socket while it runs: every other path that would
+                        # talk to the machine is gated on _testing().
+                        if msg.get("action") == "stop":
+                            if follow_test is not None:
+                                follow_test.stop()
+                        elif ui_mode != "control" or not (
+                                use_hardware and hardware_dynamics):
+                            await ws.send_json({"type": "follow_test",
+                                                "state": "error",
+                                                "error": "hardware is off"})
+                        elif _testing():
+                            await ws.send_json({"type": "follow_test",
+                                                "state": "error",
+                                                "error": "already running"})
+                        else:
+                            cam = (VISION.latest_pose_stamped
+                                   if VISION.running else None)
+                            if cam is None:
+                                print("  tracking test: camera off -- "
+                                      "drives vs steps only")
+                            VISION.set_boost(cam is not None)
+                            follow_test = FollowTest(
+                                hardware_dynamics.client, camera=cam,
+                                on_status=hardware_dynamics.absorb_status)
+                            follow_test.start()
+                            await ws.send_json({
+                                "type": "follow_test", "state": "started",
+                                "camera": cam is not None,
+                                "segments": len(follow_test.segments)})
                     elif msg_type == "set_mode":
                         # "control" = human driving the machine, no world.
                         # "sim" = the full game. Replay never reaches here.
                         ui_mode = ("control" if msg.get("mode") == "control"
                                    else "sim")
+                        if ui_mode != "control" and follow_test is not None:
+                            # The sim loop steps the hardware dynamics too.
+                            follow_test.stop(join_s=2.0)
                     elif msg_type == "set_players":
                         new_players = {
                             "agent": msg.get("agent") or players["agent"],
@@ -531,15 +578,46 @@ async def live_game(ws: WebSocket):
                 # somewhere the robot cannot go -- and with hardware enabled
                 # the display then disagreed with the machine, which clamps
                 # in _sim_to_mm regardless.
+                testing = _testing()
+                if follow_test is not None and not testing:
+                    # The test just finished, or died. Hold the paddle where
+                    # it left it -- the mouse's old target would otherwise
+                    # yank it away the moment the socket is ours again --
+                    # and hand the verdict to the browser.
+                    ft, follow_test = follow_test, None
+                    VISION.set_boost(False)
+                    if hardware_dynamics:
+                        target_x, target_y = hardware_dynamics.x, hardware_dynamics.y
+                    if ft.error:
+                        print(f"  tracking test failed: {ft.error}")
+                        await ws.send_json({"type": "follow_test",
+                                            "state": "error",
+                                            "error": ft.error})
+                    elif ft.result:
+                        text = format_summary(ft.result)
+                        print("  tracking test:\n    "
+                              + text.replace("\n", "\n    "))
+                        await ws.send_json({"type": "follow_test",
+                                            "state": "done",
+                                            "summary": ft.result,
+                                            "text": text})
                 tx = min(max(target_x, env._ws["min_x"]), env._ws["max_x"])
                 ty = min(max(target_y, env._ws["min_y"]), env._ws["max_y"])
-                ax, ay = env.agent_dynamics.update(tx, ty, env.action_dt)
+                if testing:
+                    # The test owns the socket; its STATUS replies land in
+                    # hardware_dynamics through absorb_status, so the view
+                    # keeps following without a second reader.
+                    ax, ay = hardware_dynamics.x, hardware_dynamics.y
+                else:
+                    ax, ay = env.agent_dynamics.update(tx, ty, env.action_dt)
                 frame_msg = {
                     "type": "frame",
                     "control": True,
                     "agent_x": ax,
                     "agent_y": ay,
                 }
+                if testing:
+                    frame_msg["follow_test"] = dict(follow_test.progress)
                 if use_hardware and hardware_dynamics:
                     frame_msg["hw_x"] = hardware_dynamics.x
                     frame_msg["hw_y"] = hardware_dynamics.y

@@ -826,3 +826,20 @@ canvas {
     font: inherit;
     font-size: 12px;
 }
+
+/* Tracking test: a verdict line, then the numbers as monospace lines. Scrolls
+   inside itself rather than widening the panel. */
+#follow-test-msg { font-size: 12px; color: var(--ink-2); min-height: 1em; }
+#follow-test-msg.bad { color: var(--red); }
+#follow-test-result {
+    margin: 0;
+    padding: 6px 8px;
+    font: 11px ui-monospace, Menlo, monospace;
+    color: var(--ink-2);
+    background: var(--ice);
+    border: 1.5px solid var(--line);
+    border-radius: var(--r);
+    white-space: pre;
+    overflow: auto;
+    max-height: 240px;
+}
