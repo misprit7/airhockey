@@ -963,3 +963,17 @@ def test_frame_reader_hands_over_everything_queued_since_the_last_batch():
     assert frames[6][2].shape == (0, 3)
     # everything that had queued came in one go once the consumer arrived
     assert len(batches[0]) >= 1 and sum(len(b) for b in batches) == 7
+
+
+def test_a_camera_fix_a_metre_from_the_controller_is_not_the_robot():
+    """The tracker clustered the wrong blobs (the human's mallet, the puck):
+    the controller wins and the miss is counted. A genuine disagreement
+    of a few centimetres still goes to the camera."""
+    r = rp.ReportBuilder()
+    r.add_mallet(1.0, 300.0, 560.0)
+    r.set_controller_mallet(1.0, 1446.0, 544.0)          # 1146 mm apart
+    assert r.observation(1.0)[rp.OBS_MALLET] == (1446.0, 544.0)
+    assert r.n_implausible == 1
+    r.add_mallet(1.0, 1400.0, 544.0)                     # 46 mm: camera
+    assert r.observation(1.0)[rp.OBS_MALLET] == (1400.0, 544.0)
+    assert r.n_implausible == 1

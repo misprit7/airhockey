@@ -141,6 +141,14 @@ MALLET_DISAGREE_WARN_MM = 25.0
 # read live and does not go stale with the loop.
 CAM_OWN_MAX_LAG_S = 0.030
 SHED_WARN_EVERY_S = 1.0
+# A camera "own mallet" this far from the controller is not the robot's
+# mallet: with the loop current the tracking test puts the two within a
+# few centimetres, and the drives cannot be a metre behind. It is the
+# tracker having clustered the wrong blobs -- the human's mallet or the
+# puck's markers -- which happened on 17 ticks of the 2026-09-06 11:53
+# session (1148 mm) and handed the policy a self-position at the far end
+# of the table. The controller wins; the fix is counted and reported.
+MALLET_IMPLAUSIBLE_MM = 300.0
 
 
 @dataclass(frozen=True)
@@ -209,6 +217,7 @@ class ReportBuilder:
         # Counters for the status line; the interesting number on the rig is
         # what fraction of frames produced a real fix.
         self.n_frames = 0
+        self.n_implausible = 0       # camera own-mallet fixes rejected as not the robot's
         self.n_puck = 0
         self.n_mallet = 0
         self.n_opponent = 0
@@ -343,6 +352,9 @@ class ReportBuilder:
         if ctl_fresh and cam_fresh:
             gap = math.hypot(self.mallet[0] - self.controller_mallet[0],
                              self.mallet[1] - self.controller_mallet[1])
+            if gap > MALLET_IMPLAUSIBLE_MM:
+                self.n_implausible += 1
+                return self.controller_mallet
             return self.mallet if gap > MALLET_DISAGREE_WARN_MM else self.controller_mallet
         if ctl_fresh:
             return self.controller_mallet
@@ -1637,6 +1649,7 @@ def _status(t, report, action, committer, flags, n_clamped, rate, live, lag,
           f"  {'' if live else 'WOULD SEND  '}"
           f"clamped {n_clamped}"
           + (f"  shed {skipped}" if skipped else "")
+          + (f"  badfix {report.n_implausible}" if report.n_implausible else "")
           + (f"  [{','.join(flags)}]" if flags else "")
           + (f"  | {cost_line}" if cost_line else ""))
 
