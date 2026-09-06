@@ -1455,13 +1455,15 @@ def _tick_row(t, report: ReportBuilder, lag, watchdog, policy, asked: Action,
               action: Action, flags, committer, cost, tick_io, tick_policy):
     st = report.staleness(t)
     hist = report.observation(t)[OBS_PUCK]
-    if (report.controller_mallet is not None
-            and t - report.t_controller <= STALE_S):
-        m, src = report.controller_mallet, "controller"
-    elif report.mallet is not None and t - report.t_mallet <= STALE_S:
-        m, src = report.mallet, "camera"
+    # The same choice _own_mallet makes, so the column says what the policy
+    # was actually given (it used to say "controller" whenever one was fresh).
+    m = report.observation(t)[OBS_MALLET]
+    if report.controller_mallet is not None and tuple(m) == tuple(report.controller_mallet):
+        src = "controller"
+    elif report.mallet is not None and tuple(m) == tuple(report.mallet):
+        src = "camera"
     else:
-        m, src = (None, None), "fallback"
+        src = "fallback"
     opp = report.opponent if t - report.t_opponent <= STALE_S else (None, None)
     row = {
         "t_cam": t, "t_wall": time.time(), "lag_ms": 1000.0 * lag.lag,
