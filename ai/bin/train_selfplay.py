@@ -58,6 +58,11 @@ from airhockey.batch_env import _OPP_POLICY_MAP  # noqa: E402
 
 warnings.filterwarnings('ignore')
 torch.backends.cudnn.benchmark = True
+# TF32 matmuls: 1.5x on the planner and the update on this GPU for a
+# precision loss (10-bit mantissa) that a layer-normed RL MLP does not
+# notice. PyTorch leaves it off by default; profile_selfplay.py measured
+# it on 2026-09-06 -- the two planner calls were 93% of an iteration.
+torch.set_float32_matmul_precision("high")
 
 # Weights come from the named curriculum's self-play stage so the pretrain
 # stages and this one share one table (rewards.CURRICULUM).
@@ -181,6 +186,19 @@ def main():
     parser.add_argument("--iterations", type=int, default=PLAN_ITERATIONS,
                         help="MPPI iterations for data collection; the table's "
                              "number, for the same reason")
+    parser.add_argument("--opp-iterations", type=int, default=None,
+                        help="MPPI iterations for the far side's planner "
+                             "(default: --iterations); 0 = the prior alone")
+    parser.add_argument("--samples", type=int, default=256,
+                        help="MPPI samples per env during COLLECTION (eval and "
+                             "the table keep the config's 512). At 32 envs the "
+                             "planner is compute-bound and 512 -> 256 halves "
+                             "its cost, measured 2026-09-06")
+    parser.add_argument("--no-compile", dest="compile_plan", action="store_false",
+                        default=True,
+                        help="skip torch.compile(reduce-overhead) on the "
+                             "batched planners (CUDA graphs; ~30 s warm-up, "
+                             "then ~1.4x on each planner call)")
     parser.add_argument("--reset-prior", action="store_true",
                         help="re-initialise the policy prior head on resume "
                              "(policy_loader.reset_prior): a prior saturated "
@@ -217,6 +235,7 @@ def main():
         "pi_smooth_coef": args.pi_smooth,
         "plan_smooth_coef": args.plan_smooth,
         "iterations": args.iterations,
+        "num_samples": args.samples,
     })
     cfg = OmegaConf.merge(base_cfg, overrides)
     if args.model_size in MODEL_SIZE:
@@ -246,16 +265,34 @@ def main():
         from airhockey.policy_loader import reset_prior   # noqa: PLC0415
         reset_prior(agent)
         print("  prior head re-initialised (--reset-prior)")
-    opponent = TDMPC2(cfg)
+    # The far side gets its OWN cfg: TDMPC2 keeps a reference, and the
+    # opponent's iteration count must not change the agent's.
+    import copy                                            # noqa: PLC0415
+    opp_cfg = copy.deepcopy(cfg)
+    opp_iters = args.iterations if args.opp_iterations is None else args.opp_iterations
+    opp_cfg.iterations = max(1, opp_iters)
+    opp_cfg.mpc = opp_iters > 0
+    opponent = TDMPC2(opp_cfg)
     load_checkpoint(opponent, args.resume)
     buffer = Buffer(cfg)
+    if args.compile_plan and torch.cuda.is_available():
+        # CUDA graphs on the batched planners. Shapes are static (n_envs),
+        # weights update in place (the graph reads the same memory), and
+        # the opponent's periodic load() copies into the same parameters.
+        agent._plan_batch = torch.compile(agent._plan_batch, mode="reduce-overhead")
+        if opp_cfg.mpc:
+            opponent._plan_batch = torch.compile(opponent._plan_batch, mode="reduce-overhead")
 
     print(f"\nSelf-Play TD-MPC2 Training (March recipe, new environment)")
     print(f"  Steps: {args.steps:,}   Parallel envs: {n_envs}")
     print(f"  Opponent update: every {args.opponent_update_freq:,} steps")
     print(f"  Far side: {'copy of self (robot body, mirrored workspace)' if args.symmetric else 'human model'}")
     print(f"  Prior smoothness (pi_smooth_coef): {args.pi_smooth}")
-    print(f"  Planner: {args.iterations} MPPI iterations, action-change cost {args.plan_smooth}")
+    print(f"  Planner: {args.iterations} MPPI iterations x {args.samples} samples, "
+          f"action-change cost {args.plan_smooth}; far side "
+          f"{'prior only' if not opp_cfg.mpc else f'{opp_cfg.iterations} iterations'}; "
+          f"CUDA graphs {'on' if args.compile_plan and torch.cuda.is_available() else 'off'}; "
+          f"TF32 on")
     print(f"  Planning horizon: {args.horizon}   Goals: +{GOAL_REWARD:.0f} / {GOAL_PENALTY:.0f}")
     print(f"  Sensing: {'on' if args.realistic_sensing else 'off'}   "
           f"DR: {'on' if args.domain_randomize else 'off'}   obs {env.obs_dim} dims")
