@@ -95,6 +95,100 @@ def _is_bank_shot(px, py, vx, vy):
     return (x_at_goal < 0.0) | (x_at_goal > _TABLE_W)
 
 
+# ---------------------------------------------------------------------------
+# The shot predictor: where a puck's free path crosses the far goal line
+# ---------------------------------------------------------------------------
+# One definition of "on target", shared by every term that scores a shot
+# (the on-target reward, the shot-type reward, the SAC exchange shaper). The
+# path is traced through the MEASURED lossy-wall model -- normal 0.785,
+# tangential 0.66, the coefficients the heuristic bots aim with -- so a bank
+# is scored where it actually lands rather than where a mirror says. The
+# opponent is deliberately ignored: the question is whether it WOULD go in
+# with nobody there, which is what makes it a statement about the shot.
+# Friction is ignored too; a slow on-target shot is scored optimistically,
+# and the speed term is what pays for making it fast.
+SHOT_MAX_BOUNCES = 4
+SHOT_RAIL_LEFT = -1      # the x = 0 rail, LEFT for a robot facing the far goal
+SHOT_RAIL_RIGHT = 1      # the x = width rail
+SHOT_RAIL_NONE = 0
+
+# Shot types the policy can be asked for (observation one-hot, see
+# BatchAirHockeyEnv): 0 = no preference (all zeros), then the three.
+SHOT_TYPE_NONE, SHOT_TYPE_LEFT, SHOT_TYPE_RIGHT, SHOT_TYPE_STRAIGHT = 0, 1, 2, 3
+SHOT_TYPE_NAMES = ("none", "left", "right", "straight")
+
+# Possession and control (see BatchRewardShaper): a puck is TRAPPED when,
+# on the agent's half, it is brought under TRAP_SPEED within TRAP_DIST of
+# the paddle after having moved faster than TRAP_MIN_ARRIVAL during this
+# visit -- a puck that drifted to rest on its own is not a trap.
+TRAP_SPEED = 0.3
+TRAP_DIST = 0.20
+TRAP_MIN_ARRIVAL = 0.8
+
+
+def predict_shot(x, y, vx, vy, width: float = _TABLE_W, height: float = _GOAL_CY,
+                 puck_radius: float = 0.0407, e_n: float = 0.785, e_t: float = 0.66,
+                 max_bounces: int = SHOT_MAX_BOUNCES):
+    """Trace a puck's free path to the far goal line.
+
+    Elementwise over arrays. Returns (x_goal, t_goal, n_bounces, first_rail):
+    x_goal is nan where the path never reaches the line (moving away, or
+    dead after `max_bounces` rails), t_goal the time to get there,
+    n_bounces the side rails touched on the way and first_rail which one
+    was touched first (SHOT_RAIL_LEFT / RIGHT / NONE).
+    """
+    x = np.array(x, dtype=float, copy=True)
+    y = np.array(y, dtype=float, copy=True)
+    vx = np.array(vx, dtype=float, copy=True)
+    vy = np.array(vy, dtype=float, copy=True)
+    t_total = np.zeros_like(x)
+    x_goal = np.full_like(x, np.nan)
+    n_b = np.zeros(x.shape, dtype=np.int32)
+    first = np.zeros(x.shape, dtype=np.int32)
+    active = vy > 1e-6
+    lo, hi = puck_radius, width - puck_radius
+    for _ in range(max_bounces + 1):
+        if not active.any():
+            break
+        with np.errstate(invalid="ignore"):
+            t_g = np.where(active, (height - y) / np.maximum(vy, 1e-9), np.inf)
+            x_lin = x + vx * t_g
+        direct = active & (x_lin >= lo) & (x_lin <= hi)
+        x_goal = np.where(direct, x_lin, x_goal)
+        t_total = np.where(direct, t_total + t_g, t_total)
+        active &= ~direct
+        with np.errstate(divide="ignore", invalid="ignore"):
+            t_w = np.where(vx > 1e-9, (hi - x) / vx,
+                           np.where(vx < -1e-9, (lo - x) / vx, np.inf))
+        t_w = np.clip(t_w, 0.0, None)
+        bounced = active & np.isfinite(t_w)
+        step = np.where(bounced, t_w, 0.0)
+        x = x + vx * step
+        y = y + vy * step
+        t_total = t_total + step
+        rail = np.where(vx > 0, SHOT_RAIL_RIGHT, SHOT_RAIL_LEFT)
+        first = np.where(bounced & (n_b == 0), rail, first)
+        n_b = n_b + bounced.astype(np.int32)
+        vx = np.where(bounced, -vx * e_n, vx)
+        vy = np.where(bounced, vy * e_t, vy)
+        active &= bounced
+    # A path still bouncing after the cap never arrives.
+    x_goal = np.where(active, np.nan, x_goal)
+    return x_goal, t_total, n_b, first
+
+
+def shot_matches_type(shot_type, n_bounces, first_rail):
+    """Elementwise: did a shot with this rail history satisfy the request?
+
+    straight = touched no rail; left / right bank = the FIRST rail touched
+    is that side. No preference never matches (nothing to pay for).
+    """
+    shot_type = np.asarray(shot_type)
+    return ((shot_type == SHOT_TYPE_STRAIGHT) & (n_bounces == 0)) | \
+           ((shot_type == SHOT_TYPE_LEFT) & (first_rail == SHOT_RAIL_LEFT)) | \
+           ((shot_type == SHOT_TYPE_RIGHT) & (first_rail == SHOT_RAIL_RIGHT))
+
+
 def _resolve(explicit: float | None, key: str, stage: int) -> float:
     """Return explicit weight if provided, else stage default."""
     if explicit is not None:
@@ -316,9 +410,45 @@ class BatchRewardShaper:
         # change and stays cheap against contact (2) and a goal (100); a
         # policy that flips every few ticks pays every time.
         smooth_weight: float = 0.0,
+        # Shot OUTCOMES (2026-09-06, ai/RETRAIN.md items 2-4). Paid at the
+        # hit, once per possession (a visit of the puck to the agent's half):
+        #   on_target_reward   the shot's free path (predict_shot) crosses
+        #                      the far goal line inside the mouth
+        #   shot_speed_weight  x the puck's speed, on on-target shots only
+        #   trap_reward        the first time this visit the puck is brought
+        #                      to rest under the paddle after arriving fast
+        #   controlled_shot_bonus  multiplies on_target_reward when the
+        #                      possession included a trap (1.0 = off)
+        #   shot_type_reward   the shot's rail history matches the type the
+        #                      env asked for (info["shot_type"])
+        on_target_reward: float = 0.0,
+        shot_speed_weight: float = 0.0,
+        trap_reward: float = 0.0,
+        controlled_shot_bonus: float = 1.0,
+        shot_type_reward: float = 0.0,
+        config=None,
     ):
         self.n_envs = n_envs
         self.stage = stage
+        from airhockey.physics import TableConfig    # noqa: PLC0415
+        cfg = config or TableConfig()
+        self._cfg = cfg
+        self._H = cfg.height
+        self.on_target_reward = on_target_reward
+        self.shot_speed_weight = shot_speed_weight
+        self.trap_reward = trap_reward
+        self.controlled_shot_bonus = controlled_shot_bonus
+        self.shot_type_reward = shot_type_reward
+        # Possession state: is the puck on the agent's half, has it been
+        # trapped this visit, has an on-target shot been paid this visit,
+        # and the fastest it moved this visit (the trap's arrival test).
+        self._in_half = np.zeros(n_envs, dtype=bool)
+        self._trapped = np.zeros(n_envs, dtype=bool)
+        self._shot_paid = np.zeros(n_envs, dtype=bool)
+        self._visit_max_speed = np.zeros(n_envs)
+        # Counters for the trainer's logs: traps, on-target shots and
+        # type matches since the last read.
+        self.stats = {"traps": 0, "on_target": 0, "type_matched": 0, "shots": 0}
         # The reachable box (env._ws), for the proximity term. Measured
         # distance to the puck is dominated by where the PUCK is: it spends
         # most of a game outside the robot's box, and a policy that drives
@@ -406,6 +536,11 @@ class BatchRewardShaper:
             self._prev_puck_y[idx] = obs[idx, 1]  # puck_y
         self._contact_count[idx] = 0
         self._has_prev_action[idx] = False
+        py = info["puck_y"][idx] if (info is not None and "puck_y" in info) else obs[idx, 1]
+        self._in_half[idx] = py < self._H / 2.0
+        self._trapped[idx] = False
+        self._shot_paid[idx] = False
+        self._visit_max_speed[idx] = 0.0
         # Read puck velocity from info (truth) or obs (indices 2-3)
         puck_vx = obs[idx, 2]
         puck_vy = obs[idx, 3]
@@ -502,6 +637,54 @@ class BatchRewardShaper:
                 upd = shooting
                 self._bank_ema[upd] += 0.2 * (bank[upd].astype(float) - self._bank_ema[upd])
 
+        # Possession: a visit of the puck to the agent's half. Entering
+        # starts a fresh visit (nothing trapped, nothing paid); leaving --
+        # which is what a shot does -- ends it.
+        in_half = puck_y < self._H / 2.0
+        entered = in_half & ~self._in_half
+        if np.any(entered):
+            self._trapped[entered] = False
+            self._shot_paid[entered] = False
+            self._visit_max_speed[entered] = 0.0
+        self._in_half[:] = in_half
+        self._visit_max_speed = np.where(in_half, np.maximum(self._visit_max_speed, puck_speed),
+                                         self._visit_max_speed)
+
+        # Trap: the puck brought to rest under the paddle after arriving
+        # fast. Once per visit, so bump-stop-bump earns nothing extra.
+        if self.trap_reward > 0:
+            trap = (in_half & ~self._trapped & (puck_speed < TRAP_SPEED)
+                    & (dist < TRAP_DIST) & (self._visit_max_speed > TRAP_MIN_ARRIVAL))
+            if np.any(trap):
+                shaped += np.where(trap, self.trap_reward, 0.0)
+                self._trapped |= trap
+                self.stats["traps"] += int(trap.sum())
+
+        # Shot outcome, scored at the hit from the puck's outgoing velocity
+        # and paid once per visit. A hit that was already paid this visit
+        # (dribbling) earns nothing more until the puck leaves and returns.
+        if self.on_target_reward > 0 or self.shot_type_reward > 0:
+            scoring = hit & ~self._shot_paid
+            if np.any(scoring):
+                x_goal, _t, n_b, first = predict_shot(
+                    puck_x, puck_y, puck_vx, puck_vy, self._cfg.width, self._H,
+                    self._cfg.puck_radius, self._cfg.wall_restitution,
+                    self._cfg.wall_tangential)
+                on_target = scoring & np.isfinite(x_goal) & \
+                    (np.abs(x_goal - self._cfg.width / 2.0) < self._cfg.goal_width / 2.0)
+                self.stats["shots"] += int(scoring.sum())
+                if np.any(on_target):
+                    mult = np.where(self._trapped, self.controlled_shot_bonus, 1.0)
+                    shaped += np.where(on_target,
+                                       self.on_target_reward * mult
+                                       + self.shot_speed_weight * puck_speed, 0.0)
+                    self.stats["on_target"] += int(on_target.sum())
+                    if self.shot_type_reward > 0 and info is not None and "shot_type" in info:
+                        matched = on_target & shot_matches_type(info["shot_type"], n_b, first)
+                        shaped += np.where(matched, self.shot_type_reward, 0.0)
+                        self.stats["type_matched"] += int(matched.sum())
+                    self._shot_paid |= on_target
+
         # Puck progress (one-way, only positive delta)
         if self.puck_progress_weight > 0:
             delta_y = puck_y - self._prev_puck_y
@@ -571,6 +754,10 @@ class BatchRewardShaper:
         if np.any(goal_mask):
             self._prev_puck_y[goal_mask] = puck_y[goal_mask]
             self._contact_count[goal_mask] = 0
+            self._in_half[goal_mask] = puck_y[goal_mask] < self._H / 2.0
+            self._trapped[goal_mask] = False
+            self._shot_paid[goal_mask] = False
+            self._visit_max_speed[goal_mask] = 0.0
 
         return shaped.astype(np.float32)
 
@@ -668,41 +855,10 @@ class ExchangeRewardShaper:
             self._prev_score_opp[idx] = 0
 
     def _predict_goal_crossing(self, x, y, vx, vy):
-        """Where the puck's free path crosses the opponent goal line.
-
-        Segments between side-wall bounces, each bounce applying the
-        MEASURED coefficients (normal e_n, tangential e_t) -- the same
-        model the heuristic bots aim with, and the reason a bank shot is
-        scored where it actually lands rather than where a mirror says.
-        Returns (x_at_goal [nan if never], time_to_goal).
-        """
-        x, y = x.copy(), y.copy()
-        vx, vy = vx.copy(), vy.copy()
-        t_total = np.zeros_like(x)
-        x_goal = np.full_like(x, np.nan)
-        active = vy > 1e-6
-        lo, hi = self.r, self.W - self.r
-        for _ in range(4):
-            if not active.any():
-                break
-            t_g = np.where(active, (self.H - y) / np.maximum(vy, 1e-9), np.inf)
-            x_lin = x + vx * t_g
-            direct = active & (x_lin >= lo) & (x_lin <= hi)
-            x_goal = np.where(direct, x_lin, x_goal)
-            t_total = np.where(direct, t_total + t_g, t_total)
-            active &= ~direct
-            with np.errstate(divide="ignore", invalid="ignore"):
-                t_w = np.where(vx > 1e-9, (hi - x) / vx,
-                               np.where(vx < -1e-9, (lo - x) / vx, np.inf))
-            t_w = np.clip(t_w, 0.0, None)
-            step = np.where(active & np.isfinite(t_w), t_w, 0.0)
-            x = x + vx * step
-            y = y + vy * step
-            t_total = t_total + step
-            bounced = active & np.isfinite(t_w)
-            vx = np.where(bounced, -vx * self.e_n, vx)
-            vy = np.where(bounced, vy * self.e_t, vy)
-            active &= bounced
+        """Where the puck's free path crosses the opponent goal line, via the
+        shared predict_shot (see it for the wall model)."""
+        x_goal, t_total, _n, _first = predict_shot(
+            x, y, vx, vy, self.W, self.H, self.r, self.e_n, self.e_t)
         return x_goal, t_total
 
     def compute(self, obs, raw_rewards, actions=None, info=None):
@@ -795,26 +951,45 @@ CURRICULUM: dict[str, dict] = {
         proximity_weight=0.1, contact_reward=0.0, directed_hit_weight=0.0,
         puck_progress_weight=0.0, defense_weight=0.0, shot_placement_weight=0.0,
         goal_reward=0.0, goal_penalty=0.0, entropy_weight=0.0, shot_mix_weight=0.0),
+    # From "contact" on, the shot's OUTCOME is what pays (2026-09-06, see
+    # ai/RETRAIN.md items 2-4): an on-target shot earns on_target_reward
+    # plus shot_speed_weight per m/s, ten times a merely forward hit
+    # (directed_hit, cut from 2.0/1.0 to 0.5). From "scoring" on, bringing
+    # the puck to rest under the paddle first earns trap_reward and lifts
+    # the on-target reward by controlled_shot_bonus, so stop-then-shoot
+    # beats the instant slap when both are on target. Self-play adds the
+    # shot-type request (shot_type_reward on a match) and the opponent mix.
     "contact": dict(
         opponent="idle", episode_s=10.0, steps=300_000,
-        proximity_weight=0.02, contact_reward=5.0, directed_hit_weight=2.0,
+        proximity_weight=0.02, contact_reward=5.0, directed_hit_weight=0.5,
         puck_progress_weight=0.0, defense_weight=0.0, shot_placement_weight=0.0,
-        goal_reward=0.0, goal_penalty=0.0, entropy_weight=0.0, shot_mix_weight=0.0),
+        goal_reward=0.0, goal_penalty=0.0, entropy_weight=0.0, shot_mix_weight=0.0,
+        on_target_reward=10.0, shot_speed_weight=1.0),
     "scoring": dict(
-        opponent="idle", episode_s=20.0, steps=500_000,
-        proximity_weight=0.0, contact_reward=2.0, directed_hit_weight=1.0,
-        puck_progress_weight=0.5, defense_weight=0.5, shot_placement_weight=2.0,
-        goal_reward=100.0, goal_penalty=-20.0, entropy_weight=0.0, shot_mix_weight=0.5),
+        opponent="idle", episode_s=20.0, steps=500_000, fuzz_p=0.2,
+        proximity_weight=0.0, contact_reward=2.0, directed_hit_weight=0.5,
+        puck_progress_weight=0.5, defense_weight=0.5, shot_placement_weight=1.0,
+        goal_reward=100.0, goal_penalty=-20.0, entropy_weight=0.0, shot_mix_weight=0.5,
+        on_target_reward=10.0, shot_speed_weight=1.0,
+        trap_reward=2.0, controlled_shot_bonus=1.5),
     "goalie": dict(
-        opponent="goalie", episode_s=20.0, steps=500_000,
-        proximity_weight=0.0, contact_reward=2.0, directed_hit_weight=1.0,
-        puck_progress_weight=0.5, defense_weight=0.5, shot_placement_weight=2.0,
-        goal_reward=100.0, goal_penalty=-20.0, entropy_weight=0.0, shot_mix_weight=0.5),
+        opponent="goalie", episode_s=20.0, steps=500_000, fuzz_p=0.2,
+        proximity_weight=0.0, contact_reward=2.0, directed_hit_weight=0.5,
+        puck_progress_weight=0.5, defense_weight=0.5, shot_placement_weight=1.0,
+        goal_reward=100.0, goal_penalty=-20.0, entropy_weight=0.0, shot_mix_weight=0.5,
+        on_target_reward=10.0, shot_speed_weight=1.0,
+        trap_reward=2.0, controlled_shot_bonus=1.5),
     "selfplay": dict(
-        opponent="external", episode_s=30.0, steps=3_000_000,
-        proximity_weight=0.0, contact_reward=2.0, directed_hit_weight=1.0,
-        puck_progress_weight=0.5, defense_weight=1.0, shot_placement_weight=2.0,
+        opponent="external", episode_s=30.0, steps=3_000_000, fuzz_p=0.2,
+        proximity_weight=0.0, contact_reward=2.0, directed_hit_weight=0.5,
+        puck_progress_weight=0.5, defense_weight=1.0, shot_placement_weight=1.0,
         goal_reward=100.0, goal_penalty=-50.0, entropy_weight=0.0, shot_mix_weight=0.5,
+        on_target_reward=10.0, shot_speed_weight=1.0,
+        trap_reward=2.0, controlled_shot_bonus=1.5,
+        # The env draws a shot type per possession (shot_types=True) and
+        # the far side is drawn per episode from opponent_mix.
+        shot_type_reward=10.0, shot_types=True,
+        opponent_mix={"external": 0.6, "sniper": 0.2, "weak_goalie": 0.2},
         # Idle hygiene (see BatchRewardShaper): at most 0.005/step for
         # sitting off the goal's centre line while the puck is on the far
         # half. Smoothness during play: 0.2 per unit of action change,
@@ -838,6 +1013,9 @@ _SHAPER_KEYS = ("proximity_weight", "contact_reward", "directed_hit_weight",
 # sets them, so the scalar ShapedRewardWrapper -- which has no such terms --
 # keeps accepting every pretrain stage's kwargs.
 _IDLE_KEYS = ("home_weight", "jitter_weight", "smooth_weight")
+# Shot-outcome terms, likewise batch-only and passed through only when set.
+_OUTCOME_KEYS = ("on_target_reward", "shot_speed_weight", "trap_reward",
+                 "controlled_shot_bonus", "shot_type_reward")
 
 
 def curriculum_episode_steps(name: str, action_dt: float = ACTION_DT) -> int:
@@ -850,4 +1028,19 @@ def curriculum_shaper_kwargs(name: str) -> dict:
     spec = CURRICULUM[name]
     out = {k: spec[k] for k in _SHAPER_KEYS}
     out.update({k: spec[k] for k in _IDLE_KEYS if k in spec})
+    out.update({k: spec[k] for k in _OUTCOME_KEYS if k in spec})
+    return out
+
+
+def curriculum_env_kwargs(name: str) -> dict:
+    """The BatchAirHockeyEnv kwargs a stage sets beyond its opponent:
+    the shot-type draw and the opponent mix (self-play only)."""
+    spec = CURRICULUM[name]
+    out = {}
+    if spec.get("shot_types"):
+        out["shot_types"] = True
+    if spec.get("opponent_mix"):
+        out["opponent_mix_probs"] = dict(spec["opponent_mix"])
+    if spec.get("fuzz_p"):
+        out["fuzz_p"] = float(spec["fuzz_p"])
     return out

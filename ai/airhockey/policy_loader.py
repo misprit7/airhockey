@@ -135,6 +135,8 @@ def load_agent(run_name: str, iterations: int | None = PLAN_ITERATIONS,
     if iterations is not None:
         cfg.iterations = iterations
     cfg.plan_smooth_coef = float(plan_smooth)
+    from airhockey.batch_env import BatchAirHockeyEnv   # noqa: PLC0415
+    cfg.prev_action_start = BatchAirHockeyEnv.PREV_ACTION_IDX   # obs [15:17]
 
     agent = TDMPC2(cfg)
     load_checkpoint(agent, ckpt)

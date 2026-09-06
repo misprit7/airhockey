@@ -76,3 +76,30 @@ def test_pi_smooth_off_leaves_the_loss_alone():
     info = agent.update_pi(zs, None, prev_action=torch.zeros(3, 16, agent.cfg.action_dim, device=agent.device))
     agent.model.eval()
     assert float(info["pi_smooth"]) == 0.0
+
+
+@pytest.mark.skipif(_latest() is None, reason="no checkpoint under runs/")
+def test_plan_smooth_cost_takes_the_flips_out_of_the_planner():
+    """The prior can be smooth and the planner will still flip corner to
+    corner, because Q prefers it on a fast body. Charging action change in
+    the MPPI objective is what makes the planner smooth too."""
+    from airhockey.batch_env import BatchAirHockeyEnv, sensing_kwargs
+    jumps = {}
+    for coef in (0.0, 0.5):
+        agent = load_agent("latest", iterations=2, plan_smooth=coef)
+        env = BatchAirHockeyEnv(n_envs=4, opponent_policy="goalie", domain_randomize=True,
+                                **sensing_kwargs(True))
+        obs = env.reset(seed=9)
+        t0 = torch.ones(4, dtype=torch.bool)
+        prev = None
+        big = 0
+        for _ in range(300):
+            with torch.no_grad():
+                a = agent.act(torch.from_numpy(obs).float(), t0=t0, eval_mode=True).numpy()
+            t0 = torch.zeros(4, dtype=torch.bool)
+            if prev is not None:
+                big += int((np.linalg.norm(a - prev, axis=1) > 0.6).sum())
+            prev = a
+            obs = env.step(a)[0]
+        jumps[coef] = big / (4 * 299)
+    assert jumps[0.5] < 0.5 * jumps[0.0], f"planner jumps: {jumps}"

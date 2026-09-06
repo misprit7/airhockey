@@ -51,6 +51,8 @@ OPP_GOALIE = 2
 OPP_EXTERNAL = 3
 OPP_CORNER = 4
 OPP_RANDOM = 5
+OPP_SNIPER = 6        # scripted striker on a free body: fast shots at the goal
+OPP_WEAK_GOALIE = 7   # scripted, slow, tracks the puck across its line
 
 _OPP_POLICY_MAP = {
     "idle": OPP_IDLE,
@@ -59,6 +61,8 @@ _OPP_POLICY_MAP = {
     "external": OPP_EXTERNAL,
     "corner": OPP_CORNER,
     "random": OPP_RANDOM,
+    "sniper": OPP_SNIPER,
+    "weak_goalie": OPP_WEAK_GOALIE,
 }
 
 
@@ -106,7 +110,15 @@ class BatchAirHockeyEnv:
     #        checkpoints are loaded with zero weight on these two inputs
     #        (policy_loader.load_checkpoint), so they behave exactly as
     #        before until training grows them.
-    OBS_DIM = 17
+    #   [17] [18] [19] SHOT TYPE REQUESTED, one-hot [bank left, bank right,
+    #        straight]; all zero = no preference. Drawn by the env once per
+    #        possession (the puck entering this body's half) when
+    #        shot_types=True, else always zero. Left and right are the
+    #        observer's own, facing the far goal: the x = 0 rail is LEFT.
+    #        The reward for honouring it lives in rewards.BatchRewardShaper
+    #        (shot_type_reward); on the table run_policy --shot-type sets it.
+    OBS_DIM = 20
+    PREV_ACTION_IDX = 15      # [15:17]; TD-MPC2's cfg.prev_action_start
     ROBOT_SIDE = 1.0
     HUMAN_SIDE = 0.0
 
@@ -128,6 +140,48 @@ class BatchAirHockeyEnv:
     STUCK_UNATTENDED_S = 1.2
     STUCK_ATTENDED_S = 3.0
     ATTEND_RADIUS = 0.15
+
+    # Scripted far-side opponents on a FREE body (ai/RETRAIN.md item 5).
+    # Neither is a copy of the machine: the sniper exists to put fast shots
+    # at the robot, which the robot's own body cannot produce at 20 m/s^2,
+    # and the weak goalie exists to be scored on. Both run a first-order
+    # lag body with the caps below rather than the profile law.
+    #
+    # SNIPER: waits near its line tracking the puck, and when the puck is
+    # on its half, slower than SNIPER_MAX_PUCK_SPEED and in front of it,
+    # drives THROUGH the puck toward a random point in the robot's goal
+    # mouth (a rail bank on a third of shots) at strike caps for up to
+    # SNIPER_STRIKE_S. Puck leaves at 8-12 m/s (paddle restitution 0.9,
+    # 15 g puck vs 170 g mallet, max_puck_speed 12).
+    SNIPER_STATION_Y = 0.20            # below the far wall
+    SNIPER_WAIT_SPEED = 3.0
+    SNIPER_WAIT_ACCEL = 30.0
+    SNIPER_STRIKE_SPEED = (5.0, 8.0)   # drawn per strike
+    SNIPER_STRIKE_ACCEL = 300.0
+    SNIPER_STRIKE_S = 0.25
+    SNIPER_COOLDOWN_S = 0.40
+    SNIPER_MAX_PUCK_SPEED = 2.5
+    SNIPER_THROUGH = 0.15              # target this far beyond the puck
+    SNIPER_BANK_P = 0.33
+    # WEAK GOALIE: tracks puck x along its line with a dead zone, slowly.
+    WEAK_STATION_Y = 0.15
+    WEAK_SPEED = 2.0
+    WEAK_ACCEL = 15.0
+    WEAK_DEADZONE = 0.08
+
+    # Sensing fuzz (ai/RETRAIN.md item 6): in a fuzz_p fraction of episodes
+    # the camera loses the opponent's mallet for FUZZ_OPP_WINDOWS spells of
+    # FUZZ_OPP_S seconds (a hand over it), and the puck for FUZZ_PUCK_WINDOWS
+    # spells of FUZZ_PUCK_S. What the policy sees then is what the deploy
+    # encoder would give it: the opponent parked at its default, at rest,
+    # with the velocity zeroed on both edges of the spell; the puck coasting
+    # on the tracker's last velocity for up to 150 ms and then at rest.
+    # Both views lose sight of the OTHER paddle in the same spell.
+    FUZZ_OPP_WINDOWS = (1, 2)
+    FUZZ_OPP_S = (0.3, 1.5)
+    FUZZ_PUCK_WINDOWS = (1, 3)
+    FUZZ_PUCK_S = (0.05, 0.15)
+    FUZZ_MARGIN_S = 0.5              # no spell in the first/last half second
 
     # History-mode observation layout. Frame lags are relative to the newest
     # frame the env is entitled to see (i.e. after sensing latency), in
@@ -230,6 +284,18 @@ class BatchAirHockeyEnv:
         # opponent_obs() builds the far side's view natively: own paddle
         # fresh, puck and rival through the camera, exactly as the agent's.
         opponent_body: str = "human",      # "human" | "robot"
+        # Shot-type requests in the observation ([17:20]); see OBS_DIM.
+        shot_types: bool = False,
+        shot_type_probs: tuple[float, float, float, float] = (0.25, 0.25, 0.25, 0.25),
+        # Per-EPISODE opponent draw: {policy name: probability}. Each env
+        # rolls a fresh opponent kind at every reset, so one batch plays a
+        # mix over time rather than a fixed split (opponent_mix, which is
+        # counts, stays for the eval harness). "external" is the trainer's
+        # own checkpoint.
+        opponent_mix_probs: dict[str, float] | None = None,
+        # Sensing fuzz: fraction of episodes that get dropout spells (needs
+        # realistic_perception; ignored without the camera ring).
+        fuzz_p: float = 0.0,
     ):
         self.n_envs = n_envs
         self.table_config = table_config or TableConfig()
@@ -256,6 +322,15 @@ class BatchAirHockeyEnv:
         self.frame_stack = 1  # always 1; velocities replace stacking
 
         # Per-env opponent policy
+        self._opp_mix_ids = None
+        self._opp_mix_p = None
+        if opponent_mix_probs:
+            names = list(opponent_mix_probs)
+            probs = np.array([opponent_mix_probs[k] for k in names], dtype=float)
+            if probs.sum() <= 0:
+                raise ValueError("opponent_mix_probs must have positive weight")
+            self._opp_mix_ids = np.array([_OPP_POLICY_MAP[k] for k in names], dtype=np.int8)
+            self._opp_mix_p = probs / probs.sum()
         if opponent_mix is not None:
             total = sum(opponent_mix.values())
             assert total == n_envs, (
@@ -330,6 +405,7 @@ class BatchAirHockeyEnv:
             OPPONENT_MAX_SPEED_M_S / MAX_SPEED_M_S,
             DR_ACCEL_RANGE[1] * OPPONENT_MAX_ACCEL_M_S2 / MAX_ACCEL_M_S2,
             1.0, 1.0,                                     # previous action
+            1.0, 1.0, 1.0,                                # shot type one-hot
         ], dtype=np.float32)
 
         # ── Sensing ─────────────────────────────────────────────────────
@@ -384,7 +460,10 @@ class BatchAirHockeyEnv:
             # Per-frame tracker report: puck x,y,vx,vy + opponent x,y, and
             # the agent paddle x,y so a robot-bodied far side can see its
             # rival through the same camera (opponent_obs()).
-            self._cam_ring = np.zeros((self._cam_ring_size, n_envs, 8))
+            # ... plus [8] a flag: the paddles were HIDDEN in this frame
+            # (sensing fuzz), so the readers zero the finite-difference
+            # velocity across the edges of a spell as the encoder does.
+            self._cam_ring = np.zeros((self._cam_ring_size, n_envs, 9))
             self._cam_write = 0
             self._cam_lag = np.zeros(n_envs, dtype=np.int32)
             self._max_delay = 0                  # legacy ring off
@@ -422,6 +501,23 @@ class BatchAirHockeyEnv:
             self._opp_dyn = self._make_dynamics_state(
                 opponent_dynamics, n_envs, OPPONENT_MAX_SPEED_M_S,
                 OPPONENT_MAX_ACCEL_M_S2, dynamics_time_constant)
+
+        # A second far-side body for the scripted free-body opponents
+        # (sniper, weak goalie): first-order lag, per-env caps set by the
+        # script. Envs whose opponent kind is one of those read their
+        # paddle from here; the rest from _opp_dyn. Both are advanced every
+        # substep and re-synced to the paddle at reset, so switching kinds
+        # between episodes never jumps the paddle.
+        self._opp_dyn_free = self._make_dynamics_state(
+            "delayed", n_envs, OPPONENT_MAX_SPEED_M_S, OPPONENT_MAX_ACCEL_M_S2,
+            dynamics_time_constant)
+        self._opp_free = np.zeros(n_envs, dtype=bool)
+        # Sniper state: phase (0 wait, 1 strike, 2 cooldown), time in phase,
+        # the aim point on the robot's goal line and the strike speed.
+        self._sniper_phase = np.zeros(n_envs, dtype=np.int8)
+        self._sniper_t = np.zeros(n_envs)
+        self._sniper_aim_x = np.full(n_envs, cfg.width / 2.0)
+        self._sniper_speed = np.full(n_envs, self.SNIPER_STRIKE_SPEED[0])
 
         # The firmware keeps the cart's PATH inside the box, not only its
         # target (motionProfileContain); the sim's profile body gets the same
@@ -463,6 +559,28 @@ class BatchAirHockeyEnv:
         self._prev_rival_y = np.zeros(n_envs)
         # The far side's previous normalised action, for its view.
         self._prev_opp_action = np.zeros((n_envs, 2), dtype=np.float32)
+
+        # Sensing fuzz schedule: per env, the start/end times (episode
+        # seconds) of the opponent and puck dropout spells; -1 = none.
+        self.fuzz_p = float(fuzz_p)
+        self._fuzz_opp = np.full((n_envs, self.FUZZ_OPP_WINDOWS[1], 2), -1.0)
+        self._fuzz_puck = np.full((n_envs, self.FUZZ_PUCK_WINDOWS[1], 2), -1.0)
+        self._fuzzed = np.zeros(n_envs, dtype=bool)
+        self._opp_default = (cfg.width / 2.0, cfg.height * 0.85)   # = deploy's
+        self._rival_default = (cfg.width / 2.0, cfg.height * 0.15)
+
+        # Shot-type requests, one per side, and the possession edges that
+        # trigger a draw (the puck entering a half).
+        if shot_types and obs_mode == "history":
+            raise NotImplementedError("shot types are kinematic-obs only")
+        self.shot_types = bool(shot_types)
+        self._shot_type_p = np.asarray(shot_type_probs, dtype=float)
+        if self._shot_type_p.shape != (4,) or abs(self._shot_type_p.sum() - 1.0) > 1e-6:
+            raise ValueError("shot_type_probs must be four probabilities summing to 1")
+        self._shot_type = np.zeros(n_envs, dtype=np.int8)
+        self._shot_type_opp = np.zeros(n_envs, dtype=np.int8)
+        self._prev_in_half = np.zeros(n_envs, dtype=bool)
+        self._prev_in_far = np.zeros(n_envs, dtype=bool)
 
         # Puck-stuck detection: reset if speed < threshold for N consecutive steps
         self._puck_slow_count = np.zeros(n_envs, dtype=np.int32)
@@ -571,6 +689,14 @@ class BatchAirHockeyEnv:
         self.engine.reset(self._rng, mask=mask)
         self._reset_agent_into_workspace(mask)
 
+        # A fresh opponent kind for every env that resets, when a mix is on.
+        if self._opp_mix_ids is not None:
+            r_idx = slice(None) if mask is None else mask
+            n_r = self.n_envs if mask is None else int(mask.sum())
+            if n_r:
+                self._opp_policy_id[r_idx] = self._rng.choice(
+                    self._opp_mix_ids, size=n_r, p=self._opp_mix_p)
+
         # Reset per-env step counters and stuck detection
         if mask is None:
             self._step_count[:] = 0
@@ -650,21 +776,37 @@ class BatchAirHockeyEnv:
             self.engine.paddle_opp_x[corner_reset] = corners[picks, 0]
             self.engine.paddle_opp_y[corner_reset] = corners[picks, 1]
 
+        # The free-body scripts start on their stations, whatever the
+        # far-side body is, and are exempt from the robot box below.
+        self._opp_free = np.isin(self._opp_policy_id, (OPP_SNIPER, OPP_WEAK_GOALIE))
+        sniper_reset = resetting & (self._opp_policy_id == OPP_SNIPER)
+        if np.any(sniper_reset):
+            self.engine.paddle_opp_x[sniper_reset] = cfg.width / 2
+            self.engine.paddle_opp_y[sniper_reset] = cfg.height - self.SNIPER_STATION_Y
+            self._sniper_phase[sniper_reset] = 0
+            self._sniper_t[sniper_reset] = 0.0
+        weak_reset = resetting & (self._opp_policy_id == OPP_WEAK_GOALIE)
+        if np.any(weak_reset):
+            self.engine.paddle_opp_x[weak_reset] = cfg.width / 2
+            self.engine.paddle_opp_y[weak_reset] = cfg.height - self.WEAK_STATION_Y
+
         if self._ws_opp is not None:
+            boxed = resetting & ~self._opp_free
             self._reset_opponent_into_workspace(
-                resetting & ~goalie_reset & ~corner_reset)
+                boxed & ~goalie_reset & ~corner_reset)
             # Scripted stations sit on the back wall, which a robot-bodied
             # far side cannot reach: hold them at its box edge instead.
             w = self._ws_opp
-            self.engine.paddle_opp_x[resetting] = np.clip(
-                self.engine.paddle_opp_x[resetting], w["min_x"], w["max_x"])
-            self.engine.paddle_opp_y[resetting] = np.clip(
-                self.engine.paddle_opp_y[resetting], w["min_y"], w["max_y"])
+            self.engine.paddle_opp_x[boxed] = np.clip(
+                self.engine.paddle_opp_x[boxed], w["min_x"], w["max_x"])
+            self.engine.paddle_opp_y[boxed] = np.clip(
+                self.engine.paddle_opp_y[boxed], w["min_y"], w["max_y"])
 
-        self._opp_dyn["x"][idx] = self.engine.paddle_opp_x[idx]
-        self._opp_dyn["y"][idx] = self.engine.paddle_opp_y[idx]
-        self._opp_dyn["vx"][idx] = 0.0
-        self._opp_dyn["vy"][idx] = 0.0
+        for body in (self._opp_dyn, self._opp_dyn_free):
+            body["x"][idx] = self.engine.paddle_opp_x[idx]
+            body["y"][idx] = self.engine.paddle_opp_y[idx]
+            body["vx"][idx] = 0.0
+            body["vy"][idx] = 0.0
         self._clear_profile_accel(self._opp_dyn, idx)
 
         # Init previous positions (zero velocity at start)
@@ -685,6 +827,7 @@ class BatchAirHockeyEnv:
                 self._cam_ring[f, idx, 5] = e.paddle_opp_y[idx]
                 self._cam_ring[f, idx, 6] = e.paddle_agent_x[idx]
                 self._cam_ring[f, idx, 7] = e.paddle_agent_y[idx]
+                self._cam_ring[f, idx, 8] = 0.0
             lo, hi = self._cam_latency_range
             n_r = self.n_envs if mask is None else int(mask.sum())
             if hi > 0:
@@ -705,6 +848,19 @@ class BatchAirHockeyEnv:
         self._prev_rival_x[idx] = self.engine.paddle_agent_x[idx]
         self._prev_rival_y[idx] = self.engine.paddle_agent_y[idx]
         self._prev_opp_action[idx] = 0.0
+
+        self._draw_fuzz(resetting)
+
+        # Shot-type requests restart with the episode: none until the puck
+        # first enters a half, which for a puck launched from the centre is
+        # a few steps away; one already inside a half is drawn for now.
+        half = cfg.height / 2.0
+        self._shot_type[idx] = 0
+        self._shot_type_opp[idx] = 0
+        self._prev_in_half[idx] = self.engine.puck_y[idx] < half
+        self._prev_in_far[idx] = self.engine.puck_y[idx] > half
+        self._draw_shot_types(resetting & self._prev_in_half, agent=True)
+        self._draw_shot_types(resetting & self._prev_in_far, agent=False)
 
         # Pre-fill camera delay buffer for reset envs
         if self._max_delay > 0:
@@ -857,6 +1013,7 @@ class BatchAirHockeyEnv:
             self.engine.puck_vy[stuck] = speed * np.sin(angle)
             self._puck_slow_count[stuck] = 0
 
+        self._update_possessions()
         obs = self._make_obs()  # applies camera delay if configured
 
         # Termination / truncation
@@ -896,9 +1053,88 @@ class BatchAirHockeyEnv:
             # so shapers can carry them; until 2026-09-01 no policy ever saw
             # the overshoot fine it was supposedly being trained with.
             "penalty": -self.WS_PENALTY_PER_UNIT * ws_overshoot + stuck_penalty,
+            # The shot type asked of the agent this possession (0 = none),
+            # for the shaper's shot_type_reward, and who the far side is.
+            "shot_type": self._shot_type.copy(),
+            "opponent_kind": self._opp_policy_id.copy(),
+            "fuzzed": self._fuzzed.copy(),
         }
 
         return obs, rewards, terminated, truncated, info
+
+    def _draw_fuzz(self, mask: np.ndarray) -> None:
+        """Schedule this episode's dropout spells for the envs in `mask`."""
+        n = int(mask.sum())
+        if n == 0:
+            return
+        self._fuzz_opp[mask] = -1.0
+        self._fuzz_puck[mask] = -1.0
+        self._fuzzed[mask] = False
+        if self.fuzz_p <= 0 or self._perception is None:
+            return
+        rng = self._rng
+        fuzzed = rng.random(n) < self.fuzz_p
+        if not fuzzed.any():
+            return
+        idx = np.nonzero(mask)[0][fuzzed]
+        self._fuzzed[idx] = True
+        if self.max_episode_steps is not None:
+            T = self.max_episode_steps * self.action_dt
+        else:
+            T = self.max_episode_time
+        lo, hi = self.FUZZ_MARGIN_S, max(self.FUZZ_MARGIN_S + 0.1, T - self.FUZZ_MARGIN_S)
+        for table, (k_lo, k_hi), (d_lo, d_hi) in (
+                (self._fuzz_opp, self.FUZZ_OPP_WINDOWS, self.FUZZ_OPP_S),
+                (self._fuzz_puck, self.FUZZ_PUCK_WINDOWS, self.FUZZ_PUCK_S)):
+            m = len(idx)
+            k = rng.integers(k_lo, k_hi + 1, size=m)
+            for j in range(k_hi):
+                on = k > j
+                start = rng.uniform(lo, hi, size=m)
+                dur = rng.uniform(d_lo, d_hi, size=m)
+                table[idx, j, 0] = np.where(on, start, -1.0)
+                table[idx, j, 1] = np.where(on, start + dur, -1.0)
+
+    def _fuzz_active(self, table: np.ndarray) -> np.ndarray:
+        """[N] bool: is any spell in `table` open at each env's time now."""
+        t = self.engine.time[:, None]
+        return ((t >= table[:, :, 0]) & (t < table[:, :, 1])).any(axis=1)
+
+    def _draw_shot_types(self, mask: np.ndarray, agent: bool) -> None:
+        """Roll a request for each env in `mask` (no-op unless shot_types)."""
+        if not self.shot_types:
+            return
+        if not agent and self.opponent_body != "robot":
+            return          # a human far side is never asked for a shot
+        n = int(mask.sum())
+        if n == 0:
+            return
+        draw = self._rng.choice(4, size=n, p=self._shot_type_p).astype(np.int8)
+        if agent:
+            self._shot_type[mask] = draw
+        else:
+            self._shot_type_opp[mask] = draw
+
+    def _update_possessions(self) -> None:
+        """Track the puck entering each half; a new possession draws a
+        fresh request. The request is kept while the puck is away rather
+        than cleared -- a hit at the box's top edge can put the puck just
+        over the line, and the shaper scores that hit against the request
+        it was made under."""
+        half = self.table_config.height / 2.0
+        in_half = self.engine.puck_y < half
+        in_far = self.engine.puck_y > half
+        self._draw_shot_types(in_half & ~self._prev_in_half, agent=True)
+        self._draw_shot_types(in_far & ~self._prev_in_far, agent=False)
+        self._prev_in_half[:] = in_half
+        self._prev_in_far[:] = in_far
+
+    def _shot_onehot(self, types: np.ndarray) -> np.ndarray:
+        """[N, 3] one-hot of [left, right, straight]; type 0 -> zeros."""
+        out = np.zeros((self.n_envs, 3), dtype=np.float32)
+        hot = types > 0
+        out[np.nonzero(hot)[0], types[hot] - 1] = 1.0
+        return out
 
     def auto_reset(
         self, terminated: np.ndarray, truncated: np.ndarray
@@ -1001,6 +1237,10 @@ class BatchAirHockeyEnv:
         was_robot = obs[:, 12] > (self.ROBOT_SIDE + self.HUMAN_SIDE) * 0.5
         m[:, 15:17] = np.where(was_robot[:, None], self._prev_opp_action,
                                self._prev_action[:, :2])
+        # The request follows the body too: the other side's, or none for
+        # a human, who is never asked.
+        m[:, 17:20] = np.where(was_robot[:, None], self._shot_onehot(self._shot_type_opp),
+                               self._shot_onehot(self._shot_type))
         if self.opponent_body == "robot":
             # Two copies of one body: the flag and the caps are the same on
             # both sides, and swapping them would be wrong, not symmetric.
@@ -1059,8 +1299,9 @@ class BatchAirHockeyEnv:
             before = self._cam_ring[prev, self._env_idx]
             px, py, pvx, pvy = seen[:, 0], seen[:, 1], seen[:, 2], seen[:, 3]
             rx, ry = seen[:, 6], seen[:, 7]
-            rvx = (seen[:, 6] - before[:, 6]) / self._cam_dt
-            rvy = (seen[:, 7] - before[:, 7]) / self._cam_dt
+            edge = (seen[:, 8] > 0) | (before[:, 8] > 0)
+            rvx = np.where(edge, 0.0, (seen[:, 6] - before[:, 6]) / self._cam_dt)
+            rvy = np.where(edge, 0.0, (seen[:, 7] - before[:, 7]) / self._cam_dt)
         else:
             px, py, pvx, pvy = e.puck_x, e.puck_y, e.puck_vx, e.puck_vy
             rx, ry = e.paddle_agent_x, e.paddle_agent_y
@@ -1077,6 +1318,7 @@ class BatchAirHockeyEnv:
             self._opp_dyn["max_speed"] / MAX_SPEED_M_S,
             self._opp_dyn["max_accel"] / MAX_ACCEL_M_S2,
             self._prev_opp_action[:, 0], self._prev_opp_action[:, 1],
+            self._shot_onehot(self._shot_type_opp),
         ]).astype(np.float32)
 
     def mirror_action_to_opponent(self, actions: np.ndarray) -> tuple[np.ndarray, np.ndarray]:
@@ -1213,12 +1455,114 @@ class BatchAirHockeyEnv:
         target_x[ext] = self._ext_opp_target_x[ext]
         target_y[ext] = self._ext_opp_target_y[ext]
 
+        free = self._opp_free
+        if np.any(free):
+            fx, fy = self._free_body_targets(dt, target_x, target_y)
+            target_x = np.where(free, fx, target_x)
+            target_y = np.where(free, fy, target_y)
+
         if self._ws_opp is not None:
             # The same cap the agent's targets get in step(): the profile
             # chases the nearest reachable point, as the firmware would.
-            target_x = np.clip(target_x, self._ws_opp["min_x"], self._ws_opp["max_x"])
-            target_y = np.clip(target_y, self._ws_opp["min_y"], self._ws_opp["max_y"])
-        return self._update_dynamics(self._opp_dyn, target_x, target_y, dt)
+            # The free-body scripts are not the machine and keep the half.
+            target_x = np.where(free, target_x, np.clip(
+                target_x, self._ws_opp["min_x"], self._ws_opp["max_x"]))
+            target_y = np.where(free, target_y, np.clip(
+                target_y, self._ws_opp["min_y"], self._ws_opp["max_y"]))
+        mx, my = self._update_dynamics(self._opp_dyn, target_x, target_y, dt)
+        if not np.any(free):
+            return mx, my
+        fx, fy = self._update_dynamics(self._opp_dyn_free, target_x, target_y, dt)
+        # Keep the idle body on the paddle so a later kind switch is
+        # seamless: whichever body is not driving follows the one that is.
+        x = np.where(free, fx, mx)
+        y = np.where(free, fy, my)
+        for body in (self._opp_dyn, self._opp_dyn_free):
+            body["x"][:] = x
+            body["y"][:] = y
+        self._opp_dyn["vx"][:] = np.where(free, self._opp_dyn_free["vx"], self._opp_dyn["vx"])
+        self._opp_dyn["vy"][:] = np.where(free, self._opp_dyn_free["vy"], self._opp_dyn["vy"])
+        self._opp_dyn_free["vx"][:] = self._opp_dyn["vx"]
+        self._opp_dyn_free["vy"][:] = self._opp_dyn["vy"]
+        return x, y
+
+    def _free_body_targets(self, dt: float, target_x, target_y):
+        """Targets and per-env caps for the sniper and the weak goalie.
+
+        Returns (x, y) targets for every env (garbage where the env is not
+        a free-body kind; the caller masks). Sets _opp_dyn_free's caps.
+        """
+        e = self.engine
+        cfg = self.table_config
+        W, H = cfg.width, cfg.height
+        tx, ty = target_x.copy(), target_y.copy()
+        free = self._opp_dyn_free
+        ox, oy = e.paddle_opp_x, e.paddle_opp_y
+
+        # ── weak goalie ─────────────────────────────────────────────
+        weak = self._opp_policy_id == OPP_WEAK_GOALIE
+        if np.any(weak):
+            interested = (e.puck_y > H / 2) | (e.puck_vy > 0)
+            want_x = np.where(interested, e.puck_x, W / 2)
+            move = np.abs(want_x - ox) > self.WEAK_DEADZONE
+            tx = np.where(weak, np.where(move, want_x, ox), tx)
+            ty = np.where(weak, H - self.WEAK_STATION_Y, ty)
+            free["max_speed"][weak] = self.WEAK_SPEED
+            free["max_accel"][weak] = self.WEAK_ACCEL
+
+        # ── sniper ──────────────────────────────────────────────────
+        sn = self._opp_policy_id == OPP_SNIPER
+        if np.any(sn):
+            self._sniper_t[sn] += dt
+            speed = np.hypot(e.puck_vx, e.puck_vy)
+            phase = self._sniper_phase
+            # Strike trigger: puck on its half, slow, in front of the paddle.
+            can = (sn & (phase == 0) & (e.puck_y > H / 2 + 0.05)
+                   & (e.puck_y < oy - 0.02) & (speed < self.SNIPER_MAX_PUCK_SPEED))
+            n_c = int(can.sum())
+            if n_c:
+                r = self._rng
+                mouth = cfg.goal_width / 2.0 - cfg.puck_radius
+                aim = W / 2 + r.uniform(-mouth, mouth, size=n_c)
+                bank = r.random(n_c) < self.SNIPER_BANK_P
+                # A bank: aim at the goal's mirror image in the nearer rail
+                # (specular; the real rail is lossier, which only makes the
+                # sniper miss sometimes, as a human does).
+                left = e.puck_x[can] < W / 2
+                aim = np.where(bank, np.where(left, -aim, 2 * W - aim), aim)
+                self._sniper_aim_x[can] = aim
+                self._sniper_speed[can] = r.uniform(*self.SNIPER_STRIKE_SPEED, size=n_c)
+                phase[can] = 1
+                self._sniper_t[can] = 0.0
+            # Strike ends when the time is up or the puck has gone.
+            striking = sn & (phase == 1)
+            over = striking & ((self._sniper_t > self.SNIPER_STRIKE_S)
+                               | (e.puck_y < H / 2) | (speed > 6.0))
+            phase[over] = 2
+            self._sniper_t[over] = 0.0
+            cooled = sn & (phase == 2) & (self._sniper_t > self.SNIPER_COOLDOWN_S)
+            phase[cooled] = 0
+            striking = sn & (phase == 1)
+            # Through the puck, away from the aim point.
+            dx = e.puck_x - self._sniper_aim_x
+            dy = e.puck_y - 0.0
+            n = np.maximum(np.hypot(dx, dy), 1e-6)
+            ux, uy = dx / n, dy / n
+            sx = e.puck_x - ux * self.SNIPER_THROUGH
+            sy = e.puck_y - uy * self.SNIPER_THROUGH
+            waiting = sn & ~striking
+            station_x = np.clip(e.puck_x, cfg.paddle_radius, W - cfg.paddle_radius)
+            tx = np.where(striking, sx, np.where(waiting, station_x, tx))
+            ty = np.where(striking, sy, np.where(waiting, H - self.SNIPER_STATION_Y, ty))
+            free["max_speed"][sn] = np.where(striking[sn], self._sniper_speed[sn],
+                                             self.SNIPER_WAIT_SPEED)
+            free["max_accel"][sn] = np.where(striking[sn], self.SNIPER_STRIKE_ACCEL,
+                                             self.SNIPER_WAIT_ACCEL)
+        # The half is the script's limit; the far wall is the body's.
+        r = cfg.paddle_radius
+        tx = np.clip(tx, r, W - r)
+        ty = np.clip(ty, H / 2 + r, H - r)
+        return tx, ty
 
     def _clamp_to_half(
         self, x: np.ndarray, y: np.ndarray, agent: bool
@@ -1226,8 +1570,13 @@ class BatchAirHockeyEnv:
         cfg = self.table_config
         r = cfg.paddle_radius
         if not agent and self._ws_opp is not None:
-            return (np.clip(x, self._ws_opp["min_x"], self._ws_opp["max_x"]),
-                    np.clip(y, self._ws_opp["min_y"], self._ws_opp["max_y"]))
+            bx = np.clip(x, self._ws_opp["min_x"], self._ws_opp["max_x"])
+            by = np.clip(y, self._ws_opp["min_y"], self._ws_opp["max_y"])
+            if np.any(self._opp_free):
+                hx = np.clip(x, r, cfg.width - r)
+                hy = np.clip(y, cfg.height / 2 + r, cfg.height - r)
+                return np.where(self._opp_free, hx, bx), np.where(self._opp_free, hy, by)
+            return bx, by
         if agent and self._ws is not None:
             # The machine's own limit, not the table's. The firmware clamps
             # here too; doing it in the sim means the policy learns the
@@ -1248,8 +1597,11 @@ class BatchAirHockeyEnv:
         serves as clean position history for history-mode observations.
         """
         e = self.engine
+        hidden = None
         if self._perception is not None:
-            px, py, pvx, pvy = self._perception.update(e.puck_x, e.puck_y)
+            if self.fuzz_p > 0:
+                hidden = self._fuzz_active(self._fuzz_puck)
+            px, py, pvx, pvy = self._perception.update(e.puck_x, e.puck_y, hidden=hidden)
         else:
             px, py, pvx, pvy = e.puck_x, e.puck_y, e.puck_vx, e.puck_vy
         w = self._cam_write
@@ -1257,10 +1609,19 @@ class BatchAirHockeyEnv:
         self._cam_ring[w, :, 1] = py
         self._cam_ring[w, :, 2] = pvx
         self._cam_ring[w, :, 3] = pvy
-        self._cam_ring[w, :, 4] = e.paddle_opp_x
-        self._cam_ring[w, :, 5] = e.paddle_opp_y
-        self._cam_ring[w, :, 6] = e.paddle_agent_x
-        self._cam_ring[w, :, 7] = e.paddle_agent_y
+        if self._perception is not None and self.fuzz_p > 0:
+            gone = self._fuzz_active(self._fuzz_opp)
+            self._cam_ring[w, :, 4] = np.where(gone, self._opp_default[0], e.paddle_opp_x)
+            self._cam_ring[w, :, 5] = np.where(gone, self._opp_default[1], e.paddle_opp_y)
+            self._cam_ring[w, :, 6] = np.where(gone, self._rival_default[0], e.paddle_agent_x)
+            self._cam_ring[w, :, 7] = np.where(gone, self._rival_default[1], e.paddle_agent_y)
+            self._cam_ring[w, :, 8] = gone
+        else:
+            self._cam_ring[w, :, 4] = e.paddle_opp_x
+            self._cam_ring[w, :, 5] = e.paddle_opp_y
+            self._cam_ring[w, :, 6] = e.paddle_agent_x
+            self._cam_ring[w, :, 7] = e.paddle_agent_y
+            self._cam_ring[w, :, 8] = 0.0
         self._cam_write = (w + 1) % self._cam_ring_size
 
     def _camera_read(self):
@@ -1274,10 +1635,11 @@ class BatchAirHockeyEnv:
         newest = (self._cam_write - 1) % self._cam_ring_size
         idx = (newest - self._cam_lag) % self._cam_ring_size
         prev = (idx - 1) % self._cam_ring_size
-        seen = self._cam_ring[idx, self._env_idx]        # [N, 6]
+        seen = self._cam_ring[idx, self._env_idx]        # [N, 9]
         before = self._cam_ring[prev, self._env_idx]
-        opp_vx = (seen[:, 4] - before[:, 4]) / self._cam_dt
-        opp_vy = (seen[:, 5] - before[:, 5]) / self._cam_dt
+        edge = (seen[:, 8] > 0) | (before[:, 8] > 0)
+        opp_vx = np.where(edge, 0.0, (seen[:, 4] - before[:, 4]) / self._cam_dt)
+        opp_vy = np.where(edge, 0.0, (seen[:, 5] - before[:, 5]) / self._cam_dt)
         return seen, opp_vx, opp_vy
 
     def _history_obs(self) -> np.ndarray:
@@ -1356,6 +1718,7 @@ class BatchAirHockeyEnv:
             self._agent_dyn["max_speed"] / MAX_SPEED_M_S,
             self._agent_dyn["max_accel"] / MAX_ACCEL_M_S2,
             self._prev_action[:, 0], self._prev_action[:, 1],
+            self._shot_onehot(self._shot_type),
         ]).astype(np.float32)
 
     def _get_delayed_obs(self, current_obs: np.ndarray) -> np.ndarray:

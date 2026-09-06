@@ -769,6 +769,8 @@ def main():
 
     cfg.bin_size = (cfg.vmax - cfg.vmin) / (cfg.num_bins - 1)
 
+    cfg.prev_action_start = BatchAirHockeyEnv.PREV_ACTION_IDX   # obs [15:17]
+
     # Env shape info (from BatchAirHockeyEnv)
     frame_stack = args.frame_stack  # kept for API compat; always 1 internally
     # Taken from the env, not written down again. The 13th feature (which

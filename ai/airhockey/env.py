@@ -108,6 +108,8 @@ class AirHockeyEnv(gym.Env):
             1.0,                                          # side flag
             OPPONENT_MAX_SPEED_M_S / MAX_SPEED_M_S,       # max speed ratio
             OPPONENT_MAX_ACCEL_M_S2 / MAX_ACCEL_M_S2,     # max accel ratio
+            1.0, 1.0,                                     # previous action
+            1.0, 1.0, 1.0,                                # shot type one-hot
         ], dtype=np.float32)
         self.observation_space = spaces.Box(-high_obs, high_obs, dtype=np.float32)
 
@@ -189,6 +191,9 @@ class AirHockeyEnv(gym.Env):
         self._prev_opp_x = state.paddle_opponent.x
         self._prev_opp_y = state.paddle_opponent.y
         self._last_action = np.zeros(2, dtype=np.float32)
+        # Shot type asked of the robot (rewards.SHOT_TYPE_*; 0 = none). The
+        # scalar env never draws one itself -- the UI or a test sets it.
+        self.shot_type = 0
         self._last_opp_action = np.zeros(2, dtype=np.float32)
 
         self._obs_buffer.clear()
@@ -346,6 +351,7 @@ class AirHockeyEnv(gym.Env):
         mirrored[13] = getattr(dyn, "max_speed", MAX_SPEED_M_S) / MAX_SPEED_M_S
         mirrored[14] = getattr(dyn, "max_accel", MAX_ACCEL_M_S2) / MAX_ACCEL_M_S2
         mirrored[15:17] = self._last_opp_action if was_robot else self._last_action
+        mirrored[17:20] = 0.0        # the far side is never asked for a shot here
         return mirrored
 
     def mirror_action_to_opponent(self, action: np.ndarray) -> tuple[float, float]:
@@ -421,7 +427,12 @@ class AirHockeyEnv(gym.Env):
             self.ROBOT_SIDE,
             *self._cap_features(),
             *self._last_action,
+            *self._shot_onehot(),
         ], dtype=np.float32)
+
+    def _shot_onehot(self) -> tuple[float, float, float]:
+        t = int(self.shot_type)
+        return tuple(1.0 if t == k else 0.0 for k in (1, 2, 3))
 
     def note_opponent_action(self, action: np.ndarray) -> None:
         """The far side's normalised action this step, for its mirrored

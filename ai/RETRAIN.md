@@ -10,16 +10,30 @@ Status key: `[ ]` not started, `[~]` in progress, `[x]` done and tested,
 
 ## 1. Physical parameters the rig can actually run
 
-- [ ] Accel pinned at **20 m/s²** (`AGENT_DR_ACCEL_M_S2 = (20, 20)`), was 60.
+- [x] Accel pinned at **20 m/s²** (`AGENT_DR_ACCEL_M_S2 = (20, 20)`), was 60.
       The tick logs say the paddle follows 24 and not 60; the tracking test
       (`ai/airhockey/follow_test.py`) is the tool to firm this up before the
       run starts. Cap features stay in the observation as constants.
-- [ ] Speed stays **12 m/s** (user's call; not the binding constraint).
-- [ ] Control rate: **50 Hz** decisions instead of 100 (see item 7). One
+- [x] Speed stays **12 m/s** (user's call; not the binding constraint).
+- [x] Control rate: **50 Hz** decisions instead of 100 (see item 7). One
       constant, `ACTION_HZ`, derived everywhere: env default, curriculum
       episode lengths (specified in seconds, not steps), trainers, eval,
       deploy `--cmd-hz`, stuck-puck timer.
-- [ ] Runner defaults (`run_policy.Caps`) follow the same constants.
+- [x] Runner defaults (`run_policy.Caps`) follow the same constants.
+- [ ] Tracking test WITH the camera at 12 / 20. The six runs of 2026-09-06
+      00:44-00:48 were all camera-less (the camera was not running when
+      Run was pressed), so they score drives-vs-steps only. What they say:
+      at 0.2 m/s every drive's encoder moves exactly 1.000 mm per mm of
+      steps (signs +,-,+,-), so the 800 counts/rev step input is
+      confirmed on all four. At speed the drives lag their steps unevenly:
+      p90 of |encoder - steps| while moving, mm, per motor 0..3 --
+      20 m/s²: 13 / 26 / 53 / 63; 40: 16-18 / 36-45 / 54-65 / 80;
+      60: 21 / 41 / 69 / 102. Motors 2 and 3 (the near-side pair) lag
+      three to five times motors 0 and 1, and are still 5-22 mm off in
+      the rest windows after fast moves, while peaking at only 18-47% of
+      torque (motor 3: 19%). A drive that lags 100 mm of cable at a fifth
+      of its torque is not torque-limited; look at its ClearView tune /
+      torque limit before blaming the physics.
 
 Thoughts: the thermal budget is a separate constraint from following. At
 24 m/s² the drives tripped RMS overload within ~30 s of bang-bang play, and

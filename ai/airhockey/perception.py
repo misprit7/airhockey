@@ -145,15 +145,34 @@ class PuckPerception:
             return np.ones(self.n, dtype=bool)
         return ~((np.abs(x - self.cx) < self.hw) & (np.abs(y - self.cy) < self.hh))
 
-    def update(self, true_x: np.ndarray, true_y: np.ndarray):
-        """Return (x, y, vx, vy) as the tracker would report them."""
+    def update(self, true_x: np.ndarray, true_y: np.ndarray,
+               hidden: np.ndarray | None = None):
+        """Return (x, y, vx, vy) as the tracker would report them.
+
+        `hidden` [N] bool forces a dropout regardless of position -- the
+        sensing fuzz's brief losses of the puck (ai/RETRAIN.md item 6),
+        handled by the same coast the blind spot gets.
+        """
         seen = self.visible(true_x, true_y)
+        if hidden is not None:
+            seen = seen & ~hidden
 
         mx = true_x.copy()
         my = true_y.copy()
         if self.noise:
             mx += self._rng.normal(0.0, self.pos_noise, self.n)
             my += self._rng.normal(0.0, self.pos_noise, self.n)
+
+        # A puck seen again after a dropout restarts its history from the
+        # new fix: the real fitter only uses samples inside its 30 ms
+        # window, so after a gap the slope is over the fresh samples alone.
+        # Fitting across the gap read a 300 ms dropout as ~20 m/s of
+        # velocity that never happened (found by the fuzz, 2026-09-06; the
+        # IR blind spot had the same artefact).
+        reacq = seen & (self._coast_t > 0.0)
+        if reacq.any():
+            self._hist_x[:, reacq] = mx[reacq]
+            self._hist_y[:, reacq] = my[reacq]
 
         # Roll the history only for envs where the puck was actually seen.
         # Rolling everywhere would feed the estimator its own extrapolation,
@@ -184,7 +203,12 @@ class PuckPerception:
             self._last_y[alive] += self._last_vy[alive] * self.dt
             out_x[hidden] = self._last_x[hidden]
             out_y[hidden] = self._last_y[hidden]
-            vx = np.where(hidden, self._last_vx, vx)
-            vy = np.where(hidden, self._last_vy, vy)
+            # While coasting the report carries the last velocity; once the
+            # coast has expired the puck is reported where it was last put
+            # and AT REST -- which is what the deploy encoder does with a
+            # puck it has not seen (ReportEncoder: last fix, zero velocity).
+            # Until 2026-09-06 the sim kept reporting the stale velocity.
+            vx = np.where(hidden, np.where(alive, self._last_vx, 0.0), vx)
+            vy = np.where(hidden, np.where(alive, self._last_vy, 0.0), vy)
 
         return out_x, out_y, vx, vy

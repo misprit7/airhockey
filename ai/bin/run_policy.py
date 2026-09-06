@@ -698,7 +698,8 @@ def _bot_config(caps: Caps):
     )
 
 
-def _load_tdmpc2(name: str, caps: Caps, plan_iters: int, device: str | None):
+def _load_tdmpc2(name: str, caps: Caps, plan_iters: int, device: str | None,
+                 shot_mode: str = "none"):
     """A TD-MPC2 checkpoint through airhockey.deploy.TDMPC2Policy.
 
     Prints the resolved checkpoint, the mode, the measured cost per decision
@@ -709,12 +710,13 @@ def _load_tdmpc2(name: str, caps: Caps, plan_iters: int, device: str | None):
 
     try:
         policy = TDMPC2Policy(name, caps.speed_max, caps.accel_max,
-                              plan_iterations=plan_iters, device=device)
+                              plan_iterations=plan_iters, device=device,
+                              shot_mode=shot_mode)
     except FileNotFoundError as e:
         raise SystemExit(f"no checkpoint for tdmpc2:{name} ({e})") from None
     print(policy.describe(caps.speed_max, caps.accel_max))
     ms = policy.warm_up()
-    budget = 10.0
+    budget = 1000.0 / ACTION_HZ
     verdict = ("fits" if ms < 0.5 * budget else
                "TIGHT" if ms < budget else "DOES NOT FIT -- use --plan 0")
     print(f"  cost: {ms:.2f} ms per decision against a {budget:.0f} ms tick "
@@ -723,7 +725,7 @@ def _load_tdmpc2(name: str, caps: Caps, plan_iters: int, device: str | None):
 
 
 def load_policy(spec: str, caps: Caps, plan_iters: int = 0,
-                device: str | None = None):
+                device: str | None = None, shot_mode: str = "none"):
     """Turn a --policy string into a callable(obs) -> Command or 4-tuple.
 
         heuristic:<name>   a bot from ai/airhockey/heuristics.py
@@ -734,7 +736,7 @@ def load_policy(spec: str, caps: Caps, plan_iters: int = 0,
     """
     kind, _, name = spec.partition(":")
     if kind == "tdmpc2":
-        return _load_tdmpc2(name, caps, plan_iters, device)
+        return _load_tdmpc2(name, caps, plan_iters, device, shot_mode)
     if kind == "sac":
         return _load_sac(name, caps)
     if kind == "builtin":
@@ -1248,7 +1250,8 @@ def run(args) -> int:
         slog.capture_stdout()
         slog.context(args)
     policy = load_policy(args.policy, caps, getattr(args, "plan", 0),
-                         getattr(args, "device", None))
+                         getattr(args, "device", None),
+                         shot_mode=getattr(args, "shot_type", "none"))
 
     client = None
     if args.live:
@@ -1636,8 +1639,14 @@ def main() -> int:
                          "default sits still on purpose.")
     ap.add_argument("--plan", type=int, default=0,
                     help="tdmpc2 only: MPPI iterations per decision (0 = the "
-                         "policy prior alone, ~0.1 ms; each iteration is "
-                         "several ms on a GPU and the tick is 10 ms)")
+                         "policy prior alone, ~0.1 ms; 6 iterations are ~6 ms "
+                         f"on the GPU under CUDA graphs; the tick is "
+                         f"{1000.0 / ACTION_HZ:.0f} ms)")
+    ap.add_argument("--shot-type", default="none",
+                    choices=["none", "left", "right", "straight", "mix"],
+                    help="tdmpc2 only: the shot the policy is asked for "
+                         "(observation [17:20]); mix = a fresh draw each time "
+                         "the puck enters the robot's half, as in training")
     ap.add_argument("--device", default=None,
                     help="tdmpc2 only: torch device (default: cpu for the "
                          "prior, cuda for planning when available)")

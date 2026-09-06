@@ -383,7 +383,7 @@ def test_side_flag_tells_the_policy_which_body_it_is_driving():
     e = BatchAirHockeyEnv(n_envs=4)
     out = e.reset(seed=0)
     obs = out[0] if isinstance(out, tuple) else out
-    assert obs.shape[1] == BatchAirHockeyEnv.OBS_DIM == 17
+    assert obs.shape[1] == BatchAirHockeyEnv.OBS_DIM == 20
     assert np.all(obs[:, 12] == BatchAirHockeyEnv.ROBOT_SIDE)
     mirrored = e.mirror_obs(obs)
     assert np.all(mirrored[:, 12] == BatchAirHockeyEnv.HUMAN_SIDE)

@@ -43,7 +43,8 @@ from airhockey.recorder import Recorder
 from airhockey.rewards import (
     BatchRewardShaper, ShapedRewardWrapper,
     STAGE_SCORING, STAGE_OPPONENT, STAGE_NAMES,
-    CURRICULUM, curriculum_episode_steps, curriculum_shaper_kwargs,
+    CURRICULUM, curriculum_env_kwargs, curriculum_episode_steps,
+    curriculum_shaper_kwargs,
 )
 
 warnings.filterwarnings('ignore')
@@ -336,6 +337,8 @@ def main():
 
     cfg.bin_size = (cfg.vmax - cfg.vmin) / (cfg.num_bins - 1)
 
+    cfg.prev_action_start = BatchAirHockeyEnv.PREV_ACTION_IDX   # obs [15:17]
+
     # Hyperparameter overrides (CLI > config defaults).
     if args.lr is not None:
         cfg.lr = args.lr
@@ -359,11 +362,13 @@ def main():
         opponent_policy = spec["opponent"]
         episode_steps = curriculum_episode_steps(args.curriculum_stage)
         shaper_kwargs = curriculum_shaper_kwargs(args.curriculum_stage)
+        env_kwargs = curriculum_env_kwargs(args.curriculum_stage)
         stage_label = args.curriculum_stage
     else:
         opponent_policy = STAGE_OPPONENT[stage]
         episode_steps = None
         shaper_kwargs = {}
+        env_kwargs = {}
         stage_label = f"{stage} — {STAGE_NAMES[stage]}"
     batch_env = BatchAirHockeyEnv(
         n_envs=n_envs,
@@ -378,6 +383,7 @@ def main():
         max_episode_steps=episode_steps,
         max_score=7,
         frame_stack=frame_stack,
+        **env_kwargs,
     )
     reward_shaper = BatchRewardShaper(n_envs, stage=stage, frame_stack=frame_stack,
                                       workspace=batch_env._ws, **shaper_kwargs)

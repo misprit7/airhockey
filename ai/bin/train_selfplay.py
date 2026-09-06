@@ -52,7 +52,9 @@ from airhockey.recorder import FrameData, Recorder  # noqa: E402
 from airhockey.policy_loader import (PLAN_ITERATIONS, PLAN_SMOOTH_COEF,  # noqa: E402
                                      load_checkpoint)
 from airhockey.rewards import (BatchRewardShaper, STAGE_SCORING,  # noqa: E402
-                               CURRICULUM, curriculum_shaper_kwargs)
+                               CURRICULUM, curriculum_env_kwargs,
+                               curriculum_shaper_kwargs)
+from airhockey.batch_env import _OPP_POLICY_MAP  # noqa: E402
 
 warnings.filterwarnings('ignore')
 torch.backends.cudnn.benchmark = True
@@ -64,9 +66,16 @@ GOAL_REWARD = _SP["goal_reward"]
 GOAL_PENALTY = _SP["goal_penalty"]
 
 
-def make_env(args, n_envs):
+def make_env(args, n_envs, stage_kwargs: bool = True):
+    # The self-play stage's env settings -- the shot-type request, the
+    # opponent mix and the sensing fuzz -- come from rewards.CURRICULUM so
+    # the trainer and the table (deploy) agree on what the policy saw.
+    extra = curriculum_env_kwargs("selfplay") if stage_kwargs else {}
+    if getattr(args, "no_opponent_mix", False):
+        extra.pop("opponent_mix_probs", None)
     return BatchAirHockeyEnv(
         n_envs=n_envs,
+        **extra,
         agent_dynamics="profile" if args.dynamics else "ideal",
         opponent_dynamics="delayed" if args.dynamics else "ideal",
         opponent_policy="external",
@@ -103,7 +112,10 @@ def drive_opponent(env, opponent, obs, t0_mask):
 
 
 def record_game(agent, opponent, step, recordings_dir, run_name, args):
+    # Recorded games are always against the copy of self, with requests on.
     env = make_env(args, 1)
+    env._opp_mix_ids = None          # no draw: the far side is the checkpoint
+    env._opp_policy_id[:] = _OPP_POLICY_MAP["external"]
     obs = env.reset(seed=int(step) % 99_991)
     rec = Recorder()
     rec.start_episode()
@@ -173,6 +185,10 @@ def main():
                         help="re-initialise the policy prior head on resume "
                              "(policy_loader.reset_prior): a prior saturated "
                              "by long training cannot be regularised back")
+    parser.add_argument("--no-opponent-mix", action="store_true",
+                        help="every far side is the copy of self (the "
+                             "curriculum's default mixes in the sniper and "
+                             "the weak goalie, see rewards.CURRICULUM)")
     parser.add_argument("--updates-per-iter", type=int, default=1,
                         help="gradient updates per vectorised step; March "
                              "used 1 (i.e. one update per n_envs transitions)")
@@ -207,6 +223,7 @@ def main():
         for k, v in MODEL_SIZE[args.model_size].items():
             cfg[k] = v
     cfg.bin_size = (cfg.vmax - cfg.vmin) / (cfg.num_bins - 1)
+    cfg.prev_action_start = BatchAirHockeyEnv.PREV_ACTION_IDX   # obs [15:17]
 
     n_envs = args.n_envs
     env = make_env(args, n_envs)
@@ -265,6 +282,9 @@ def main():
     last_opp_update = 0
     opp_version = 0
     wins = losses = draws = 0
+    # Per-opponent-kind tallies: with a mix, one win rate means nothing.
+    kind_names = {v: k for k, v in _OPP_POLICY_MAP.items()}
+    by_kind: dict[int, list[int]] = {}
 
     while step <= cfg.steps:
         if step > 0 and step // args.opponent_update_freq > last_opp_update // args.opponent_update_freq:
@@ -306,6 +326,11 @@ def main():
                 if sa > so: wins += 1
                 elif so > sa: losses += 1
                 else: draws += 1
+                k = int(info["opponent_kind"][i])
+                tally = by_kind.setdefault(k, [0, 0, 0, 0, 0])   # W, L, D, GF, GA
+                tally[0 if sa > so else 1 if so > sa else 2] += 1
+                tally[3] += sa
+                tally[4] += so
                 writer.add_scalar('train/episode_reward', ep_reward, step)
                 writer.add_scalar('train/win_rate',
                                   wins / max(wins + losses + draws, 1), step)
@@ -345,6 +370,18 @@ def main():
             print(f"[Train] step={step:,} fps={fps:.0f} W/L/D={wins}/{losses}/{draws} "
                   f"WR={wr:.0f}% opp_v{opp_version}")
             writer.add_scalar('train/fps', fps, step)
+            for k, (w_, l_, d_, gf, ga) in sorted(by_kind.items()):
+                n_k = max(w_ + l_ + d_, 1)
+                name = kind_names.get(k, str(k))
+                writer.add_scalar(f'vs_{name}/win_rate', w_ / n_k, step)
+                writer.add_scalar(f'vs_{name}/goals_for_per_game', gf / n_k, step)
+                writer.add_scalar(f'vs_{name}/goals_against_per_game', ga / n_k, step)
+                print(f"    vs {name:12s} {w_}/{l_}/{d_}  GF {gf / n_k:.2f}  GA {ga / n_k:.2f}")
+            for k, v in shaper.stats.items():
+                writer.add_scalar(f'shots/{k}', v, step)
+            print(f"    shots {shaper.stats}")
+            for k in shaper.stats:
+                shaper.stats[k] = 0
             writer.flush()
 
         if step > 0 and step // args.record_freq > last_record // args.record_freq:

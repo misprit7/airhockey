@@ -79,7 +79,9 @@ RAMP_S = 0.003          # the firmware's jerk ramp, for the travel estimate
 # ── sampling ────────────────────────────────────────────────────────
 
 SAMPLE_HZ = 100.0
-ENC_EVERY_S = 0.10      # the drives' encoders cost an sFoundation round trip
+ENC_EVERY_S = 0.25      # an ENC costs ~39 ms on the rig (four sFoundation reads),
+                        # during which nothing else is sampled; 0.10 dragged
+                        # the loop to 71 Hz (2026-09-06)
 
 # ── scoring ─────────────────────────────────────────────────────────
 

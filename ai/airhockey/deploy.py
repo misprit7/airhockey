@@ -6,7 +6,7 @@ observation and action conventions in between. Two objects, split so the
 part that has to be exactly right is testable with no checkpoint, no torch
 and no camera:
 
-  ReportEncoder   report (mm, camera clock) -> the 15-dim kinematic
+  ReportEncoder   report (mm, camera clock) -> the 20-dim kinematic
                   observation BatchAirHockeyEnv trains on. Same layout, same
                   units (sim metres, sim metres/s), same estimators: puck
                   velocity from the same 30 ms slope the sim's tracker model
@@ -20,11 +20,10 @@ fresh (the env hands it the controller's position), the puck and the
 opponent through a ~7.7 ms camera, and constant cap features. The table gives
 it exactly that: run_policy prefers the controller's POS for the own mallet,
 the tracker carries the camera's latency, and the cap features are written
-as the constants training used. What the table does NOT match is the cap
-itself -- see the note printed at load time: the sim's accel band is pinned
-at 60 m/s^2 while the runner's ceiling is 24 m/s^2 and the paddle tips near
-15. The policy's timing model is therefore optimistic on the rig; it arrives
-late rather than wrong.
+as the constants training used, and the shot-type request ([17:20]) is
+whatever --shot-type asks for. The caps are the sim body's since 2026-09-06
+(12 m/s, 20 m/s^2, pinned); a run below them is noted at load time -- the
+policy then arrives late rather than wrong.
 """
 from __future__ import annotations
 
@@ -44,6 +43,12 @@ from airhockey.dynamics import (AGENT_DR_ACCEL_M_S2, AGENT_DR_SPEED_M_S,  # noqa
 from airhockey.heuristics import (Command, TrackerReport,  # noqa: E402
                                   estimate_velocity)
 from airhockey.physics import TableConfig  # noqa: E402
+from airhockey.rewards import SHOT_TYPE_NAMES  # noqa: E402
+
+# What to ask the policy for (observation [17:20]): a fixed type for the
+# session, or "mix" -- a fresh draw each time the puck enters the robot's
+# half, which is how training presented it.
+SHOT_MODES = tuple(SHOT_TYPE_NAMES) + ("mix",)
 
 # The sim's tracker model fits the puck velocity over 30 ms (6 frames at
 # 200 Hz); the deployed estimate fits the same window so the policy sees the
@@ -72,7 +77,7 @@ def puck_out_of_play(x_mm: float, y_mm: float) -> bool:
     in_mouth = abs(y_mm - centre_y) < 0.5 * geom.GOAL_WIDTH_MM + GOAL_MOUTH_MARGIN_MM
     return beyond_end and in_mouth
 
-OBS_DIM = 17
+OBS_DIM = 20
 
 
 def mm_velocity_to_sim(vx_mm_s: float, vy_mm_s: float,
@@ -96,7 +101,11 @@ class ReportEncoder:
     is empty. `reset()` clears it.
     """
 
-    def __init__(self, table: TableConfig | None = None):
+    def __init__(self, table: TableConfig | None = None, shot_mode: str = "none"):
+        if shot_mode not in SHOT_MODES:
+            raise ValueError(f"shot_mode must be one of {SHOT_MODES}, not {shot_mode!r}")
+        self.shot_mode = shot_mode
+        self._rng = np.random.default_rng()
         cfg = table or TableConfig()
         self.width = cfg.width
         self.half_h = cfg.height / 2.0
@@ -114,6 +123,9 @@ class ReportEncoder:
         self._own_prev: tuple[float, float] | None = None
         self._opp_prev: tuple[float, float] | None = None
         self._puck_last: tuple[float, float] | None = None
+        self.shot_type = (0 if self.shot_mode == "mix"
+                          else SHOT_TYPE_NAMES.index(self.shot_mode))
+        self._puck_in_half: bool | None = None
         # The previous action, as the env carries it: zero after a reset,
         # then whatever the policy last emitted (the caller sets it).
         self.last_action = np.zeros(2, dtype=np.float32)
@@ -170,11 +182,19 @@ class ReportEncoder:
             (qx, qy), qvx, qvy = self._opp_default, 0.0, 0.0
             self._opp_prev = None
 
+        # A possession begins when the puck enters the robot's half; in
+        # "mix" mode that is when a new request is drawn, as in training.
+        in_half = py < self.half_h
+        if self.shot_mode == "mix" and in_half and not self._puck_in_half:
+            self.shot_type = int(self._rng.integers(0, 4))
+        self._puck_in_half = in_half
+        onehot = [1.0 if self.shot_type == k else 0.0 for k in (1, 2, 3)]
+
         return np.array([px, py, pvx, pvy,
                          ox, oy, ovx, ovy,
                          qx, qy, qvx, qvy,
                          self.side, *self.cap_features,
-                         *self.last_action], dtype=np.float32)
+                         *self.last_action, *onehot], dtype=np.float32)
 
 
 class TDMPC2Policy:
@@ -192,7 +212,7 @@ class TDMPC2Policy:
     def __init__(self, run: str, speed_mm_s: float, accel_mm_s2: float,
                  plan_iterations: int = 0, device: str | None = None,
                  ckpt: str | Path | None = None, plan_smooth: float | None = None,
-                 compile_plan: bool = True):
+                 compile_plan: bool = True, shot_mode: str = "none"):
         import torch                                        # noqa: PLC0415
 
         from airhockey.batch_env import BatchAirHockeyEnv   # noqa: PLC0415
@@ -204,7 +224,7 @@ class TDMPC2Policy:
         # instance, never stepped.
         env = BatchAirHockeyEnv(n_envs=1)
         assert env.OBS_DIM == OBS_DIM
-        self.encoder = ReportEncoder(env.table_config)
+        self.encoder = ReportEncoder(env.table_config, shot_mode=shot_mode)
         self._low = np.asarray(env._action_low, dtype=float)
         self._high = np.asarray(env._action_high, dtype=float)
         self.width, self.half_h = env.table_config.width, env.table_config.height / 2.0
