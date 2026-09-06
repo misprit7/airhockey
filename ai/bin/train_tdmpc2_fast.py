@@ -53,7 +53,7 @@ from common import MODEL_SIZE
 from tdmpc2 import TDMPC2
 
 from airhockey.batch_env import BatchAirHockeyEnv, sensing_kwargs
-from airhockey.dynamics import ProfileDynamics, DelayedDynamics
+from airhockey.dynamics import ACTION_DT, ProfileDynamics, DelayedDynamics
 from airhockey.env import AirHockeyEnv
 from airhockey.recorder import Recorder
 from airhockey.rewards import (
@@ -391,7 +391,7 @@ def _run_eval(agent, cfg, step, start_time, logger, use_dynamics, frame_stack=1)
             agent_dynamics=dynamics,
             opponent_policy="idle",
             record=False,
-            action_dt=1 / 100,
+            action_dt=ACTION_DT,
             max_episode_time=30.0,
             max_score=7,
             frame_stack=frame_stack,
@@ -444,7 +444,7 @@ def _record_game_selfplay(agent, opponent, step, recordings_dir, run_name, stage
         # recorded games against a second robot that training never sees.
         opponent_policy="external",
         record=True,
-        action_dt=1 / 100,
+        action_dt=ACTION_DT,
         max_episode_time=90.0,
         max_score=21,
         frame_stack=frame_stack,
@@ -502,7 +502,7 @@ def _run_benchmark(agent, step, logger, frame_stack=1):
                 agent_dynamics=ProfileDynamics(),
                 opponent_dynamics=ProfileDynamics(),
                 opponent_policy=opp,
-                action_dt=1 / 100,
+                action_dt=ACTION_DT,
                 max_episode_steps=3000,
                 max_score=7,
                 frame_stack=frame_stack,
@@ -869,7 +869,7 @@ def main():
         opponent_mix=opp_mix,
         domain_randomize=args.domain_randomize,
         **sensing_kwargs(args.realistic_sensing),
-        action_dt=1 / 100,
+        action_dt=ACTION_DT,
         max_episode_time=30.0,
         max_episode_steps=episode_steps,
         max_score=7,

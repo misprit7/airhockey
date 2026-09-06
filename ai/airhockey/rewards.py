@@ -17,6 +17,8 @@ from typing import Any
 import gymnasium as gym
 import numpy as np
 
+from airhockey.dynamics import ACTION_DT
+
 # ---------------------------------------------------------------------------
 # Curriculum stage constants
 # ---------------------------------------------------------------------------
@@ -53,18 +55,27 @@ STAGE_NAMES: dict[int, str] = {
     4: "SELF-PLAY",
 }
 
-# Steps are at the 100 Hz action rate. These were written for 60 Hz
-# ("600 steps ~ 10 s") and never rescaled when action_dt moved to 1/100 --
-# which silently cut every episode to 60% of its intended wall time and made
-# each goals-PER-EPISODE gate ~1.7x harder. The first full curriculum run
-# spent 840k of its 1M steps held at stage 2 by that inflated bar, while its
-# recorded games were winning 5-0.
-STAGE_EPISODE_STEPS: dict[int, int] = {
-    1: 1000,   # 10 s — chase + hit
-    2: 2000,   # 20 s — game vs goalie
-    3: 3000,   # 30 s — game vs follower
-    4: 3000,   # 30 s — self-play
+# Episode lengths in SECONDS, converted to steps at the control rate. They
+# were once steps written for 60 Hz ("600 steps ~ 10 s") and never rescaled
+# when action_dt moved to 1/100 -- which silently cut every episode to 60%
+# of its intended wall time and made each goals-PER-EPISODE gate ~1.7x
+# harder. The first full curriculum run spent 840k of its 1M steps held at
+# stage 2 by that inflated bar, while its recorded games were winning 5-0.
+# Seconds cannot drift with the rate.
+STAGE_EPISODE_S: dict[int, float] = {
+    1: 10.0,   # chase + hit
+    2: 20.0,   # game vs goalie
+    3: 30.0,   # game vs follower
+    4: 30.0,   # self-play
 }
+
+
+def steps_for(seconds: float, action_dt: float = ACTION_DT) -> int:
+    """Episode seconds -> control steps at the (one) control rate."""
+    return int(round(seconds / action_dt))
+
+
+STAGE_EPISODE_STEPS: dict[int, int] = {k: steps_for(v) for k, v in STAGE_EPISODE_S.items()}
 
 # Default table geometry for shot placement
 _GOAL_CX = 0.5   # table_width / 2
@@ -780,27 +791,27 @@ class ExchangeRewardShaper:
 # caps at 100; contact 5 x 5 capped hits = 25 max; a goal 100.
 CURRICULUM: dict[str, dict] = {
     "proximity": dict(
-        opponent="idle", episode_steps=1000, steps=200_000,
+        opponent="idle", episode_s=10.0, steps=200_000,
         proximity_weight=0.1, contact_reward=0.0, directed_hit_weight=0.0,
         puck_progress_weight=0.0, defense_weight=0.0, shot_placement_weight=0.0,
         goal_reward=0.0, goal_penalty=0.0, entropy_weight=0.0, shot_mix_weight=0.0),
     "contact": dict(
-        opponent="idle", episode_steps=1000, steps=300_000,
+        opponent="idle", episode_s=10.0, steps=300_000,
         proximity_weight=0.02, contact_reward=5.0, directed_hit_weight=2.0,
         puck_progress_weight=0.0, defense_weight=0.0, shot_placement_weight=0.0,
         goal_reward=0.0, goal_penalty=0.0, entropy_weight=0.0, shot_mix_weight=0.0),
     "scoring": dict(
-        opponent="idle", episode_steps=2000, steps=500_000,
+        opponent="idle", episode_s=20.0, steps=500_000,
         proximity_weight=0.0, contact_reward=2.0, directed_hit_weight=1.0,
         puck_progress_weight=0.5, defense_weight=0.5, shot_placement_weight=2.0,
         goal_reward=100.0, goal_penalty=-20.0, entropy_weight=0.0, shot_mix_weight=0.5),
     "goalie": dict(
-        opponent="goalie", episode_steps=2000, steps=500_000,
+        opponent="goalie", episode_s=20.0, steps=500_000,
         proximity_weight=0.0, contact_reward=2.0, directed_hit_weight=1.0,
         puck_progress_weight=0.5, defense_weight=0.5, shot_placement_weight=2.0,
         goal_reward=100.0, goal_penalty=-20.0, entropy_weight=0.0, shot_mix_weight=0.5),
     "selfplay": dict(
-        opponent="external", episode_steps=3000, steps=3_000_000,
+        opponent="external", episode_s=30.0, steps=3_000_000,
         proximity_weight=0.0, contact_reward=2.0, directed_hit_weight=1.0,
         puck_progress_weight=0.5, defense_weight=1.0, shot_placement_weight=2.0,
         goal_reward=100.0, goal_penalty=-50.0, entropy_weight=0.0, shot_mix_weight=0.5,
@@ -827,6 +838,11 @@ _SHAPER_KEYS = ("proximity_weight", "contact_reward", "directed_hit_weight",
 # sets them, so the scalar ShapedRewardWrapper -- which has no such terms --
 # keeps accepting every pretrain stage's kwargs.
 _IDLE_KEYS = ("home_weight", "jitter_weight", "smooth_weight")
+
+
+def curriculum_episode_steps(name: str, action_dt: float = ACTION_DT) -> int:
+    """A stage's episode length in control steps, from its seconds."""
+    return steps_for(CURRICULUM[name]["episode_s"], action_dt)
 
 
 def curriculum_shaper_kwargs(name: str) -> dict:

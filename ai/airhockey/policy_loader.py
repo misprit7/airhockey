@@ -63,9 +63,27 @@ def resolve_checkpoint(run_name: str) -> Path:
     raise FileNotFoundError(d / "agent.pt")
 
 
-def load_agent(run_name: str, iterations: int | None = 3,
+# The MPPI action-change cost, in reward units per squared unit of action
+# change, charged from the previously executed action through the horizon.
+# ONE constant for training, evaluation and the table: the planner that
+# collects the data is the planner that plays. Sized so a corner-to-corner
+# flip (8 squared units) costs 4, comparable to one of Q's value bins near
+# 50, while a strike-sized change (~2) costs 1.
+PLAN_SMOOTH_COEF = 0.0   # parked: see memory; planner cost code stays inert
+# MPPI iterations, likewise shared. 6 (TD-MPC2's default) since 2026-09-06:
+# the tick is 20 ms at ACTION_HZ = 50, and ai/bin/bench_planner.py on the
+# rig's RTX 4090 measured 6 iterations at 12.6 ms eager (p95 14.6) and
+# 6.3 ms under CUDA graphs (deploy.TDMPC2Policy compile_plan). At the old
+# 100 Hz tick even 3 iterations (7.1 ms) left no room for the master's I/O.
+# The cost is launch-bound, not compute-bound: 128 samples cost the same as
+# 512, so the knobs that matter are iterations and horizon.
+PLAN_ITERATIONS = 6
+
+
+def load_agent(run_name: str, iterations: int | None = PLAN_ITERATIONS,
                model_size: int = DEFAULT_MODEL_SIZE,
-               ckpt: str | Path | None = None):
+               ckpt: str | Path | None = None,
+               plan_smooth: float = PLAN_SMOOTH_COEF):
     """Build a TDMPC2 agent and load a checkpoint into it.
 
     run_name resolves through resolve_checkpoint() unless `ckpt` names the
@@ -116,6 +134,7 @@ def load_agent(run_name: str, iterations: int | None = 3,
     cfg = cfg_to_dataclass(cfg)
     if iterations is not None:
         cfg.iterations = iterations
+    cfg.plan_smooth_coef = float(plan_smooth)
 
     agent = TDMPC2(cfg)
     load_checkpoint(agent, ckpt)

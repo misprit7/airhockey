@@ -69,6 +69,7 @@ sys.path.insert(0, str(ROOT / "ai"))
 sys.path.insert(0, str(ROOT / "shared"))
 
 import cdpr_geometry as geom  # noqa: E402
+from airhockey.dynamics import ACTION_HZ  # noqa: E402
 
 # ── Policy interface ────────────────────────────────────────────────────
 #
@@ -157,7 +158,7 @@ class Caps:
     speed_min: float = 100.0
     speed_max: float = 12000.0      # = the sim body (AGENT_DR_SPEED_M_S), 2026-09-05
     accel_min: float = 400.0
-    accel_max: float = 60000.0      # = the sim body (AGENT_DR_ACCEL_M_S2), 2026-09-05
+    accel_max: float = 20000.0      # = the sim body (AGENT_DR_ACCEL_M_S2), 2026-09-06
 
     def clamp_speed(self, v: float) -> float:
         return min(max(v, self.speed_min), self.speed_max)
@@ -1041,7 +1042,7 @@ def selftest(verbose: bool = True) -> dict:
     on anything that would have been unsafe on the rig.
     """
     caps = Caps()
-    fps, cmd_hz = 200.0, 100.0      # the rig's real rates
+    fps, cmd_hz = 200.0, ACTION_HZ  # the rig's real rates
     results = {}
 
     policies = [("builtin:hold", HoldCentre(caps)),
@@ -1648,7 +1649,7 @@ def main() -> int:
     ap.add_argument("--exposure", type=float, default=300.0)
     ap.add_argument("--gain", type=float, default=12.0)
     ap.add_argument("--threshold", type=int, default=90)
-    ap.add_argument("--cmd-hz", type=float, default=100.0,
+    ap.add_argument("--cmd-hz", type=float, default=ACTION_HZ,
                     help="command rate to the Teensy; tracking stays at --fps")
     ap.add_argument("--gentle", action="store_true",
                     help=f"first-live-run preset: {GENTLE_SPEED:.0f} mm/s, "

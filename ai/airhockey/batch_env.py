@@ -11,7 +11,7 @@ from typing import Any
 import numpy as np
 
 from airhockey.batch_physics import BatchPhysicsEngine
-from airhockey.dynamics import (AGENT_DR_ACCEL_M_S2, AGENT_DR_SPEED_M_S,
+from airhockey.dynamics import (ACTION_DT, AGENT_DR_ACCEL_M_S2, AGENT_DR_SPEED_M_S,
                                 DR_ACCEL_RANGE, DR_SPEED_RANGE,
                                 MAX_ACCEL_M_S2, MAX_SPEED_M_S,
                                 OPPONENT_MAX_ACCEL_M_S2,
@@ -121,6 +121,14 @@ class BatchAirHockeyEnv:
     # ~0.34 sim-units -> -0.007/step, small next to the 0.1 proximity term.
     WS_PENALTY_PER_UNIT = 0.02
 
+    # Stuck-puck relaunch (see step()). Seconds, not steps, so the rule does
+    # not change meaning with the control rate. "Attended" = a paddle
+    # within ATTEND_RADIUS of the puck: paddle radius 0.05 + puck radius
+    # 0.04 + 0.06 of slack, in sim metres.
+    STUCK_UNATTENDED_S = 1.2
+    STUCK_ATTENDED_S = 3.0
+    ATTEND_RADIUS = 0.15
+
     # History-mode observation layout. Frame lags are relative to the newest
     # frame the env is entitled to see (i.e. after sensing latency), in
     # 5 ms camera frames: 0/10/20/50/100 ms for the puck, 0/20/50 ms for the
@@ -171,7 +179,7 @@ class BatchAirHockeyEnv:
         # 200 Hz camera clock (see below), so nothing about the delay model
         # depends on this number. 100 Hz keeps decisions fresh against a
         # fast puck and is sustainable in real time with a 3-iteration MPPI.
-        action_dt: float = 1 / 100,
+        action_dt: float = ACTION_DT,
         max_episode_time: float = 60.0,
         max_episode_steps: int | None = None,
         max_score: int = 7,
@@ -458,6 +466,8 @@ class BatchAirHockeyEnv:
 
         # Puck-stuck detection: reset if speed < threshold for N consecutive steps
         self._puck_slow_count = np.zeros(n_envs, dtype=np.int32)
+        self._stuck_unattended_steps = max(1, int(round(self.STUCK_UNATTENDED_S / action_dt)))
+        self._stuck_attended_steps = max(1, int(round(self.STUCK_ATTENDED_S / action_dt)))
 
     @staticmethod
     def _clear_profile_accel(dyn: dict[str, Any], idx) -> None:
@@ -803,12 +813,26 @@ class BatchAirHockeyEnv:
 
         self._step_count += 1
 
-        # Universal puck-stuck reset: if puck speed < 0.05 for 120 steps (~2s),
-        # reset to center heading toward a random side.
+        # Puck-stuck relaunch: a puck at rest with NOBODY near it for
+        # STUCK_UNATTENDED_S is dead and gets relaunched from the centre. A
+        # puck at rest WITH a paddle on it is being controlled -- the
+        # trap-then-shoot play the reward now asks for (ai/RETRAIN.md item
+        # 3) -- and gets STUCK_ATTENDED_S before the same relaunch, so
+        # control is possible but cannot become holding the puck for ever.
+        # Before 2026-09-06 the rule was 120 steps regardless, which at
+        # 100 Hz yanked the puck away 1.2 s after a stop and fined the
+        # agent for having stopped it.
         puck_speed = np.hypot(self.engine.puck_vx, self.engine.puck_vy)
         slow = puck_speed < 0.05
         self._puck_slow_count = np.where(slow, self._puck_slow_count + 1, 0)
-        stuck = self._puck_slow_count >= 120
+        attended = (
+            (np.hypot(self.engine.puck_x - self.engine.paddle_agent_x,
+                      self.engine.puck_y - self.engine.paddle_agent_y) < self.ATTEND_RADIUS)
+            | (np.hypot(self.engine.puck_x - self.engine.paddle_opp_x,
+                        self.engine.puck_y - self.engine.paddle_opp_y) < self.ATTEND_RADIUS))
+        limit = np.where(attended, self._stuck_attended_steps,
+                         self._stuck_unattended_steps)
+        stuck = self._puck_slow_count >= limit
         stuck_penalty = np.zeros(self.n_envs)
         if np.any(stuck):
             # Penalize if puck stalled on agent's side (agent should have hit it)

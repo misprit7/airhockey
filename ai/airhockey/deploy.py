@@ -191,7 +191,8 @@ class TDMPC2Policy:
 
     def __init__(self, run: str, speed_mm_s: float, accel_mm_s2: float,
                  plan_iterations: int = 0, device: str | None = None,
-                 ckpt: str | Path | None = None, plan_smooth: float | None = None):
+                 ckpt: str | Path | None = None, plan_smooth: float | None = None,
+                 compile_plan: bool = True):
         import torch                                        # noqa: PLC0415
 
         from airhockey.batch_env import BatchAirHockeyEnv   # noqa: PLC0415
@@ -230,6 +231,19 @@ class TDMPC2Policy:
             if v is not None:
                 setattr(self.agent, k, v.to(self.device))
 
+        # CUDA graphs on the single-env planner. The planner's cost is launch
+        # overhead, not arithmetic (bench_planner.py: 128 samples cost the
+        # same as 512), and replaying a captured graph halves it -- 6 MPPI
+        # iterations 12.6 -> 6.3 ms on the 4090. Compile + warm-up takes
+        # ~20 s at start-up, which warm_up() below absorbs. The same wrap
+        # upstream TD-MPC2 applies under cfg.compile; the shapes here are
+        # static (one env), which is what the mode needs.
+        self._plan_fn = None
+        self.compiled = False
+        if self.plan and compile_plan and self.device.type == "cuda":
+            self._plan_fn = torch.compile(self.agent._plan, mode="reduce-overhead")
+            self.compiled = True
+
         self.speed_mm_s = float(speed_mm_s)
         self.accel_mm_s2 = float(accel_mm_s2)
         self.last_ms = 0.0
@@ -243,9 +257,15 @@ class TDMPC2Policy:
     def act(self, obs: np.ndarray) -> np.ndarray:
         torch = self._torch
         o = torch.as_tensor(obs, dtype=torch.float32, device=self.device).unsqueeze(0)
-        t0 = torch.tensor([self.encoder.fresh], dtype=torch.bool, device=self.device)
         with torch.no_grad():
-            a = self.agent.act(o, t0=t0, eval_mode=True)
+            if self._plan_fn is not None:
+                # The captured single-env graph; t0 is a Python bool here,
+                # so a fresh episode and a continuing one are two graphs.
+                a = self._plan_fn(o, t0=bool(self.encoder.fresh), eval_mode=True)
+            else:
+                t0 = torch.tensor([self.encoder.fresh], dtype=torch.bool,
+                                  device=self.device)
+                a = self.agent.act(o, t0=t0, eval_mode=True)
         self.encoder.fresh = False
         return np.asarray(a.detach().cpu().numpy(), dtype=float).reshape(-1)[:2]
 
@@ -288,6 +308,7 @@ class TDMPC2Policy:
 
     def describe(self, caps_speed: float, caps_accel: float) -> str:
         mode = (f"{self.agent.cfg.iterations} MPPI iterations on {self.device}"
+                + (" (CUDA graphs)" if self.compiled else "")
                 if self.plan else f"policy prior only on {self.device}")
         trained_v = AGENT_DR_SPEED_M_S[1] * 1000.0
         trained_a = AGENT_DR_ACCEL_M_S2[1] * 1000.0

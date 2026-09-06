@@ -47,8 +47,10 @@ from common import MODEL_SIZE  # noqa: E402
 from tdmpc2 import TDMPC2  # noqa: E402
 
 from airhockey.batch_env import BatchAirHockeyEnv, sensing_kwargs  # noqa: E402
+from airhockey.dynamics import ACTION_DT  # noqa: E402
 from airhockey.recorder import FrameData, Recorder  # noqa: E402
-from airhockey.policy_loader import load_checkpoint  # noqa: E402
+from airhockey.policy_loader import (PLAN_ITERATIONS, PLAN_SMOOTH_COEF,  # noqa: E402
+                                     load_checkpoint)
 from airhockey.rewards import (BatchRewardShaper, STAGE_SCORING,  # noqa: E402
                                CURRICULUM, curriculum_shaper_kwargs)
 
@@ -71,7 +73,7 @@ def make_env(args, n_envs):
         # Symmetric by default: the far side is a copy of the machine, not
         # the human model, so the learner is always playing itself.
         opponent_body="robot" if args.symmetric else "human",
-        action_dt=1 / 100,
+        action_dt=ACTION_DT,
         max_episode_time=30.0,
         max_score=7,
         domain_randomize=args.domain_randomize,
@@ -160,6 +162,13 @@ def main():
                              "prior (TD-MPC2 pi_smooth_coef): pulls the "
                              "prior's mean toward the previous action, which "
                              "the observation carries. 0 disables.")
+    parser.add_argument("--plan-smooth", type=float, default=PLAN_SMOOTH_COEF,
+                        help="MPPI action-change cost (TD-MPC2 plan_smooth_coef); "
+                             "the same constant the table uses, so the planner "
+                             "that collects the data is the planner that plays")
+    parser.add_argument("--iterations", type=int, default=PLAN_ITERATIONS,
+                        help="MPPI iterations for data collection; the table's "
+                             "number, for the same reason")
     parser.add_argument("--reset-prior", action="store_true",
                         help="re-initialise the policy prior head on resume "
                              "(policy_loader.reset_prior): a prior saturated "
@@ -190,6 +199,8 @@ def main():
         "task_title": "Air Hockey Self-Play",
         "multitask": False, "tasks": ["airhockey-selfplay"], "task_dim": 0,
         "pi_smooth_coef": args.pi_smooth,
+        "plan_smooth_coef": args.plan_smooth,
+        "iterations": args.iterations,
     })
     cfg = OmegaConf.merge(base_cfg, overrides)
     if args.model_size in MODEL_SIZE:
@@ -201,7 +212,7 @@ def main():
     env = make_env(args, n_envs)
     shaper = BatchRewardShaper(n_envs, stage=STAGE_SCORING, workspace=env._ws,
                                **curriculum_shaper_kwargs("selfplay"))
-    episode_length = 3000          # 30 s at the 100 Hz action rate
+    episode_length = int(round(30.0 / ACTION_DT))   # 30 s
     cfg = OmegaConf.merge(cfg, OmegaConf.create({
         "obs_shape": {"state": [env.obs_dim]},
         "action_dim": env.action_dim,
@@ -227,6 +238,7 @@ def main():
     print(f"  Opponent update: every {args.opponent_update_freq:,} steps")
     print(f"  Far side: {'copy of self (robot body, mirrored workspace)' if args.symmetric else 'human model'}")
     print(f"  Prior smoothness (pi_smooth_coef): {args.pi_smooth}")
+    print(f"  Planner: {args.iterations} MPPI iterations, action-change cost {args.plan_smooth}")
     print(f"  Planning horizon: {args.horizon}   Goals: +{GOAL_REWARD:.0f} / {GOAL_PENALTY:.0f}")
     print(f"  Sensing: {'on' if args.realistic_sensing else 'off'}   "
           f"DR: {'on' if args.domain_randomize else 'off'}   obs {env.obs_dim} dims")

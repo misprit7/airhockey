@@ -50,10 +50,16 @@ def test_selftest_passes():
     assert {f"heuristic:{n}" for n in rp.list_heuristics()} <= set(stats)
     # "watchdog" is a scenario, not a policy, and carries different keys.
     for label, s in ((k, v) for k, v in stats.items() if k != "watchdog"):
-        assert s["commands"] > 100, f"{label}: only {s['commands']} commands"
+        # 2 s of synthetic play at the control rate, less start-up.
+        assert s["commands"] > 0.8 * 2.0 * rp.ACTION_HZ, \
+            f"{label}: only {s['commands']} commands"
         # LIMITS must not track the command rate; that is the point of the
-        # committer. Two decades of margin either way would hide a failure.
-        assert s["limits"] < s["commands"] / 10, \
+        # committer. The hostile bot re-caps every 200 ms at most, so over
+        # 2 s that is ~10 LIMITS whatever the tick -- and far fewer than
+        # the commands at any rate worth running.
+        assert s["limits"] <= 12, \
+            f"{label}: {s['limits']} LIMITS in 2 s -- tracking the tick, not time"
+        assert s["limits"] < s["commands"] / 4, \
             f"{label}: {s['limits']} LIMITS against {s['commands']} commands"
     assert stats["hostile"]["clamped"] > 0
     assert stats["builtin:hold"]["clamped"] == 0, \
@@ -508,7 +514,8 @@ def test_watchdog_freezes_commands_in_the_selftest():
     """The end-to-end scenario: cut the puck feed, commands must not move."""
     stats = rp.selftest(verbose=False)["watchdog"]
     assert stats["trips"] == 1
-    assert stats["held_ticks"] > 50, \
+    # Half a second of holding, in ticks at the control rate.
+    assert stats["held_ticks"] > 0.5 * rp.ACTION_HZ, \
         f"only {stats['held_ticks']} held ticks — the blind window was too short"
     assert stats["resumed_targets"] > 1, "never resumed after reacquisition"
 

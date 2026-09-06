@@ -28,6 +28,7 @@ ROOT = Path(__file__).resolve().parents[2]
 sys.path.insert(0, str(ROOT / "ai"))
 
 from airhockey.batch_env import BatchAirHockeyEnv, sensing_kwargs  # noqa: E402
+from airhockey.dynamics import ACTION_DT
 from airhockey.recorder import FrameData, Recorder  # noqa: E402
 from airhockey.rewards import (BatchRewardShaper,  # noqa: E402
                                ExchangeRewardShaper)
@@ -284,7 +285,7 @@ def _make_env(args, n_envs=None):
         opponent_dynamics="delayed",
         opponent_policy=args.opponent,
         opponent_mix=mix,
-        action_dt=1 / 100,
+        action_dt=ACTION_DT,
         max_episode_steps=2000,          # 20 s exchanges
         max_score=7,
         domain_randomize=args.domain_randomize,

@@ -36,6 +36,22 @@ import cdpr_geometry as _geom  # noqa: E402
 MAX_SPEED_M_S = 12.0    # 12000 mm/s
 MAX_ACCEL_M_S2 = 20.0   # 20000 mm/s^2
 
+# The CONTROL RATE: how often the policy decides, in sim and on the table.
+# One constant, derived everywhere (env default action_dt, curriculum
+# episode lengths, the trainers, eval, run_policy --cmd-hz), because it was
+# "1 / 100" in nine places and "3000 steps = 30 s" in three more.
+#
+# 50 Hz, down from 100 on 2026-09-06. The planner has to answer inside one
+# tick: at 100 Hz three MPPI iterations took 7.7 ms median / 10.4 p95 plus
+# ~1 ms of master I/O and the loop fell up to 0.3 s behind the camera. At
+# 50 Hz the same planner fits with slack, six iterations fit at all, and a
+# five-step horizon looks 100 ms ahead instead of 50 -- nearer the time a
+# shot takes to cross the table. Reaction latency grows by 10 ms on
+# average, 50 mm of puck travel at 5 m/s, a third of a paddle radius.
+# Sensing is unaffected: the camera model ticks on its own 200 Hz clock.
+ACTION_HZ = 50.0
+ACTION_DT = 1.0 / ACTION_HZ
+
 
 def table_mm_to_sim(mm_x: float, mm_y: float, sim_width: float = 1.0,
                     sim_half_height: float = 1.0, flip: bool = False):
@@ -117,8 +133,17 @@ def sim_to_table_mm(sim_x: float, sim_y: float, sim_width: float = 1.0,
 # cap ratios ([13], [14]) as constants, so the band can be reopened without
 # changing the network's shape. The firmware ceiling is 120; nothing here
 # approaches it.
+#
+# 2026-09-06: pinned at 20, not 60. 60 was the top of the band and the sim
+# followed it perfectly; the table did not. The camera put the paddle 200 to
+# 440 mm from where the controller believed it was for the whole of a run at
+# 60 m/s^2, against 7 to 20 mm at 24 -- the drives cannot make the step
+# stream at 60 and fall behind, and a policy trained on a body that follows
+# is planning on fiction. 20 is what the paddle demonstrably follows with
+# margin under the RMS-overload trips seen at 24 (see ai/RETRAIN.md item 1
+# and the tracking test that measures this: airhockey/follow_test.py).
 AGENT_DR_SPEED_M_S = (MAX_SPEED_M_S, MAX_SPEED_M_S)   # pinned to the clamp
-AGENT_DR_ACCEL_M_S2 = (60.0, 60.0)                      # pinned, see above
+AGENT_DR_ACCEL_M_S2 = (MAX_ACCEL_M_S2, MAX_ACCEL_M_S2)  # pinned, see above
 
 # Fraction-of-nominal spread for the OPPONENT (human) side only.
 DR_SPEED_RANGE = (0.5, 1.0)

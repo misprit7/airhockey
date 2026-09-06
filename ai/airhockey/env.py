@@ -9,7 +9,7 @@ import gymnasium as gym
 import numpy as np
 from gymnasium import spaces
 
-from airhockey.dynamics import (ProfileDynamics, DelayedDynamics,
+from airhockey.dynamics import (ACTION_DT, ProfileDynamics, DelayedDynamics,
                                 IdealDynamics, MotorDynamics,
                                 MAX_ACCEL_M_S2, MAX_SPEED_M_S,
                                 OPPONENT_MAX_ACCEL_M_S2,
@@ -56,7 +56,7 @@ class AirHockeyEnv(gym.Env):
         physics_dt: float = 1 / 240,  # 240 Hz physics
         # 100 Hz. The measured 7.7 ms loop latency is shorter than a 60 Hz
         # step, so at 60 the delay cannot be represented at all.
-        action_dt: float = 1 / 100,
+        action_dt: float = ACTION_DT,
         camera_delay: float = 0.0,  # seconds of observation delay
         max_episode_time: float = 60.0,  # seconds
         max_episode_steps: int | None = None,

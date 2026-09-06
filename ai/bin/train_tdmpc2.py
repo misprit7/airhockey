@@ -37,13 +37,13 @@ from common.buffer import Buffer
 from tdmpc2 import TDMPC2
 
 from airhockey.batch_env import BatchAirHockeyEnv, sensing_kwargs
-from airhockey.dynamics import ProfileDynamics, DelayedDynamics
+from airhockey.dynamics import ACTION_DT, ProfileDynamics, DelayedDynamics
 from airhockey.env import AirHockeyEnv
 from airhockey.recorder import Recorder
 from airhockey.rewards import (
     BatchRewardShaper, ShapedRewardWrapper,
     STAGE_SCORING, STAGE_OPPONENT, STAGE_NAMES,
-    CURRICULUM, curriculum_shaper_kwargs,
+    CURRICULUM, curriculum_episode_steps, curriculum_shaper_kwargs,
 )
 
 warnings.filterwarnings('ignore')
@@ -67,7 +67,7 @@ class AirHockeyTDMPC2Wrapper:
                 agent_dynamics=dynamics,
                 opponent_policy=opponent_policy,
                 record=False,
-                action_dt=1 / 100,
+                action_dt=ACTION_DT,
                 max_episode_time=30.0,
                 max_score=7,
                 frame_stack=frame_stack,
@@ -76,7 +76,7 @@ class AirHockeyTDMPC2Wrapper:
         )
         self.observation_space = self.env.observation_space
         self.action_space = self.env.action_space
-        self.max_episode_steps = 3000  # 30 s at 100 Hz
+        self.max_episode_steps = int(round(30.0 / ACTION_DT))  # 30 s
 
     def rand_act(self):
         return torch.from_numpy(self.action_space.sample().astype(np.float32))
@@ -157,7 +157,7 @@ def record_game(agent, env_factory, step, recordings_dir, run_name, stage=STAGE_
         agent_dynamics=ProfileDynamics(),
         opponent_policy=opponent_policy,
         record=True,
-        action_dt=1 / 100,
+        action_dt=ACTION_DT,
         max_episode_time=30.0,
         max_score=7,
         frame_stack=frame_stack,
@@ -357,7 +357,7 @@ def main():
     if args.curriculum_stage:
         spec = CURRICULUM[args.curriculum_stage]
         opponent_policy = spec["opponent"]
-        episode_steps = spec["episode_steps"]
+        episode_steps = curriculum_episode_steps(args.curriculum_stage)
         shaper_kwargs = curriculum_shaper_kwargs(args.curriculum_stage)
         stage_label = args.curriculum_stage
     else:
@@ -373,7 +373,7 @@ def main():
         opponent_policy=opponent_policy,
         domain_randomize=args.domain_randomize,
         **sensing_kwargs(args.realistic_sensing),
-        action_dt=1 / 100,
+        action_dt=ACTION_DT,
         max_episode_time=30.0,
         max_episode_steps=episode_steps,
         max_score=7,
@@ -388,7 +388,7 @@ def main():
     obs_dim = BatchAirHockeyEnv.OBS_DIM  # puck(4) + paddle(4) + opp(4) + side(1)
     cfg.obs_shape = {"state": (obs_dim,)}
     cfg.action_dim = 2
-    cfg.episode_length = 3000  # 30 s at 100 Hz
+    cfg.episode_length = int(round(30.0 / ACTION_DT))  # 30 s
     cfg.seed_steps = max(1000, 5 * cfg.episode_length)
 
     cfg = cfg_to_dataclass(cfg)

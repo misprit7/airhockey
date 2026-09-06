@@ -34,7 +34,7 @@ from stable_baselines3.common.callbacks import (
 from stable_baselines3.common.env_util import make_vec_env
 from stable_baselines3.common.vec_env import SubprocVecEnv
 
-from airhockey.dynamics import ProfileDynamics, DelayedDynamics, IdealDynamics
+from airhockey.dynamics import ACTION_DT, ProfileDynamics, DelayedDynamics, IdealDynamics
 from airhockey.env import AirHockeyEnv
 from airhockey.recorder import Recorder
 from airhockey.rewards import STAGE_PROXIMITY, STAGE_SCORING, ShapedRewardWrapper
@@ -111,7 +111,7 @@ def make_env(
         agent_dynamics=dynamics,
         opponent_policy="idle",
         record=record,
-        action_dt=1 / 100,
+        action_dt=ACTION_DT,
         max_episode_time=30.0,
         max_score=7,
     )

@@ -179,16 +179,22 @@ def test_batch_env_defaults_to_the_firmware_profile():
     assert e.opponent_dynamics_type == "delayed"
 
 
-def test_action_rate_can_represent_the_measured_latency():
-    """At 60 Hz a step is 16.7 ms, longer than the whole 7.7 ms loop latency,
-    so the delay rounds to zero or one step and the sim silently models a
-    robot that sees instantly."""
-    from airhockey.batch_env import BatchAirHockeyEnv
-    from airhockey.perception import MEASURED_LOOP_MEAN_S
-    e = BatchAirHockeyEnv(n_envs=1)
-    assert e.action_dt <= MEASURED_LOOP_MEAN_S * 1.5, (
-        f"action_dt {e.action_dt * 1000:.1f} ms cannot resolve a "
-        f"{MEASURED_LOOP_MEAN_S * 1000:.1f} ms delay")
+def test_sensing_latency_is_resolved_by_the_camera_clock_not_the_action_rate():
+    """The measured 5.1-10.3 ms loop latency lives on the 200 Hz camera
+    clock (5 ms frames), so it is represented whatever the control rate is.
+    At 50 Hz a control step is 20 ms -- longer than the whole latency -- and
+    the old action-step delay ring would have rounded it to zero. The
+    realistic sensing model must therefore be on the camera ring."""
+    from airhockey.batch_env import BatchAirHockeyEnv, sensing_kwargs
+    from airhockey.perception import CAMERA_DELAY_RANGE_S, MEASURED_LOOP_MEAN_S
+    e = BatchAirHockeyEnv(n_envs=64, **sensing_kwargs(True))
+    e.reset(seed=3)
+    assert e._cam_dt <= MEASURED_LOOP_MEAN_S, "camera frames must resolve the latency"
+    lags_s = e._cam_lag * e._cam_dt
+    assert lags_s.min() >= CAMERA_DELAY_RANGE_S[0] - e._cam_dt / 2
+    assert lags_s.max() <= CAMERA_DELAY_RANGE_S[1] + e._cam_dt / 2
+    assert len(set(e._cam_lag.tolist())) > 1, "latency should vary across envs"
+    assert e._max_delay == 0, "the whole-obs action-step ring must be off"
 
 
 def test_profile_paddle_does_not_teleport():
@@ -274,16 +280,17 @@ def test_agent_speed_is_pinned_to_the_firmware_clamp():
     the Teensy; its caps are its own.
     """
     from airhockey.batch_env import BatchAirHockeyEnv
-    from airhockey.dynamics import AGENT_DR_ACCEL_M_S2, MAX_SPEED_M_S
+    from airhockey.dynamics import AGENT_DR_ACCEL_M_S2, MAX_ACCEL_M_S2, MAX_SPEED_M_S
     e = BatchAirHockeyEnv(n_envs=4000, domain_randomize=True)
     e.reset(seed=11)
     dyn = e._agent_dyn
     assert np.all(dyn["max_speed"] == MAX_SPEED_M_S), "speed must be pinned"
     lo, hi = AGENT_DR_ACCEL_M_S2
-    # Pinned at the top of the former 10-60 band since 2026-09-02: the
-    # spread made every self-play episode a game between two different
-    # machines. The feature stays in the observation as a constant.
-    assert (lo, hi) == (60.0, 60.0)
+    # Pinned since 2026-09-02 (the spread made every self-play episode a
+    # game between two different machines) and at the NOMINAL 20 m/s^2
+    # since 2026-09-06: the drives follow 20-24 and do not follow 60 (see
+    # dynamics.py). The feature stays in the observation as a constant.
+    assert (lo, hi) == (MAX_ACCEL_M_S2, MAX_ACCEL_M_S2) == (20.0, 20.0)
     assert np.all(dyn["max_accel"] == hi), "accel must be pinned"
 
 

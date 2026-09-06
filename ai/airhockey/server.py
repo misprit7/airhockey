@@ -13,7 +13,7 @@ from fastapi.responses import StreamingResponse
 from fastapi import FastAPI, WebSocket, WebSocketDisconnect
 from fastapi.responses import HTMLResponse
 
-from airhockey.dynamics import (DelayedDynamics, HardwareDynamics,  # noqa: F401
+from airhockey.dynamics import (ACTION_DT, DelayedDynamics, HardwareDynamics,  # noqa: F401
                                 ProfileDynamics,
                                 IdealDynamics, table_mm_to_sim)
 from airhockey.env import AirHockeyEnv
@@ -313,7 +313,7 @@ async def live_game(ws: WebSocket):
         record=True,
         # 100 Hz: the measured 7.7 ms loop latency is shorter than a 60 Hz
         # step, so at 60 the delay cannot be represented at all.
-        action_dt=1 / 100,
+        action_dt=ACTION_DT,
         # A moving start, as in training: the robot's box does not include
         # the table centre, so a puck parked dead centre is unreachable and
         # the game never begins. Also re-enables the stuck-puck relaunch.
