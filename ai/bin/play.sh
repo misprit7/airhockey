@@ -35,14 +35,9 @@ for a in "$@"; do
 done
 ARGS=()
 for a in "$@"; do [ "$a" != "--dry" ] && ARGS+=("$a"); done
-# Caps for a learned policy unless the caller set any: what the drives were
-# measured to FOLLOW (camera-vs-controller gap under 20 mm below 2 m/s,
-# 40-80 mm at 3-5 m/s, and an RMS overload at 24000 mm/s^2, 2026-09-05).
-# The governor in run_policy trims further if the gap opens.
-case " $* " in
-    *" --gentle "*|*" --speed "*|*" --accel "*) ;;
-    *) ARGS+=(--speed 3000 --accel 12000) ;;
-esac
+# Caps: run_policy's defaults are the sim body's (12000 mm/s, 60000 mm/s^2)
+# so the table runs what the policy trained on; --gentle or --speed/--accel
+# override, --governor trims when the paddle falls behind.
 
 [ -x vision/build/blobtrack ] || make -C vision
 if [ "$LIVE" = 1 ]; then

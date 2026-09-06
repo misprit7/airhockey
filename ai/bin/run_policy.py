@@ -155,9 +155,9 @@ class Caps:
     """
 
     speed_min: float = 100.0
-    speed_max: float = 8000.0
+    speed_max: float = 12000.0      # = the sim body (AGENT_DR_SPEED_M_S), 2026-09-05
     accel_min: float = 400.0
-    accel_max: float = 24000.0
+    accel_max: float = 60000.0      # = the sim body (AGENT_DR_ACCEL_M_S2), 2026-09-05
 
     def clamp_speed(self, v: float) -> float:
         return min(max(v, self.speed_min), self.speed_max)
@@ -1297,8 +1297,11 @@ def run(args) -> int:
     committer = CapCommitter(client, min_interval_s=args.limits_interval)
     lag = LagMonitor()
     watchdog = PuckWatchdog(args.puck_timeout)
-    governor = (None if getattr(args, "no_governor", False)
-                else FollowGovernor(caps, tol_mm=getattr(args, "follow_tol", 40.0)))
+    # Opt-in: with the ceilings set to the sim body's, a governor that trims
+    # them whenever the paddle lags would quietly run a different machine
+    # than the one asked for.
+    governor = (FollowGovernor(caps, tol_mm=getattr(args, "follow_tol", 40.0))
+                if getattr(args, "governor", False) else None)
 
     stream = BlobStream(fps=args.fps, exposure=args.exposure, gain=args.gain,
                         threshold=args.threshold)
@@ -1652,12 +1655,11 @@ def main() -> int:
                          "--accel still wins.")
     ap.add_argument("--speed", type=float, default=None,
                     help=f"CEILING on the speed cap a policy may ask for, "
-                         f"mm/s (default {Caps.speed_max:.0f})")
+                         f"mm/s (default {Caps.speed_max:.0f}, the sim body's)")
     ap.add_argument("--accel", type=float, default=None,
                     help=f"CEILING on the accel cap a policy may ask for, "
-                         f"mm/s^2 (default {Caps.accel_max:.0f}). That "
-                         "default is above the ~15120 at which the paddle "
-                         "tips; drop it if the paddle hops.")
+                         f"mm/s^2 (default {Caps.accel_max:.0f}, the sim "
+                         "body's)")
     ap.add_argument("--puck-timeout", type=float,
                     default=DEFAULT_PUCK_TIMEOUT_S,
                     help="seconds without a puck fix before the policy is "
@@ -1682,11 +1684,13 @@ def main() -> int:
                          "lengthen the stop, not shorten it.")
     ap.add_argument("--no-enable", action="store_true",
                     help="assume the drives are already energized")
+    ap.add_argument("--governor", action="store_true",
+                    help="trim the caps when the paddle falls behind the "
+                         "controller (see FollowGovernor); off by default so "
+                         "the caps asked for are the caps run")
     ap.add_argument("--follow-tol", type=float, default=40.0,
-                    help="camera-vs-controller paddle gap, mm, above which the "
-                         "governor cuts the caps (see FollowGovernor)")
-    ap.add_argument("--no-governor", action="store_true",
-                    help="keep the caps fixed whatever the paddle does")
+                    help="--governor: camera-vs-controller paddle gap, mm, "
+                         "above which the caps are cut")
     ap.add_argument("--log-dir", default=str(ROOT / "logs" / "run_policy"),
                     help="session logs go here (a .log of everything printed "
                          "and a .ticks.csv of what the policy saw and did, "
