@@ -74,6 +74,13 @@ body {
     z-index: 10;
 }
 
+/* The sidebar SCROLLS when its content is taller than the screen; it must
+   never squash its children to fit. A flex column shrinks any child whose
+   min-height is zero, and #mode-select (overflow: hidden) is exactly that:
+   on a phone with a shorter viewport than the content, the mode selector
+   collapsed to its 1.5 px border and Replay became unreachable. */
+#sidebar > * { flex-shrink: 0; }
+
 /* Masthead, not a page title: uppercase on wide tracking over a red rule,
    the way a rink board or a scoreboard header is set. */
 h1 {

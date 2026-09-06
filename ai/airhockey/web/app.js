@@ -691,7 +691,9 @@ function setMode(next) {
     if (mode === "replay") {
         replayPanel.classList.remove("hidden");
         loadRecordingsList();
-        if (isPhone()) replayPanel.scrollIntoView({ block: "start" });
+        // Scroll the SELECTOR to the top, not the panel: the list then sits
+        // right under it and the way back out stays on screen.
+        if (isPhone()) document.getElementById("mode-select").scrollIntoView({ block: "start" });
         // Auto-refresh recording list every 5 seconds
         if (recordingsRefreshTimer) clearInterval(recordingsRefreshTimer);
         recordingsRefreshTimer = setInterval(loadRecordingsList, 5000);
