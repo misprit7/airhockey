@@ -380,3 +380,41 @@ Contact, directed hit, near-miss placement and the bank/straight mix are
 gone from the stage, puck progress is a tenth, and the on-target reward
 is 15 + 1/m/s. Runs 1-2 landed 35-45% of shots while a miss still
 collected about 5. ETA ~20:05.
+
+
+# Run 4 (started 19:28, self-play from run 3's 900k checkpoint)
+
+Run 3 at 900k (stopped there): patience on goals worked as a lever (the
+multiplier on scored goals 0.48 -> 0.66), on-target 46-47%, but traps
+stayed at zero and the accel slot was NOT USED -- fraction 0.48 whether
+the puck was near or far, i.e. the network's neutral output plus noise.
+Games vs self went almost all to draws (157 of 190 at 500k).
+
+Before changing anything I checked the physics: a paddle retreating at
+0.47x the puck's speed stops a 3 m/s puck dead in the sim (0.30x leaves
+1 m/s, standing still returns it at 2.6). The skill exists; the reward
+never lit the path to it -- a trap is a rare endpoint reached through
+touches that merely slow the puck, and those earned nothing.
+
+Changes (commit below), all unit-tested (`tests/test_run2_changes.py`):
+
+- [x] **Cushion reward**: any touch on the robot's side that takes speed
+      off a fast puck pays 1.5 per m/s absorbed (1.0 in the pretrain).
+- [x] **Hold income**: 0.03 per step while a trapped puck sits under the
+      paddle (until the 5 s relaunch), trap itself 3.
+- [x] **Control gate** replaces the time ramp: the shot and goal rewards
+      pay 1.0x when the possession was trapped and 0.2x otherwise (a puck
+      that arrived too slowly to be trapped counts as controlled after
+      1.5 s on the side). Time on side stays in the observation.
+- [x] **Accel slot: the neutral output is the cheap one.** The mapping is
+      quadratic (slot -1 -> 5%, 0 -> 29%, +1 -> 100%), so not using the
+      slot means low accel, and a save or a strike has to raise it --
+      which the goal and shot rewards pay for. One definition
+      (`BatchAirHockeyEnv.accel_fraction`) used by the env, the scalar
+      env, the shaper and the deploy path.
+
+`train_selfplay.py --resume runs/run3_selfplay/agent.pt --steps 1500000
+--run-name run4_selfplay`, log `logs/run4.log`, ETA ~21:00. Read
+`shots/cushion_sum` (rising = the path is being walked), `shots/traps`,
+`shots/hold_steps`, and the accel fraction (should now differ between
+puck near and puck far).

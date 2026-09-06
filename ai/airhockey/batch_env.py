@@ -1131,9 +1131,17 @@ class BatchAirHockeyEnv:
 
     @classmethod
     def accel_fraction(cls, a) -> np.ndarray:
-        """Action slot [-1, 1] -> fraction of the machine's accel cap."""
+        """Action slot [-1, 1] -> fraction of the machine's accel cap.
+
+        QUADRATIC since run 4: slot -1 -> 5%, 0 -> 29%, +1 -> 100%. Runs 2
+        and 3 mapped linearly and the policy never used the slot -- it sat
+        at the network's neutral output (fraction 0.52) whether the puck
+        was near or far. With the neutral output cheap, a save or a strike
+        needs the slot raised, which the goal and shot rewards pay for.
+        """
         a = np.clip(np.asarray(a, dtype=float), -1.0, 1.0)
-        return cls.ACCEL_FRAC_MIN + (a + 1.0) * 0.5 * (1.0 - cls.ACCEL_FRAC_MIN)
+        u = (a + 1.0) * 0.5
+        return cls.ACCEL_FRAC_MIN + (1.0 - cls.ACCEL_FRAC_MIN) * u * u
 
     def _draw_shot_types(self, mask: np.ndarray, agent: bool) -> None:
         """Roll a request for each env in `mask` (no-op unless shot_types)."""

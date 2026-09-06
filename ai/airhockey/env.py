@@ -239,7 +239,8 @@ class AirHockeyEnv(gym.Env):
         # fraction of the machine's (BatchAirHockeyEnv.accel_fraction).
         accel_cap = None
         if self.action_mode == "profile_a" and len(action) >= 3:
-            frac = 0.05 + (action[2] + 1.0) * 0.5 * 0.95
+            from airhockey.batch_env import BatchAirHockeyEnv as _BE   # noqa: PLC0415
+            frac = float(_BE.accel_fraction(action[2]))
             accel_cap = frac * getattr(self.agent_dynamics, "max_accel", MAX_ACCEL_M_S2)
 
         # Run physics substeps

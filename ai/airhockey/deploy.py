@@ -321,8 +321,8 @@ class TDMPC2Policy:
         # whole. The runner's Caps clamp both.
         accel = self.accel_mm_s2
         if len(a) >= 3:
-            frac = 0.05 + (float(a[2]) + 1.0) * 0.5 * 0.95
-            accel = frac * self.accel_mm_s2
+            from airhockey.batch_env import BatchAirHockeyEnv   # noqa: PLC0415
+            accel = float(BatchAirHockeyEnv.accel_fraction(a[2])) * self.accel_mm_s2
         self.last_ms = 1000.0 * (time.perf_counter() - w)
         # Kept for the session log: a bad move is a bad observation or a
         # bad decision, and only this tells them apart.

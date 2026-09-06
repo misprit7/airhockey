@@ -21,7 +21,8 @@ import cdpr_geometry as geom  # noqa: E402
 
 def test_accel_fraction_maps_the_action_slot_onto_a_crawl_to_the_cap():
     f = BatchAirHockeyEnv.accel_fraction(np.array([-1.0, 0.0, 1.0, 3.0]))
-    assert f.tolist() == pytest.approx([0.05, 0.525, 1.0, 1.0])
+    # quadratic since run 4: the neutral output is the cheap one
+    assert f.tolist() == pytest.approx([0.05, 0.2875, 1.0, 1.0])
 
 
 def _travel_after(mode, accel_slot, steps=10):
@@ -142,6 +143,9 @@ def test_accel_cost_is_per_step_times_the_fraction_asked_for():
     assert r_crawl == pytest.approx(-0.02 * 0.05)
     assert r_2dim == 0.0
     assert sh.stats["accel_frac_sum"] == pytest.approx(1.05)
+    # the neutral output costs less than a third of full
+    r_mid = sh.compute(obs, np.zeros(1), actions=np.array([[0.0, 0.0, 0.0]]), info=_info(0.5, 1.5, 0.0, 0.0))[0]
+    assert r_mid == pytest.approx(-0.02 * 0.2875)
 
 
 def test_patience_scales_the_hit_rewards_from_the_floor_to_full():
@@ -167,6 +171,7 @@ def test_patience_beats_the_discount_by_design():
     kw = R.curriculum_shaper_kwargs("selfplay")
     assert kw["patience_s"] == 1.5 and kw["patience_floor"] == 0.2
     assert kw["accel_cost_weight"] == 0.04 and kw["patience_on_goals"] is True
+    assert kw["control_gate"] is True and kw["cushion_weight"] == 1.5 and kw["hold_income"] == 0.03
     assert R.curriculum_env_kwargs("proximity")["action_mode"] == "profile_a"
     assert R.curriculum_env_kwargs("selfplay")["action_mode"] == "profile_a"
     assert "accel_cost_weight" not in R.curriculum_shaper_kwargs("contact")
@@ -231,7 +236,7 @@ def test_a_three_dim_policy_commands_its_accel_through_the_runner():
     enc = ReportEncoder()
     # No checkpoint needed for the arithmetic: mimic __call__'s mapping.
     a = np.array([0.0, 0.0, -1.0])
-    frac = 0.05 + (a[2] + 1.0) * 0.5 * 0.95
+    frac = float(BatchAirHockeyEnv.accel_fraction(a[2]))
     assert frac == pytest.approx(0.05)
     enc.last_action[:] = 0.0
     enc.last_action[:3] = a
@@ -264,3 +269,70 @@ def test_a_goal_from_an_instant_slap_pays_the_floor_and_a_patient_one_pays_whole
     sh.reset(obs, info=_info(0.5, 1.5, 0.0, 1.0))
     goal = _info(0.5, 1.9, 0.0, 1.0); goal["score_agent"] = np.array([1])
     assert float(sh.compute(obs, np.zeros(1), info=goal)[0]) == pytest.approx(100.0)
+
+
+# ── run 4: the path to control is paid, and control gates the outcome ──
+
+def test_a_touch_that_takes_speed_off_the_puck_is_paid_per_m_per_s():
+    sh = _shaper(cushion_weight=1.5)
+    obs = np.zeros((1, 22), dtype=np.float32)
+    fast = _info(0.5, 0.45, 0.0, -3.0)
+    sh.reset(obs, info=fast)
+    sh.compute(obs, np.zeros(1), info=fast)
+    r = float(sh.compute(obs, np.zeros(1), info=_info(0.5, 0.40, 0.0, -1.0))[0])   # 3 -> 1 m/s under the paddle
+    assert r == pytest.approx(1.5 * 2.0)
+    r = float(sh.compute(obs, np.zeros(1), info=_info(0.5, 0.38, 0.0, 0.0))[0])    # 1 -> 0
+    assert r == pytest.approx(1.5 * 1.0)
+    # a bounce that SPEEDS the puck up, or a slowdown far from the paddle, earns nothing
+    sh2 = _shaper(cushion_weight=1.5)
+    sh2.reset(obs, info=fast); sh2.compute(obs, np.zeros(1), info=fast)
+    assert float(sh2.compute(obs, np.zeros(1), info=_info(0.5, 0.40, 0.0, 4.0))[0]) == 0.0
+    sh3 = _shaper(cushion_weight=1.5)
+    far = _info(0.5, 0.9, 0.0, -3.0)
+    sh3.reset(obs, info=far); sh3.compute(obs, np.zeros(1), info=far)
+    assert float(sh3.compute(obs, np.zeros(1), info=_info(0.5, 0.85, 0.0, -1.0))[0]) == 0.0
+
+
+def test_holding_a_trapped_puck_pays_income_until_the_shot():
+    sh = _shaper(trap_reward=3.0, hold_income=0.03)
+    obs = np.zeros((1, 22), dtype=np.float32)
+    fast = _info(0.5, 0.6, 0.0, -2.0)
+    sh.reset(obs, info=fast); sh.compute(obs, np.zeros(1), info=fast)
+    stopped = _info(0.5, 0.36, 0.0, 0.05)
+    r1 = float(sh.compute(obs, np.zeros(1), info=stopped)[0])
+    assert r1 == pytest.approx(3.0 + 0.03)
+    for _ in range(10):
+        r = float(sh.compute(obs, np.zeros(1), info=stopped)[0])
+    assert r == pytest.approx(0.03)
+    assert sh.stats["hold_steps"] == 11
+    # once it is shot away the income stops
+    assert float(sh.compute(obs, np.zeros(1), info=_info(0.5, 0.45, 0.0, 3.0))[0]) == 0.0
+
+
+def test_control_gate_pays_the_floor_for_an_uncontrolled_shot_and_full_for_a_trapped_one():
+    def shot(controlled, t_side=3.0):
+        sh = _shaper(on_target_reward=15.0, trap_reward=3.0, controlled_shot_bonus=1.5,
+                     patience_s=1.5, patience_floor=0.2,
+                     control_gate=True, goal_reward=100.0, patience_on_goals=True)
+        obs = np.zeros((1, 22), dtype=np.float32)
+        fast = _info(0.5, 0.6, 0.0, -2.0, t_side)
+        sh.reset(obs, info=fast); sh.compute(obs, np.zeros(1), info=fast)
+        if controlled:
+            sh.compute(obs, np.zeros(1), info=_info(0.5, 0.36, 0.0, 0.05, t_side))
+        r_hit = float(sh.compute(obs, np.zeros(1), info=_info(0.5, 0.40, 0.0, 4.0, t_side))[0])
+        sh.compute(obs, np.zeros(1), info=_info(0.5, 1.5, 0.0, 4.0, t_side))
+        goal = _info(0.5, 1.0, 0.0, 1.0, 0.0); goal["score_agent"] = np.array([1])
+        r_goal = float(sh.compute(obs, np.zeros(1), info=goal)[0])
+        return r_hit, r_goal
+    hit_c, goal_c = shot(True)
+    hit_u, goal_u = shot(False)
+    assert hit_u == pytest.approx(0.2 * 15.0) and goal_u == pytest.approx(20.0)
+    assert hit_c == pytest.approx(1.5 * 15.0) and goal_c == pytest.approx(100.0)
+    # time on side does NOT substitute for control when the puck arrived fast...
+    assert shot(False, t_side=5.0)[0] == pytest.approx(0.2 * 15.0)
+    # ...but a puck that never arrived fast is controlled by patience alone
+    sh = _shaper(on_target_reward=15.0, patience_s=1.5, patience_floor=0.2, control_gate=True)
+    obs = np.zeros((1, 22), dtype=np.float32)
+    slow = _info(0.5, 0.35, 0.0, -0.5, 2.0)
+    sh.reset(obs, info=slow); sh.compute(obs, np.zeros(1), info=slow)
+    assert float(sh.compute(obs, np.zeros(1), info=_info(0.5, 0.40, 0.0, 4.0, 2.0))[0]) == pytest.approx(15.0)
