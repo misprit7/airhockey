@@ -373,3 +373,10 @@ function was trained under the old scale and re-adapts; the first 200k
 steps are not representative. Watch `shots/patience_sum / shots/on_target`
 climbing above 0.7, `shots/traps` above zero, and the mean accel fraction
 below 0.4.
+
+Restarted 18:39 (same command, same checkpoint) with one more change
+(commit 6c34467): **self-play pays nothing for an off-target shot**.
+Contact, directed hit, near-miss placement and the bank/straight mix are
+gone from the stage, puck progress is a tenth, and the on-target reward
+is 15 + 1/m/s. Runs 1-2 landed 35-45% of shots while a miss still
+collected about 5. ETA ~20:05.
