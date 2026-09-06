@@ -509,7 +509,7 @@ def main():
                 pending_futures.append(fut)
 
         # Collect actions for all envs
-        actions_np = np.empty((n_envs, 2), dtype=np.float32)
+        actions_np = np.empty((n_envs, int(cfg.action_dim)), dtype=np.float32)
         actions_t = []
         if step > cfg.seed_steps and use_batched_mppi:
             # Path A: one batched MPPI call across all envs.
@@ -523,7 +523,7 @@ def main():
             for i in range(n_envs):
                 if step <= cfg.seed_steps:
                     action = torch.from_numpy(
-                        np.random.uniform(-1, 1, size=2).astype(np.float32)
+                        np.random.uniform(-1, 1, size=int(cfg.action_dim)).astype(np.float32)
                     )
                 elif replan_k > 1:
                     # Per-env action chunking with restored warm-start.
