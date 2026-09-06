@@ -212,6 +212,15 @@ def _run_eval(agent, cfg, step, start_time, logger, use_dynamics, stage=STAGE_SC
     }, 'eval')
 
 
+def _worker_copy(agent):
+    """A deep copy for a worker thread, without the compiled planner: a
+    CUDA-graph function must only ever run on the thread that captured it,
+    and the workers plan single-env through _plan anyway."""
+    c = copy.deepcopy(agent)
+    c.__dict__.pop("_plan_batch", None)
+    return c
+
+
 def _save_checkpoint(agent, *paths):
     """Save agent checkpoint to one or more paths in background thread."""
     for p in paths:
@@ -469,6 +478,12 @@ def main():
         # ~1.4x on the call that dominates collection. The warm start is
         # allocated outside the compiled function by act().
         agent._plan_batch = torch.compile(agent._plan_batch, mode="reduce-overhead")
+        # CUDA-graph trees keep their state in a threading.local that the
+        # module initialises in the thread that FIRST imports it. The eval
+        # and recording workers below touch it first unless it is imported
+        # here, in the main thread -- run2's proximity stage died on
+        # "assert torch._C._is_key_in_tls" at its first compiled call.
+        import torch._inductor.cudagraph_trees  # noqa: F401
         print("  batched planner: CUDA graphs on (first call compiles, ~30 s)")
     if args.batched_mppi and not use_batched_mppi:
         print("WARNING: --batched-mppi requested but this tdmpc2 checkout has no "
@@ -501,7 +516,7 @@ def main():
         if step % cfg.eval_freq < n_envs:
             _cleanup_futures()
             if len(pending_futures) < 2:
-                agent_copy = copy.deepcopy(agent)
+                agent_copy = _worker_copy(agent)
                 fut = executor.submit(
                     _run_eval, agent_copy, cfg, step, start_time, logger, args.dynamics, stage,
                     frame_stack=frame_stack,
@@ -626,7 +641,7 @@ def main():
         # Checkpoint every 50k steps
         if step > 0 and step % 50_000 < n_envs:
             _cleanup_futures()
-            agent_copy = copy.deepcopy(agent)
+            agent_copy = _worker_copy(agent)
             ckpt_path = run_dir / f"agent_step_{step}.pt"
             executor.submit(_save_checkpoint, agent_copy, ckpt_path, run_dir / "agent.pt")
 
@@ -635,7 +650,7 @@ def main():
             last_record_step = step
             _cleanup_futures()
             if len(pending_futures) < 2:
-                agent_copy = copy.deepcopy(agent)
+                agent_copy = _worker_copy(agent)
                 fut = executor.submit(
                     record_game, agent_copy, None, step, recordings_dir, args.run_name, stage,
                     opponent=opponent_policy,
