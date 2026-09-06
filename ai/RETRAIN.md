@@ -322,3 +322,30 @@ per-opponent lines. First table run: the master must be restarted for
 the per-command ACCEL (rebuilt 12:11); then
 `python ai/bin/run_policy.py --live --gentle --opponent --policy
 tdmpc2:run2_selfplay --plan 3 --shot-type mix`.
+
+
+**Run 2 finished 17:05** (`runs/run2_selfplay/agent_final.pt`, also
+`agent.pt`; the pipeline took 4 h 40 min end to end against run 1's 11 h).
+Final self-play tallies over 1990 games: vs copy of self 196 W / 241 L /
+727 D (0.30 for, 0.35 against per game); vs sniper 305 / 59 / 49 (3.66 /
+1.48); vs weak goalie 282 / 2 / 129 (1.22 / 0.04). Last 100k steps: shots
+44% on target, 11% matching the request, 150 shots per 10k steps.
+
+What the new terms did:
+- The accel tax WORKED as a lever: the mean accel fraction asked for
+  settled at 0.52-0.54 for the whole stage, never drifting to 1.0. On the
+  table that should roughly halve the duty run 1 tripped a drive with;
+  it is the first thing to check.
+- The patience term did NOT: the multiplier on on-target shots went from
+  0.76 at the start to 0.62 at the end (shooting sooner), and traps stayed
+  at zero. A half-price instant shot still beat a full-price shot 1.5 s
+  later. Next lever: a much lower floor (0.2) or a controlled-shot
+  multiplier of 4-5x, so the trap route pays several times the slap.
+- Blocking improved through the stage (sniper 2.55 -> 1.48 goals against
+  per game) and finished a little better than run 1 (1.22 there).
+
+Table: `python ai/bin/run_policy.py --live --gentle --opponent --policy
+tdmpc2:run2_selfplay --plan 3 --shot-type mix` after restarting the master
+(rebuilt 12:11 for the per-command ACCEL). Watch the status line for
+`shed` and `badfix`, and the tick log's cmd_accel column for how the
+accel command is being used.
