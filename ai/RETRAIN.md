@@ -179,6 +179,18 @@ use a third of the tick. Compile + warm-up costs ~20 s at start-up.
 Training throughput in sim-seconds per wall-second is unchanged by the
 move (half the decisions per second, each twice as expensive).
 
+Why 50 Hz when 6 iterations take 6.3 ms: what matters for intercepting a
+shot is lookahead in TIME, and the planner's cost is linear in horizon
+steps. Horizon 5 at 50 Hz sees 100 ms for 6.3 ms; the same 100 ms at
+100 Hz is horizon 10, 12.6 ms compiled, which does not fit a 10 ms tick
+even before the master's ~1 ms I/O and the tracker. Within a 20 ms tick
+the compiled planner leaves 13 ms of margin for GPU hiccups (one eager
+row in the sweep hit 114 ms); within 10 ms it would leave two. The price
+is 10 ms more reaction latency on average, 50 mm of puck at 5 m/s. It is
+a judgement call, and `ACTION_HZ` is one constant if it goes the other
+way -- but training and the table must agree, so it is decided before
+the run, not after.
+
 ## Gate before the run
 
 - [x] Full test suite green (on the system Python; the venv's tensordict
