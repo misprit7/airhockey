@@ -787,6 +787,8 @@ def _load_tdmpc2(name: str, caps: Caps, plan_iters: int, device: str | None,
     except FileNotFoundError as e:
         raise SystemExit(f"no checkpoint for tdmpc2:{name} ({e})") from None
     print(policy.describe(caps.speed_max, caps.accel_max))
+    if getattr(policy, "compiled", False):
+        print("  compiling the planner into CUDA graphs (about 20 s, once)...")
     ms = policy.warm_up()
     budget = 1000.0 / cmd_hz
     if abs(cmd_hz - ACTION_HZ) > 1e-6:
@@ -1363,6 +1365,13 @@ def run(args) -> int:
                      "Run that ALONE — not alongside sw/build/activate, "
                      "which opens the same USB port.")
 
+        if _stop:
+            # Ctrl-C during the load or the compile only sets the flag; the
+            # first live run of retrain40 enabled the drives on the way out
+            # and left the Teensy's timer running for the next session.
+            print("stopped before enabling -- nothing was commanded")
+            client.close()
+            return 0
         if not args.no_enable:
             print("ENABLING the drives (they will hold position, not move)...")
             try:

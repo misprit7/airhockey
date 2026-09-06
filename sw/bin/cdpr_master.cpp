@@ -322,6 +322,14 @@ static int handleCommand(const char *line, ClearPath &robot, int client_fd, int 
             logf("  calibrating at measured (%.1f, %.1f) theta %.2f deg%s\n",
                  cx, cy, cth, ngot < 3 ? "  (nominal)" : "");
         }
+        // A previous session may have left the Teensy's step timer running:
+        // the runner brakes and disconnects WITHOUT disabling, by design,
+        // so the drives keep holding. CAL refuses while the timer runs
+        // ("ERR stop timer before calibrating", 2026-09-06, which made every
+        // second ENABLE fail). Stop it first; "ERR not running" is the
+        // Teensy's answer when it was already stopped, and is fine.
+        sendTeensy(teensy_fd, "STOP\n");
+        waitTeensyOK(teensy_fd);
         char cmd[64];
         snprintf(cmd, sizeof(cmd), "CAL %.1f %.1f %.2f\n", cx, cy, cth);
         sendTeensy(teensy_fd, cmd);
