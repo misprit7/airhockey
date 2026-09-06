@@ -220,4 +220,21 @@ the next live session should log both before trusting either.
       is stale, see memory).
 - [x] Tracking test run on the rig at 12 m/s, 20 m/s² -> CLOSE.
 - [x] `run_full_pipeline.sh` dry check with a tiny step budget (both trainers, scratch names).
-- [ ] User go-ahead.
+- [x] User go-ahead (2026-09-06 ~01:55): "let's just try training at a
+      lower speed" -- accel 40 m/s², idle pull raised to 0.05/step.
+
+## The run
+
+`PREFIX=retrain40 bash ai/bin/run_full_pipeline.sh`, started 2026-09-06
+~01:55, log `logs/retrain40.log`, runs `runs/retrain40_{proximity,contact,
+scoring,goalie,selfplay}`. Stage budgets 200k / 300k / 500k / 500k / 3M
+steps at 50 Hz. Settings frozen at commit e4fd2c5: 12 m/s, 40 m/s²
+pinned, 50 Hz, 6 MPPI iterations, elite mean at eval, obs 20, the reward
+table in `rewards.CURRICULUM`, opponent mix 60/20/20, fuzz 20%.
+
+Things to read while it runs (tensorboard on `runs/retrain40_selfplay/logs`):
+`vs_external/win_rate`, `vs_sniper/goals_against_per_game` (blocking),
+`vs_weak_goalie/goals_for_per_game` (shooting), `shots/on_target`,
+`shots/traps`, `shots/type_matched`. First table run: `--plan 6` at the
+default 50 Hz and 40 m/s², `--shot-type mix`, short sessions, watch
+"shed" and the lag in the status line.
