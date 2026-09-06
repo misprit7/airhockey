@@ -1000,7 +1000,14 @@ CURRICULUM: dict[str, dict] = {
         # 0.057 difference next to contacts at 2 and goals at 100. One
         # strike per exchange costs a quarter of a contact; flipping every
         # four ticks costs four goals an episode.
-        home_weight=0.005, jitter_weight=0.0, smooth_weight=0.2),
+        # home_weight 0.05 since the retrain (was 0.005): with the puck away
+        # the value landscape was FLAT, and under MPPI a flat landscape is a
+        # random walk -- the wander seen on the table and in the replays.
+        # At 0.05/step, ten seconds at the box edge costs 25 against a
+        # goal's 100; at home it costs nothing. The two-hot value bins
+        # resolve ~0.6 near zero, so a discounted 0.05/step (~5) is visible
+        # where 0.005 was not.
+        home_weight=0.05, jitter_weight=0.0, smooth_weight=0.2),
 }
 CURRICULUM_ORDER = ["proximity", "contact", "scoring", "goalie", "selfplay"]
 

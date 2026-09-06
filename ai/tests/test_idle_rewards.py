@@ -100,14 +100,19 @@ def test_smoothness_taxes_action_change_everywhere_but_one_strike_stays_cheap():
 
 
 def test_idle_terms_are_small_against_play():
-    """A full second of maximal dithering at the box edge with the puck away
-    costs less than one contact; a whole 30 s episode of it costs less than
-    one goal. Nothing here can outbid play."""
+    """A second parked at the box edge with the puck away costs about one
+    contact; a whole 30 s episode of it costs less than one goal, and less
+    than the on-target shots it would forgo. Nothing here can outbid play,
+    but since the retrain it IS visible to the value bins (0.05/step, was
+    0.005): a flat idle landscape was the wander seen on the table."""
+    from airhockey.dynamics import ACTION_DT
     kw = curriculum_shaper_kwargs("selfplay")
     per_step = kw["home_weight"] + kw["jitter_weight"] * np.sqrt(8.0)
-    assert per_step < 0.02
-    assert per_step * 100 < kw["contact_reward"]
-    assert per_step * 3000 < kw["goal_reward"]
+    steps_per_s = round(1.0 / ACTION_DT)
+    assert 0.02 <= per_step <= 0.1
+    assert per_step * steps_per_s <= 1.5 * kw["contact_reward"]
+    assert per_step * 30 * steps_per_s < kw["goal_reward"]
+    assert per_step * 10 * steps_per_s < kw["on_target_reward"] * kw["controlled_shot_bonus"] * 2
     # And only self-play pays them: the pretrain stages are unchanged.
     for name, stage in CURRICULUM.items():
         if name != "selfplay":

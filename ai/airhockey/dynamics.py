@@ -134,16 +134,21 @@ def sim_to_table_mm(sim_x: float, sim_y: float, sim_width: float = 1.0,
 # changing the network's shape. The firmware ceiling is 120; nothing here
 # approaches it.
 #
-# 2026-09-06: pinned at 20, not 60. 60 was the top of the band and the sim
-# followed it perfectly; the table did not. The camera put the paddle 200 to
-# 440 mm from where the controller believed it was for the whole of a run at
-# 60 m/s^2, against 7 to 20 mm at 24 -- the drives cannot make the step
-# stream at 60 and fall behind, and a policy trained on a body that follows
-# is planning on fiction. 20 is what the paddle demonstrably follows with
-# margin under the RMS-overload trips seen at 24 (see ai/RETRAIN.md item 1
-# and the tracking test that measures this: airhockey/follow_test.py).
+# 2026-09-06: the tracking test (airhockey/follow_test.py) settled what the
+# drives follow: 20, 40 and 60 m/s^2 all CLOSE (13 / 21 / 26 mm p90 at
+# speed). The 200-440 mm "gap" of the 12/60 play session that first read as
+# the drives falling behind was the runner acting on camera frames 0.1-0.3 s
+# old; the drives were never the limit. What has NOT been measured is the
+# sustained thermal load: drives tripped RMS overload after ~30 s of
+# flat-out play at 24.
 AGENT_DR_SPEED_M_S = (MAX_SPEED_M_S, MAX_SPEED_M_S)   # pinned to the clamp
-AGENT_DR_ACCEL_M_S2 = (MAX_ACCEL_M_S2, MAX_ACCEL_M_S2)  # pinned, see above
+#
+# 40 since the retrain of 2026-09-06 (ai/RETRAIN.md): the tracking test on
+# the rig followed 40 m/s^2 within 21 mm p90 and 60 within 26, and 60 with
+# the old policy still jittered on the table after the planner and loop
+# fixes -- the user chose to train lower. The observation's cap ratio reads
+# 2.0 (nominal MAX_ACCEL_M_S2 stays 20); constant, so the band can reopen.
+AGENT_DR_ACCEL_M_S2 = (40.0, 40.0)                      # pinned, see above
 
 # Fraction-of-nominal spread for the OPPONENT (human) side only.
 DR_SPEED_RANGE = (0.5, 1.0)

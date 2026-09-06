@@ -290,7 +290,7 @@ def test_agent_speed_is_pinned_to_the_firmware_clamp():
     # game between two different machines) and at the NOMINAL 20 m/s^2
     # since 2026-09-06: the drives follow 20-24 and do not follow 60 (see
     # dynamics.py). The feature stays in the observation as a constant.
-    assert (lo, hi) == (MAX_ACCEL_M_S2, MAX_ACCEL_M_S2) == (20.0, 20.0)
+    assert lo == hi == 40.0 and hi >= MAX_ACCEL_M_S2, "pinned at the retrain's 40"
     assert np.all(dyn["max_accel"] == hi), "accel must be pinned"
 
 

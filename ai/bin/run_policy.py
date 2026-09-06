@@ -69,7 +69,7 @@ sys.path.insert(0, str(ROOT / "ai"))
 sys.path.insert(0, str(ROOT / "shared"))
 
 import cdpr_geometry as geom  # noqa: E402
-from airhockey.dynamics import ACTION_HZ  # noqa: E402
+from airhockey.dynamics import ACTION_HZ, AGENT_DR_ACCEL_M_S2  # noqa: E402
 
 # ── Policy interface ────────────────────────────────────────────────────
 #
@@ -167,7 +167,7 @@ class Caps:
     speed_min: float = 100.0
     speed_max: float = 12000.0      # = the sim body (AGENT_DR_SPEED_M_S), 2026-09-05
     accel_min: float = 400.0
-    accel_max: float = 20000.0      # = the sim body (AGENT_DR_ACCEL_M_S2), 2026-09-06
+    accel_max: float = 1000.0 * AGENT_DR_ACCEL_M_S2[1]   # = the sim body, by construction
 
     def clamp_speed(self, v: float) -> float:
         return min(max(v, self.speed_min), self.speed_max)
