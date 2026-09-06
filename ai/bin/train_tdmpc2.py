@@ -280,8 +280,13 @@ def main():
     parser.add_argument("--no-batched-mppi", dest="batched_mppi", action="store_false",
                         help="plan each env separately (shares one MPPI warm start "
                              "across envs; ablation only)")
-    parser.add_argument("--no-compile-plan", action="store_true",
-                        help="skip torch.compile(reduce-overhead) on the batched planner")
+    parser.add_argument("--compile-plan", dest="no_compile_plan", action="store_false",
+                        default=True,
+                        help="torch.compile(reduce-overhead) on the batched planner. OFF by "
+                             "default here: this loop's per-env warm-start bookkeeping and "
+                             "worker threads mutate planner state under the graph and it "
+                             "segfaulted on the first replay (run2, 2026-09-06); "
+                             "train_selfplay's cleaner loop runs it fine")
     parser.add_argument("--batched-mppi", action="store_true", default=True,
                         help="Use batched MPPI planning across all n_envs in a single GPU "
                              "call (requires act_batched method on agent).")
@@ -483,7 +488,8 @@ def main():
         # and recording workers below touch it first unless it is imported
         # here, in the main thread -- run2's proximity stage died on
         # "assert torch._C._is_key_in_tls" at its first compiled call.
-        import torch._inductor.cudagraph_trees  # noqa: F401
+        import importlib                                    # noqa: PLC0415
+        importlib.import_module("torch._inductor.cudagraph_trees")  # not `import torch.x`: that rebinds `torch` locally
         print("  batched planner: CUDA graphs on (first call compiles, ~30 s)")
     if args.batched_mppi and not use_batched_mppi:
         print("WARNING: --batched-mppi requested but this tdmpc2 checkout has no "
