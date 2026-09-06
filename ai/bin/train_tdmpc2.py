@@ -43,8 +43,8 @@ from airhockey.recorder import Recorder
 from airhockey.rewards import (
     BatchRewardShaper, ShapedRewardWrapper,
     STAGE_SCORING, STAGE_OPPONENT, STAGE_NAMES,
-    CURRICULUM, curriculum_env_kwargs, curriculum_episode_steps,
-    curriculum_shaper_kwargs,
+    CURRICULUM, CURRICULUM_ACTION_MODE, curriculum_env_kwargs,
+    curriculum_episode_steps, curriculum_shaper_kwargs,
 )
 
 warnings.filterwarnings('ignore')
@@ -68,6 +68,7 @@ class AirHockeyTDMPC2Wrapper:
                 agent_dynamics=dynamics,
                 opponent_policy=opponent_policy,
                 record=False,
+                action_mode=CURRICULUM_ACTION_MODE,
                 action_dt=ACTION_DT,
                 max_episode_time=30.0,
                 max_score=7,
@@ -158,6 +159,7 @@ def record_game(agent, env_factory, step, recordings_dir, run_name, stage=STAGE_
         agent_dynamics=ProfileDynamics(),
         opponent_policy=opponent_policy,
         record=True,
+        action_mode=CURRICULUM_ACTION_MODE,
         action_dt=ACTION_DT,
         max_episode_time=30.0,
         max_score=7,
@@ -238,7 +240,10 @@ def main():
     parser.add_argument("--record-freq", type=int, default=50_000)
     parser.add_argument("--horizon", type=int, default=5, help="Planning horizon (steps to look ahead)")
     parser.add_argument("--fast", action="store_true", help="Use reduced MPPI params for faster planning (num_samples=128, iterations=3, horizon=3)")
-    parser.add_argument("--num-samples", type=int, default=None, help="MPPI trajectory samples (default: 512, --fast: 128)")
+    parser.add_argument("--num-samples", type=int, default=256,
+                        help="MPPI trajectory samples during collection (256 since "
+                             "2026-09-06: at 32 envs the planner is compute-bound and "
+                             "512 cost twice as much for nothing measurable; --fast: 128)")
     parser.add_argument("--mppi-iterations", type=int, default=None, help="MPPI refinement iterations (default: 6, --fast: 3)")
     parser.add_argument("--n-envs", type=int, default=32, help="Number of parallel environments")
     # 32, i.e. one gradient update per ENV transition (UTD 1), which is what
@@ -266,6 +271,8 @@ def main():
     parser.add_argument("--no-batched-mppi", dest="batched_mppi", action="store_false",
                         help="plan each env separately (shares one MPPI warm start "
                              "across envs; ablation only)")
+    parser.add_argument("--no-compile-plan", action="store_true",
+                        help="skip torch.compile(reduce-overhead) on the batched planner")
     parser.add_argument("--batched-mppi", action="store_true", default=True,
                         help="Use batched MPPI planning across all n_envs in a single GPU "
                              "call (requires act_batched method on agent).")
@@ -311,7 +318,7 @@ def main():
         "compile": args.compile,
         "data_dir": str(run_dir / "data"),
         "exp_name": args.run_name,
-        "discount_max": 0.99,
+        "discount_max": 0.995,   # run 2: patience must survive the discount (rewards.py)
         "rho": 0.85,
         "task_title": "Air Hockey",
         "multitask": False,
@@ -393,7 +400,7 @@ def main():
     # network with the wrong input width.
     obs_dim = BatchAirHockeyEnv.OBS_DIM  # puck(4) + paddle(4) + opp(4) + side(1)
     cfg.obs_shape = {"state": (obs_dim,)}
-    cfg.action_dim = 2
+    cfg.action_dim = batch_env.action_dim     # 3 in the curriculum's profile_a mode
     cfg.episode_length = int(round(30.0 / ACTION_DT))  # 30 s
     cfg.seed_steps = max(1000, 5 * cfg.episode_length)
 
@@ -428,7 +435,7 @@ def main():
     obs_t = torch.from_numpy(obs_np).float()
 
     # Per-env episode tracking (needed for buffer which stores full episodes)
-    nan_action = torch.full((1, 2), float('nan'))
+    nan_action = torch.full((1, int(cfg.action_dim)), float('nan'))
     nan_scalar = torch.tensor(float('nan')).unsqueeze(0)
     tds_list = []
     t0_list = [True] * n_envs
@@ -457,6 +464,12 @@ def main():
     # to per-env act() -- which shares ONE _prev_mean across all 32 envs, so
     # every env's MPPI warm-started from its neighbour's plan.
     use_batched_mppi = bool(args.batched_mppi) and hasattr(agent, "_plan_batch")
+    if use_batched_mppi and torch.cuda.is_available() and not args.no_compile_plan:
+        # CUDA graphs on the batched planner (train_selfplay does the same):
+        # ~1.4x on the call that dominates collection. The warm start is
+        # allocated outside the compiled function by act().
+        agent._plan_batch = torch.compile(agent._plan_batch, mode="reduce-overhead")
+        print("  batched planner: CUDA graphs on (first call compiles, ~30 s)")
     if args.batched_mppi and not use_batched_mppi:
         print("WARNING: --batched-mppi requested but this tdmpc2 checkout has no "
               "_plan_batch; falling back to per-env act().")

@@ -138,13 +138,20 @@ class CDPRClient:
         if not resp.startswith("OK"):
             raise RuntimeError(f"CDPR disable failed: {resp}")
 
-    def command_position(self, x_mm: float, y_mm: float, speed_mm_s: float) -> None:
+    def command_position(self, x_mm: float, y_mm: float, speed_mm_s: float,
+                         accel_mm_s2: float | None = None) -> None:
         """Send a non-blocking position command to the Teensy.
 
-        The Teensy handles trajectory planning. Speed is included for
-        interface consistency but ignored by the master.
+        The Teensy handles trajectory planning. The speed and, when given,
+        the accel ride along: the master forwards each to the Teensy only
+        when it CHANGES (SPEED / ACCEL), so a policy that commands its
+        accel per move (profile_a) costs one serial write per change and
+        nothing in steady state. 0 = leave that cap alone.
         """
-        resp = self._send(f"CMD {x_mm:.2f} {y_mm:.2f} {speed_mm_s:.1f}")
+        if accel_mm_s2 is None:
+            resp = self._send(f"CMD {x_mm:.2f} {y_mm:.2f} {speed_mm_s:.1f}")
+        else:
+            resp = self._send(f"CMD {x_mm:.2f} {y_mm:.2f} {speed_mm_s:.1f} {accel_mm_s2:.1f}")
         if not resp.startswith("OK"):
             raise RuntimeError(f"CDPR cmd failed: {resp}")
 

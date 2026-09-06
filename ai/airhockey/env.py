@@ -58,6 +58,9 @@ class AirHockeyEnv(gym.Env):
         # step, so at 60 the delay cannot be represented at all.
         action_dt: float = ACTION_DT,
         camera_delay: float = 0.0,  # seconds of observation delay
+        # "position" (2-dim) or "profile_a" (3-dim: x, y, accel fraction of
+        # the cap) -- the batch env's modes; see BatchAirHockeyEnv.
+        action_mode: str = "position",
         max_episode_time: float = 60.0,  # seconds
         max_episode_steps: int | None = None,
         max_score: int = 7,
@@ -108,15 +111,20 @@ class AirHockeyEnv(gym.Env):
             1.0,                                          # side flag
             OPPONENT_MAX_SPEED_M_S / MAX_SPEED_M_S,       # max speed ratio
             OPPONENT_MAX_ACCEL_M_S2 / MAX_ACCEL_M_S2,     # max accel ratio
-            1.0, 1.0,                                     # previous action
+            1.0, 1.0, 1.0,                                # previous action
             1.0, 1.0, 1.0,                                # shot type one-hot
+            1.0,                                          # time on side
         ], dtype=np.float32)
         self.observation_space = spaces.Box(-high_obs, high_obs, dtype=np.float32)
 
         # Action: normalized [-1, 1] mapped to paddle position in agent's half
+        if action_mode not in ("position", "profile_a"):
+            raise ValueError(f"unknown action_mode {action_mode!r}")
+        self.action_mode = action_mode
+        self.action_dim = 2 if action_mode == "position" else 3
         self.action_space = spaces.Box(
-            low=np.array([-1.0, -1.0], dtype=np.float32),
-            high=np.array([1.0, 1.0], dtype=np.float32),
+            low=-np.ones(self.action_dim, dtype=np.float32),
+            high=np.ones(self.action_dim, dtype=np.float32),
             dtype=np.float32,
         )
         # Real position bounds for rescaling: the FULL half, matching
@@ -190,11 +198,14 @@ class AirHockeyEnv(gym.Env):
         self._prev_agent_y = state.paddle_agent.y
         self._prev_opp_x = state.paddle_opponent.x
         self._prev_opp_y = state.paddle_opponent.y
-        self._last_action = np.zeros(2, dtype=np.float32)
+        self._last_action = np.zeros(3, dtype=np.float32)
         # Shot type asked of the robot (rewards.SHOT_TYPE_*; 0 = none). The
         # scalar env never draws one itself -- the UI or a test sets it.
         self.shot_type = 0
-        self._last_opp_action = np.zeros(2, dtype=np.float32)
+        self._last_opp_action = np.zeros(3, dtype=np.float32)
+        # Seconds since the puck last crossed the centre line.
+        self._t_side = 0.0
+        self._prev_puck_side = state.puck.y < self.table_config.height / 2
 
         self._obs_buffer.clear()
         obs = self._make_obs(state)
@@ -217,11 +228,19 @@ class AirHockeyEnv(gym.Env):
         # Sanitize NaN/Inf (early TD-MPC2 planning can emit NaN actions, which
         # would survive np.clip and corrupt physics state into NaN), then
         # clip to [-1, 1] and rescale to real position bounds.
-        action = np.nan_to_num(action, nan=0.0, posinf=1.0, neginf=-1.0)
+        action = np.nan_to_num(np.asarray(action, dtype=np.float64).reshape(-1),
+                               nan=0.0, posinf=1.0, neginf=-1.0)
         action = np.clip(action, -1.0, 1.0)
-        self._last_action = np.asarray(action[:2], dtype=np.float32)
-        real_action = self._action_low + (action + 1.0) * 0.5 * (self._action_high - self._action_low)
+        self._last_action[:] = 0.0
+        self._last_action[:min(3, len(action))] = action[:3]
+        real_action = self._action_low + (action[:2] + 1.0) * 0.5 * (self._action_high - self._action_low)
         target_x, target_y = float(real_action[0]), float(real_action[1])
+        # profile_a: the third slot is this command's accel cap, as a
+        # fraction of the machine's (BatchAirHockeyEnv.accel_fraction).
+        accel_cap = None
+        if self.action_mode == "profile_a" and len(action) >= 3:
+            frac = 0.05 + (action[2] + 1.0) * 0.5 * 0.95
+            accel_cap = frac * getattr(self.agent_dynamics, "max_accel", MAX_ACCEL_M_S2)
 
         # Run physics substeps
         n_substeps = max(1, int(self.action_dt / self.physics_dt))
@@ -241,7 +260,10 @@ class AirHockeyEnv(gym.Env):
 
         for _ in range(n_substeps):
             # Update agent paddle through dynamics
-            ax, ay = self.agent_dynamics.update(target_x, target_y, sub_dt)
+            if accel_cap is not None and isinstance(self.agent_dynamics, ProfileDynamics):
+                ax, ay = self.agent_dynamics.update(target_x, target_y, sub_dt, accel_cap=accel_cap)
+            else:
+                ax, ay = self.agent_dynamics.update(target_x, target_y, sub_dt)
             ax, ay = self._clamp_to_half(ax, ay, agent=True)
             self.engine.update_paddle(state.paddle_agent, ax, ay, sub_dt)
 
@@ -258,6 +280,9 @@ class AirHockeyEnv(gym.Env):
                 reward -= 1.0
 
         self._step_count += 1
+        side = state.puck.y < self.table_config.height / 2
+        self._t_side = 0.0 if side != self._prev_puck_side else self._t_side + self.action_dt
+        self._prev_puck_side = side
         obs = self._make_obs(state)
 
         # Universal puck-stuck reset: if puck speed < 0.05 for 120 steps (~2s),
@@ -350,8 +375,8 @@ class AirHockeyEnv(gym.Env):
         dyn = self.opponent_dynamics if was_robot else self.agent_dynamics
         mirrored[13] = getattr(dyn, "max_speed", MAX_SPEED_M_S) / MAX_SPEED_M_S
         mirrored[14] = getattr(dyn, "max_accel", MAX_ACCEL_M_S2) / MAX_ACCEL_M_S2
-        mirrored[15:17] = self._last_opp_action if was_robot else self._last_action
-        mirrored[17:20] = 0.0        # the far side is never asked for a shot here
+        mirrored[15:18] = self._last_opp_action if was_robot else self._last_action
+        mirrored[18:21] = 0.0        # the far side is never asked for a shot here
         return mirrored
 
     def mirror_action_to_opponent(self, action: np.ndarray) -> tuple[float, float]:
@@ -428,6 +453,7 @@ class AirHockeyEnv(gym.Env):
             *self._cap_features(),
             *self._last_action,
             *self._shot_onehot(),
+            min(self._t_side, 5.0) / 5.0,
         ], dtype=np.float32)
 
     def _shot_onehot(self) -> tuple[float, float, float]:
@@ -437,7 +463,9 @@ class AirHockeyEnv(gym.Env):
     def note_opponent_action(self, action: np.ndarray) -> None:
         """The far side's normalised action this step, for its mirrored
         view's previous-action features. Scripted opponents never call it."""
-        self._last_opp_action = np.clip(np.asarray(action, dtype=np.float32)[:2], -1.0, 1.0)
+        a = np.clip(np.asarray(action, dtype=np.float32).reshape(-1)[:3], -1.0, 1.0)
+        self._last_opp_action[:] = 0.0
+        self._last_opp_action[:len(a)] = a
 
     def _cap_features(self) -> tuple[float, float]:
         """Own speed/accel caps, as a ratio to the robot's nominal.

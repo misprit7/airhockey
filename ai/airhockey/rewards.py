@@ -426,10 +426,28 @@ class BatchRewardShaper:
         trap_reward: float = 0.0,
         controlled_shot_bonus: float = 1.0,
         shot_type_reward: float = 0.0,
+        # Retrain run 2 (2026-09-06). accel_cost_weight: per step, times the
+        # accel fraction the action asked for (action_mode "profile_a"), so
+        # a high cap is spent on strikes and saves and not on wandering --
+        # heat is torque and torque is accel, and the first run tripped a
+        # drive after 20 s of continuous full-box traversal. patience_s /
+        # patience_floor: the hit rewards (on-target, speed, directed, shot
+        # type) are multiplied by floor + (1 - floor) * min(1, t_side /
+        # patience_s), t_side being how long the puck has been on the
+        # robot's side (info["t_side"]), so an instant slap pays the floor
+        # and a controlled shot the whole. Sized against the discount: at
+        # 50 Hz and 0.995, 1.5 s of waiting keeps 69% of a reward, and 2x
+        # (floor 0.5) is what makes waiting win.
+        accel_cost_weight: float = 0.0,
+        patience_s: float = 0.0,
+        patience_floor: float = 1.0,
         config=None,
     ):
         self.n_envs = n_envs
         self.stage = stage
+        self.accel_cost_weight = accel_cost_weight
+        self.patience_s = patience_s
+        self.patience_floor = patience_floor
         from airhockey.physics import TableConfig    # noqa: PLC0415
         cfg = config or TableConfig()
         self._cfg = cfg
@@ -448,7 +466,8 @@ class BatchRewardShaper:
         self._visit_max_speed = np.zeros(n_envs)
         # Counters for the trainer's logs: traps, on-target shots and
         # type matches since the last read.
-        self.stats = {"traps": 0, "on_target": 0, "type_matched": 0, "shots": 0}
+        self.stats = {"traps": 0, "on_target": 0, "type_matched": 0, "shots": 0,
+                      "patience_sum": 0.0, "accel_frac_sum": 0.0, "steps": 0}
         # The reachable box (env._ws), for the proximity term. Measured
         # distance to the puck is dominated by where the PUCK is: it spends
         # most of a game outside the robot's box, and a policy that drives
@@ -594,6 +613,14 @@ class BatchRewardShaper:
                 reach_dist = dist
             shaped += aux_scale * self.proximity_weight * np.exp(-self.proximity_k * reach_dist)
 
+        # Patience: how the hit rewards scale with the time the puck has
+        # been on the robot's side. 1.0 everywhere when the term is off.
+        if self.patience_s > 0 and info is not None and "t_side" in info:
+            patience = self.patience_floor + (1.0 - self.patience_floor) * np.minimum(
+                1.0, info["t_side"] / self.patience_s)
+        else:
+            patience = np.ones(self.n_envs)
+
         # Contact + directed hit + shot placement (only reward forward hits)
         speed_change = puck_speed - self._prev_puck_speed
         hit = (dist < 0.25) & (speed_change > 0.2) & (puck_vy > 0)  # forward hits only
@@ -608,7 +635,7 @@ class BatchRewardShaper:
         if self.directed_hit_weight > 0:
             shaped += np.where(
                 hit & contact_ok,
-                aux_scale * self.directed_hit_weight * puck_vy,
+                aux_scale * self.directed_hit_weight * puck_vy * patience,
                 0.0,
             )
 
@@ -674,14 +701,15 @@ class BatchRewardShaper:
                     (np.abs(x_goal - self._cfg.width / 2.0) < self._cfg.goal_width / 2.0)
                 self.stats["shots"] += int(scoring.sum())
                 if np.any(on_target):
-                    mult = np.where(self._trapped, self.controlled_shot_bonus, 1.0)
+                    mult = np.where(self._trapped, self.controlled_shot_bonus, 1.0) * patience
                     shaped += np.where(on_target,
-                                       self.on_target_reward * mult
-                                       + self.shot_speed_weight * puck_speed, 0.0)
+                                       (self.on_target_reward
+                                        + self.shot_speed_weight * puck_speed) * mult, 0.0)
                     self.stats["on_target"] += int(on_target.sum())
+                    self.stats["patience_sum"] += float(patience[on_target].sum())
                     if self.shot_type_reward > 0 and info is not None and "shot_type" in info:
                         matched = on_target & shot_matches_type(info["shot_type"], n_b, first)
-                        shaped += np.where(matched, self.shot_type_reward, 0.0)
+                        shaped += np.where(matched, self.shot_type_reward * patience, 0.0)
                         self.stats["type_matched"] += int(matched.sum())
                     self._shot_paid |= on_target
 
@@ -729,6 +757,16 @@ class BatchRewardShaper:
         # by goal_reward/goal_penalty above, so they must be carried here.
         if info is not None and "penalty" in info:
             shaped += info["penalty"]
+
+        # The accel the action asked for, taxed per step (profile_a: the
+        # third action slot; absent in the 2-dim mode = nothing to tax).
+        if self.accel_cost_weight > 0 and actions is not None:
+            a = np.asarray(actions)
+            if a.shape[1] >= 3:
+                frac = 0.05 + (np.clip(a[:, 2], -1.0, 1.0) + 1.0) * 0.5 * 0.95
+                shaped -= self.accel_cost_weight * frac
+                self.stats["accel_frac_sum"] += float(frac.sum())
+        self.stats["steps"] += self.n_envs
 
         # Idle hygiene (gated on the puck being on the far half) and
         # smoothness during play (ungated).
@@ -943,11 +981,15 @@ class ExchangeRewardShaper:
 # terms enter only once a stage is ABOUT goals. In self-play a goal is worth
 # ~50 clean contacts, not ~1600.
 #
-# Per-step scale check: proximity 0.1/step over a 10 s (1000-step) episode
-# caps at 100; contact 5 x 5 capped hits = 25 max; a goal 100.
+# Per-step scale check: proximity 0.1/step over a 10 s episode caps at 50
+# (500 steps at 50 Hz); contact 5 x 5 capped hits = 25 max; a goal 100.
+#
+# Budgets halved for run 2 (2026-09-06): the pretrain only has to get the
+# policy doing roughly the right thing before self-play, and run 1's stages
+# were winning their recorded games well before their budgets ran out.
 CURRICULUM: dict[str, dict] = {
     "proximity": dict(
-        opponent="idle", episode_s=10.0, steps=200_000,
+        opponent="idle", episode_s=10.0, steps=100_000,
         proximity_weight=0.1, contact_reward=0.0, directed_hit_weight=0.0,
         puck_progress_weight=0.0, defense_weight=0.0, shot_placement_weight=0.0,
         goal_reward=0.0, goal_penalty=0.0, entropy_weight=0.0, shot_mix_weight=0.0),
@@ -960,25 +1002,31 @@ CURRICULUM: dict[str, dict] = {
     # beats the instant slap when both are on target. Self-play adds the
     # shot-type request (shot_type_reward on a match) and the opponent mix.
     "contact": dict(
-        opponent="idle", episode_s=10.0, steps=300_000,
+        opponent="idle", episode_s=10.0, steps=150_000,
         proximity_weight=0.02, contact_reward=5.0, directed_hit_weight=0.5,
         puck_progress_weight=0.0, defense_weight=0.0, shot_placement_weight=0.0,
         goal_reward=0.0, goal_penalty=0.0, entropy_weight=0.0, shot_mix_weight=0.0,
         on_target_reward=10.0, shot_speed_weight=1.0),
+    # Run 2 (2026-09-06): the accel the action asks for is taxed from the
+    # scoring stage on, and the hit rewards ramp with how long the puck has
+    # been on the robot's side (patience_s, floor 0.5) -- run 1 never
+    # stopped the puck and drove the paddle 33 m in 20 s on the table.
     "scoring": dict(
-        opponent="idle", episode_s=20.0, steps=500_000, fuzz_p=0.2,
+        opponent="idle", episode_s=20.0, steps=250_000, fuzz_p=0.2,
         proximity_weight=0.0, contact_reward=2.0, directed_hit_weight=0.5,
         puck_progress_weight=0.5, defense_weight=0.5, shot_placement_weight=1.0,
         goal_reward=100.0, goal_penalty=-20.0, entropy_weight=0.0, shot_mix_weight=0.5,
         on_target_reward=10.0, shot_speed_weight=1.0,
-        trap_reward=2.0, controlled_shot_bonus=1.5),
+        trap_reward=2.0, controlled_shot_bonus=1.5,
+        accel_cost_weight=0.01, patience_s=1.5, patience_floor=0.5),
     "goalie": dict(
-        opponent="goalie", episode_s=20.0, steps=500_000, fuzz_p=0.2,
+        opponent="goalie", episode_s=20.0, steps=250_000, fuzz_p=0.2,
         proximity_weight=0.0, contact_reward=2.0, directed_hit_weight=0.5,
         puck_progress_weight=0.5, defense_weight=0.5, shot_placement_weight=1.0,
         goal_reward=100.0, goal_penalty=-20.0, entropy_weight=0.0, shot_mix_weight=0.5,
         on_target_reward=10.0, shot_speed_weight=1.0,
-        trap_reward=2.0, controlled_shot_bonus=1.5),
+        trap_reward=2.0, controlled_shot_bonus=1.5,
+        accel_cost_weight=0.01, patience_s=1.5, patience_floor=0.5),
     "selfplay": dict(
         opponent="external", episode_s=30.0, steps=3_000_000, fuzz_p=0.2,
         proximity_weight=0.0, contact_reward=2.0, directed_hit_weight=0.5,
@@ -986,6 +1034,9 @@ CURRICULUM: dict[str, dict] = {
         goal_reward=100.0, goal_penalty=-50.0, entropy_weight=0.0, shot_mix_weight=0.5,
         on_target_reward=10.0, shot_speed_weight=1.0,
         trap_reward=2.0, controlled_shot_bonus=1.5,
+        # Full accel for a whole 30 s episode costs 30 -- a goal is 100 and
+        # a controlled on-target shot ~20 -- so it is spent, not defaulted.
+        accel_cost_weight=0.02, patience_s=1.5, patience_floor=0.5,
         # The env draws a shot type per possession (shot_types=True) and
         # the far side is drawn per episode from opponent_mix.
         shot_type_reward=10.0, shot_types=True,
@@ -1010,6 +1061,8 @@ CURRICULUM: dict[str, dict] = {
         home_weight=0.05, jitter_weight=0.0, smooth_weight=0.2),
 }
 CURRICULUM_ORDER = ["proximity", "contact", "scoring", "goalie", "selfplay"]
+# Run 2: position plus an accel fraction (BatchAirHockeyEnv "profile_a").
+CURRICULUM_ACTION_MODE = "profile_a"
 
 _SHAPER_KEYS = ("proximity_weight", "contact_reward", "directed_hit_weight",
                 "puck_progress_weight", "defense_weight", "shot_placement_weight",
@@ -1022,7 +1075,8 @@ _SHAPER_KEYS = ("proximity_weight", "contact_reward", "directed_hit_weight",
 _IDLE_KEYS = ("home_weight", "jitter_weight", "smooth_weight")
 # Shot-outcome terms, likewise batch-only and passed through only when set.
 _OUTCOME_KEYS = ("on_target_reward", "shot_speed_weight", "trap_reward",
-                 "controlled_shot_bonus", "shot_type_reward")
+                 "controlled_shot_bonus", "shot_type_reward",
+                 "accel_cost_weight", "patience_s", "patience_floor")
 
 
 def curriculum_episode_steps(name: str, action_dt: float = ACTION_DT) -> int:
@@ -1043,7 +1097,9 @@ def curriculum_env_kwargs(name: str) -> dict:
     """The BatchAirHockeyEnv kwargs a stage sets beyond its opponent:
     the shot-type draw and the opponent mix (self-play only)."""
     spec = CURRICULUM[name]
-    out = {}
+    # One action space for the whole curriculum: a checkpoint resumes from
+    # stage to stage, so every stage must present the same actions.
+    out = {"action_mode": CURRICULUM_ACTION_MODE}
     if spec.get("shot_types"):
         out["shot_types"] = True
     if spec.get("opponent_mix"):

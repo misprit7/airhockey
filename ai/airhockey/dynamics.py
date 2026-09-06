@@ -269,13 +269,16 @@ class ProfileDynamics(MotorDynamics):
         c.vx[0] = c.vy[0] = c.ax[0] = c.ay[0] = 0.0
 
     def update(self, target_x: float, target_y: float,
-               dt: float) -> tuple[float, float]:
+               dt: float, accel_cap: float | None = None) -> tuple[float, float]:
+        """accel_cap: this command's accel limit in m/s^2 (profile_a), at
+        most max_accel; None = the machine's cap."""
         from airhockey.motion import DEFAULT_SIM_DT, advance
         c = self._cart
         substeps = max(1, int(round(dt / DEFAULT_SIM_DT)))
+        a_max = self.max_accel if accel_cap is None else min(float(accel_cap), self.max_accel)
         advance(c,
                 np.float32([target_x * 1000.0]), np.float32([target_y * 1000.0]),
-                self.max_speed * 1000.0, self.max_accel * 1000.0,
+                self.max_speed * 1000.0, a_max * 1000.0,
                 self.ramp_s, dt / substeps, substeps)
         self.x = float(c.x[0]) / 1000.0
         self.y = float(c.y[0]) / 1000.0

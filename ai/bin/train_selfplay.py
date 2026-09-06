@@ -229,7 +229,7 @@ def main():
         "save_video": False, "enable_wandb": False, "save_csv": False,
         "work_dir": str(run_dir), "compile": False,
         "data_dir": str(run_dir / "data"), "exp_name": args.run_name,
-        "discount_max": 0.99, "rho": 0.7,
+        "discount_max": 0.995, "rho": 0.7,   # run 2: see rewards.patience_s
         "task_title": "Air Hockey Self-Play",
         "multitask": False, "tasks": ["airhockey-selfplay"], "task_dim": 0,
         "pi_smooth_coef": args.pi_smooth,

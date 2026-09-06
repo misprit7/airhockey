@@ -1537,8 +1537,12 @@ def run(args) -> int:
                     # SPEED to the Teensy only when it changes, so in steady
                     # state this costs nothing and after a LIMITS it costs
                     # one redundant round trip at most 5 times a second.
+                    # The accel rides on the CMD too (forwarded only when
+                    # it changes): a policy that commands its accel per
+                    # move needs it applied THIS tick, not at the
+                    # committer's 5 Hz.
                     client.command_position(action.x_mm, action.y_mm,
-                                            committer.speed)
+                                            committer.speed, action.accel_mm_s2)
                 except Exception as e:      # noqa: BLE001
                     print(f"command failed: {e}")
                     break

@@ -259,3 +259,50 @@ Things to read while it runs (tensorboard on `runs/retrain40_selfplay2/logs`):
 `shots/traps`, `shots/type_matched`. First table run: `--plan 6` at the
 default 50 Hz and 40 m/s², `--shot-type mix`, short sessions, watch
 "shed" and the lag in the status line.
+
+
+# Run 2 (prepared 2026-09-06 ~12:30, not started)
+
+What run 1 (retrain40) showed on the table: 20 s at 12 / 40 tripped motor 2
+on RMS overload; the paddle travelled 33 m, was moving 82% of the time and
+sat its target on a box edge 48% of the time, 45% even with the puck away.
+Traps were zero all run: at 50 Hz with discount 0.99, one second of
+waiting cost 39% of a reward and the controlled shot paid only 3-5 more.
+
+Changes, all implemented and tested (`ai/tests/test_run2_changes.py`,
+14 tests; suite 340 green):
+
+- [x] **Action = position + accel fraction** (`action_mode="profile_a"`,
+      3 dims; speed stays 12 m/s). Slot [-1, 1] -> 5%..100% of the 40
+      m/s² cap. Taxed `accel_cost_weight` per step: 0.01 in scoring and
+      goalie, 0.02 in self-play (a whole episode at full accel costs 30
+      against a goal's 100). The copy of the robot commands its own too.
+      The previous action in the obs is three wide.
+- [x] **Time on side** in the observation ([21], seconds since the puck
+      last crossed the centre line / 5 s), in the env, the scalar env and
+      the deploy encoder.
+- [x] **Patience**: the hit rewards (on-target + speed, directed, shot
+      type) are multiplied by 0.5 + 0.5 * min(1, t_side / 1.5 s). An
+      instant slap pays half; a shot after 1.5 s of control pays whole.
+      With the trap's 1.5x that is 3x an instant one. The user asked for
+      "less reward for hits under 5 s"; 5 s is longer than any real
+      possession and the ramp does the same job at 1.5 s -- change
+      `patience_s` if that reads wrong.
+- [x] **Discount 0.995** in both trainers (was 0.99): 1.5 s of waiting
+      keeps 69% of a reward instead of 47%. Without this the patience
+      term cannot win.
+- [x] Attended stuck relaunch 5 s (was 3) so control has room.
+- [x] Pretrain budgets halved: 100k / 150k / 250k / 250k, and UTD 0.5
+      (`--updates-per-step 16`) -- the stages were winning their recorded
+      games long before their budgets ran out.
+- [x] Table: `CMD x y speed accel`; the master forwards ACCEL to the
+      Teensy only when it changes (master rebuilt 12:11 -- restart it).
+      The runner sends the policy's accel every tick. Older 2-dim
+      checkpoints load and play unchanged.
+- [x] Pretrain trainer: 256 collection samples and CUDA graphs on the
+      batched planner, as in self-play.
+
+Not changed: on-target 10 + 1/m/s, trap 2, controlled 1.5x, shot type 10,
+idle pull 0.05, action-change tax 0.2, opponent mix, fuzz.
+
+Start it with `PREFIX=run2 bash ai/bin/run_full_pipeline.sh`.

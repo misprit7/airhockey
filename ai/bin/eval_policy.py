@@ -42,6 +42,8 @@ def run_match(agent, run_name: str, opponent: str, games: int, seconds: float,
 
     env = BatchAirHockeyEnv(
         n_envs=games,
+        # The checkpoint decides: 3-dim policies command their accel.
+        action_mode="profile_a" if int(agent.cfg.action_dim) >= 3 else "position",
         opponent_policy=opponent,
         # A rival checkpoint gets the robot's body, as in training; the
         # scripted opponents keep the human model they were written for.

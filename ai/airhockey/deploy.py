@@ -77,7 +77,8 @@ def puck_out_of_play(x_mm: float, y_mm: float) -> bool:
     in_mouth = abs(y_mm - centre_y) < 0.5 * geom.GOAL_WIDTH_MM + GOAL_MOUTH_MARGIN_MM
     return beyond_end and in_mouth
 
-OBS_DIM = 20
+OBS_DIM = 22
+T_SIDE_CLIP_S = 5.0     # = BatchAirHockeyEnv.T_SIDE_CLIP
 
 
 def mm_velocity_to_sim(vx_mm_s: float, vy_mm_s: float,
@@ -126,9 +127,12 @@ class ReportEncoder:
         self.shot_type = (0 if self.shot_mode == "mix"
                           else SHOT_TYPE_NAMES.index(self.shot_mode))
         self._puck_in_half: bool | None = None
+        # Seconds since the puck last crossed the centre line (obs [21]).
+        self.t_side = 0.0
         # The previous action, as the env carries it: zero after a reset,
-        # then whatever the policy last emitted (the caller sets it).
-        self.last_action = np.zeros(2, dtype=np.float32)
+        # then whatever the policy last emitted (the caller sets it). Three
+        # wide (x, y, accel fraction); a 2-dim policy leaves the third zero.
+        self.last_action = np.zeros(3, dtype=np.float32)
 
     def _to_sim(self, x_mm: float, y_mm: float) -> tuple[float, float]:
         return table_mm_to_sim(x_mm, y_mm, self.width, self.half_h)
@@ -187,14 +191,23 @@ class ReportEncoder:
         in_half = py < self.half_h
         if self.shot_mode == "mix" and in_half and not self._puck_in_half:
             self.shot_type = int(self._rng.integers(0, 4))
+        # Time on side: reset on a crossing (and on a resume), else the tick.
+        if self._puck_in_half is None or in_half != self._puck_in_half or resync:
+            self.t_side = 0.0
+        else:
+            self.t_side += dt
         self._puck_in_half = in_half
         onehot = [1.0 if self.shot_type == k else 0.0 for k in (1, 2, 3)]
+        prev = np.zeros(3, dtype=np.float32)
+        la = np.asarray(self.last_action, dtype=np.float32).reshape(-1)[:3]
+        prev[:len(la)] = la
 
         return np.array([px, py, pvx, pvy,
                          ox, oy, ovx, ovy,
                          qx, qy, qvx, qvy,
                          self.side, *self.cap_features,
-                         *self.last_action, *onehot], dtype=np.float32)
+                         *prev, *onehot,
+                         min(self.t_side, T_SIDE_CLIP_S) / T_SIDE_CLIP_S], dtype=np.float32)
 
 
 class TDMPC2Policy:
@@ -287,7 +300,7 @@ class TDMPC2Policy:
                                   device=self.device)
                 a = self.agent.act(o, t0=t0, eval_mode=True)
         self.encoder.fresh = False
-        return np.asarray(a.detach().cpu().numpy(), dtype=float).reshape(-1)[:2]
+        return np.asarray(a.detach().cpu().numpy(), dtype=float).reshape(-1)
 
     def target_mm(self, action: np.ndarray) -> tuple[float, float]:
         a = np.clip(action, -1.0, 1.0)
@@ -299,14 +312,23 @@ class TDMPC2Policy:
         w = time.perf_counter()
         obs = self.encoder.encode(report)
         action = self.act(obs)
-        self.encoder.last_action = np.clip(action, -1.0, 1.0).astype(np.float32)
-        x_mm, y_mm = self.target_mm(action)
+        a = np.clip(action, -1.0, 1.0).astype(np.float32)
+        self.encoder.last_action[:] = 0.0
+        self.encoder.last_action[:min(3, len(a))] = a[:3]
+        x_mm, y_mm = self.target_mm(action[:2])
+        # A 3-dim policy commands its accel cap as a fraction of the
+        # session's (BatchAirHockeyEnv.accel_fraction); a 2-dim one gets it
+        # whole. The runner's Caps clamp both.
+        accel = self.accel_mm_s2
+        if len(a) >= 3:
+            frac = 0.05 + (float(a[2]) + 1.0) * 0.5 * 0.95
+            accel = frac * self.accel_mm_s2
         self.last_ms = 1000.0 * (time.perf_counter() - w)
         # Kept for the session log: a bad move is a bad observation or a
         # bad decision, and only this tells them apart.
         self.last_obs = obs
         self.last_action = action
-        return Command(float(x_mm), float(y_mm), self.speed_mm_s, self.accel_mm_s2)
+        return Command(float(x_mm), float(y_mm), self.speed_mm_s, float(accel))
 
     # ── Load-time diagnostics ──────────────────────────────────────────
 
@@ -330,6 +352,8 @@ class TDMPC2Policy:
         mode = (f"{self.agent.cfg.iterations} MPPI iterations on {self.device}"
                 + (" (CUDA graphs)" if self.compiled else "")
                 if self.plan else f"policy prior only on {self.device}")
+        mode += (", commands its own accel" if self.agent.cfg.action_dim >= 3
+                 else ", position only")
         trained_v = AGENT_DR_SPEED_M_S[1] * 1000.0
         trained_a = AGENT_DR_ACCEL_M_S2[1] * 1000.0
         lines = [f"tdmpc2: {self.ckpt}", f"  mode: {mode}"]

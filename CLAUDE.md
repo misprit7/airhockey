@@ -225,7 +225,7 @@ goals conceded from 0.10 to 0.04 per game.
   that is a random target every tick, which is what the 2026-09-05 table
   runs showed and the sim reproduces on a static scene. Halves the target
   jumps and doubled goals vs the goalie in sim.
-- **Observation space**: Puck (pos + vel), own paddle (pos + vel), opponent paddle (pos + vel) — all in 2D — then a side flag, two cap ratios (constants since the band was pinned), the PREVIOUS ACTION (2026-09-03: needed for the smoothness term to be learnable from a frame), and the SHOT TYPE REQUESTED (2026-09-06: one-hot bank-left / bank-right / straight, all zero = no preference; x = 0 rail is LEFT facing the far goal). 20 dims. Older 15- and 17-wide checkpoints load with zero weight on the new inputs (`policy_loader.load_checkpoint`). Camera delay is applied to observations to simulate real sensing latency.
+- **Observation space**: Puck (pos + vel), own paddle (pos + vel), opponent paddle (pos + vel) — all in 2D — then a side flag, two cap ratios (constants since the band was pinned), the PREVIOUS ACTION (2026-09-03: needed for the smoothness term to be learnable from a frame), the SHOT TYPE REQUESTED (2026-09-06: one-hot bank-left / bank-right / straight, all zero = no preference; x = 0 rail is LEFT facing the far goal), and TIME ON SIDE (seconds since the puck last crossed the centre line, clipped at 5 s and divided by it). 22 dims; the previous action is three wide (x, y, accel fraction). Older 15-, 17- and 20-wide checkpoints load with their columns moved into place and zero weight on the new inputs (`policy_loader.OBS_LAYOUTS`, `load_checkpoint`). Camera delay is applied to observations to simulate real sensing latency.
 - **Retrain (2026-09-06, `ai/RETRAIN.md` is the checklist)**: accel pinned
   at the nominal 20 m/s² (the drives follow 20-24, not 60); rewards pay
   shot OUTCOMES — `rewards.predict_shot` traces the puck through the
@@ -244,7 +244,25 @@ goals conceded from 0.10 to 0.04 per game.
   (1.2 s unattended) so control is possible. `rewards.curriculum_env_kwargs`
   hands these to the env; `train_selfplay.py` logs win rate per opponent
   kind and the shaper's shot counters.
-- **Action space**: Target (x, y) position for the paddle. Motor dynamics model converts this to actual paddle movement.
+  **Run 2 (2026-09-06)** after run 1 never stopped the puck and drove the
+  paddle 33 m in 20 s on the table: the hit rewards are multiplied by
+  `patience_floor + (1 - floor) * min(1, t_side / patience_s)` (0.5 at an
+  instant slap, 1.0 after 1.5 s of the puck on the robot's side), the
+  discount goes to 0.995 so 1.5 s of waiting keeps 69% of a reward, the
+  accel fraction is taxed per step, the attended stuck relaunch waits
+  5 s, and the four pretrain budgets are halved to 750k steps in total
+  with UTD 0.5 (`--updates-per-step 16`).
+- **Action space**: Target (x, y) position for the paddle, plus (run 2,
+  2026-09-06, `action_mode="profile_a"`, 3 dims) the ACCEL CAP for this
+  command as a fraction of the machine's (slot [-1, 1] -> 5%..100%,
+  `BatchAirHockeyEnv.accel_fraction`); speed stays at the clamp. The
+  reward taxes the fraction (`accel_cost_weight`), so a high cap is spent
+  on strikes and saves, not on wandering -- heat is torque and torque is
+  accel, and run 1 tripped a drive after 20 s of continuous traversal.
+  On the table the accel rides on `CMD x y speed accel`; the master
+  forwards it to the Teensy as ACCEL only when it changes. Older 2-dim
+  checkpoints still load and play (`policy_loader.checkpoint_shapes`).
+  The motor dynamics model converts the target to actual paddle movement.
 - **Web UI**: Real-time visualization over WebSocket for debugging. Binds to 0.0.0.0 for access over Tailscale. Not used during training. Defaults to replay mode showing most recent recording. Has instant/realistic physics toggle for manual play.
   - **Camera view** (`vision_service.py`) identifies three things and labels
     each in the overlay: the ROBOT paddle (3-marker cluster), the PUCK (its

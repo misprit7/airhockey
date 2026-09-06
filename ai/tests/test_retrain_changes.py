@@ -183,7 +183,7 @@ def test_curriculum_table_carries_the_new_terms():
     assert env_kw["shot_types"] is True
     assert abs(sum(env_kw["opponent_mix_probs"].values()) - 1.0) < 1e-9
     assert env_kw["fuzz_p"] == 0.2
-    assert R.curriculum_env_kwargs("proximity") == {}
+    assert R.curriculum_env_kwargs("proximity") == {"action_mode": "profile_a"}
     assert R.curriculum_episode_steps("selfplay") == round(30.0 / ACTION_DT)
 
 
@@ -192,18 +192,18 @@ def test_curriculum_table_carries_the_new_terms():
 def test_observation_is_twenty_wide_with_the_request_last():
     e = BatchAirHockeyEnv(8, shot_types=True, shot_type_probs=(0.0, 1.0, 0.0, 0.0))
     o = e.reset(seed=1)
-    assert o.shape == (8, 20) and BatchAirHockeyEnv.OBS_DIM == 20
+    assert o.shape == (8, 22) and BatchAirHockeyEnv.OBS_DIM == 22
     for _ in range(60):
         o, *_ = e.step(np.zeros((8, 2), dtype=np.float32))
     assert (e._shot_type == R.SHOT_TYPE_LEFT).any(), "the puck reaches a half eventually"
     rows = e._shot_type == R.SHOT_TYPE_LEFT
-    assert np.all(o[rows, 17:20] == [1.0, 0.0, 0.0])
-    assert np.all(o[~rows, 17:20] == 0.0)
+    assert np.all(o[rows, 18:21] == [1.0, 0.0, 0.0])
+    assert np.all(o[~rows, 18:21] == 0.0)
     e2 = BatchAirHockeyEnv(8)                 # no draws: always zeros
     o2 = e2.reset(seed=1)
     for _ in range(60):
         o2, *_ = e2.step(np.zeros((8, 2), dtype=np.float32))
-    assert np.all(o2[:, 17:20] == 0.0)
+    assert np.all(o2[:, 18:21] == 0.0)
 
 
 def test_request_is_drawn_when_the_puck_enters_the_half_and_kept_until_the_next():
@@ -240,14 +240,14 @@ def test_far_side_copy_gets_its_own_request_and_a_human_none():
     for _ in range(80):
         o, *_ = e.step(np.zeros((64, 2), dtype=np.float32))
     view = e.opponent_obs()
-    assert view.shape == (64, 20)
-    assert view[:, 17:20].sum() > 0, "the copy is asked for shots too"
-    assert not np.array_equal(view[:, 17:20], o[:, 17:20])
+    assert view.shape == (64, 22)
+    assert view[:, 18:21].sum() > 0, "the copy is asked for shots too"
+    assert not np.array_equal(view[:, 18:21], o[:, 18:21])
     h = BatchAirHockeyEnv(4, opponent_body="human", opponent_policy="follow", shot_types=True)
     oh = h.reset(seed=4)
     for _ in range(80):
         oh, *_ = h.step(np.zeros((4, 2), dtype=np.float32))
-    assert np.all(h.mirror_obs(oh)[:, 17:20] == 0.0)
+    assert np.all(h.mirror_obs(oh)[:, 18:21] == 0.0)
 
 
 def test_opponent_kinds_are_redrawn_per_episode_from_the_mix():
@@ -377,7 +377,7 @@ def test_stuck_relaunch_waits_longer_for_an_attended_puck():
         lo, hi = e._action_low, e._action_high
         ty = ws["max_y"] if attended else ws["min_y"]
         a = np.array([[0.0, -1.0 + 2.0 * (ty - lo[1]) / (hi[1] - lo[1])]], dtype=np.float32)
-        for k in range(int(4.0 / ACTION_DT)):
+        for k in range(int(6.5 / ACTION_DT)):
             _, _, _, _, info = e.step(a)
             if abs(float(info["puck_y"][0]) - py) > 0.2:
                 return k * ACTION_DT
@@ -385,19 +385,19 @@ def test_stuck_relaunch_waits_longer_for_an_attended_puck():
     t_free = stall(False)
     t_held = stall(True)
     assert t_free is not None and 1.0 < t_free < 1.6, t_free
-    assert t_held is not None and 2.8 < t_held < 3.6, t_held
+    assert t_held is not None and 4.6 < t_held < 5.6, t_held
 
 
 # ── deploy ──────────────────────────────────────────────────────────
 
 def test_encoder_carries_the_request_in_every_mode():
     rep = {"puck": [], "mallet": (1600.0, 480.0), "opponent": None, "t_s": 0.0}
-    assert OBS_DIM == 20
+    assert OBS_DIM == 22
     for mode, want in (("none", [0, 0, 0]), ("left", [1, 0, 0]),
                        ("right", [0, 1, 0]), ("straight", [0, 0, 1])):
         enc = ReportEncoder(shot_mode=mode)
         o = enc.encode(rep)
-        assert o.shape == (20,) and o[17:20].tolist() == want
+        assert o.shape == (22,) and o[18:21].tolist() == want
     with pytest.raises(ValueError):
         ReportEncoder(shot_mode="curve")
 
@@ -416,5 +416,5 @@ def test_encoder_mix_redraws_when_the_puck_enters_the_robot_half():
             hist = [(x, y, t - 0.005 * j) for j in range(8)]
             o = enc.encode({"puck": hist, "mallet": (geom.HOME_X, geom.HOME_Y),
                             "opponent": None, "t_s": t})
-        seen.add(tuple(o[17:20].tolist()))
+        seen.add(tuple(o[18:21].tolist()))
     assert len(seen) == 4, seen

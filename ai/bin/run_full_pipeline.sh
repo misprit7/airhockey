@@ -24,7 +24,7 @@ for stage in proximity contact scoring goalie; do
     [ -n "$prev" ] && resume="--resume runs/$prev/agent.pt"
     python3 ai/bin/train_tdmpc2.py --curriculum-stage $stage --steps $steps \
         --model-size 5 --horizon 5 --run-name $run --record-freq 50000 \
-        --updates-per-step 32 $resume || true
+        --updates-per-step 16 $resume || true
     if [ ! -f runs/$run/agent.pt ]; then
         echo "stage $stage produced no checkpoint — aborting"; exit 1
     fi

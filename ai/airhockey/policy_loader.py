@@ -118,6 +118,10 @@ def load_agent(run_name: str, iterations: int | None = PLAN_ITERATIONS,
     from airhockey.batch_env import BatchAirHockeyEnv
 
     base = OmegaConf.load(str(TDMPC2_DIR / "config.yaml"))
+    # The checkpoint decides the action dimension (2 = position, 3 = position
+    # + accel fraction); the observation width is always the current one,
+    # load_checkpoint moving old columns into place.
+    _obs_have, action_dim = checkpoint_shapes(ckpt)
     overrides = OmegaConf.create({
         "task": "airhockey", "obs": "state", "episodic": True,
         "steps": 1_000_000, "model_size": model_size, "horizon": 5,
@@ -137,7 +141,7 @@ def load_agent(run_name: str, iterations: int | None = PLAN_ITERATIONS,
     cfg.bin_size = (cfg.vmax - cfg.vmin) / (cfg.num_bins - 1)
     cfg = OmegaConf.merge(cfg, OmegaConf.create({
         "obs_shape": {"state": [BatchAirHockeyEnv.OBS_DIM]},
-        "action_dim": 2,
+        "action_dim": action_dim,
         "episode_length": 3000,
         "seed_steps": 1000,
     }))
@@ -154,13 +158,56 @@ def load_agent(run_name: str, iterations: int | None = PLAN_ITERATIONS,
     return agent
 
 
+# Observation layouts by width, as (name, start, width) per feature group.
+# A checkpoint trained on a narrower layout is loaded by moving each group
+# to where the current layout keeps it and zeroing the rest, so an old
+# policy computes exactly what it did until training grows the new columns.
+OBS_LAYOUTS = {
+    15: (("state", 0, 15),),
+    17: (("state", 0, 15), ("prev_action", 15, 2)),
+    20: (("state", 0, 15), ("prev_action", 15, 2), ("shot_type", 17, 3)),
+    22: (("state", 0, 15), ("prev_action", 15, 3), ("shot_type", 18, 3), ("t_side", 21, 1)),
+}
+
+
+def obs_column_map(have: int, want: int) -> list[tuple[int, int]]:
+    """(old column, new column) pairs for widening a `have`-wide obs to `want`."""
+    if have == want:
+        return [(i, i) for i in range(have)]
+    if have not in OBS_LAYOUTS or want not in OBS_LAYOUTS:
+        raise ValueError(f"no known observation layout for {have} -> {want}")
+    new = {name: (start, width) for name, start, width in OBS_LAYOUTS[want]}
+    pairs = []
+    for name, start, width in OBS_LAYOUTS[have]:
+        if name not in new:
+            raise ValueError(f"feature {name} of a {have}-wide obs has no place in {want}")
+        nstart, nwidth = new[name]
+        for k in range(min(width, nwidth)):
+            pairs.append((start + k, nstart + k))
+    return pairs
+
+
+def checkpoint_shapes(path) -> tuple[int, int]:
+    """(obs width, action dim) a checkpoint was trained with, from its weights."""
+    import torch                                        # noqa: PLC0415
+    sd = torch.load(str(path), map_location="cpu", weights_only=False)
+    sd = sd["model"] if "model" in sd else sd
+    obs_dim = int(sd["_encoder.state.0.weight"].shape[1])
+    pi_layers = sorted((int(k.split(".")[1]), k) for k in sd
+                       if k.startswith("_pi.") and k.endswith(".weight") and sd[k].dim() == 2)
+    action_dim = int(sd[pi_layers[-1][1]].shape[0]) // 2      # mean and log-std
+    return obs_dim, action_dim
+
+
 def load_checkpoint(agent, path) -> None:
     """agent.load(), accepting checkpoints trained on a NARROWER observation.
 
-    New observation features (the previous action, 2026-09-03) get zero
-    weight in the encoder's first layer, so the loaded policy computes
-    exactly what it did before until training grows those columns. The
-    layer norm sits on that layer's OUTPUT, so zero columns change nothing.
+    New observation features get zero weight in the encoder's first layer
+    and old ones are moved to their current columns (OBS_LAYOUTS), so the
+    loaded policy computes exactly what it did before until training grows
+    the new columns. The layer norm sits on that layer's OUTPUT, so zero
+    columns change nothing. The action dimension cannot be widened: build
+    the agent with the checkpoint's (checkpoint_shapes).
     """
     import torch                                        # noqa: PLC0415
 
@@ -171,10 +218,12 @@ def load_checkpoint(agent, path) -> None:
         want = agent.model.state_dict()[key].shape[1]
         have = sd[key].shape[1]
         if have < want:
-            pad = torch.zeros(sd[key].shape[0], want - have, dtype=sd[key].dtype)
-            sd[key] = torch.cat([sd[key], pad], dim=1)
-            print(f"[load] observation widened {have} -> {want}: the new inputs "
-                  f"start at zero weight")
+            w = torch.zeros(sd[key].shape[0], want, dtype=sd[key].dtype)
+            for old, new in obs_column_map(have, want):
+                w[:, new] = sd[key][:, old]
+            sd[key] = w
+            print(f"[load] observation widened {have} -> {want}: old features "
+                  f"moved to their columns, the new inputs start at zero weight")
         elif have > want:
             raise ValueError(f"{path}: trained on {have}-wide observations, "
                              f"this build has {want}")

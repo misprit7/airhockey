@@ -283,7 +283,7 @@ static int handleCommand(const char *line, ClearPath &robot, int client_fd, int 
     // stack memory, which "if (speed > 0.0)" then happily forwarded to the
     // Teensy as a SPEED command. Zero means "no speed given", which the
     // check below already treats as "don't send one".
-    double x, y, speed = 0.0;
+    double x, y, speed = 0.0, accel = 0.0;
 
     if (strncmp(line, "ENABLE", 6) == 0) {
         logf("  ENABLE\n");
@@ -426,7 +426,7 @@ static int handleCommand(const char *line, ClearPath &robot, int client_fd, int 
         snprintf(resp, sizeof(resp), "OK\n");
         logf("  -> disabled\n");
 
-    } else if (sscanf(line, "CMD %lf %lf %lf", &x, &y, &speed) >= 2) {
+    } else if (sscanf(line, "CMD %lf %lf %lf %lf", &x, &y, &speed, &accel) >= 2) {
         // "CMD x y speed" or "CMD x y". The speed is NOT ignored: the Teensy
         // owns the trajectory, so we push the cap down to it whenever it
         // changes. Dropping it here silently left the machine running at the
@@ -445,6 +445,19 @@ static int handleCommand(const char *line, ClearPath &robot, int client_fd, int 
             return 1;
         }
 
+        // A fourth field is this move's accel cap, forwarded the same way
+        // (ACCEL, only on change): a policy that commands its accel per
+        // move (action_mode profile_a, 2026-09-06) rides on CMD rather
+        // than on LIMITS, which costs two Teensy round trips. The Teensy
+        // clamps to its own ceiling.
+        static double last_accel = -1.0;
+        if (accel > 0.0 && accel != last_accel) {
+            char acmd[64];
+            snprintf(acmd, sizeof(acmd), "ACCEL %.1f\n", accel);
+            sendTeensy(teensy_fd, acmd);
+            waitTeensyOK(teensy_fd);
+            last_accel = accel;
+        }
         static double last_speed = -1.0;
         if (speed > 0.0 && speed != last_speed) {
             char scmd[64];

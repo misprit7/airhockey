@@ -110,15 +110,29 @@ class BatchAirHockeyEnv:
     #        checkpoints are loaded with zero weight on these two inputs
     #        (policy_loader.load_checkpoint), so they behave exactly as
     #        before until training grows them.
-    #   [17] [18] [19] SHOT TYPE REQUESTED, one-hot [bank left, bank right,
+    #        The previous action is THREE wide since 2026-09-06 (x, y and
+    #        the accel fraction of action_mode "profile_a"); in the 2-dim
+    #        "position" mode the third slot stays zero.
+    #   [18] [19] [20] SHOT TYPE REQUESTED, one-hot [bank left, bank right,
     #        straight]; all zero = no preference. Drawn by the env once per
     #        possession (the puck entering this body's half) when
     #        shot_types=True, else always zero. Left and right are the
     #        observer's own, facing the far goal: the x = 0 rail is LEFT.
     #        The reward for honouring it lives in rewards.BatchRewardShaper
     #        (shot_type_reward); on the table run_policy --shot-type sets it.
-    OBS_DIM = 20
-    PREV_ACTION_IDX = 15      # [15:17]; TD-MPC2's cfg.prev_action_start
+    #   [21] TIME ON SIDE: seconds since the puck last crossed the centre
+    #        line, clipped at T_SIDE_CLIP and divided by it. Which side it is
+    #        on, the puck's y already says. Exists so patience can be
+    #        rewarded (rewards: patience_s) and be learnable from a frame.
+    OBS_DIM = 22
+    PREV_ACTION_IDX = 15      # [15:18]; TD-MPC2's cfg.prev_action_start
+    PREV_ACTION_WIDTH = 3
+    SHOT_TYPE_IDX = 18        # [18:21]
+    T_SIDE_IDX = 21
+    T_SIDE_CLIP = 5.0         # seconds; the feature saturates here
+    # action_mode "profile_a": the accel fraction maps [-1, 1] -> this range
+    # of the machine's cap, so a command is never below a crawl.
+    ACCEL_FRAC_MIN = 0.05
     ROBOT_SIDE = 1.0
     HUMAN_SIDE = 0.0
 
@@ -138,7 +152,7 @@ class BatchAirHockeyEnv:
     # within ATTEND_RADIUS of the puck: paddle radius 0.05 + puck radius
     # 0.04 + 0.06 of slack, in sim metres.
     STUCK_UNATTENDED_S = 1.2
-    STUCK_ATTENDED_S = 3.0
+    STUCK_ATTENDED_S = 5.0     # was 3; the patience ramp (rewards) needs up to 1.5 s of control
     ATTEND_RADIUS = 0.15
 
     # Scripted far-side opponents on a FREE body (ai/RETRAIN.md item 5).
@@ -262,12 +276,15 @@ class BatchAirHockeyEnv:
         # existed to read from.)
         obs_mode: str = "kinematic",       # "kinematic" | "history"
         # "position" (default): 2-dim target the profile chases at machine
-        # caps. "profile_v": 4-dim (x, y, speed_frac, accel_frac) -- the
-        # policy also commands the caps for this segment, as fractions of
-        # the machine's. Productionizable by construction: the Teensy takes
-        # runtime LIMITS alongside MOVE, so this action IS its command set.
-        # Without it a policy can only hit hard by aiming through the puck.
-        action_mode: str = "position",     # "position" | "profile_v"
+        # caps. "profile_a" (the retrain, 2026-09-06): 3-dim (x, y,
+        # accel_frac) -- the policy also commands the ACCEL cap for this
+        # segment as a fraction of the machine's, speed staying at the
+        # clamp; the reward taxes the fraction, so a high one is spent on
+        # strikes and saves, not on wandering (heat is torque, torque is
+        # accel). "profile_v": 4-dim (x, y, speed_frac, accel_frac).
+        # Productionizable by construction: the Teensy takes a runtime
+        # ACCEL alongside CMD, so this action IS its command set.
+        action_mode: str = "position",     # "position" | "profile_a" | "profile_v"
         # Bound the AGENT to the box the machine can actually reach, rather
         # than to its half of the table. Off only for ablations; on it, the
         # policy would learn to use 65% of the half that does not exist.
@@ -301,11 +318,11 @@ class BatchAirHockeyEnv:
         self.table_config = table_config or TableConfig()
         if obs_mode not in ("kinematic", "history"):
             raise ValueError(f"unknown obs_mode {obs_mode!r}")
-        if action_mode not in ("position", "profile_v"):
+        if action_mode not in ("position", "profile_a", "profile_v"):
             raise ValueError(f"unknown action_mode {action_mode!r}")
         self.obs_mode = obs_mode
         self.action_mode = action_mode
-        self.action_dim = 2 if action_mode == "position" else 4
+        self.action_dim = {"position": 2, "profile_a": 3, "profile_v": 4}[action_mode]
         # Previous action is part of the history observation; kept at the
         # full 4 slots regardless of mode so the layout never shifts.
         self._prev_action = np.zeros((n_envs, 4), dtype=np.float32)
@@ -404,8 +421,9 @@ class BatchAirHockeyEnv:
             # human side's accel at the top of its DR band (1.125 x 80).
             OPPONENT_MAX_SPEED_M_S / MAX_SPEED_M_S,
             DR_ACCEL_RANGE[1] * OPPONENT_MAX_ACCEL_M_S2 / MAX_ACCEL_M_S2,
-            1.0, 1.0,                                     # previous action
+            1.0, 1.0, 1.0,                                # previous action
             1.0, 1.0, 1.0,                                # shot type one-hot
+            1.0,                                          # time on side
         ], dtype=np.float32)
 
         # ── Sensing ─────────────────────────────────────────────────────
@@ -557,8 +575,12 @@ class BatchAirHockeyEnv:
         self._prev_own_opp_y = np.zeros(n_envs)
         self._prev_rival_x = np.zeros(n_envs)
         self._prev_rival_y = np.zeros(n_envs)
-        # The far side's previous normalised action, for its view.
-        self._prev_opp_action = np.zeros((n_envs, 2), dtype=np.float32)
+        # The far side's previous normalised action, for its view, and the
+        # accel fraction its last command asked for (profile_a).
+        self._prev_opp_action = np.zeros((n_envs, 3), dtype=np.float32)
+        self._ext_opp_accel_frac = np.ones(n_envs)
+        # Seconds since the puck last crossed the centre line.
+        self._t_side = np.zeros(n_envs)
 
         # Sensing fuzz schedule: per env, the start/end times (episode
         # seconds) of the opponent and puck dropout spells; -1 = none.
@@ -857,6 +879,8 @@ class BatchAirHockeyEnv:
         half = cfg.height / 2.0
         self._shot_type[idx] = 0
         self._shot_type_opp[idx] = 0
+        self._t_side[idx] = 0.0
+        self._ext_opp_accel_frac[idx] = 1.0
         self._prev_in_half[idx] = self.engine.puck_y[idx] < half
         self._prev_in_far[idx] = self.engine.puck_y[idx] > half
         self._draw_shot_types(resetting & self._prev_in_half, agent=True)
@@ -918,6 +942,10 @@ class BatchAirHockeyEnv:
             v_frac = 0.05 + (actions[:, 2] + 1.0) * 0.5 * 0.95
             a_frac = 0.05 + (actions[:, 3] + 1.0) * 0.5 * 0.95
             agent_speed_cap = v_frac * self._agent_dyn["max_speed"]
+            agent_accel_cap = a_frac * self._agent_dyn["max_accel"]
+        elif self.action_mode == "profile_a":
+            a_frac = self.accel_fraction(actions[:, 2])
+            agent_speed_cap = None
             agent_accel_cap = a_frac * self._agent_dyn["max_accel"]
         else:
             agent_speed_cap = agent_accel_cap = None
@@ -1058,6 +1086,7 @@ class BatchAirHockeyEnv:
             "shot_type": self._shot_type.copy(),
             "opponent_kind": self._opp_policy_id.copy(),
             "fuzzed": self._fuzzed.copy(),
+            "t_side": self._t_side.copy(),
         }
 
         return obs, rewards, terminated, truncated, info
@@ -1100,6 +1129,12 @@ class BatchAirHockeyEnv:
         t = self.engine.time[:, None]
         return ((t >= table[:, :, 0]) & (t < table[:, :, 1])).any(axis=1)
 
+    @classmethod
+    def accel_fraction(cls, a) -> np.ndarray:
+        """Action slot [-1, 1] -> fraction of the machine's accel cap."""
+        a = np.clip(np.asarray(a, dtype=float), -1.0, 1.0)
+        return cls.ACCEL_FRAC_MIN + (a + 1.0) * 0.5 * (1.0 - cls.ACCEL_FRAC_MIN)
+
     def _draw_shot_types(self, mask: np.ndarray, agent: bool) -> None:
         """Roll a request for each env in `mask` (no-op unless shot_types)."""
         if not self.shot_types:
@@ -1126,8 +1161,13 @@ class BatchAirHockeyEnv:
         in_far = self.engine.puck_y > half
         self._draw_shot_types(in_half & ~self._prev_in_half, agent=True)
         self._draw_shot_types(in_far & ~self._prev_in_far, agent=False)
+        crossed = (in_half != self._prev_in_half) | (in_far != self._prev_in_far)
+        self._t_side = np.where(crossed, 0.0, self._t_side + self.action_dt)
         self._prev_in_half[:] = in_half
         self._prev_in_far[:] = in_far
+
+    def _t_side_feature(self) -> np.ndarray:
+        return np.minimum(self._t_side, self.T_SIDE_CLIP) / self.T_SIDE_CLIP
 
     def _shot_onehot(self, types: np.ndarray) -> np.ndarray:
         """[N, 3] one-hot of [left, right, straight]; type 0 -> zeros."""
@@ -1235,11 +1275,12 @@ class BatchAirHockeyEnv:
         # say, so the far side's is written -- that path is for scripted
         # opponents that never look, and opponent_obs() is the real one.
         was_robot = obs[:, 12] > (self.ROBOT_SIDE + self.HUMAN_SIDE) * 0.5
-        m[:, 15:17] = np.where(was_robot[:, None], self._prev_opp_action,
-                               self._prev_action[:, :2])
+        m[:, 15:18] = np.where(was_robot[:, None], self._prev_opp_action[:, :3],
+                               self._prev_action[:, :3])
         # The request follows the body too: the other side's, or none for
-        # a human, who is never asked.
-        m[:, 17:20] = np.where(was_robot[:, None], self._shot_onehot(self._shot_type_opp),
+        # a human, who is never asked. Time on side is the same from both
+        # ends and is left as it is.
+        m[:, 18:21] = np.where(was_robot[:, None], self._shot_onehot(self._shot_type_opp),
                                self._shot_onehot(self._shot_type))
         if self.opponent_body == "robot":
             # Two copies of one body: the flag and the caps are the same on
@@ -1317,15 +1358,18 @@ class BatchAirHockeyEnv:
             np.full(self.n_envs, self.ROBOT_SIDE),
             self._opp_dyn["max_speed"] / MAX_SPEED_M_S,
             self._opp_dyn["max_accel"] / MAX_ACCEL_M_S2,
-            self._prev_opp_action[:, 0], self._prev_opp_action[:, 1],
+            self._prev_opp_action[:, :3],
             self._shot_onehot(self._shot_type_opp),
+            self._t_side_feature(),
         ]).astype(np.float32)
 
     def mirror_action_to_opponent(self, actions: np.ndarray) -> tuple[np.ndarray, np.ndarray]:
         """Convert [N, 2] normalized actions from opponent's mirrored perspective
         to real table coordinates in opponent's half."""
         actions = np.clip(actions, -1.0, 1.0)
-        self._prev_opp_action[:] = actions[:, :2]
+        self._prev_opp_action[:, :actions.shape[1]] = actions[:, :3]
+        if actions.shape[1] >= 3 and self.action_mode == "profile_a":
+            self._ext_opp_accel_frac[:] = self.accel_fraction(actions[:, 2])
         cfg = self.table_config
         r = cfg.paddle_radius
         x = r + (actions[:, 0] + 1.0) * 0.5 * (cfg.width - 2 * r)
@@ -1469,7 +1513,14 @@ class BatchAirHockeyEnv:
                 target_x, self._ws_opp["min_x"], self._ws_opp["max_x"]))
             target_y = np.where(free, target_y, np.clip(
                 target_y, self._ws_opp["min_y"], self._ws_opp["max_y"]))
-        mx, my = self._update_dynamics(self._opp_dyn, target_x, target_y, dt)
+        # The copy of the robot commands its accel too (profile_a); the
+        # scripted kinds run at the body's cap.
+        opp_accel_cap = None
+        if self.action_mode == "profile_a":
+            opp_accel_cap = np.where(self._opp_policy_id == OPP_EXTERNAL,
+                                     self._ext_opp_accel_frac, 1.0) * self._opp_dyn["max_accel"]
+        mx, my = self._update_dynamics(self._opp_dyn, target_x, target_y, dt,
+                                       accel_cap=opp_accel_cap)
         if not np.any(free):
             return mx, my
         fx, fy = self._update_dynamics(self._opp_dyn_free, target_x, target_y, dt)
@@ -1717,8 +1768,9 @@ class BatchAirHockeyEnv:
             np.full(self.n_envs, self.ROBOT_SIDE),
             self._agent_dyn["max_speed"] / MAX_SPEED_M_S,
             self._agent_dyn["max_accel"] / MAX_ACCEL_M_S2,
-            self._prev_action[:, 0], self._prev_action[:, 1],
+            self._prev_action[:, :3],
             self._shot_onehot(self._shot_type),
+            self._t_side_feature(),
         ]).astype(np.float32)
 
     def _get_delayed_obs(self, current_obs: np.ndarray) -> np.ndarray:
