@@ -597,3 +597,27 @@ Two changes:
 > 10/10k), `overstay_steps` (want it to fall), on-target (now counts
 real shots only) and goals per 10k; and re-run the held-puck eval
 (shot speed median should climb past 3 m/s, hold time under 1.5 s).
+
+
+# Run 11 (from run 10's 550k checkpoint: demonstrations of a wound-up shot)
+
+Run 10 at 500k: the shot clock works -- median hold 1.0-1.6 s (was
+2.2-2.7), max 3-7 s (was 14) -- and the shot is still a nudge: median
+0.8-1.1 m/s after 50-72% of holds, 2.6 real on-target shots per 10k,
+0.22 goals per game against the weak goalie. The accel fraction sits
+at 0.31. A hard shot from a standstill is a wind-up and a full-accel
+strike, a two-phase sequence of ~15 steps that the planner's 100 ms
+horizon cannot see and the value function has never been shown.
+
+Change: the bot WINDS UP -- pulls back 0.15 m along the shot line, then
+strikes through the puck at full accel; a paddle arriving at v sends a
+resting puck away at 1.9 v (kinematic paddle, e = 0.9). Measured median
+strike 5.3 m/s vs the weak goalie, 4.6 vs the sniper (the old push:
+~3). Demonstrations back on with the cloning term so the sequence is
+in the buffer and in the prior's proposals.
+
+`--resume runs/run10_selfplay/agent.pt --steps 1000000 --demo-envs 8
+--bc-coef 0.5 --demo-until 800000 --run-name run11_selfplay`, log
+`logs/run11.log`. Read on-target per 10k (real shots), goals per 10k,
+`shots/accel_frac_sum` (a strike needs 1.0 for a few steps), and the
+held-puck eval's shot speed (want the median past 3 m/s).
