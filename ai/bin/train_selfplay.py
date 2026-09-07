@@ -55,6 +55,7 @@ from airhockey.rewards import (BatchRewardShaper, STAGE_SCORING,  # noqa: E402
                                CURRICULUM, curriculum_env_kwargs,
                                curriculum_shaper_kwargs)
 from airhockey.batch_env import _OPP_POLICY_MAP  # noqa: E402
+from airhockey.cushion_bot import CushionBot  # noqa: E402
 
 warnings.filterwarnings('ignore')
 torch.backends.cudnn.benchmark = True
@@ -203,6 +204,13 @@ def main():
                         help="re-initialise the policy prior head on resume "
                              "(policy_loader.reset_prior): a prior saturated "
                              "by long training cannot be regularised back")
+    parser.add_argument("--demo-envs", type=int, default=0,
+                        help="envs played by the scripted CushionBot alongside the "
+                             "agent's, whose episodes go into the same replay buffer "
+                             "(rewards and all): the stop-hold-shoot chain the policy "
+                             "never found on its own. 0 = none")
+    parser.add_argument("--demo-until", type=int, default=800_000,
+                        help="stop adding demonstrations after this many agent steps")
     parser.add_argument("--no-opponent-mix", action="store_true",
                         help="every far side is the copy of self (the "
                              "curriculum's default mixes in the sniper and "
@@ -248,6 +256,16 @@ def main():
     env = make_env(args, n_envs)
     shaper = BatchRewardShaper(n_envs, stage=STAGE_SCORING, workspace=env._ws,
                                **curriculum_shaper_kwargs("selfplay"))
+    demo_env = demo_bot = demo_shaper = None
+    if args.demo_envs > 0:
+        # The demonstrator plays the scripted opponents only (no planner
+        # call for its far side); the checkpoint's copy stays the agent's.
+        demo_env = make_env(args, args.demo_envs)
+        demo_env._opp_mix_ids = np.array([_OPP_POLICY_MAP["sniper"], _OPP_POLICY_MAP["weak_goalie"],
+                                          _OPP_POLICY_MAP["goalie"]], dtype=np.int8)
+        demo_env._opp_mix_p = np.array([0.4, 0.4, 0.2])
+        demo_shaper = BatchRewardShaper(args.demo_envs, stage=STAGE_SCORING, workspace=demo_env._ws,
+                                        **curriculum_shaper_kwargs("selfplay"))
     episode_length = int(round(30.0 / ACTION_DT))   # 30 s
     cfg = OmegaConf.merge(cfg, OmegaConf.create({
         "obs_shape": {"state": [env.obs_dim]},
@@ -302,14 +320,26 @@ def main():
     shaper.reset(obs, info=_truth_info(env))
     t0_mask = torch.ones(n_envs, dtype=torch.bool)
 
-    def fresh_td(o):
+    def fresh_td_for(e, o):
         return TensorDict(
             obs=torch.from_numpy(o).float().unsqueeze(0),
-            action=torch.full((1, env.action_dim), float('nan')),
+            action=torch.full((1, e.action_dim), float('nan')),
             reward=torch.tensor([float('nan')]),
             terminated=torch.tensor([float('nan')]),
             batch_size=(1,))
+
+    def fresh_td(o):
+        return fresh_td_for(env, o)
     tds = [[fresh_td(obs[i])] for i in range(n_envs)]
+    if demo_env is not None:
+        demo_obs = demo_env.reset(seed=cfg.seed + 1)
+        demo_env._opp_policy_id[:] = demo_env._rng.choice(demo_env._opp_mix_ids, size=args.demo_envs, p=demo_env._opp_mix_p)
+        demo_obs = demo_env.reset(seed=cfg.seed + 1)
+        demo_shaper.reset(demo_obs, info=_truth_info(demo_env))
+        demo_bot = CushionBot(demo_env, np.random.default_rng(cfg.seed + 2))
+        demo_tds = [[fresh_td_for(demo_env, demo_obs[i])] for i in range(args.demo_envs)]
+        demo_eps = 0
+        print(f"  Demonstrations: {args.demo_envs} envs of CushionBot until step {args.demo_until:,}")
 
     step = 0
     updating = False
@@ -382,6 +412,33 @@ def main():
         t0_mask = torch.from_numpy(done.copy())
         obs = next_obs
 
+        # Demonstrations: the scripted controller's envs, stepped alongside,
+        # their episodes stored exactly like the agent's.
+        if demo_env is not None and step <= args.demo_until:
+            d_act = demo_bot.act()
+            d_next, d_raw, d_term, d_trunc, d_info = demo_env.step(d_act)
+            d_shaped = demo_shaper.compute(d_next, d_raw, actions=d_act, info=d_info)
+            d_done = d_term | d_trunc
+            for i in range(args.demo_envs):
+                demo_tds[i].append(TensorDict(
+                    obs=torch.from_numpy(d_next[i]).float().unsqueeze(0),
+                    action=torch.from_numpy(d_act[i]).float().unsqueeze(0),
+                    reward=torch.tensor([float(d_shaped[i])], dtype=torch.float32),
+                    terminated=torch.tensor([float(d_term[i])]),
+                    batch_size=(1,)))
+            if np.any(d_done):
+                for i in np.where(d_done)[0]:
+                    buffer.add(torch.cat(demo_tds[i]))
+                    demo_eps += 1
+                r_obs = demo_env.auto_reset(d_term, d_trunc)
+                if r_obs is not None:
+                    d_next = r_obs
+                    demo_shaper.reset(d_next, mask=d_done, info=_truth_info(demo_env))
+                    demo_bot.reset(d_done)
+                    for i in np.where(d_done)[0]:
+                        demo_tds[i] = [fresh_td_for(demo_env, d_next[i])]
+            demo_obs = d_next
+
         total_eps = wins + losses + draws
         # The buffer stores whole episodes, so the first update waits for
         # the first games to finish (~96k env steps at 32 envs x 30 s, or
@@ -419,6 +476,11 @@ def main():
             print(f"    shots {shaper.stats}")
             for k in shaper.stats:
                 shaper.stats[k] = 0
+            if demo_env is not None:
+                print(f"    demo  {demo_shaper.stats}  episodes stored {demo_eps}  bot {demo_bot.stats}")
+                for k, v in demo_shaper.stats.items():
+                    writer.add_scalar(f'demo/{k}', v, step)
+                    demo_shaper.stats[k] = 0
             writer.flush()
 
         if step > 0 and step // args.record_freq > last_record // args.record_freq:
