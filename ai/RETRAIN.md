@@ -543,3 +543,28 @@ gate.
 the gate, per 10k), `pay_shot`/`pay_hold` against `pay_goal`, and the
 controlled multiplier; the value function now has a reason to take the
 prior's proposals.
+
+
+# Run 9 (from run 8's 1M checkpoint: hold income capped, no demonstrations)
+
+Run 8 learned to hold. Per 10k steps, the agent's held possessions went
+1.6 -> 22 by 600k (the bot: 6.4), traps 0.6 -> 7, and the controlled
+share of its on-target shots 6% -> 57%, with control income (shot 347,
+hold 169, trap 74) its main positive stream. Then it over-learned it:
+by 1M it held 1900 steps per 10k, shot half as often, on-target 41% ->
+19%, goals 2.6 -> 1.2 per 10k, and 349 of 393 games against itself were
+draws -- both copies sitting on the puck until the 5 s stuck relaunch,
+because 0.2/step of hold income with no cap is 50 per relaunch cycle
+against a shot's 60 with risk.
+
+Change: hold income for at most `HOLD_PAY_MAX_S` = 1 s per possession
+(max 10). The stop is still paid; after a second the only income left
+is the shot. Demonstrations dropped (`--demo-envs 0`): the agent holds
+three times as often as the bot, and the cloning term would pull it
+back toward the bot.
+
+`--resume runs/run8_selfplay/agent.pt --steps 1000000 --demo-envs 0
+--run-name run9_selfplay`, log `logs/run9.log`. Read `shots/held`
+(want it to stay > 10/10k), `hold_steps` (want it to FALL toward
+~500-800), on-target back above 35%, goals per 10k back up, and fewer
+draws against itself.

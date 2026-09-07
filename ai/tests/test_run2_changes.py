@@ -313,6 +313,22 @@ def test_holding_a_trapped_puck_pays_income_until_the_shot():
     assert float(sh.compute(obs, np.zeros(1), info=_info(0.5, 0.45, 0.0, 3.0))[0]) == 0.0
 
 
+def test_hold_income_is_capped_per_possession():
+    sh = _shaper(hold_income=0.2, patience_s=1.5, control_gate=True)
+    obs = np.zeros((1, 22), dtype=np.float32)
+    fast = _info(0.5, 0.6, 0.0, -2.0)
+    sh.reset(obs, info=fast); sh.compute(obs, np.zeros(1), info=fast)
+    stopped = _info(0.5, 0.36, 0.0, 0.0)
+    cap_steps = int(round(R.HOLD_PAY_MAX_S / R.ACTION_DT))
+    paid = [float(sh.compute(obs, np.zeros(1), info=stopped)[0]) for _ in range(cap_steps + 20)]
+    assert all(r == pytest.approx(0.2) for r in paid[:cap_steps])
+    assert all(r == 0.0 for r in paid[cap_steps:]), "sitting on the puck pays past the cap"
+    # a new possession pays again
+    sh.compute(obs, np.zeros(1), info=_info(0.5, 1.5, 0.0, 3.0))
+    sh.compute(obs, np.zeros(1), info=fast)
+    assert float(sh.compute(obs, np.zeros(1), info=stopped)[0]) == pytest.approx(0.2)
+
+
 def test_control_gate_pays_the_floor_for_an_uncontrolled_shot_and_full_for_a_held_one():
     hold_steps = int(round(R.HOLD_MIN_S / R.ACTION_DT))
 

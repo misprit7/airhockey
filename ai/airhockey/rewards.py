@@ -150,6 +150,12 @@ CONTROL_SPEED = 0.6
 # it to 29%. A puck that must be held still first cannot be slapped.
 HOLD_MIN_S = 0.3
 HELD_SPEED = 0.5      # "at rest" for the held rule; the bot's holds creep at 0.3-0.5 m/s
+# Run 9: hold income is paid for at most HOLD_PAY_MAX_S per possession. At
+# 0.2/step uncapped, run 8 learned by 1M to sit on the puck until the 5 s
+# stuck relaunch (1900 steps held per 10k, shots halved, on-target 41% ->
+# 19%, 349 draws in 393 games against itself). A second of holding is
+# the stop; after it the only income left is the shot.
+HOLD_PAY_MAX_S = 1.0
 
 
 def predict_shot(x, y, vx, vy, width: float = _TABLE_W, height: float = _GOAL_CY,
@@ -505,6 +511,7 @@ class BatchRewardShaper:
         # The slowest the puck has been within reach this possession.
         self._visit_min_near = np.full(n_envs, 9.0)
         self._held_s = np.zeros(n_envs)
+        self._hold_paid_s = np.zeros(n_envs)
         from airhockey.physics import TableConfig    # noqa: PLC0415
         cfg = config or TableConfig()
         self._cfg = cfg
@@ -625,6 +632,7 @@ class BatchRewardShaper:
         self._last_hit_patience[idx] = self.patience_floor if self.control_gate else 1.0
         self._visit_min_near[idx] = 9.0
         self._held_s[idx] = 0.0
+        self._hold_paid_s[idx] = 0.0
         # Read puck velocity from info (truth) or obs (indices 2-3)
         puck_vx = obs[idx, 2]
         puck_vy = obs[idx, 3]
@@ -771,6 +779,7 @@ class BatchRewardShaper:
             self._last_hit_patience[entered] = self.patience_floor if self.control_gate else 1.0
             self._visit_min_near[entered] = 9.0
             self._held_s[entered] = 0.0
+            self._hold_paid_s[entered] = 0.0
         self._in_half[:] = in_half
         self._visit_max_speed = np.where(in_half, np.maximum(self._visit_max_speed, puck_speed),
                                          self._visit_max_speed)
@@ -811,10 +820,12 @@ class BatchRewardShaper:
         # Hold: income while a puck that arrived fast is slow within reach,
         # scaled by how slow -- continuous, so partial control already pays.
         if self.hold_income > 0:
-            within = in_half & (dist < TRAP_DIST) & (self._visit_max_speed > TRAP_MIN_ARRIVAL)
+            within = (in_half & (dist < TRAP_DIST) & (self._visit_max_speed > TRAP_MIN_ARRIVAL)
+                      & (self._hold_paid_s < HOLD_PAY_MAX_S))
             slowness = np.clip(1.0 - puck_speed / HOLD_SPEED_SCALE, 0.0, 1.0)
             pay = np.where(within, self.hold_income * slowness, 0.0)
             shaped += pay
+            self._hold_paid_s += np.where(pay > 0, self.dt, 0.0)
             self.stats["hold_steps"] += int((pay > 0).sum())
 
         _mark("hold")
@@ -947,6 +958,7 @@ class BatchRewardShaper:
             self._last_hit_patience[goal_mask] = self.patience_floor if self.control_gate else 1.0
             self._visit_min_near[goal_mask] = 9.0
             self._held_s[goal_mask] = 0.0
+            self._hold_paid_s[goal_mask] = 0.0
 
         _mark("idle")
         return shaped.astype(np.float32)
