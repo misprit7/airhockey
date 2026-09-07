@@ -35,12 +35,15 @@ def test_proximity_stage_only_pays_proximity():
 def test_contact_is_not_noise_next_to_a_goal():
     """A goal should be worth a handful of the stage's per-shot reward, not
     thousands of them. Self-play pays nothing for a mere contact since run
-    3 (a miss earns nothing), so its per-shot reward is the on-target one."""
+    3 (a miss earns nothing), so its per-shot reward is the on-target one --
+    and since run 8 a CONTROLLED on-target shot there is deliberately worth
+    a good fraction of a goal (30 x 2), an uncontrolled one a twentieth."""
     for name in ("scoring", "goalie", "selfplay"):
         s = CURRICULUM[name]
         per_shot = s["contact_reward"] or s["on_target_reward"]
         ratio = s["goal_reward"] / per_shot
-        assert 5 <= ratio <= 100, f"{name}: goal/shot = {ratio}"
+        lo = 3 if name == "selfplay" else 5
+        assert lo <= ratio <= 100, f"{name}: goal/shot = {ratio}"
 
 
 def test_stage_budgets_are_positive_and_total_is_sane():

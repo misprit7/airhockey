@@ -72,7 +72,8 @@ def test_bot_takes_speed_off_the_snipers_shots():
     e, bot, sh, fast, phases = _possessions("sniper")
     mn = np.array([p["mn"] for p in fast])
     assert len(fast) >= 40
-    assert float(np.mean(mn < CONTROL_SPEED)) > 0.15
+    # (fewer than against the goalie: the fast goal-bound ones are blocked)
+    assert float(np.mean(mn < CONTROL_SPEED)) > 0.08
     assert sh.stats["cushion_sum"] > 50
     # ...and BLOCKS the goal-bound fast ones instead of retreating from
     # them: the first version cushioned everything and lost 23-61, a

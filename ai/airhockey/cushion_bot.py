@@ -213,9 +213,15 @@ class CushionBot:
         acc[c] = 1.0
 
         h = ph == HOLD
-        # Sit on the puck: a target just short of it toward our own goal.
-        tx[h] = px[h]
-        ty[h] = (py - 0.03)[h]
+        # Rest against the puck, not in it: the paddle's centre a contact
+        # distance short of the puck's, toward our own goal, and once the
+        # puck is at rest within reach, STAY PUT. The first version
+        # targeted 30 mm inside the puck and pushed it along at 0.3-1 m/s
+        # for the whole hold -- a dribble, which the held-puck gate does
+        # not count and the planner would not learn from.
+        still = (speed < 0.25) & (gap < 0.03)
+        tx[h] = np.where(still, mx, px)[h]
+        ty[h] = np.where(still, my, py - (self.contact + 0.005))[h]
         acc[h] = -0.3
 
         b = ph == BLOCK

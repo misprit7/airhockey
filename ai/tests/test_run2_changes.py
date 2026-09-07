@@ -171,7 +171,8 @@ def test_patience_beats_the_discount_by_design():
     kw = R.curriculum_shaper_kwargs("selfplay")
     assert kw["patience_s"] == 1.5
     assert kw["accel_cost_weight"] == 0.04 and kw["patience_on_goals"] is True
-    assert kw["control_gate"] is True and kw["cushion_weight"] == 1.5 and kw["hold_income"] == 0.05
+    assert kw["control_gate"] is True and kw["cushion_weight"] == 1.5 and kw["hold_income"] == 0.2
+    assert kw["on_target_reward"] == 30.0 and kw["trap_reward"] == 10.0 and kw["controlled_shot_bonus"] == 2.0
     assert kw["patience_floor"] == 0.05
     assert R.curriculum_env_kwargs("proximity")["action_mode"] == "profile_a"
     assert R.curriculum_env_kwargs("selfplay")["action_mode"] == "profile_a"
@@ -333,6 +334,17 @@ def test_control_gate_pays_the_floor_for_an_uncontrolled_shot_and_full_for_a_hel
     hit_u, goal_u = shot(0)
     assert hit_u == pytest.approx(0.2 * 15.0) and goal_u == pytest.approx(20.0)
     assert hit_c == pytest.approx(1.5 * 15.0) and goal_c == pytest.approx(100.0)
+    # a goal off a BLOCK's rebound (the puck slowed at the touch: not a
+    # "hit") is an uncontrolled goal, not a free one
+    sh = _shaper(patience_s=1.5, patience_floor=0.2, control_gate=True, goal_reward=100.0,
+                 patience_on_goals=True)
+    obs = np.zeros((1, 22), dtype=np.float32)
+    fast = _info(0.5, 0.6, 0.0, -6.0)
+    sh.reset(obs, info=fast); sh.compute(obs, np.zeros(1), info=fast)
+    sh.compute(obs, np.zeros(1), info=_info(0.5, 0.40, 0.0, 4.0))       # rebound, slower
+    sh.compute(obs, np.zeros(1), info=_info(0.5, 1.5, 0.0, 4.0))
+    goal = _info(0.5, 1.0, 0.0, 1.0); goal["score_agent"] = np.array([1])
+    assert float(sh.compute(obs, np.zeros(1), info=goal)[0]) == pytest.approx(20.0)
     # a touch-and-go stop is not a hold
     assert shot(hold_steps // 3)[0] == pytest.approx(0.2 * 15.0)
     # time on side does NOT substitute for holding, fast arrival or slow
@@ -358,10 +370,10 @@ def test_a_slow_puck_held_under_the_paddle_counts_as_controlled_without_a_formal
     assert sh.stats["traps"] == 0
     r = float(sh.compute(obs, np.zeros(1), info=_info(0.5, 0.40, 0.0, 4.0))[0])
     assert r == pytest.approx(15.0)
-    # merely SLOWED within reach (0.5 m/s, above TRAP_SPEED) is not control
+    # merely SLOWED within reach (above HELD_SPEED) is not control
     sh2 = _shaper(on_target_reward=15.0, patience_s=1.5, patience_floor=0.05, control_gate=True)
     fast = _info(0.5, 0.6, 0.0, -2.0)
     sh2.reset(obs, info=fast); sh2.compute(obs, np.zeros(1), info=fast)
     for _ in range(hold_steps):
-        sh2.compute(obs, np.zeros(1), info=_info(0.5, 0.38, 0.0, 0.5))
+        sh2.compute(obs, np.zeros(1), info=_info(0.5, 0.38, 0.0, R.HELD_SPEED + 0.1))
     assert float(sh2.compute(obs, np.zeros(1), info=_info(0.5, 0.40, 0.0, 4.0))[0]) == pytest.approx(0.05 * 15.0)

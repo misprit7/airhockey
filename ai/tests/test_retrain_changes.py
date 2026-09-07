@@ -179,7 +179,10 @@ def test_curriculum_table_carries_the_new_terms():
     assert "on_target_reward" not in R.curriculum_shaper_kwargs("proximity")
     for name in ("contact", "scoring", "goalie", "selfplay"):
         kw = R.curriculum_shaper_kwargs(name)
-        assert kw["on_target_reward"] == 15.0 and kw["shot_speed_weight"] == 1.0
+        # 15 in the pretrain stages; 30 in self-play since run 8, where a
+        # held, on-target possession is meant to be worth about a goal
+        assert kw["on_target_reward"] == (30.0 if name == "selfplay" else 15.0)
+        assert kw["shot_speed_weight"] == 1.0
         assert kw["directed_hit_weight"] <= kw["on_target_reward"] / 30
     for name in ("scoring", "goalie", "selfplay"):
         kw = R.curriculum_shaper_kwargs(name)

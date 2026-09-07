@@ -492,38 +492,54 @@ has seen the chain can pick it. `--bc-coef 0.5`, logged as `loss/pi_bc`.
 and controlled multiplier.
 
 
-# Run 8 (from run 7's 550k checkpoint: controlled means HELD, bot blocks)
+# Run 8 (from run 7's 550k checkpoint: the reward's economy, fixed)
 
 Run 7 at 500k, the agent's numbers unchanged (hold 230/10k, 8% of shots
 controlled). Playing its checkpoint with the planner and with the PRIOR
-alone, 16 envs x 30 s each:
+alone (16 envs x 30 s each), the prior controls 66% of fast possessions
+against the weak goalie -- MORE than the bot it was cloned from (55%) --
+and the planner overrides it to 29%. The cloning works; the planner
+maximises the reward, and the reward preferred the slap. A per-term
+income breakdown (`stats["pay_*"]`, new) of three styles on the same
+table, per 10k steps, under run 7's reward:
 
-    vs weak goalie   controlled possessions   goals    reward/10k
-      planner              29%                15-1       1412
-      prior alone          66%                 4-6        486
-    vs sniper
-      planner               9%                11-15      4089
-      prior alone          21%                17-29      1367
+                      total   field   cushion   shot   goal   accel   idle
+    planner vs sniper  4149    4105      392    102    329    -142   -637
+    prior   vs sniper  2196    2011      220     73    300    -252   -196
+    bot     vs sniper  2091    1783      270     21    506    -260   -238
 
-The cloning works -- the prior controls more possessions than the bot
-it was cloned from -- and the planner overrides it because, under run
-7's reward, the slap style earns three times as much. The gate counted
-a slap on a slow puck (relaunch, rebound) as "controlled" (slowed
-within reach, or arrived slowly and waited 1.5 s), so the planner's
-goals paid in full (goal multiplier 0.6-0.8) and goals dominate.
+"field" is the DEFENSE term: 1.0 per step whenever the puck approaches
+with the paddle between it and the goal, aligned. It paid ten times the
+goals, for every style, and holding the puck switches it off. It had
+been in every self-play stage since the first run.
 
-Two changes, and a fresh start from run 7's checkpoint:
+Four changes to the self-play reward, and a fresh start from run 7:
 
-1. CONTROLLED = HELD. The outcome gate opens only once the puck has sat
-   under 0.3 m/s within 0.2 m of the paddle for 0.3 s this possession
-   (`HOLD_MIN_S`), whatever speed it arrived at. An uncontrolled goal
-   pays 5, a controlled one 100; the controlled-shot bonus needs the
-   hold too. A puck that must be held still first cannot be slapped.
-2. The bot BLOCKS a fast goal-bound shot instead of retreating from it
-   (23-61 -> 30-35 vs the sniper, reward rate 1085 -> 1720/10k), so the
-   demonstrations are net positive against every opponent.
+1. defense_weight 1.0 -> 0.05. The -50 goal is the incentive to defend.
+2. CONTROLLED = HELD. The outcome gate opens only once the puck has been
+   under 0.5 m/s within 0.2 m of the paddle for 0.3 s this possession
+   (`HOLD_MIN_S`, `HELD_SPEED`). Run 7's gate passed a puck merely
+   slowed within reach, or one that arrived slowly and waited 1.5 s, so
+   a slap on a relaunch or a rebound paid in full.
+3. The goal multiplier starts at the floor each possession and follows
+   ANY touch, not only a forward hit: a block's rebound (the puck slows,
+   so not a "hit") used to carry 1.0 into the far goal -- run 7's prior
+   scored 36 against the sniper at a goal multiplier of 0.89 while
+   holding 14 pucks.
+4. A held possession is worth about a goal: trap 10 (was 3), hold income
+   0.2/step (0.05), on-target 30 x 2.0 controlled (15 x 1.5), type 10.
+   With the defense income gone every style netted -300 to -900 per 10k
+   (goals against, the accel and smoothness taxes) and a held possession
+   earned ~40: a rounding error next to the taxes.
+
+The bot also BLOCKS a fast goal-bound shot instead of retreating from
+it (23-61 -> 30-35 vs the sniper) and rests against a held puck rather
+than dribbling it, so its demonstrations are net positive and pass the
+gate.
 
 `--resume runs/run7_selfplay/agent.pt --steps 1500000 --demo-envs 8
 --bc-coef 0.5 --demo-until 1000000 --run-name run8_selfplay`, log
-`logs/run8.log`. Read the agent's `shots/hold_steps` and the controlled
-multiplier; the planner now has a reason to take the prior's proposals.
+`logs/run8.log`. Read the agent's `shots/held` (possessions that passed
+the gate, per 10k), `pay_shot`/`pay_hold` against `pay_goal`, and the
+controlled multiplier; the value function now has a reason to take the
+prior's proposals.
