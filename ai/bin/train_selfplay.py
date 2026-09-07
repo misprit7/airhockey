@@ -209,6 +209,11 @@ def main():
                              "agent's, whose episodes go into the same replay buffer "
                              "(rewards and all): the stop-hold-shoot chain the policy "
                              "never found on its own. 0 = none")
+    parser.add_argument("--bc-coef", type=float, default=0.5,
+                        help="behaviour-cloning weight on the policy prior for "
+                             "demonstrated transitions (TD-MPC2 bc_coef); the prior "
+                             "then proposes the demonstrator's actions and the planner "
+                             "evaluates them. 0 = value learning alone")
     parser.add_argument("--demo-until", type=int, default=800_000,
                         help="stop adding demonstrations after this many agent steps")
     parser.add_argument("--no-opponent-mix", action="store_true",
@@ -244,6 +249,7 @@ def main():
         "plan_smooth_coef": args.plan_smooth,
         "iterations": args.iterations,
         "num_samples": args.samples,
+        "bc_coef": args.bc_coef if args.demo_envs > 0 else 0.0,
     })
     cfg = OmegaConf.merge(base_cfg, overrides)
     if args.model_size in MODEL_SIZE:
@@ -320,12 +326,13 @@ def main():
     shaper.reset(obs, info=_truth_info(env))
     t0_mask = torch.ones(n_envs, dtype=torch.bool)
 
-    def fresh_td_for(e, o):
+    def fresh_td_for(e, o, demo: float = 0.0):
         return TensorDict(
             obs=torch.from_numpy(o).float().unsqueeze(0),
             action=torch.full((1, e.action_dim), float('nan')),
             reward=torch.tensor([float('nan')]),
             terminated=torch.tensor([float('nan')]),
+            demo=torch.tensor([demo]),
             batch_size=(1,))
 
     def fresh_td(o):
@@ -337,7 +344,7 @@ def main():
         demo_obs = demo_env.reset(seed=cfg.seed + 1)
         demo_shaper.reset(demo_obs, info=_truth_info(demo_env))
         demo_bot = CushionBot(demo_env, np.random.default_rng(cfg.seed + 2))
-        demo_tds = [[fresh_td_for(demo_env, demo_obs[i])] for i in range(args.demo_envs)]
+        demo_tds = [[fresh_td_for(demo_env, demo_obs[i], 1.0)] for i in range(args.demo_envs)]
         demo_eps = 0
         print(f"  Demonstrations: {args.demo_envs} envs of CushionBot until step {args.demo_until:,}")
 
@@ -384,6 +391,7 @@ def main():
                 action=actions[i].unsqueeze(0),
                 reward=torch.tensor([float(shaped[i])], dtype=torch.float32),
                 terminated=torch.tensor([float(term[i])]),
+                demo=torch.tensor([0.0]),
                 batch_size=(1,)))
 
         if np.any(done):
@@ -425,6 +433,7 @@ def main():
                     action=torch.from_numpy(d_act[i]).float().unsqueeze(0),
                     reward=torch.tensor([float(d_shaped[i])], dtype=torch.float32),
                     terminated=torch.tensor([float(d_term[i])]),
+                    demo=torch.tensor([1.0]),
                     batch_size=(1,)))
             if np.any(d_done):
                 for i in np.where(d_done)[0]:
@@ -436,7 +445,7 @@ def main():
                     demo_shaper.reset(d_next, mask=d_done, info=_truth_info(demo_env))
                     demo_bot.reset(d_done)
                     for i in np.where(d_done)[0]:
-                        demo_tds[i] = [fresh_td_for(demo_env, d_next[i])]
+                        demo_tds[i] = [fresh_td_for(demo_env, d_next[i], 1.0)]
             demo_obs = d_next
 
         total_eps = wins + losses + draws
@@ -451,7 +460,7 @@ def main():
             for _ in range(args.updates_per_iter):
                 train_info = agent.update(buffer)
             if step % 10000 < n_envs and train_info is not None:
-                for k in ("pi_loss", "pi_smooth", "pi_scale", "pi_entropy",
+                for k in ("pi_loss", "pi_smooth", "pi_bc", "pi_scale", "pi_entropy",
                           "value_loss", "reward_loss", "consistency_loss", "total_loss"):
                     if k in train_info.keys():
                         writer.add_scalar(f"loss/{k}", float(train_info[k]), step)
