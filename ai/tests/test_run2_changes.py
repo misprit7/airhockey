@@ -173,7 +173,7 @@ def test_patience_beats_the_discount_by_design():
     assert kw["accel_cost_weight"] == 0.04 and kw["patience_on_goals"] is True
     assert kw["control_gate"] is True and kw["cushion_weight"] == 1.5 and kw["hold_income"] == 0.2
     assert kw["on_target_reward"] == 30.0 and kw["trap_reward"] == 10.0 and kw["controlled_shot_bonus"] == 2.0
-    assert kw["overstay_cost"] == 0.1 and kw["windup_income"] == 0.2 and kw["drive_weight"] == 0.5
+    assert kw["overstay_cost"] == 0.1 and kw["windup_income"] == 0.2 and kw["drive_weight"] == 0.25
     assert kw["patience_floor"] == 0.05
     assert R.curriculum_env_kwargs("proximity")["action_mode"] == "profile_a"
     assert R.curriculum_env_kwargs("selfplay")["action_mode"] == "profile_a"
@@ -354,7 +354,7 @@ def test_shot_clock_costs_per_step_after_the_hold_is_established():
 
 
 def test_drive_income_pays_paddle_speed_toward_a_held_puck():
-    def held_shaper(drive_weight=0.5):
+    def held_shaper(drive_weight=0.25):
         sh = _shaper(drive_weight=drive_weight, patience_s=1.5, control_gate=True)
         obs = np.zeros((1, 22), dtype=np.float32)
         fast = _info(0.5, 0.6, 0.0, -2.0)
@@ -363,12 +363,16 @@ def test_drive_income_pays_paddle_speed_toward_a_held_puck():
             sh.compute(obs, np.zeros(1), info=_info(0.5, 0.36, 0.0, 0.0))
         return sh, obs
     sh, obs = held_shaper()
-    # wound up 0.2 m behind, then driving at the puck at 2 m/s (0.04 m per step)
+    # wound up 0.2 m behind, then driving at the puck at 2 m/s (0.04 m per
+    # step): 0.25 x 2^2 = 1.0 per step; at 1 m/s it would be a quarter of that
     sh.compute(obs, np.zeros(1), info=_info(0.5, 0.40, 0.0, 0.0, pad_x=0.5, pad_y=0.20))
     paid = [float(sh.compute(obs, np.zeros(1), info=_info(0.5, 0.40, 0.0, 0.0, pad_x=0.5, pad_y=0.20 + 0.04 * k))[0])
             for k in range(1, 3)]
     assert paid == [pytest.approx(1.0), pytest.approx(1.0)]
     assert sh.stats["drive_sum"] == pytest.approx(2.0)
+    sh, obs = held_shaper()
+    sh.compute(obs, np.zeros(1), info=_info(0.5, 0.40, 0.0, 0.0, pad_x=0.5, pad_y=0.20))
+    assert float(sh.compute(obs, np.zeros(1), info=_info(0.5, 0.40, 0.0, 0.0, pad_x=0.5, pad_y=0.22))[0]) == pytest.approx(0.25)
     # capped per possession (a heavy weight hits the cap on the first step)
     sh, obs = held_shaper(drive_weight=5.0)
     sh.compute(obs, np.zeros(1), info=_info(0.5, 0.40, 0.0, 0.0, pad_x=0.5, pad_y=0.20))

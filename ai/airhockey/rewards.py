@@ -164,7 +164,7 @@ HOLD_PAY_MAX_S = 1.0
 # one paid shot. And a SHOT CLOCK: sitting on the puck past the paid
 # second costs `overstay_cost` per step (run 9 sat a median 2.2-2.7 s,
 # up to 14 s, waiting for the relaunch).
-SHOT_SPEED_MIN = 1.5
+SHOT_SPEED_MIN = 2.0      # run 14: was 1.5; a 1 m/s creep into the puck made 1.9
 SHOT_SPEED_FULL = 4.0
 # Run 12: the WIND-UP is paid. Run 11 held and still nudged (0.8-1.1 m/s)
 # with demonstrations of a 5 m/s wound-up strike in the buffer: the bot's
@@ -191,8 +191,12 @@ SHOT_CLOCK_REACH = 0.35
 # step (`drive_weight` per m/s), DRIVE_PAY_MAX per possession: dense,
 # smooth, a function of the observed paddle velocity, and the hit it
 # produces then puts the on-target reward in the data often enough.
+# Run 14: the drive pays by SPEED SQUARED. Linear and capped, run 13
+# collected it with a 1 m/s creep over six steps -- the same pay as a
+# 3 m/s strike over two, at less accel and smoothness cost -- and the
+# puck left at 0.5-0.7 m/s. Quadratic, the 3 m/s drive earns 9x per step.
 DRIVE_MIN_TOWARD = 0.5
-DRIVE_PAY_MAX = 6.0
+DRIVE_PAY_MAX = 8.0
 
 
 def predict_shot(x, y, vx, vy, width: float = _TABLE_W, height: float = _GOAL_CY,
@@ -917,7 +921,7 @@ class BatchRewardShaper:
             toward = vpx * ux + vpy * uy
             driving = (held_now & (along < 0.0) & (along > -WINDUP_MAX) & (lateral < WINDUP_LINE_TOL)
                        & (toward > DRIVE_MIN_TOWARD) & (self._drive_paid < DRIVE_PAY_MAX))
-            pay = np.where(driving, np.minimum(self.drive_weight * toward,
+            pay = np.where(driving, np.minimum(self.drive_weight * toward ** 2,
                                                DRIVE_PAY_MAX - self._drive_paid), 0.0)
             shaped += pay
             self._drive_paid += pay
@@ -1332,7 +1336,7 @@ CURRICULUM: dict[str, dict] = {
         # runs 1-3 never once stopped the puck under a time-based ramp.
         trap_reward=10.0, controlled_shot_bonus=2.0,
         cushion_weight=1.5, hold_income=0.2, control_gate=True, overstay_cost=0.1,
-        windup_income=0.2, drive_weight=0.5,
+        windup_income=0.2, drive_weight=0.25,
         # Run 3: full accel for a whole 30 s episode costs 60 (run 2's 0.02
         # settled the mean fraction at 0.52; the user wants it lower), and
         # patience floors at 0.2 ON THE GOAL AS WELL: a goal from an instant

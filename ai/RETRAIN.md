@@ -673,3 +673,22 @@ on-target reward in the data often enough to be learned in turn.
 --bc-coef 0.5 --demo-until 800000 --run-name run13_selfplay`, log
 `logs/run13.log`. Read `shots/drive_sum` (the drive is used), on-target
 per 10k and goals per 10k, and the held-puck eval's shot speed.
+
+
+# Run 14 (from run 13's 600k checkpoint: the drive pays by speed squared)
+
+Run 13 at 500k collected the drive income (45-57 per 10k) and the
+checkpoint's shots after a hold were a median 0.5-0.7 m/s: it drives
+into the puck at a creep. Linear in speed and capped per possession, a
+1 m/s creep over six steps paid the same as a 3 m/s strike over two,
+at less accel and smoothness cost, and a 1 m/s paddle sends a resting
+puck off at 1.9 m/s -- just over the 1.5 m/s on-target floor.
+
+Change: drive pay is `drive_weight` x speed^2 (0.25: 1 m/s pays 0.25 a
+step, 3 m/s pays 2.25), cap 8 per possession, and the on-target floor
+is 2 m/s.
+
+`--resume runs/run13_selfplay/agent.pt --steps 1000000 --demo-envs 8
+--bc-coef 0.5 --demo-until 800000 --run-name run14_selfplay`, log
+`logs/run14.log`. Same numbers to read; the held-puck eval's shot
+speed is the one that matters.
