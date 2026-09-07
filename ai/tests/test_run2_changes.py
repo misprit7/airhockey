@@ -518,9 +518,10 @@ def test_a_puck_that_dies_on_our_side_is_a_turnover():
     relaunched = False
     for _ in range(int(2.0 / e.action_dt)):
         _o, _r, _t, _tr, info = e.step(hold)
-        if np.any(info["penalty"] < 0):
-            assert np.all(info["penalty"][info["penalty"] < 0] == e.STUCK_TURNOVER_PENALTY)
-            assert np.all(info["puck_vy"][info["penalty"] < 0] > 0), "relaunch must go to the opponent"
+        fined = info["penalty"] <= -1.0          # the workspace fine is cents; the turnover is -20
+        if np.any(fined):
+            assert np.all(info["penalty"][fined] == e.STUCK_TURNOVER_PENALTY)
+            assert np.all(info["puck_vy"][fined] > 0), "relaunch must go to the opponent"
             relaunched = True
             break
     assert relaunched
