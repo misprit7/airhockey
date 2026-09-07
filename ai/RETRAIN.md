@@ -722,3 +722,57 @@ the table; the model is horizon-agnostic, so older checkpoints load.
 `--resume runs/run14_selfplay/agent.pt --steps 1000000 --horizon 8
 --demo-envs 8 --bc-coef 0.5 --demo-until 800000 --run-name
 run15_selfplay`, log `logs/run15.log`.
+
+
+Result at 500k (04:52): no better than run 14 at the same point. Held
+15 per 10k, real on-target shots 1.6, goals 1.0-1.8; the checkpoint's
+shots after a hold a median 0.9 m/s against the weak goalie, 1.3
+against the sniper (7-21, worse), 0.4 against itself. The accel
+fraction did move for the first time in any run, 0.34 -> 0.42. The
+horizon was not the limit either.
+
+# Where this stands (2026-09-07 05:10)
+
+Learned, and stable across runs 8-15: the machine stops the puck and
+holds it. 15-22 possessions per 10k steps held under 0.5 m/s for 0.3 s
+(the demonstrator: 6-10), traps 7-12 per 10k, a median hold of
+1.3-1.7 s against the scripted opponents, and half to two thirds of its
+on-target shots come from a held puck. That was the request.
+
+Not learned: the strike from a standstill. Eight reward variants (held
+gate, hold cap, shot clock, speed-ramped on-target pay, wind-up income,
+drive income linear and squared, demonstrations with cloning) and a
+longer planning horizon produced at best a transient median 2.2 m/s
+shot (run 14 at 500k, 5-0 against the weak goalie) that the same run
+had lost again by 1M (0.9 m/s). Everything else it does after a hold
+is a 0.5-1.3 m/s push, which the weak goalie blocks and a copy of
+itself answers in kind: games against itself are 0-0 draws.
+
+What the evidence says about why. The cushion, hold and wind-up are
+all reached by a slow, smooth motion that a dense per-step income can
+steer. The strike is a burst -- a target jump and a full-accel drive
+over 3-8 steps -- whose whole payoff is one event at its end. The
+policy's accel fraction has sat at 0.31-0.34 in every run under the
+accel tax (0.42 in run 15), and the smoothness term charges the
+target jump at once. The value function did learn the strike in run 14
+and let it go again, which is the signature of a rare, high-variance
+payoff competing with a steady, certain one (holding, cushioning).
+
+Options, in the order I would try them:
+1. Take the burst out of the policy's hands: a STRIKE PRIMITIVE. A
+   fourth action slot (or a threshold on the accel slot) that hands the
+   firmware a scripted wind-up-and-drive at the puck along the line to
+   a requested aim, exactly as the bot does it. The policy then decides
+   WHEN and WHERE to shoot, which is one decision inside the horizon,
+   and the physical strike is reproducible on the table. The bot's
+   strike is already measured (5 m/s median) and unit-tested.
+2. Exempt the strike from the smoothness and accel taxes: pay them
+   only while the puck is not held (they exist to stop wandering, and
+   a held puck is not wandering). Cheap to try; may not be enough.
+3. Prioritised replay of controlled on-target hits so the rare payoff
+   is fitted. The stock buffer is uniform; the fork's prioritised path
+   was lost with the machine it lived on.
+
+For the table: `run14_500k` (a symlink to run 14's 500k checkpoint)
+is the one that holds AND shot; `eval_policy.py` numbers for it and
+for run 14's final are in this section's follow-up once they land.
