@@ -702,6 +702,13 @@ Run 14 is the first checkpoint that strikes: after a hold, a median
 (17-6). Over the run: held 17-18 per 10k, real on-target shots 1.6 ->
 3.2 per 10k, goals 1.6 -> 3.0, accel fraction 0.34 throughout.
 
+Run 14's FINAL checkpoint (1M) then regressed against its 500k one:
+shot after a hold a median 0.9 m/s against the weak goalie (2.2 at
+500k), 1.9 against the sniper, hold time back to 2.5-2.8 s, and 46% of
+held possessions against a copy of itself ending in the relaunch. The
+strike was not stable within the run: it appears and the value
+function does not keep it.
+
 The shaping has run its course; the structural suspect is the horizon.
 At the agent's habitual 13 m/s^2 a strike from the wind-up band takes
 ~150 ms, and the planner sees 100 ms (5 steps at 50 Hz): the hit and
