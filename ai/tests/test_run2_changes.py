@@ -173,6 +173,7 @@ def test_patience_beats_the_discount_by_design():
     assert kw["accel_cost_weight"] == 0.04 and kw["patience_on_goals"] is True
     assert kw["control_gate"] is True and kw["cushion_weight"] == 1.5 and kw["hold_income"] == 0.2
     assert kw["on_target_reward"] == 30.0 and kw["trap_reward"] == 10.0 and kw["controlled_shot_bonus"] == 2.0
+    assert kw["overstay_cost"] == 0.1
     assert kw["patience_floor"] == 0.05
     assert R.curriculum_env_kwargs("proximity")["action_mode"] == "profile_a"
     assert R.curriculum_env_kwargs("selfplay")["action_mode"] == "profile_a"
@@ -311,6 +312,38 @@ def test_holding_a_trapped_puck_pays_income_until_the_shot():
     assert float(sh.compute(obs, np.zeros(1), info=_info(0.5, 0.36, 0.0, 0.5))[0]) == pytest.approx(0.03 * 0.5)
     # once it is shot away the income stops
     assert float(sh.compute(obs, np.zeros(1), info=_info(0.5, 0.45, 0.0, 3.0))[0]) == 0.0
+
+
+def test_on_target_pays_by_shot_speed_and_a_nudge_keeps_the_shot_open():
+    def pay(speed, then=None):
+        sh = _shaper(on_target_reward=30.0)
+        obs = np.zeros((1, 22), dtype=np.float32)
+        slow = _info(0.5, 0.35, 0.0, -0.5)
+        sh.reset(obs, info=slow); sh.compute(obs, np.zeros(1), info=slow)
+        r = float(sh.compute(obs, np.zeros(1), info=_info(0.5, 0.40, 0.0, speed))[0])
+        if then is None:
+            return r
+        sh.compute(obs, np.zeros(1), info=_info(0.5, 0.42, 0.0, 0.3))      # still on our half, slow
+        return r, float(sh.compute(obs, np.zeros(1), info=_info(0.5, 0.44, 0.0, then))[0])
+    assert pay(1.0) == 0.0, "a nudge is not a shot"
+    assert pay(R.SHOT_SPEED_FULL) == pytest.approx(30.0)
+    mid = 0.5 * (R.SHOT_SPEED_MIN + R.SHOT_SPEED_FULL)
+    assert pay(mid) == pytest.approx(15.0)
+    # the nudge did not use up the possession's paid shot
+    assert pay(1.0, then=R.SHOT_SPEED_FULL) == (0.0, pytest.approx(30.0))
+
+
+def test_overstay_costs_per_step_past_the_paid_second():
+    sh = _shaper(hold_income=0.2, overstay_cost=0.1, patience_s=1.5, control_gate=True)
+    obs = np.zeros((1, 22), dtype=np.float32)
+    fast = _info(0.5, 0.6, 0.0, -2.0)
+    sh.reset(obs, info=fast); sh.compute(obs, np.zeros(1), info=fast)
+    stopped = _info(0.5, 0.36, 0.0, 0.0)
+    cap_steps = int(round(R.HOLD_PAY_MAX_S / R.ACTION_DT))
+    paid = [float(sh.compute(obs, np.zeros(1), info=stopped)[0]) for _ in range(cap_steps + 10)]
+    assert all(r == pytest.approx(0.2) for r in paid[:cap_steps])
+    assert all(r == pytest.approx(-0.1) for r in paid[cap_steps:])
+    assert sh.stats["overstay_steps"] == 10
 
 
 def test_hold_income_is_capped_per_possession():

@@ -156,6 +156,16 @@ HELD_SPEED = 0.5      # "at rest" for the held rule; the bot's holds creep at 0.
 # 19%, 349 draws in 393 games against itself). A second of holding is
 # the stop; after it the only income left is the shot.
 HOLD_PAY_MAX_S = 1.0
+# Run 10: an on-target shot pays by SPEED. Run 9 cashed the on-target
+# reward with a nudge -- median shot speed 0.9-1.1 m/s after 66-70% of
+# held possessions in eval -- which the weak goalie blocks every time and
+# a copy of self answers in kind (0-0). Nothing under SHOT_SPEED_MIN,
+# full from SHOT_SPEED_FULL, and a nudge does not use up the possession's
+# one paid shot. And a SHOT CLOCK: sitting on the puck past the paid
+# second costs `overstay_cost` per step (run 9 sat a median 2.2-2.7 s,
+# up to 14 s, waiting for the relaunch).
+SHOT_SPEED_MIN = 1.5
+SHOT_SPEED_FULL = 4.0
 
 
 def predict_shot(x, y, vx, vy, width: float = _TABLE_W, height: float = _GOAL_CY,
@@ -492,6 +502,7 @@ class BatchRewardShaper:
         #                   and patience_floor otherwise.
         cushion_weight: float = 0.0,
         hold_income: float = 0.0,
+        overstay_cost: float = 0.0,
         control_gate: bool = False,
         config=None,
     ):
@@ -503,6 +514,7 @@ class BatchRewardShaper:
         self.patience_on_goals = patience_on_goals
         self.cushion_weight = cushion_weight
         self.hold_income = hold_income
+        self.overstay_cost = overstay_cost
         self.control_gate = control_gate
         self.dt = ACTION_DT
         # The patience multiplier at the agent's last hit of the current
@@ -533,7 +545,7 @@ class BatchRewardShaper:
         self.stats = {"traps": 0, "on_target": 0, "type_matched": 0, "shots": 0,
                       "patience_sum": 0.0, "accel_frac_sum": 0.0, "steps": 0,
                       "goal_patience_sum": 0.0, "goals": 0,
-                      "cushion_sum": 0.0, "hold_steps": 0, "held": 0,
+                      "cushion_sum": 0.0, "hold_steps": 0, "held": 0, "overstay_steps": 0,
                       **{"pay_" + k: 0.0 for k in ("prox", "hit", "trap", "cushion", "hold",
                                                    "shot", "field", "goal", "penalty", "accel",
                                                    "idle")}}
@@ -825,6 +837,13 @@ class BatchRewardShaper:
             slowness = np.clip(1.0 - puck_speed / HOLD_SPEED_SCALE, 0.0, 1.0)
             pay = np.where(within, self.hold_income * slowness, 0.0)
             shaped += pay
+            if self.overstay_cost > 0:
+                # The shot clock: the puck slow within reach past the paid
+                # second (judged before this step's second is counted).
+                over = (in_half & (dist < TRAP_DIST) & (puck_speed < HELD_SPEED)
+                        & (self._hold_paid_s >= HOLD_PAY_MAX_S))
+                shaped -= np.where(over, self.overstay_cost, 0.0)
+                self.stats["overstay_steps"] += int(over.sum())
             self._hold_paid_s += np.where(pay > 0, self.dt, 0.0)
             self.stats["hold_steps"] += int((pay > 0).sum())
 
@@ -843,10 +862,15 @@ class BatchRewardShaper:
                 on_target = scoring & np.isfinite(x_goal) & \
                     (np.abs(x_goal - self._cfg.width / 2.0) < self._cfg.goal_width / 2.0)
                 self.stats["shots"] += int(scoring.sum())
+                # A shot, not a nudge: nothing under SHOT_SPEED_MIN, full from
+                # SHOT_SPEED_FULL; a nudge leaves the possession's paid shot open.
+                ramp = np.clip((puck_speed - SHOT_SPEED_MIN) / (SHOT_SPEED_FULL - SHOT_SPEED_MIN),
+                               0.0, 1.0)
+                on_target &= ramp > 0
                 if np.any(on_target):
                     # The bonus is for a trap that was HELD, not a touch-and-go.
                     held = self._trapped & (self._held_s >= HOLD_MIN_S)
-                    mult = np.where(held, self.controlled_shot_bonus, 1.0) * patience
+                    mult = np.where(held, self.controlled_shot_bonus, 1.0) * patience * ramp
                     shaped += np.where(on_target,
                                        (self.on_target_reward
                                         + self.shot_speed_weight * puck_speed) * mult, 0.0)
@@ -854,7 +878,7 @@ class BatchRewardShaper:
                     self.stats["patience_sum"] += float(patience[on_target].sum())
                     if self.shot_type_reward > 0 and info is not None and "shot_type" in info:
                         matched = on_target & shot_matches_type(info["shot_type"], n_b, first)
-                        shaped += np.where(matched, self.shot_type_reward * patience, 0.0)
+                        shaped += np.where(matched, self.shot_type_reward * patience * ramp, 0.0)
                         self.stats["type_matched"] += int(matched.sum())
                     self._shot_paid |= on_target
 
@@ -1215,7 +1239,7 @@ CURRICULUM: dict[str, dict] = {
         # possession having been controlled rather than on elapsed time --
         # runs 1-3 never once stopped the puck under a time-based ramp.
         trap_reward=10.0, controlled_shot_bonus=2.0,
-        cushion_weight=1.5, hold_income=0.2, control_gate=True,
+        cushion_weight=1.5, hold_income=0.2, control_gate=True, overstay_cost=0.1,
         # Run 3: full accel for a whole 30 s episode costs 60 (run 2's 0.02
         # settled the mean fraction at 0.52; the user wants it lower), and
         # patience floors at 0.2 ON THE GOAL AS WELL: a goal from an instant
@@ -1262,7 +1286,8 @@ _IDLE_KEYS = ("home_weight", "jitter_weight", "smooth_weight")
 _OUTCOME_KEYS = ("on_target_reward", "shot_speed_weight", "trap_reward",
                  "controlled_shot_bonus", "shot_type_reward",
                  "accel_cost_weight", "patience_s", "patience_floor",
-                 "patience_on_goals", "cushion_weight", "hold_income", "control_gate")
+                 "patience_on_goals", "cushion_weight", "hold_income", "control_gate",
+                 "overstay_cost")
 
 
 def curriculum_episode_steps(name: str, action_dt: float = ACTION_DT) -> int:

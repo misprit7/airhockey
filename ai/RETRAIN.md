@@ -568,3 +568,32 @@ back toward the bot.
 (want it to stay > 10/10k), `hold_steps` (want it to FALL toward
 ~500-800), on-target back above 35%, goals per 10k back up, and fewer
 draws against itself.
+
+
+# Run 10 (from run 9's 700k checkpoint: shots pay by speed, shot clock)
+
+Run 9 at 500k held 21 possessions per 10k (stable) but scored 0.22 per
+game against the weak goalie with 55 draws in 72, and 0-0 against a
+copy of itself. Playing the checkpoint (16 envs x 30 s per opponent):
+
+    it held 30 of 31 possessions against the weak goalie
+    sat on the puck a median 2.2-2.7 s, mean 3.0-3.6 s, up to 14 s
+    "shot" after 66-70% of holds -- at a median 0.9-1.1 m/s
+
+A nudge. `predict_shot` traces it to the goal line, so it cashed the
+on-target reward (30 x 2 controlled) at the cheapest possible speed;
+the weak goalie blocks it every time and the copy of self nudges back.
+
+Two changes:
+
+1. On-target pay is scaled by shot speed: nothing under 1.5 m/s, full
+   from 4 m/s (`SHOT_SPEED_MIN`, `SHOT_SPEED_FULL`), and a nudge does
+   not use up the possession's one paid shot.
+2. A shot clock: past the paid second of holding, every step with the
+   puck slow within reach costs `overstay_cost` 0.1 (a 5 s sit = -20).
+
+`--resume runs/run9_selfplay/agent.pt --steps 1000000 --demo-envs 0
+--run-name run10_selfplay`, log `logs/run10.log`. Read `held` (keep
+> 10/10k), `overstay_steps` (want it to fall), on-target (now counts
+real shots only) and goals per 10k; and re-run the held-puck eval
+(shot speed median should climb past 3 m/s, hold time under 1.5 s).
