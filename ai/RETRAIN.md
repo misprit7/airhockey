@@ -649,3 +649,27 @@ its strikes earned no bonus and its chain looked poor to the learner).
 `logs/run12.log`. Read `shots/windup_steps` (the position is found),
 on-target per 10k and goals per 10k (it is used), and the held-puck
 eval's shot speed.
+
+
+# Run 13 (from run 12's 600k checkpoint: the drive is paid)
+
+Run 12 at 500k found the wind-up -- 63 -> 172 wound-up steps per 10k --
+and sat in it: the shot clock cost rose 178 -> 662, real on-target
+shots fell to 1.4 per 10k, and the checkpoint's shots after a hold were
+still a median 0.7-0.9 m/s. Three-quarters of the chain (cushion, hold,
+wind up) is learned; the strike is not. Its payoff is one rare event --
+a fast controlled hit, ~2 per 10k demo steps -- that a two-hot reward
+head cannot fit, at the edge of a 100 ms planning horizon, and the
+first step of it is a target jump the smoothness term taxes at once.
+
+Change: pay the DRIVE. `drive_weight` 0.5 per m/s of paddle speed
+toward a held puck, per step, from anywhere in the wind-up band, at
+most 6 per possession (`DRIVE_PAY_MAX`). Dense, smooth, a function of
+the observed paddle velocity, so the model can represent it and the
+planner sees it inside the horizon; the hit it produces then puts the
+on-target reward in the data often enough to be learned in turn.
+
+`--resume runs/run12_selfplay/agent.pt --steps 1000000 --demo-envs 8
+--bc-coef 0.5 --demo-until 800000 --run-name run13_selfplay`, log
+`logs/run13.log`. Read `shots/drive_sum` (the drive is used), on-target
+per 10k and goals per 10k, and the held-puck eval's shot speed.

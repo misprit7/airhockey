@@ -183,6 +183,16 @@ WINDUP_LINE_TOL = 0.06
 WINDUP_PAY_MAX_S = 0.5
 SHOT_CLOCK_S = 1.5
 SHOT_CLOCK_REACH = 0.35
+# Run 13: the DRIVE is paid. Run 12 found the wind-up (170 steps per
+# 10k) and sat there: median shot 0.7-0.9 m/s still. The strike's payoff
+# is one rare event (a fast controlled hit, ~2 per 10k demo steps) the
+# reward model cannot fit, at the edge of a 100 ms horizon. So the
+# paddle's speed TOWARD a held puck from the wind-up band is paid per
+# step (`drive_weight` per m/s), DRIVE_PAY_MAX per possession: dense,
+# smooth, a function of the observed paddle velocity, and the hit it
+# produces then puts the on-target reward in the data often enough.
+DRIVE_MIN_TOWARD = 0.5
+DRIVE_PAY_MAX = 6.0
 
 
 def predict_shot(x, y, vx, vy, width: float = _TABLE_W, height: float = _GOAL_CY,
@@ -521,6 +531,7 @@ class BatchRewardShaper:
         hold_income: float = 0.0,
         overstay_cost: float = 0.0,
         windup_income: float = 0.0,
+        drive_weight: float = 0.0,
         control_gate: bool = False,
         config=None,
     ):
@@ -534,6 +545,7 @@ class BatchRewardShaper:
         self.hold_income = hold_income
         self.overstay_cost = overstay_cost
         self.windup_income = windup_income
+        self.drive_weight = drive_weight
         self.control_gate = control_gate
         self.dt = ACTION_DT
         # The patience multiplier at the agent's last hit of the current
@@ -545,6 +557,9 @@ class BatchRewardShaper:
         self._hold_paid_s = np.zeros(n_envs)
         self._windup_paid_s = np.zeros(n_envs)
         self._since_held_s = np.zeros(n_envs)
+        self._drive_paid = np.zeros(n_envs)
+        self._prev_pad_x = np.full(n_envs, np.nan)
+        self._prev_pad_y = np.full(n_envs, np.nan)
         from airhockey.physics import TableConfig    # noqa: PLC0415
         cfg = config or TableConfig()
         self._cfg = cfg
@@ -567,10 +582,10 @@ class BatchRewardShaper:
                       "patience_sum": 0.0, "accel_frac_sum": 0.0, "steps": 0,
                       "goal_patience_sum": 0.0, "goals": 0,
                       "cushion_sum": 0.0, "hold_steps": 0, "held": 0, "overstay_steps": 0,
-                      "windup_steps": 0,
+                      "windup_steps": 0, "drive_sum": 0.0,
                       **{"pay_" + k: 0.0 for k in ("prox", "hit", "trap", "cushion", "hold",
                                                    "shot", "field", "goal", "penalty", "accel",
-                                                   "idle")}}
+                                                   "idle", "windup", "drive", "clock")}}
         # The reachable box (env._ws), for the proximity term. Measured
         # distance to the puck is dominated by where the PUCK is: it spends
         # most of a game outside the robot's box, and a policy that drives
@@ -669,6 +684,9 @@ class BatchRewardShaper:
         self._hold_paid_s[idx] = 0.0
         self._windup_paid_s[idx] = 0.0
         self._since_held_s[idx] = 0.0
+        self._drive_paid[idx] = 0.0
+        self._prev_pad_x[idx] = np.nan
+        self._prev_pad_y[idx] = np.nan
         # Read puck velocity from info (truth) or obs (indices 2-3)
         puck_vx = obs[idx, 2]
         puck_vy = obs[idx, 3]
@@ -818,6 +836,7 @@ class BatchRewardShaper:
             self._hold_paid_s[entered] = 0.0
             self._windup_paid_s[entered] = 0.0
             self._since_held_s[entered] = 0.0
+            self._drive_paid[entered] = 0.0
         self._in_half[:] = in_half
         self._visit_max_speed = np.where(in_half, np.maximum(self._visit_max_speed, puck_speed),
                                          self._visit_max_speed)
@@ -866,21 +885,46 @@ class BatchRewardShaper:
             shaped += pay
             self._hold_paid_s += np.where(pay > 0, self.dt, 0.0)
             self.stats["hold_steps"] += int((pay > 0).sum())
+
+        _mark("hold")
+
+        # The shot line: from the puck to the far goal's centre; where the
+        # paddle sits along it (negative = behind the puck) and beside it.
+        gx, gy = self._cfg.width / 2.0 - puck_x, self._H - puck_y
+        gn = np.maximum(np.hypot(gx, gy), 1e-6)
+        ux, uy = gx / gn, gy / gn
+        rx, ry = pad_x - puck_x, pad_y - puck_y
+        along = rx * ux + ry * uy
+        lateral = np.abs(rx * uy - ry * ux)
+        held_now = in_half & (puck_speed < HELD_SPEED) & (self._held_s >= HOLD_MIN_S)
         if self.windup_income > 0:
             # Wound up: a held puck, slow, and the paddle behind it on the
-            # line to the far goal's centre, at striking distance.
-            gx, gy = self._cfg.width / 2.0 - puck_x, self._H - puck_y
-            gn = np.maximum(np.hypot(gx, gy), 1e-6)
-            ux, uy = gx / gn, gy / gn
-            rx, ry = pad_x - puck_x, pad_y - puck_y
-            along = rx * ux + ry * uy
-            lateral = np.abs(rx * uy - ry * ux)
-            wound = (in_half & (puck_speed < HELD_SPEED) & (self._held_s >= HOLD_MIN_S)
-                     & (along < -WINDUP_MIN) & (along > -WINDUP_MAX) & (lateral < WINDUP_LINE_TOL)
-                     & (self._windup_paid_s < WINDUP_PAY_MAX_S))
+            # shot line at striking distance.
+            wound = (held_now & (along < -WINDUP_MIN) & (along > -WINDUP_MAX)
+                     & (lateral < WINDUP_LINE_TOL) & (self._windup_paid_s < WINDUP_PAY_MAX_S))
             shaped += np.where(wound, self.windup_income, 0.0)
             self._windup_paid_s += np.where(wound, self.dt, 0.0)
             self.stats["windup_steps"] += int(wound.sum())
+
+        _mark("windup")
+
+        if self.drive_weight > 0:
+            # The drive: the paddle's speed toward a held puck from the
+            # wind-up band, per m/s per step, DRIVE_PAY_MAX per possession.
+            known = ~np.isnan(self._prev_pad_x)
+            vpx = np.where(known, (pad_x - np.nan_to_num(self._prev_pad_x)) / self.dt, 0.0)
+            vpy = np.where(known, (pad_y - np.nan_to_num(self._prev_pad_y)) / self.dt, 0.0)
+            toward = vpx * ux + vpy * uy
+            driving = (held_now & (along < 0.0) & (along > -WINDUP_MAX) & (lateral < WINDUP_LINE_TOL)
+                       & (toward > DRIVE_MIN_TOWARD) & (self._drive_paid < DRIVE_PAY_MAX))
+            pay = np.where(driving, np.minimum(self.drive_weight * toward,
+                                               DRIVE_PAY_MAX - self._drive_paid), 0.0)
+            shaped += pay
+            self._drive_paid += pay
+            self.stats["drive_sum"] += float(pay.sum())
+
+        _mark("drive")
+
         if self.overstay_cost > 0:
             # The shot clock: SHOT_CLOCK_S after the hold was established,
             # the puck still slow on our half within reach costs per step.
@@ -889,7 +933,7 @@ class BatchRewardShaper:
             shaped -= np.where(over, self.overstay_cost, 0.0)
             self.stats["overstay_steps"] += int(over.sum())
 
-        _mark("hold")
+        _mark("clock")
 
         # Shot outcome, scored at the hit from the puck's outgoing velocity
         # and paid once per visit. A hit that was already paid this visit
@@ -1028,8 +1072,11 @@ class BatchRewardShaper:
             self._hold_paid_s[goal_mask] = 0.0
             self._windup_paid_s[goal_mask] = 0.0
             self._since_held_s[goal_mask] = 0.0
+            self._drive_paid[goal_mask] = 0.0
 
         _mark("idle")
+        self._prev_pad_x = np.array(pad_x, dtype=float, copy=True)
+        self._prev_pad_y = np.array(pad_y, dtype=float, copy=True)
         return shaped.astype(np.float32)
 
 
@@ -1285,7 +1332,7 @@ CURRICULUM: dict[str, dict] = {
         # runs 1-3 never once stopped the puck under a time-based ramp.
         trap_reward=10.0, controlled_shot_bonus=2.0,
         cushion_weight=1.5, hold_income=0.2, control_gate=True, overstay_cost=0.1,
-        windup_income=0.2,
+        windup_income=0.2, drive_weight=0.5,
         # Run 3: full accel for a whole 30 s episode costs 60 (run 2's 0.02
         # settled the mean fraction at 0.52; the user wants it lower), and
         # patience floors at 0.2 ON THE GOAL AS WELL: a goal from an instant
@@ -1333,7 +1380,7 @@ _OUTCOME_KEYS = ("on_target_reward", "shot_speed_weight", "trap_reward",
                  "controlled_shot_bonus", "shot_type_reward",
                  "accel_cost_weight", "patience_s", "patience_floor",
                  "patience_on_goals", "cushion_weight", "hold_income", "control_gate",
-                 "overstay_cost", "windup_income")
+                 "overstay_cost", "windup_income", "drive_weight")
 
 
 def curriculum_episode_steps(name: str, action_dt: float = ACTION_DT) -> int:
