@@ -62,7 +62,7 @@ def test_bot_controls_the_puck_in_most_possessions_against_a_weak_goalie():
     controlled = float(np.mean(mn < CONTROL_SPEED))
     assert controlled > 0.4, f"controlled only {controlled:.0%} of fast possessions"
     assert {WAIT, INTERCEPT, CUSHION, HOLD, SHOOT} <= phases
-    assert bot.stats["holds"] > 5 and bot.stats["shots"] > 3
+    assert bot.stats["holds"] > 5 and bot.stats["windups"] > 5 and bot.stats["shots"] > 3
     # and the shaper pays it for exactly that: held steps and on-target shots
     assert sh.stats["hold_steps"] > 100
     assert sh.stats["on_target"] > 0

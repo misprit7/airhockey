@@ -31,8 +31,8 @@ import numpy as np
 
 from airhockey.batch_env import BatchAirHockeyEnv
 
-WAIT, INTERCEPT, CUSHION, HOLD, SHOOT, BLOCK = 0, 1, 2, 3, 4, 5
-PHASE_NAMES = ("wait", "intercept", "cushion", "hold", "shoot", "block")
+WAIT, INTERCEPT, CUSHION, HOLD, SHOOT, BLOCK, WINDUP = 0, 1, 2, 3, 4, 5, 6
+PHASE_NAMES = ("wait", "intercept", "cushion", "hold", "shoot", "block", "windup")
 
 # Geometry / tuning, sim metres and seconds.
 STATION_ABOVE_FLOOR = 0.25   # wait this far above the box floor: room to retreat
@@ -40,10 +40,17 @@ CUSHION_TRIGGER = 0.10       # start retreating when the gap to contact is under
 CUSHION_LEAD_S = 0.08        # ...or when contact is under this many seconds away
 RETREAT_M = 0.12             # target this far behind the paddle along the puck's motion
 CUSHION_MAX_S = 0.30
-HOLD_S = 1.2
+HOLD_S = 0.9                 # inside the shaper's paid second (the shot clock)
 HOLD_ESCAPE_SPEED = 1.0      # the puck got away: intercept again
 SHOOT_S = 0.35
-SHOOT_THROUGH = 0.22         # target this far beyond the puck toward the goal
+SHOOT_THROUGH = 0.30         # target this far beyond the puck toward the goal
+# A real shot needs a WIND-UP: pull back along the shot line, then strike
+# through the puck at full accel. Pushing through from contact (the first
+# version) left the puck at the paddle's peak speed, ~3 m/s at 40 m/s^2;
+# a paddle arriving at v hits a resting puck away at 1.9 v (kinematic
+# paddle, e = 0.9), so 0.15 m of run-up gives ~4.5 m/s.
+WINDUP_M = 0.15
+WINDUP_S = 0.25
 APPROACH_SPEED = 0.4         # a puck slower than this on our half is walked up to
 # A puck faster than this cannot be absorbed by a 40 m/s^2 body in time,
 # and one heading into the goal must not be retreated from at all: BLOCK
@@ -68,7 +75,7 @@ class CushionBot:
         self.ws = env._ws
         self.H = cfg.height
         self.W = cfg.width
-        self.stats = {"cushions": 0, "holds": 0, "shots": 0, "blocks": 0}
+        self.stats = {"cushions": 0, "holds": 0, "shots": 0, "blocks": 0, "windups": 0}
 
     def reset(self, mask=None) -> None:
         idx = slice(None) if mask is None else mask
@@ -167,18 +174,35 @@ class CushionBot:
         back = done_cu & ~to_hold
         ph[back] = INTERCEPT
         self.t_phase[back] = 0.0
-        # HOLD -> SHOOT after HOLD_S; HOLD -> INTERCEPT if it got away.
+        # HOLD -> WINDUP after HOLD_S; HOLD -> INTERCEPT if it got away.
         escaped = (ph == HOLD) & ((speed > HOLD_ESCAPE_SPEED) | (gap > 0.15))
         ph[escaped] = INTERCEPT
         self.t_phase[escaped] = 0.0
-        shoot = (ph == HOLD) & (self.t_phase >= HOLD_S)
-        ph[shoot] = SHOOT
-        self.t_phase[shoot] = 0.0
-        self.stats["shots"] += int(shoot.sum())
-        if np.any(shoot):
+        windup = (ph == HOLD) & (self.t_phase >= HOLD_S)
+        ph[windup] = WINDUP
+        self.t_phase[windup] = 0.0
+        self.stats["windups"] += int(windup.sum())
+        if np.any(windup):
             # aim somewhere in the far mouth
             mouth = e.table_config.goal_width / 2.0 - e.table_config.puck_radius
-            self.aim_x[shoot] = self.W / 2.0 + self.rng.uniform(-mouth, mouth, size=int(shoot.sum()))
+            self.aim_x[windup] = self.W / 2.0 + self.rng.uniform(-mouth, mouth, size=int(windup.sum()))
+        # WINDUP -> SHOOT once the paddle is back on the shot line behind
+        # the puck (or the wind-up times out); the puck drifting away
+        # (> 0.3 m) means intercept again.
+        dxa = self.aim_x - px
+        dya = self.H - py
+        nna = np.maximum(np.hypot(dxa, dya), 1e-6)
+        uxa, uya = dxa / nna, dya / nna
+        back_x = px - uxa * (self.contact + WINDUP_M)
+        back_y = py - uya * (self.contact + WINDUP_M)
+        at_back = np.hypot(mx - back_x, my - back_y) < 0.03
+        strike = (ph == WINDUP) & (at_back | (self.t_phase >= WINDUP_S))
+        ph[strike] = SHOOT
+        self.t_phase[strike] = 0.0
+        self.stats["shots"] += int(strike.sum())
+        lost = (ph == WINDUP) & (gap > 0.3)
+        ph[lost] = INTERCEPT
+        self.t_phase[lost] = 0.0
         # SHOOT -> WAIT after SHOOT_S, or once the puck has left the half.
         done_sh = (ph == SHOOT) & ((self.t_phase > SHOOT_S) | ~on_half)
         ph[done_sh] = WAIT
@@ -234,12 +258,14 @@ class CushionBot:
         ty[b] = y_block[b]
         acc[b] = 1.0
 
+        wu = ph == WINDUP
+        tx[wu] = np.clip(back_x, ws["min_x"], ws["max_x"])[wu]
+        ty[wu] = np.clip(back_y, ws["min_y"], ws["max_y"])[wu]
+        acc[wu] = 1.0
+
         s = ph == SHOOT
-        dx = self.aim_x - px
-        dy = self.H - py
-        nn = np.maximum(np.hypot(dx, dy), 1e-6)
-        tx[s] = (px + dx / nn * SHOOT_THROUGH)[s]
-        ty[s] = (py + dy / nn * SHOOT_THROUGH)[s]
+        tx[s] = (px + uxa * SHOOT_THROUGH)[s]
+        ty[s] = (py + uya * SHOOT_THROUGH)[s]
         acc[s] = 1.0
 
         return self._to_action(tx, ty, acc)
