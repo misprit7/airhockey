@@ -176,13 +176,12 @@ SHOT_SPEED_FULL = 4.0
 # From there the strike is one forward drive inside the horizon.
 # The shot clock is now a clock: `overstay_cost` per step once
 # SHOT_CLOCK_S have passed since the hold was established and the puck
-# is still slow on our half within SHOT_CLOCK_REACH of the paddle.
+# is still slow on our half, wherever the paddle is.
 WINDUP_MIN = 0.12
 WINDUP_MAX = 0.30
 WINDUP_LINE_TOL = 0.06
 WINDUP_PAY_MAX_S = 0.5
 SHOT_CLOCK_S = 1.5
-SHOT_CLOCK_REACH = 0.35
 # Run 13: the DRIVE is paid. Run 12 found the wind-up (170 steps per
 # 10k) and sat there: median shot 0.7-0.9 m/s still. The strike's payoff
 # is one rare event (a fast controlled hit, ~2 per 10k demo steps) the
@@ -931,9 +930,9 @@ class BatchRewardShaper:
 
         if self.overstay_cost > 0:
             # The shot clock: SHOT_CLOCK_S after the hold was established,
-            # the puck still slow on our half within reach costs per step.
-            over = (in_half & (dist < SHOT_CLOCK_REACH) & (puck_speed < HELD_SPEED)
-                    & (self._since_held_s > SHOT_CLOCK_S))
+            # the puck still slow on our half costs per step -- wherever the
+            # paddle is (run 18: stepping back out of reach was free).
+            over = in_half & (puck_speed < HELD_SPEED) & (self._since_held_s > SHOT_CLOCK_S)
             shaped -= np.where(over, self.overstay_cost, 0.0)
             self.stats["overstay_steps"] += int(over.sum())
 

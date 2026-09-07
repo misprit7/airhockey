@@ -848,3 +848,21 @@ cap) and the drive pay stay.
 --demo-envs 0 --run-name run17_selfplay`, log `logs/run17.log`. Read
 the held-puck eval against itself: relaunch endings must go to ~0 and
 the shot-after-hold share up.
+
+
+# Run 18 (from run 17's 350k: the relaunch is a turnover, the clock has no reach)
+
+Run 17 at 300k: shots up (6.6 per 10k, goals 4.2) and against a copy of
+itself still 0-0 with a fifth of its held possessions ending in the
+relaunch -- the escape hatch. The clock only ran within 0.35 m of the
+paddle, and the sim relaunched an unattended dead puck after 1.2 s,
+either way, at -0.5. So: hold for the paid second, step back, wait.
+
+Changes: the shot clock runs on a slow puck on our side wherever the
+paddle is; and a puck that dies on our side is a TURNOVER -- relaunched
+toward the opponent and fined `STUCK_TURNOVER_PENALTY` (-20). The table
+has no relaunch at all, which is what "never shoots" looked like.
+
+`--resume runs/run17_selfplay/agent.pt --steps 600000 --horizon 8
+--demo-envs 0 --run-name run18_selfplay`, log `logs/run18.log`. The
+held-puck eval against itself: relaunch endings to ~0.

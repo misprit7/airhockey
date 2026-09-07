@@ -154,6 +154,14 @@ class BatchAirHockeyEnv:
     STUCK_UNATTENDED_S = 1.2
     STUCK_ATTENDED_S = 5.0     # was 3; the patience ramp (rewards) needs up to 1.5 s of control
     ATTEND_RADIUS = 0.15
+    # A puck that dies on the agent's side is a TURNOVER (2026-09-07): it
+    # is relaunched toward the OPPONENT and costs STUCK_TURNOVER_PENALTY.
+    # Before, the relaunch went either way at -0.5, and runs 15-17
+    # learned to hold the puck for its paid second, step back, and wait
+    # 1.2 s for a free new puck -- a fifth of their held possessions
+    # against a copy of themselves ended that way, and on the table
+    # nothing relaunches, so they held for ever.
+    STUCK_TURNOVER_PENALTY = -20.0
 
     # Scripted far-side opponents on a FREE body (ai/RETRAIN.md item 5).
     # Neither is a copy of the machine: the sniper exists to put fast shots
@@ -1019,15 +1027,16 @@ class BatchAirHockeyEnv:
         stuck = self._puck_slow_count >= limit
         stuck_penalty = np.zeros(self.n_envs)
         if np.any(stuck):
-            # Penalize if puck stalled on agent's side (agent should have hit it)
+            # A puck stalled on the agent's side is the agent's turnover:
+            # it is fined and the relaunch goes to the opponent. Stalled on
+            # the far side, the relaunch goes either way.
             on_agent_side = stuck & (self.engine.puck_y < self.table_config.height / 2)
-            rewards[on_agent_side] -= 0.5
-            stuck_penalty = np.where(on_agent_side, -0.5, 0.0)
+            rewards[on_agent_side] += self.STUCK_TURNOVER_PENALTY
+            stuck_penalty = np.where(on_agent_side, self.STUCK_TURNOVER_PENALTY, 0.0)
 
             n_stuck = int(stuck.sum())
             rng = self._rng
-            # Random direction: 50% toward agent, 50% toward opponent
-            toward = rng.random(n_stuck) < 0.5
+            toward = (rng.random(n_stuck) < 0.5) & ~on_agent_side[stuck]
             angle = np.where(
                 toward,
                 rng.uniform(-np.pi * 0.8, -np.pi * 0.2, size=n_stuck),

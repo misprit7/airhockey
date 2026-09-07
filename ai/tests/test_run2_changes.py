@@ -502,3 +502,25 @@ def test_a_slow_puck_held_under_the_paddle_counts_as_controlled_without_a_formal
     for _ in range(hold_steps):
         sh2.compute(obs, np.zeros(1), info=_info(0.5, 0.38, 0.0, R.HELD_SPEED + 0.1))
     assert float(sh2.compute(obs, np.zeros(1), info=_info(0.5, 0.40, 0.0, 4.0))[0]) == pytest.approx(0.05 * 15.0)
+
+
+def test_a_puck_that_dies_on_our_side_is_a_turnover():
+    """Relaunched toward the OPPONENT and fined: runs 15-17 held the puck
+    for its paid second, stepped back and waited 1.2 s for a free puck."""
+    from airhockey.batch_env import BatchAirHockeyEnv
+    e = BatchAirHockeyEnv(4, opponent_policy="idle", action_mode="profile_a")
+    e.reset(seed=3)
+    W, H = e.table_config.width, e.table_config.height
+    e.engine.puck_x[:] = W / 2; e.engine.puck_y[:] = H * 0.3
+    e.engine.puck_vx[:] = 0.0; e.engine.puck_vy[:] = 0.0
+    e.engine.paddle_agent_x[:] = W / 2; e.engine.paddle_agent_y[:] = 0.05     # nobody near it
+    hold = np.zeros((4, 3), dtype=np.float32); hold[:, 1] = -1.0; hold[:, 2] = -1.0
+    relaunched = False
+    for _ in range(int(2.0 / e.action_dt)):
+        _o, _r, _t, _tr, info = e.step(hold)
+        if np.any(info["penalty"] < 0):
+            assert np.all(info["penalty"][info["penalty"] < 0] == e.STUCK_TURNOVER_PENALTY)
+            assert np.all(info["puck_vy"][info["penalty"] < 0] > 0), "relaunch must go to the opponent"
+            relaunched = True
+            break
+    assert relaunched
