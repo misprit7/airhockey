@@ -731,7 +731,23 @@ against the sniper (7-21, worse), 0.4 against itself. The accel
 fraction did move for the first time in any run, 0.34 -> 0.42. The
 horizon was not the limit either.
 
-# Where this stands (2026-09-07 05:10)
+Run 15's FINAL checkpoint (1M, 06:25) STRIKES. The held-puck eval:
+
+    vs weak goalie   held 54 of 57 possessions, hold median 0.9 s,
+                     shot after 72% of holds at a median 3.4 m/s, 14-0
+    vs sniper        hold 1.1 s, shot after 63% at 3.8 m/s, 8-16
+    vs itself        hold 1.1 s, shot after 46% at 3.3 m/s, 0-0 (49% of
+                     held possessions end in the relaunch)
+
+The whole chain -- cushion, hold about a second, wind up, strike --
+from a checkpoint whose 500k predecessor still pushed at 0.9 m/s. The
+horizon was the limit after all; it took the second half of the run.
+The run's own log barely shows it (on-target 3.2 per 10k in the last
+50k, goals 1.2), because in training the copy of itself blocks what
+the weak goalie cannot. Run 16 continues from it (no demonstrations,
+same reward) to see whether it holds -- run 14 lost its strike again.
+
+# Where this stands (2026-09-07 06:30)
 
 Learned, and stable across runs 8-15: the machine stops the puck and
 holds it. 15-22 possessions per 10k steps held under 0.5 m/s for 0.3 s
@@ -739,14 +755,15 @@ holds it. 15-22 possessions per 10k steps held under 0.5 m/s for 0.3 s
 1.3-1.7 s against the scripted opponents, and half to two thirds of its
 on-target shots come from a held puck. That was the request.
 
-Not learned: the strike from a standstill. Eight reward variants (held
-gate, hold cap, shot clock, speed-ramped on-target pay, wind-up income,
-drive income linear and squared, demonstrations with cloning) and a
-longer planning horizon produced at best a transient median 2.2 m/s
-shot (run 14 at 500k, 5-0 against the weak goalie) that the same run
-had lost again by 1M (0.9 m/s). Everything else it does after a hold
-is a 0.5-1.3 m/s push, which the weak goalie blocks and a copy of
-itself answers in kind: games against itself are 0-0 draws.
+Learned late: the strike from a standstill, in run 15's final
+checkpoint at horizon 8 (a median 3.3-3.8 m/s after a one-second
+hold). Eight reward variants at horizon 5 (held gate, hold cap, shot
+clock, speed-ramped on-target pay, wind-up income, drive income linear
+and squared, demonstrations with cloning) had produced at best a
+transient 2.2 m/s (run 14 at 500k) that the run lost again by 1M. The
+drive and wind-up incomes are probably what made the strike findable
+once the horizon covered it; which of them are still needed is untested.
+Games against a copy of itself are still 0-0: it blocks its own shots.
 
 What the evidence says about why. The cushion, hold and wind-up are
 all reached by a slow, smooth motion that a dense per-step income can
@@ -773,6 +790,8 @@ Options, in the order I would try them:
    is fitted. The stock buffer is uniform; the fork's prioritised path
    was lost with the machine it lived on.
 
-For the table: `run14_500k` (a symlink to run 14's 500k checkpoint)
-is the one that holds AND shot; `eval_policy.py` numbers for it and
-for run 14's final are in this section's follow-up once they land.
+For the table: `run15_selfplay` (its final `agent.pt`) is the one that
+holds AND strikes. `policy_loader.PLAN_HORIZON` is 8 to match. First
+run: `POLICY=tdmpc2:run15_selfplay bash ai/bin/play.sh --gentle`, after
+restarting `sw/build/cdpr_master` (rebuilt for the CMD accel field).
+The options above stay relevant if run 16 loses the strike again.
