@@ -303,7 +303,7 @@ PYTHONPATH=ai python -m airhockey.server
 pytest ai
 
 # Run full training pipeline (pretrain + self-play)
-bash ai/bin/run_full_pipeline.sh
+bash ai/bin/run_full_pipeline.sh 4.0-<description>   # runs named <major>.<minor>-<description>-<stage>
 
 # Run SAC curriculum training
 python ai/bin/train.py --curriculum
@@ -372,10 +372,12 @@ pio run -d fw -t upload          # flash it
 make -C fw/test                  # host tests for the motion profile
 
 # Play with the trained policy (from the repo root)
-bash ai/bin/play.sh --gentle                    # FIRST run of a new checkpoint
-bash ai/bin/play.sh                             # full caps
-bash ai/bin/play.sh --dry                       # camera + policy, commands nothing
-POLICY=tdmpc2:curriculum_goalie bash ai/bin/play.sh --plan 1
+# Defaults reproduce training; the runner prints a sim/real alignment block
+# and marks every DEVIATION. Flags only, no environment variables.
+bash ai/bin/play.sh --policy tdmpc2:2.3-control-gate-selfplay --gentle   # FIRST run of a new checkpoint
+bash ai/bin/play.sh --policy tdmpc2:2.3-control-gate-selfplay            # as trained
+bash ai/bin/play.sh --policy tdmpc2:latest --dry                          # camera + policy, commands nothing
+bash ai/bin/play.sh --policy tdmpc2:latest --tension 1.5                  # master pretension, mm (default 0)
 python ai/bin/run_policy.py --policy tdmpc2:latest --opponent   # dry-run, no master
 
 # Puck tracking / goalie demo

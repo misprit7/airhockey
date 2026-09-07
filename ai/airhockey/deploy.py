@@ -244,6 +244,7 @@ class TDMPC2Policy:
 
         self.ckpt = Path(ckpt) if ckpt is not None else resolve_checkpoint(run)
         kw = {} if plan_smooth is None else {"plan_smooth": plan_smooth}
+        self.run = run
         self.agent = load_agent(run, iterations=max(1, plan_iterations),
                                 ckpt=self.ckpt, **kw)
         self.plan = plan_iterations > 0

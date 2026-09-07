@@ -2,14 +2,18 @@
 # Turn it on and it plays: the master, the camera and the policy, in one
 # command, from the REPO ROOT.
 #
-#   bash ai/bin/play.sh                 # newest checkpoint, full caps
-#   bash ai/bin/play.sh --gentle        # FIRST RUN OF ANY NEW CHECKPOINT
-#   bash ai/bin/play.sh --dry           # camera + policy, commands nothing
-#   POLICY=tdmpc2:curriculum_goalie bash ai/bin/play.sh --plan 1
-#   MASTER_ARGS="--tension 1.5" bash ai/bin/play.sh --gentle
+#   bash ai/bin/play.sh --policy tdmpc2:2.3-control-gate-selfplay
+#   bash ai/bin/play.sh --policy tdmpc2:latest --gentle   # FIRST RUN OF ANY NEW CHECKPOINT
+#   bash ai/bin/play.sh --policy tdmpc2:latest --dry      # camera + policy, commands nothing
+#   bash ai/bin/play.sh --policy tdmpc2:latest --tension 1.5
 #
-# Everything after the script's own flags goes to ai/bin/run_policy.py;
-# MASTER_ARGS goes to cdpr_master (its default pretension is 0 = slack).
+# This script's own flags: --policy <spec> (default tdmpc2:latest), --dry,
+# --tension <mm> (cdpr_master's startup pretension; default 0 = slack, which
+# is what the tracking test validated). Everything else goes to
+# ai/bin/run_policy.py, whose defaults reproduce training (6 planner
+# iterations, the run's horizon, shot requests drawn per possession, the sim
+# body's caps, 50 Hz); it prints a sim/real alignment block and marks every
+# DEVIATION before the first live command.
 #
 # What happens, in order: build anything missing; start sw/build/cdpr_master
 # (which must run ALONE -- it opens the SC-Hub USB port; stop `activate` and
@@ -25,19 +29,24 @@ set -u
 cd "$(dirname "$0")/../.."
 export PYTHONPATH=ai PYTHONUNBUFFERED=1
 
-POLICY=${POLICY:-tdmpc2:latest}
-MASTER_ARGS=${MASTER_ARGS:-}
+POLICY=tdmpc2:latest
+MASTER_ARGS=()
 LIVE=1
-for a in "$@"; do
-    case "$a" in
-        --dry) LIVE=0 ;;
+ARGS=()
+while [ $# -gt 0 ]; do
+    case "$1" in
+        --dry) LIVE=0; shift ;;
+        --policy) POLICY=$2; shift 2 ;;
+        --policy=*) POLICY=${1#--policy=}; shift ;;
+        --tension) MASTER_ARGS+=(--tension "$2"); shift 2 ;;
+        --tension=*) MASTER_ARGS+=(--tension "${1#--tension=}"); shift ;;
+        *) ARGS+=("$1"); shift ;;
     esac
 done
-ARGS=()
-for a in "$@"; do [ "$a" != "--dry" ] && ARGS+=("$a"); done
-# Caps: run_policy's defaults are the sim body's (12000 mm/s, 60000 mm/s^2)
+# Caps: run_policy's defaults are the sim body's (12000 mm/s, 40000 mm/s^2)
 # so the table runs what the policy trained on; --gentle or --speed/--accel
-# override, --governor trims when the paddle falls behind.
+# override (and are reported as deviations), --governor trims when the
+# paddle falls behind.
 
 [ -x vision/build/blobtrack ] || make -C vision
 if [ "$LIVE" = 1 ]; then
@@ -70,12 +79,11 @@ PY
         echo "hardware mode) is running. Stop it, or run without this launcher."
         exit 1
     fi
-    echo "starting cdpr_master ${MASTER_ARGS}..."
-    # shellcheck disable=SC2086
+    echo "starting cdpr_master ${MASTER_ARGS[*]:-}..."
     # The master writes logs/cdpr_master.log itself (overwritten per run);
     # cleanup() keeps a stamped copy next to the runner's session log.
     mkdir -p logs
-    sw/build/cdpr_master ${MASTER_ARGS} > /dev/null &
+    sw/build/cdpr_master "${MASTER_ARGS[@]}" > /dev/null &
     MASTER_PID=$!
     for _ in $(seq 1 100); do
         python3 - <<'PY' 2>/dev/null && break

@@ -811,11 +811,56 @@ def _load_tdmpc2(name: str, caps: Caps, plan_iters: int, device: str | None,
                "TIGHT" if ms < budget else "DOES NOT FIT -- use --plan 0")
     print(f"  cost: {ms:.2f} ms per decision against a {budget:.0f} ms tick "
           f"({verdict})")
+    print(alignment_report(policy, caps, plan_iters, shot_mode, cmd_hz))
     return policy
 
 
-def load_policy(spec: str, caps: Caps, plan_iters: int = 0,
-                device: str | None = None, shot_mode: str = "none",
+def alignment_report(policy, caps: Caps, plan_iters: int, shot_mode: str,
+                     cmd_hz: float) -> str:
+    """Sim vs table, line by line, before the first live command.
+
+    Every setting the table can differ from training in, with what training
+    used, and DEVIATION on any line that differs. The two inherent
+    differences (the opponent, the relaunch) are named every time. The
+    user's rule (2026-09-07): the table reproduces training unless an
+    experiment says otherwise, and every difference is said out loud.
+    """
+    from airhockey.policy_loader import (PLAN_HORIZON, HORIZON_8_RUNS,   # noqa: PLC0415
+                                         PLAN_ITERATIONS)
+    from airhockey.dynamics import AGENT_DR_SPEED_M_S, AGENT_DR_ACCEL_M_S2   # noqa: PLC0415
+    cfg = policy.agent.cfg
+    run = getattr(policy, "run", None) or ""
+    trained_h = 8 if run in HORIZON_8_RUNS else PLAN_HORIZON
+    sim_v, sim_a = AGENT_DR_SPEED_M_S[1] * 1000.0, AGENT_DR_ACCEL_M_S2[1] * 1000.0
+
+    def line(label, value, trained, same):
+        return f"    {label:14s} {value:34s} trained: {trained:22s}" + ("" if same else "  <-- DEVIATION")
+    rows = [
+        line("planner", f"{plan_iters} MPPI iterations" if plan_iters else "policy prior only",
+             f"{PLAN_ITERATIONS} iterations", plan_iters == PLAN_ITERATIONS),
+        line("horizon", f"{cfg.horizon} steps", f"{trained_h} steps", cfg.horizon == trained_h),
+        line("shot request", shot_mode, "mix (drawn per possession)", shot_mode == "mix"),
+        line("speed cap", f"{caps.speed_max:.0f} mm/s", f"{sim_v:.0f} mm/s", caps.speed_max >= sim_v),
+        line("accel cap", f"{caps.accel_max:.0f} mm/s^2", f"{sim_a:.0f} mm/s^2", caps.accel_max >= sim_a),
+        line("accel floor", f"{caps.accel_min:.0f} mm/s^2", f"{Caps.accel_min:.0f} mm/s^2",
+             caps.accel_min <= Caps.accel_min),
+        line("command rate", f"{cmd_hz:.0f} Hz", f"{ACTION_HZ:.0f} Hz", abs(cmd_hz - ACTION_HZ) < 1e-6),
+    ]
+    inherent = [
+        "    inherent      opponent: a person; trained against a copy of itself (60%),",
+        "                  a scripted sniper (20%) and a weak goalie (20%)",
+        "    inherent      no stuck-puck relaunch on the table; the sim relaunches a",
+        "                  dead puck after 1.2 s unattended / 5 s attended (a turnover",
+        "                  since 3.3-turnover)",
+    ]
+    n_dev = sum("DEVIATION" in r for r in rows)
+    head = ("  sim/real alignment: reproduces training" if n_dev == 0
+            else f"  sim/real alignment: {n_dev} DEVIATION(S) from training")
+    return "\n".join([head] + rows + inherent)
+
+
+def load_policy(spec: str, caps: Caps, plan_iters: int | None = None,
+                device: str | None = None, shot_mode: str = "mix",
                 cmd_hz: float = ACTION_HZ):
     """Turn a --policy string into a callable(obs) -> Command or 4-tuple.
 
@@ -827,6 +872,9 @@ def load_policy(spec: str, caps: Caps, plan_iters: int = 0,
     """
     kind, _, name = spec.partition(":")
     if kind == "tdmpc2":
+        from airhockey.policy_loader import PLAN_ITERATIONS   # noqa: PLC0415
+        if plan_iters is None:
+            plan_iters = PLAN_ITERATIONS
         return _load_tdmpc2(name, caps, plan_iters, device, shot_mode, cmd_hz)
     if kind == "sac":
         return _load_sac(name, caps)
@@ -1341,7 +1389,7 @@ def run(args) -> int:
     if slog is not None:
         slog.capture_stdout()
         slog.context(args)
-    policy = load_policy(args.policy, caps, getattr(args, "plan", 0),
+    policy = load_policy(args.policy, caps, getattr(args, "plan", None),
                          getattr(args, "device", None),
                          shot_mode=getattr(args, "shot_type", "none"),
                          cmd_hz=float(getattr(args, "cmd_hz", ACTION_HZ)))
@@ -1757,16 +1805,18 @@ def main() -> int:
                     help="heuristic:<name> | builtin:<name> | tdmpc2:<run> "
                          "| tdmpc2:latest. --list shows the names. The "
                          "default sits still on purpose.")
-    ap.add_argument("--plan", type=int, default=0,
-                    help="tdmpc2 only: MPPI iterations per decision (0 = the "
-                         "policy prior alone, ~0.1 ms; 6 iterations are ~6 ms "
-                         f"on the GPU under CUDA graphs; the tick is "
-                         f"{1000.0 / ACTION_HZ:.0f} ms)")
-    ap.add_argument("--shot-type", default="none",
+    ap.add_argument("--plan", type=int, default=None,
+                    help="tdmpc2 only: MPPI iterations per decision. Default: "
+                         "what training used (policy_loader.PLAN_ITERATIONS, "
+                         "~6 ms on the GPU under CUDA graphs against the "
+                         f"{1000.0 / ACTION_HZ:.0f} ms tick). 0 = the policy "
+                         "prior alone (~0.1 ms, CPU) -- a DEVIATION")
+    ap.add_argument("--shot-type", default="mix",
                     choices=["none", "left", "right", "straight", "mix"],
                     help="tdmpc2 only: the shot the policy is asked for "
-                         "(observation [17:20]); mix = a fresh draw each time "
-                         "the puck enters the robot's half, as in training")
+                         "(observation [18:21]). Default mix = a fresh draw "
+                         "each time the puck enters the robot's half, as in "
+                         "training; a fixed request is a DEVIATION")
     ap.add_argument("--device", default=None,
                     help="tdmpc2 only: torch device (default: cpu for the "
                          "prior, cuda for planning when available)")
@@ -1794,11 +1844,9 @@ def main() -> int:
                          "body's)")
     ap.add_argument("--accel-floor", type=float, default=None,
                     help=f"FLOOR on the accel cap a policy may ask for, mm/s^2 "
-                         f"(default {Caps.accel_min:.0f}). The accel-taxed "
-                         "policies idle at ~3000 (2.3-control-gate asked for "
-                         "<= 4000 on 58%% of its ticks, 2026-09-07), which "
-                         "looks slow on the table; 12000-15000 keeps the "
-                         "paddle lively without leaving what it trained on")
+                         f"(default {Caps.accel_min:.0f}, the sim's). A "
+                         "DEVIATION from training: the accel-taxed policies "
+                         "idle at ~3000 by choice, on the table as in the sim")
     ap.add_argument("--puck-timeout", type=float,
                     default=DEFAULT_PUCK_TIMEOUT_S,
                     help="seconds without a puck fix before the policy is "

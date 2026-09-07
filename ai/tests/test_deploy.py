@@ -190,7 +190,9 @@ def test_runner_drives_a_checkpoint_through_its_own_clamp():
     sys.modules[spec.name] = rp
     spec.loader.exec_module(rp)
     caps = rp.Caps()
-    policy = rp.load_policy("tdmpc2:latest", caps)
+    # prior only: this test is about the clamp, and its 5 ms budget is the
+    # prior's (the default now reproduces training's 6 planner iterations)
+    policy = rp.load_policy("tdmpc2:latest", caps, plan_iters=0)
     report = rp.ReportBuilder()
     prev = None
     n = 0

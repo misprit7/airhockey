@@ -3,9 +3,9 @@
 # checkpoint; stage budgets, opponents and reward weights come from
 # rewards.CURRICULUM (one table, used by both trainers).
 #
-#   PREFIX=4.0-strike-primitive bash ai/bin/run_full_pipeline.sh
+#   bash ai/bin/run_full_pipeline.sh 4.0-strike-primitive
 #
-# PREFIX is the version and description; the stage is appended:
+# The argument is the version and description; the stage is appended:
 # 4.0-strike-primitive-proximity ... 4.0-strike-primitive-selfplay
 # (ai/RUNS.md). The trainers refuse a name outside the scheme.
 #
@@ -14,7 +14,7 @@
 # checkpoint, not its exit code.
 cd "$(dirname "$0")/../.."
 export PYTHONPATH=ai PYTHONUNBUFFERED=1
-PREFIX=${PREFIX:?set PREFIX=<major>.<minor>-<description>, e.g. 4.0-strike-primitive}
+PREFIX=${1:?usage: bash ai/bin/run_full_pipeline.sh <major>.<minor>-<description>   (e.g. 4.0-strike-primitive)}
 
 budget() { python3 -c "from airhockey.rewards import CURRICULUM as C; print(C['$1']['steps'])"; }
 
