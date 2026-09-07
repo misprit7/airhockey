@@ -167,11 +167,12 @@ def test_patience_beats_the_discount_by_design():
     control must be worth more, discounted, than the instant one."""
     steps = round(1.5 / ACTION_DT)
     discounted_patient = 1.0 * 0.995 ** steps
-    assert discounted_patient > 0.2 * 3.0      # floor 0.2, with a wide margin
+    assert discounted_patient > 0.05 * 3.0     # floor 0.05, with a wide margin
     kw = R.curriculum_shaper_kwargs("selfplay")
-    assert kw["patience_s"] == 1.5 and kw["patience_floor"] == 0.2
+    assert kw["patience_s"] == 1.5
     assert kw["accel_cost_weight"] == 0.04 and kw["patience_on_goals"] is True
-    assert kw["control_gate"] is True and kw["cushion_weight"] == 1.5 and kw["hold_income"] == 0.03
+    assert kw["control_gate"] is True and kw["cushion_weight"] == 1.5 and kw["hold_income"] == 0.05
+    assert kw["patience_floor"] == 0.05
     assert R.curriculum_env_kwargs("proximity")["action_mode"] == "profile_a"
     assert R.curriculum_env_kwargs("selfplay")["action_mode"] == "profile_a"
     assert "accel_cost_weight" not in R.curriculum_shaper_kwargs("contact")
@@ -300,11 +301,13 @@ def test_holding_a_trapped_puck_pays_income_until_the_shot():
     sh.reset(obs, info=fast); sh.compute(obs, np.zeros(1), info=fast)
     stopped = _info(0.5, 0.36, 0.0, 0.05)
     r1 = float(sh.compute(obs, np.zeros(1), info=stopped)[0])
-    assert r1 == pytest.approx(3.0 + 0.03)
+    assert r1 == pytest.approx(3.0 + 0.03 * 0.95)
     for _ in range(10):
         r = float(sh.compute(obs, np.zeros(1), info=stopped)[0])
-    assert r == pytest.approx(0.03)
+    assert r == pytest.approx(0.03 * 0.95)
     assert sh.stats["hold_steps"] == 11
+    # partial control pays partially: a puck at half the scale under the paddle
+    assert float(sh.compute(obs, np.zeros(1), info=_info(0.5, 0.36, 0.0, 0.5))[0]) == pytest.approx(0.03 * 0.5)
     # once it is shot away the income stops
     assert float(sh.compute(obs, np.zeros(1), info=_info(0.5, 0.45, 0.0, 3.0))[0]) == 0.0
 
@@ -336,3 +339,17 @@ def test_control_gate_pays_the_floor_for_an_uncontrolled_shot_and_full_for_a_tra
     slow = _info(0.5, 0.35, 0.0, -0.5, 2.0)
     sh.reset(obs, info=slow); sh.compute(obs, np.zeros(1), info=slow)
     assert float(sh.compute(obs, np.zeros(1), info=_info(0.5, 0.40, 0.0, 4.0, 2.0))[0]) == pytest.approx(15.0)
+
+
+def test_a_puck_slowed_under_the_paddle_counts_as_controlled_without_a_formal_trap():
+    sh = _shaper(on_target_reward=15.0, patience_s=1.5, patience_floor=0.05, control_gate=True)
+    obs = np.zeros((1, 22), dtype=np.float32)
+    fast = _info(0.5, 0.6, 0.0, -2.0)
+    sh.reset(obs, info=fast); sh.compute(obs, np.zeros(1), info=fast)
+    sh.compute(obs, np.zeros(1), info=_info(0.5, 0.38, 0.0, 0.5))     # 0.5 m/s under the paddle: below CONTROL_SPEED
+    r = float(sh.compute(obs, np.zeros(1), info=_info(0.5, 0.40, 0.0, 4.0))[0])
+    assert r == pytest.approx(15.0)
+    sh2 = _shaper(on_target_reward=15.0, patience_s=1.5, patience_floor=0.05, control_gate=True)
+    sh2.reset(obs, info=fast); sh2.compute(obs, np.zeros(1), info=fast)
+    sh2.compute(obs, np.zeros(1), info=_info(0.5, 0.38, 0.0, 1.2))    # never slow enough
+    assert float(sh2.compute(obs, np.zeros(1), info=_info(0.5, 0.40, 0.0, 4.0))[0]) == pytest.approx(0.05 * 15.0)

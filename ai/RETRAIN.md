@@ -418,3 +418,28 @@ Changes (commit below), all unit-tested (`tests/test_run2_changes.py`):
 `shots/cushion_sum` (rising = the path is being walked), `shots/traps`,
 `shots/hold_steps`, and the accel fraction (should now differ between
 puck near and puck far).
+
+
+# Run 5 (self-play from run 4's ~1M checkpoint)
+
+Run 4 at 1M: cushioning rose 127 -> 173 per 10k (touches that slow the
+puck are learned), but traps and hold stayed at zero and 79% of shots
+paid the floor. Watching 112 possessions of that policy in the sim: the
+FIRST touch sends the puck away at 4.2 m/s median, 65% of possessions
+are one touch, it waits 0.66 s then slaps -- and in 12% of possessions
+the puck ended nearly stopped within reach and it did nothing with it,
+because income needed a formal trap (< 0.3 m/s) first and the gate was
+binary on that trap.
+
+Changes (commit below):
+- [x] **Control income is continuous**: 0.05 per step x (1 - speed/1 m/s)
+      while a puck that arrived fast is within reach, no trap required.
+      Partial slowing already pays.
+- [x] **The outcome gate keys on the slowest the puck got within reach**
+      this possession (< 0.6 m/s = controlled), not on the 0.3 m/s trap.
+- [x] **Uncontrolled floor 0.05** (was 0.2): a slap is nearly worthless.
+
+`--resume runs/run4_selfplay/agent.pt --steps 1500000 --run-name
+run5_selfplay`, log `logs/run5.log`. Read `shots/hold_steps` (should
+climb well above run 4's ~15/10k) and the controlled multiplier
+(`shots/patience_sum / shots/on_target`, 0.05 = none controlled).

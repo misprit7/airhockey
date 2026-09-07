@@ -124,6 +124,16 @@ SHOT_TYPE_NAMES = ("none", "left", "right", "straight")
 TRAP_SPEED = 0.3
 TRAP_DIST = 0.20
 TRAP_MIN_ARRIVAL = 0.8
+# Run 5: control is CONTINUOUS. Income while the puck is within TRAP_DIST
+# on the agent's side scales with how slow it is (full at rest, nothing at
+# HOLD_SPEED_SCALE and above), with no trap required first; and a
+# possession counts as controlled for the outcome gate once the puck has
+# been under CONTROL_SPEED within reach. Run 4 paid income only after a
+# formal trap (< 0.3 m/s) and the policy, whose first touch sent the puck
+# away at 4 m/s, never got there -- though in 12% of possessions the puck
+# was nearly stopped within reach and it did nothing with it.
+HOLD_SPEED_SCALE = 1.0
+CONTROL_SPEED = 0.6
 
 
 def predict_shot(x, y, vx, vy, width: float = _TABLE_W, height: float = _GOAL_CY,
@@ -475,6 +485,8 @@ class BatchRewardShaper:
         # The patience multiplier at the agent's last hit of the current
         # possession; 1.0 when it has not hit (a relaunch, an own goal).
         self._last_hit_patience = np.ones(n_envs)
+        # The slowest the puck has been within reach this possession.
+        self._visit_min_near = np.full(n_envs, 9.0)
         from airhockey.physics import TableConfig    # noqa: PLC0415
         cfg = config or TableConfig()
         self._cfg = cfg
@@ -590,6 +602,7 @@ class BatchRewardShaper:
         self._shot_paid[idx] = False
         self._visit_max_speed[idx] = 0.0
         self._last_hit_patience[idx] = 1.0
+        self._visit_min_near[idx] = 9.0
         # Read puck velocity from info (truth) or obs (indices 2-3)
         puck_vx = obs[idx, 2]
         puck_vy = obs[idx, 3]
@@ -653,7 +666,8 @@ class BatchRewardShaper:
                 # arrived too slowly to be trapped and has been on the
                 # side for the patience time.
                 slow_arrival = self._visit_max_speed <= TRAP_MIN_ARRIVAL
-                controlled = self._trapped | (slow_arrival & (info["t_side"] >= self.patience_s))
+                controlled = (self._trapped | (self._visit_min_near < CONTROL_SPEED)
+                              | (slow_arrival & (info["t_side"] >= self.patience_s)))
                 patience = np.where(controlled, 1.0, self.patience_floor)
             else:
                 patience = by_time
@@ -717,9 +731,13 @@ class BatchRewardShaper:
             self._shot_paid[entered] = False
             self._visit_max_speed[entered] = 0.0
             self._last_hit_patience[entered] = 1.0
+            self._visit_min_near[entered] = 9.0
         self._in_half[:] = in_half
         self._visit_max_speed = np.where(in_half, np.maximum(self._visit_max_speed, puck_speed),
                                          self._visit_max_speed)
+        within = in_half & (dist < TRAP_DIST)
+        self._visit_min_near = np.where(within, np.minimum(self._visit_min_near, puck_speed),
+                                        self._visit_min_near)
 
         # Trap: the puck brought to rest under the paddle after arriving
         # fast. Once per visit, so bump-stop-bump earns nothing extra.
@@ -743,11 +761,14 @@ class BatchRewardShaper:
                 shaped += np.where(cushion, pay, 0.0)
                 self.stats["cushion_sum"] += float(pay[cushion].sum())
 
-        # Hold: income while the puck sits controlled under the paddle.
+        # Hold: income while a puck that arrived fast is slow within reach,
+        # scaled by how slow -- continuous, so partial control already pays.
         if self.hold_income > 0:
-            holding = in_half & self._trapped & (puck_speed < TRAP_SPEED) & (dist < TRAP_DIST)
-            shaped += np.where(holding, self.hold_income, 0.0)
-            self.stats["hold_steps"] += int(holding.sum())
+            within = in_half & (dist < TRAP_DIST) & (self._visit_max_speed > TRAP_MIN_ARRIVAL)
+            slowness = np.clip(1.0 - puck_speed / HOLD_SPEED_SCALE, 0.0, 1.0)
+            pay = np.where(within, self.hold_income * slowness, 0.0)
+            shaped += pay
+            self.stats["hold_steps"] += int((pay > 0).sum())
 
         # Shot outcome, scored at the hit from the puck's outgoing velocity
         # and paid once per visit. A hit that was already paid this visit
@@ -864,6 +885,7 @@ class BatchRewardShaper:
             self._shot_paid[goal_mask] = False
             self._visit_max_speed[goal_mask] = 0.0
             self._last_hit_patience[goal_mask] = 1.0
+            self._visit_min_near[goal_mask] = 9.0
 
         return shaped.astype(np.float32)
 
@@ -1113,12 +1135,13 @@ CURRICULUM: dict[str, dict] = {
         # possession having been controlled rather than on elapsed time --
         # runs 1-3 never once stopped the puck under a time-based ramp.
         trap_reward=3.0, controlled_shot_bonus=1.5,
-        cushion_weight=1.5, hold_income=0.03, control_gate=True,
+        cushion_weight=1.5, hold_income=0.05, control_gate=True,
         # Run 3: full accel for a whole 30 s episode costs 60 (run 2's 0.02
         # settled the mean fraction at 0.52; the user wants it lower), and
         # patience floors at 0.2 ON THE GOAL AS WELL: a goal from an instant
         # slap pays 20, one from a shot after 1.5 s of control pays 100.
-        accel_cost_weight=0.04, patience_s=1.5, patience_floor=0.2, patience_on_goals=True,
+        # Run 5: the uncontrolled floor is 0.05 -- a slap is nearly worthless.
+        accel_cost_weight=0.04, patience_s=1.5, patience_floor=0.05, patience_on_goals=True,
         # The env draws a shot type per possession (shot_types=True) and
         # the far side is drawn per episode from opponent_mix.
         shot_type_reward=10.0, shot_types=True,
