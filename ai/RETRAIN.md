@@ -879,3 +879,17 @@ In training: real on-target shots 11.6 per 10k (run 17: 6.6, all
 earlier runs under 6), games against itself 15-15-85 rather than all
 draws. Pinned as `runs/run18_300k`. The turnover rule and the clock
 without reach were the two things that ended the waiting.
+
+
+Run 18 FINAL (600k, 16:03) keeps the behaviour and scores more:
+
+    vs weak goalie   held 51 of 57, hold 0.8 s, shot after 75% at 4.3 m/s, 8-0
+    vs sniper        hold 1.3 s, shot after 79% at 3.8 m/s, 11-10
+    vs itself        hold 1.2 s, shot after 66% at 4.1 m/s, 1-0
+    relaunch endings 7-11%
+
+Training log at the end: vs itself 26-30-185, vs sniper GF 0.83 / GA
+1.22, vs weak goalie GF 0.58 / GA 0.06. The final is the one to take
+to the table (`run18_selfplay`); `run18_300k` stays pinned as the
+fallback. Against the sniper it now trades goals evenly (11-10) where
+runs 15-17 lost by half.
