@@ -31,8 +31,8 @@ import numpy as np
 
 from airhockey.batch_env import BatchAirHockeyEnv
 
-WAIT, INTERCEPT, CUSHION, HOLD, SHOOT = 0, 1, 2, 3, 4
-PHASE_NAMES = ("wait", "intercept", "cushion", "hold", "shoot")
+WAIT, INTERCEPT, CUSHION, HOLD, SHOOT, BLOCK = 0, 1, 2, 3, 4, 5
+PHASE_NAMES = ("wait", "intercept", "cushion", "hold", "shoot", "block")
 
 # Geometry / tuning, sim metres and seconds.
 STATION_ABOVE_FLOOR = 0.25   # wait this far above the box floor: room to retreat
@@ -45,6 +45,14 @@ HOLD_ESCAPE_SPEED = 1.0      # the puck got away: intercept again
 SHOOT_S = 0.35
 SHOOT_THROUGH = 0.22         # target this far beyond the puck toward the goal
 APPROACH_SPEED = 0.4         # a puck slower than this on our half is walked up to
+# A puck faster than this cannot be absorbed by a 40 m/s^2 body in time,
+# and one heading into the goal must not be retreated from at all: BLOCK
+# it (sit on its path, no retreat) and pick up the rebound. The first
+# version cushioned everything and lost to the sniper 23-61, a
+# demonstration whose net value the learner rightly refused.
+CUSHION_MAX_SPEED = 3.5
+BLOCK_Y_ABOVE_FLOOR = 0.10
+BLOCK_S = 0.30
 
 
 class CushionBot:
@@ -60,7 +68,7 @@ class CushionBot:
         self.ws = env._ws
         self.H = cfg.height
         self.W = cfg.width
-        self.stats = {"cushions": 0, "holds": 0, "shots": 0}
+        self.stats = {"cushions": 0, "holds": 0, "shots": 0, "blocks": 0}
 
     def reset(self, mask=None) -> None:
         idx = slice(None) if mask is None else mask
@@ -110,6 +118,11 @@ class CushionBot:
         on_half = py < self.H / 2.0
         coming = (vy < -0.3) & (py < self.H * 0.75)
         closing = (px - mx) * vx + (py - my) * vy < 0.0
+        # Where the puck's path meets our goal line, and whether that is in
+        # the mouth: a goal-bound fast puck is blocked, never cushioned.
+        x_goal = self._x_at(px, py, vx, vy, 0.0)
+        mouth = e.table_config.goal_width / 2.0 + e.table_config.puck_radius
+        dangerous = coming & (speed > CUSHION_MAX_SPEED) & (np.abs(x_goal - self.W / 2.0) < mouth)
 
         self.t_phase += dt
         ph = self.phase
@@ -122,11 +135,22 @@ class CushionBot:
         go = (ph == WAIT) & (on_half | coming)
         ph[go] = INTERCEPT
         self.t_phase[go] = 0.0
-        # INTERCEPT -> CUSHION when about to be hit and the puck is fast:
-        # by TIME to contact, so a fast puck gets the same lead as a slow
-        # one (the body needs ~35 ms at 40 m/s^2 to reach 1.4 m/s).
+        # INTERCEPT -> BLOCK for a dangerous puck (fast, goal-bound).
+        bl = (ph == INTERCEPT) & dangerous
+        ph[bl] = BLOCK
+        self.t_phase[bl] = 0.0
+        self.stats["blocks"] += int(bl.sum())
+        # BLOCK -> INTERCEPT once it is no longer dangerous (rebound, or
+        # passed) and the block has lasted its minimum.
+        unbl = (ph == BLOCK) & ~dangerous & (self.t_phase > BLOCK_S)
+        ph[unbl] = INTERCEPT
+        self.t_phase[unbl] = 0.0
+        # INTERCEPT -> CUSHION when about to be hit by a puck that CAN be
+        # absorbed: by TIME to contact, so a fast puck gets the same lead
+        # as a slow one (the body needs ~35 ms at 40 m/s^2 to reach 1.4 m/s).
         ttc = gap / np.maximum(speed, 1e-6)
-        cu = (ph == INTERCEPT) & ((gap < CUSHION_TRIGGER) | (ttc < CUSHION_LEAD_S)) & closing & (speed > 0.6)
+        cu = ((ph == INTERCEPT) & ((gap < CUSHION_TRIGGER) | (ttc < CUSHION_LEAD_S)) & closing
+              & (speed > 0.6) & (speed <= CUSHION_MAX_SPEED) & ~dangerous)
         ph[cu] = CUSHION
         self.t_phase[cu] = 0.0
         self.stats["cushions"] += int(cu.sum())
@@ -193,6 +217,16 @@ class CushionBot:
         tx[h] = px[h]
         ty[h] = (py - 0.03)[h]
         acc[h] = -0.3
+
+        b = ph == BLOCK
+        # Get onto the path at the height we already have (moving in x only
+        # is the shortest trip; an 8 m/s shot crosses the half in ~120 ms
+        # and a 40 m/s^2 body covers 0.3 m in that), never below the block
+        # floor. The rebound is picked up afterwards.
+        y_block = np.clip(my, floor_y + BLOCK_Y_ABOVE_FLOOR, station_y)
+        tx[b] = self._x_at(px, py, vx, vy, y_block)[b]
+        ty[b] = y_block[b]
+        acc[b] = 1.0
 
         s = ph == SHOOT
         dx = self.aim_x - px

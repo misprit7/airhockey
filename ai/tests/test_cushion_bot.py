@@ -9,7 +9,7 @@ from __future__ import annotations
 import numpy as np
 
 from airhockey.batch_env import BatchAirHockeyEnv, sensing_kwargs
-from airhockey.cushion_bot import CUSHION, HOLD, INTERCEPT, SHOOT, WAIT, CushionBot
+from airhockey.cushion_bot import BLOCK, CUSHION, HOLD, INTERCEPT, SHOOT, WAIT, CushionBot
 from airhockey.rewards import (CONTROL_SPEED, STAGE_SCORING, BatchRewardShaper,
                                curriculum_env_kwargs, curriculum_shaper_kwargs)
 
@@ -74,6 +74,10 @@ def test_bot_takes_speed_off_the_snipers_shots():
     assert len(fast) >= 40
     assert float(np.mean(mn < CONTROL_SPEED)) > 0.15
     assert sh.stats["cushion_sum"] > 50
+    # ...and BLOCKS the goal-bound fast ones instead of retreating from
+    # them: the first version cushioned everything and lost 23-61, a
+    # demonstration whose net value the learner rightly refused.
+    assert BLOCK in phases and bot.stats["blocks"] > 20
 
 
 def test_bot_emits_two_dim_actions_for_a_position_only_env():
