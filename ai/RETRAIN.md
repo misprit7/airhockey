@@ -692,3 +692,26 @@ is 2 m/s.
 --bc-coef 0.5 --demo-until 800000 --run-name run14_selfplay`, log
 `logs/run14.log`. Same numbers to read; the held-puck eval's shot
 speed is the one that matters.
+
+
+# Run 15 (from run 14's final checkpoint: planning horizon 5 -> 8)
+
+Run 14 is the first checkpoint that strikes: after a hold, a median
+2.2 m/s shot against the weak goalie (was 0.6) and 5-0 in the eval;
+1.5 m/s against a copy of itself (0-0 still), 0.8 against the sniper
+(17-6). Over the run: held 17-18 per 10k, real on-target shots 1.6 ->
+3.2 per 10k, goals 1.6 -> 3.0, accel fraction 0.34 throughout.
+
+The shaping has run its course; the structural suspect is the horizon.
+At the agent's habitual 13 m/s^2 a strike from the wind-up band takes
+~150 ms, and the planner sees 100 ms (5 steps at 50 Hz): the hit and
+its reward sit past the end of every candidate it scores, so they can
+only reach it through the value function. Horizon 8 (160 ms) puts the
+hit inside the plan. Costs: training ~+30% per update (the same H in
+the loss), deploy ~+26% per plan (launch-bound; ~8 ms with CUDA graphs
+against the 20 ms tick). `policy_loader.PLAN_HORIZON` = 8 for eval and
+the table; the model is horizon-agnostic, so older checkpoints load.
+
+`--resume runs/run14_selfplay/agent.pt --steps 1000000 --horizon 8
+--demo-envs 8 --bc-coef 0.5 --demo-until 800000 --run-name
+run15_selfplay`, log `logs/run15.log`.

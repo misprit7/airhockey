@@ -78,6 +78,13 @@ PLAN_SMOOTH_COEF = 0.0   # parked: see memory; planner cost code stays inert
 # The cost is launch-bound, not compute-bound: 128 samples cost the same as
 # 512, so the knobs that matter are iterations and horizon.
 PLAN_ITERATIONS = 6
+# Planning horizon, steps at ACTION_HZ. 5 (100 ms) through run 14; 8
+# (160 ms) from run 15: a strike from the wind-up at the agent's habitual
+# 13 m/s^2 takes ~150 ms, so its payoff sat beyond what the planner could
+# see. Single-env cost is ~26% over horizon 5 (launch-bound; ~8 ms under
+# CUDA graphs against the 20 ms tick). The model itself is
+# horizon-agnostic, so older checkpoints plan at 8 too.
+PLAN_HORIZON = 8
 # Execute the elite MEAN in eval mode, not a sampled elite (local TD-MPC2
 # flag plan_eval_mean). Stock MPPI draws one elite trajectory even in eval
 # mode, and on a flat value landscape -- the puck parked far away, nothing
@@ -93,7 +100,8 @@ PLAN_EVAL_MEAN = True
 def load_agent(run_name: str, iterations: int | None = PLAN_ITERATIONS,
                model_size: int = DEFAULT_MODEL_SIZE,
                ckpt: str | Path | None = None,
-               plan_smooth: float = PLAN_SMOOTH_COEF):
+               plan_smooth: float = PLAN_SMOOTH_COEF,
+               horizon: int = PLAN_HORIZON):
     """Build a TDMPC2 agent and load a checkpoint into it.
 
     run_name resolves through resolve_checkpoint() unless `ckpt` names the
@@ -124,7 +132,7 @@ def load_agent(run_name: str, iterations: int | None = PLAN_ITERATIONS,
     _obs_have, action_dim = checkpoint_shapes(ckpt)
     overrides = OmegaConf.create({
         "task": "airhockey", "obs": "state", "episodic": True,
-        "steps": 1_000_000, "model_size": model_size, "horizon": 5,
+        "steps": 1_000_000, "model_size": model_size, "horizon": horizon,
         "eval_freq": 100_000, "eval_episodes": 1, "save_video": False,
         "enable_wandb": False, "save_csv": False,
         "work_dir": str(ckpt.parent), "compile": False,
