@@ -795,3 +795,15 @@ holds AND strikes. `policy_loader.PLAN_HORIZON` is 8 to match. First
 run: `POLICY=tdmpc2:run15_selfplay bash ai/bin/play.sh --gentle`, after
 restarting `sw/build/cdpr_master` (rebuilt for the CMD accel field).
 The options above stay relevant if run 16 loses the strike again.
+
+`eval_policy.py run15_selfplay --iterations 6` (24 x 90 s games each,
+the bots' own terms):
+
+    vs goalie   GF 1.04  GA 0.00   14-10-0     (run 14 @500k: 1.88 / 0.00, 21-3-0)
+    vs follow   GF 0.00  GA 0.00    0-24-0     (run 14 @500k: 0.00 / 0.12, 0-21-3)
+    vs random   GF 3.83  GA 0.00   22-2-0
+
+Concedes nothing to any of them. Scores less than run 14's checkpoint
+against the goalie bot: the held-and-struck shot is one shot per
+possession where the slap style got several, and the goalie bot
+stops a fair share of 3.5 m/s shots.
