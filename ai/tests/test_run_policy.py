@@ -977,3 +977,13 @@ def test_a_camera_fix_a_metre_from_the_controller_is_not_the_robot():
     r.add_mallet(1.0, 1400.0, 544.0)                     # 46 mm: camera
     assert r.observation(1.0)[rp.OBS_MALLET] == (1400.0, 544.0)
     assert r.n_implausible == 1
+
+
+def test_accel_floor_lifts_a_lazy_ask():
+    """--accel-floor: the accel-taxed policies idle at ~3000 mm/s^2, which
+    looks slow on the table; the floor lifts the ask, the ceiling still wins."""
+    from run_policy import Caps
+    caps = Caps(accel_min=15000.0, accel_max=40000.0)
+    assert caps.clamp_accel(3045.0) == 15000.0
+    assert caps.clamp_accel(30000.0) == 30000.0
+    assert caps.clamp_accel(50000.0) == 40000.0

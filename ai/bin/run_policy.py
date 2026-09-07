@@ -1333,7 +1333,8 @@ def run(args) -> int:
     from puck_stream import BlobStream, PuckTracker  # noqa: PLC0415
     import track_mallet as tm                    # noqa: PLC0415
 
-    caps = Caps(speed_max=args.speed, accel_max=args.accel)
+    caps = Caps(speed_max=args.speed, accel_max=args.accel,
+                accel_min=max(Caps.accel_min, getattr(args, "accel_floor", None) or 0.0))
     # getattr: the tests drive run() with a hand-built Namespace.
     log_dir = getattr(args, "log_dir", None)
     slog = SessionLog(Path(log_dir)) if log_dir else None
@@ -1350,7 +1351,8 @@ def run(args) -> int:
         print("\n" + "!" * 68)
         print("!!  --live: THE ROBOT WILL MOVE. Stand clear of the table.")
         print(f"!!  policy {args.policy}   caps <= {args.speed:.0f} mm/s, "
-              f"{args.accel:.0f} mm/s^2")
+              f"{args.accel:.0f} mm/s^2"
+              + (f"   accel floor {caps.accel_min:.0f} mm/s^2" if caps.accel_min > Caps.accel_min else ""))
         print("!!  ctrl-C stops it and brakes the paddle where it stands.")
         print("!" * 68 + "\n")
 
@@ -1790,6 +1792,13 @@ def main() -> int:
                     help=f"CEILING on the accel cap a policy may ask for, "
                          f"mm/s^2 (default {Caps.accel_max:.0f}, the sim "
                          "body's)")
+    ap.add_argument("--accel-floor", type=float, default=None,
+                    help=f"FLOOR on the accel cap a policy may ask for, mm/s^2 "
+                         f"(default {Caps.accel_min:.0f}). The accel-taxed "
+                         "policies idle at ~3000 (2.3-control-gate asked for "
+                         "<= 4000 on 58%% of its ticks, 2026-09-07), which "
+                         "looks slow on the table; 12000-15000 keeps the "
+                         "paddle lively without leaving what it trained on")
     ap.add_argument("--puck-timeout", type=float,
                     default=DEFAULT_PUCK_TIMEOUT_S,
                     help="seconds without a puck fix before the policy is "
