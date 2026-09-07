@@ -807,3 +807,25 @@ Concedes nothing to any of them. Scores less than run 14's checkpoint
 against the goalie bot: the held-and-struck shot is one shot per
 possession where the slap style got several, and the goalie bot
 stops a fair share of 3.5 m/s shots.
+
+
+# Run 16 (from run 15's final: same reward, no demonstrations, 1M)
+
+Does the strike hold? Partly. Held-puck eval of its checkpoints:
+
+                       500k                           final (1M)
+    vs weak goalie     hold 1.2 s, 1.1 m/s, 4-0        hold 1.4 s, 3.8 m/s, 2-0
+    vs sniper          hold 1.4 s, 3.5 m/s, 13-19      hold 1.5 s, 3.8 m/s, 6-7
+    vs itself          hold 1.4 s, 1.7 m/s, 0-0        hold 1.3 s, 1.7 m/s, 0-0
+
+In training its real on-target shots were the highest of any run (4.8-
+5.6 per 10k, shot income ~200 per 10k against run 15's 55-89) and the
+share of held possessions ending in the stuck relaunch fell from about
+a quarter to 6-18%. The final checkpoint strikes at 3.8 m/s against
+both scripted opponents and concedes half as much to the sniper as
+run 15's (6-7 vs 8-16), but scores far less against the weak goalie
+(2-0 vs 14-0 in the same 16 x 30 s) and still pushes at 1.7 m/s
+against a copy of itself. The strike is learned, not yet settled.
+
+Two table candidates, then: `run15_selfplay` scores more, `run16_selfplay`
+defends better. Start with run 15.
