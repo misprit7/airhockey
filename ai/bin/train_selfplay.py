@@ -49,6 +49,7 @@ from tdmpc2 import TDMPC2  # noqa: E402
 from airhockey.batch_env import BatchAirHockeyEnv, sensing_kwargs  # noqa: E402
 from airhockey.dynamics import ACTION_DT  # noqa: E402
 from airhockey.recorder import FrameData, Recorder  # noqa: E402
+from airhockey.run_names import check_run_name  # noqa: E402
 from airhockey.policy_loader import (PLAN_ITERATIONS, PLAN_SMOOTH_COEF,  # noqa: E402
                                      load_checkpoint)
 from airhockey.rewards import (BatchRewardShaper, STAGE_SCORING,  # noqa: E402
@@ -171,7 +172,8 @@ def main():
     parser.add_argument("--domain-randomize", action="store_true", default=True)
     parser.add_argument("--no-domain-randomize", dest="domain_randomize",
                         action="store_false")
-    parser.add_argument("--run-name", type=str, default="selfplay")
+    parser.add_argument("--run-name", type=str, required=True,
+                        help="<major>.<minor>-<description>-selfplay (ai/RUNS.md)")
     parser.add_argument("--record-freq", type=int, default=50_000)
     parser.add_argument("--opponent-update-freq", type=int, default=50_000)
     parser.add_argument("--horizon", type=int, default=5)
@@ -224,6 +226,7 @@ def main():
                         help="gradient updates per vectorised step; March "
                              "used 1 (i.e. one update per n_envs transitions)")
     args = parser.parse_args()
+    check_run_name(args.run_name)   # <major>.<minor>-<description>-<stage>, see ai/RUNS.md
 
     root = Path(__file__).resolve().parents[2]
     run_dir = root / "runs" / args.run_name

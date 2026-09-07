@@ -84,8 +84,10 @@ PLAN_ITERATIONS = 6
 # but a longer rollout than it was trained on is extrapolation, so the
 # default is 5 and the horizon-8 runs pass horizon=8 to load_agent.
 PLAN_HORIZON = 5
-HORIZON_8_RUNS = ("run15_selfplay", "run16_selfplay", "run17_selfplay",
-                  "run18_selfplay", "run18_300k")
+HORIZON_8_RUNS = ("3.0-horizon8-selfplay", "3.1-no-demos-selfplay", "3.2-shot-clock-selfplay",
+                  "3.3-turnover-selfplay", "3.3-turnover-selfplay-300k",
+                  # the same runs by their pre-scheme names (symlinks under runs/)
+                  "run15_selfplay", "run16_selfplay", "run17_selfplay", "run18_selfplay", "run18_300k")
 # Execute the elite MEAN in eval mode, not a sampled elite (local TD-MPC2
 # flag plan_eval_mean). Stock MPPI draws one elite trajectory even in eval
 # mode, and on a flat value landscape -- the puck parked far away, nothing

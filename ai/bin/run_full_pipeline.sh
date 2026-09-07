@@ -3,21 +3,24 @@
 # checkpoint; stage budgets, opponents and reward weights come from
 # rewards.CURRICULUM (one table, used by both trainers).
 #
-#   bash ai/bin/run_full_pipeline.sh            # default budgets
-#   PREFIX=curr2 bash ai/bin/run_full_pipeline.sh
+#   PREFIX=4.0-strike-primitive bash ai/bin/run_full_pipeline.sh
+#
+# PREFIX is the version and description; the stage is appended:
+# 4.0-strike-primitive-proximity ... 4.0-strike-primitive-selfplay
+# (ai/RUNS.md). The trainers refuse a name outside the scheme.
 #
 # train_tdmpc2.py can core-dump at interpreter teardown (background eval
 # thread vs torch shutdown) AFTER saving, so each stage is judged by its
 # checkpoint, not its exit code.
 cd "$(dirname "$0")/../.."
 export PYTHONPATH=ai PYTHONUNBUFFERED=1
-PREFIX=${PREFIX:-curriculum}
+PREFIX=${PREFIX:?set PREFIX=<major>.<minor>-<description>, e.g. 4.0-strike-primitive}
 
 budget() { python3 -c "from airhockey.rewards import CURRICULUM as C; print(C['$1']['steps'])"; }
 
 prev=""
 for stage in proximity contact scoring goalie; do
-    run="${PREFIX}_${stage}"
+    run="${PREFIX}-${stage}"
     steps=$(budget $stage)
     echo "=== Stage $stage: $steps steps ($run) ==="
     resume=""
@@ -32,8 +35,8 @@ for stage in proximity contact scoring goalie; do
 done
 
 steps=$(budget selfplay)
-echo "=== Stage selfplay: $steps steps (${PREFIX}_selfplay) ==="
+echo "=== Stage selfplay: $steps steps (${PREFIX}-selfplay) ==="
 python3 ai/bin/train_selfplay.py --resume runs/$prev/agent.pt --steps $steps \
-    --n-envs 32 --model-size 5 --horizon 5 --run-name ${PREFIX}_selfplay \
+    --n-envs 32 --model-size 5 --horizon 5 --run-name ${PREFIX}-selfplay \
     --record-freq 50000 --opponent-update-freq 50000
 echo "=== Pipeline complete ==="

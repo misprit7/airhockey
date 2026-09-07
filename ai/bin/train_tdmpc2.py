@@ -40,6 +40,7 @@ from airhockey.batch_env import BatchAirHockeyEnv, sensing_kwargs
 from airhockey.dynamics import ACTION_DT, ProfileDynamics, DelayedDynamics
 from airhockey.env import AirHockeyEnv
 from airhockey.recorder import Recorder
+from airhockey.run_names import check_run_name
 from airhockey.rewards import (
     BatchRewardShaper, ShapedRewardWrapper,
     STAGE_SCORING, STAGE_OPPONENT, STAGE_NAMES,
@@ -245,7 +246,8 @@ def main():
                         help="per-env physics and actuator caps")
     parser.add_argument("--no-domain-randomize", dest="domain_randomize",
                         action="store_false")
-    parser.add_argument("--run-name", type=str, default="tdmpc2")
+    parser.add_argument("--run-name", type=str, required=True,
+                        help="<major>.<minor>-<description>-<stage> (ai/RUNS.md)")
     parser.add_argument("--record-freq", type=int, default=50_000)
     parser.add_argument("--horizon", type=int, default=5, help="Planning horizon (steps to look ahead)")
     parser.add_argument("--fast", action="store_true", help="Use reduced MPPI params for faster planning (num_samples=128, iterations=3, horizon=3)")
@@ -301,6 +303,7 @@ def main():
     parser.add_argument("--resume", type=str, default=None,
                         help="Path to agent.pt to load weights from (resumes training)")
     args = parser.parse_args()
+    check_run_name(args.run_name)   # <major>.<minor>-<description>-<stage>, see ai/RUNS.md
 
     run_dir = Path("runs") / args.run_name
     # The web UI's replay tab reads ai/recordings (server.py RECORDINGS_DIR).

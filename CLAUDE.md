@@ -279,6 +279,15 @@ goals conceded from 0.10 to 0.04 per game.
     `record_puck.py`, `blobtrack`, and every other vision tool.
 - **Recording**: Save game trajectories at intervals during training for later visual replay. Columnar JSON format for ~78% size reduction. Includes per-frame reward and cumulative reward.
 
+## Run names
+`<major>.<minor>-<description>-<stage>` (e.g. `3.3-turnover-selfplay`):
+major = a new lineage (action space, observation layout, horizon, model),
+minor = a recipe change resumed within it, stage = curriculum stage or
+`selfplay`, `-<step>k` for a pinned snapshot. `ai/RUNS.md` is the registry
+with each run's parent; `airhockey/run_names.py` enforces it in both
+trainers; `python -m airhockey.run_names <major> <description> <stage>`
+prints the next free name. Pre-scheme names (`runN_selfplay`) are symlinks.
+
 ## Commands
 
 All commands run from the REPO ROOT — do not `cd`. Keeping one working

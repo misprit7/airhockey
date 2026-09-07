@@ -1,3 +1,7 @@
+> Run names follow `<major>.<minor>-<description>-<stage>` since 2026-09-07;
+> `ai/RUNS.md` is the registry. The "Run N" numbers below are the old
+> names (`runs/runN_selfplay`, kept as symlinks).
+
 # Retrain checklist (from scratch, curriculum pipeline)
 
 Started 2026-09-06. The plan is to stop patching `curriculum_selfplay_smooth6`
@@ -261,7 +265,7 @@ default 50 Hz and 40 m/s², `--shot-type mix`, short sessions, watch
 "shed" and the lag in the status line.
 
 
-# Run 2 (prepared 2026-09-06 ~12:30, not started)
+# Run 2 = 2.0-accel-action-selfplay (prepared 2026-09-06 ~12:30, not started)
 
 What run 1 (retrain40) showed on the table: 20 s at 12 / 40 tripped motor 2
 on RMS overload; the paddle travelled 33 m, was moving 82% of the time and
@@ -351,7 +355,7 @@ tdmpc2:run2_selfplay --plan 3 --shot-type mix` after restarting the master
 accel command is being used.
 
 
-# Run 3 (started 18:21, self-play only, from run 2's final checkpoint)
+# Run 3 = 2.1-patience-floor-selfplay (started 18:21, self-play only, from run 2's final checkpoint)
 
 Two changes on the user's read of run 2 ("still doesn't control the puck;
 the accel tax should cut more than half"):
@@ -382,7 +386,7 @@ is 15 + 1/m/s. Runs 1-2 landed 35-45% of shots while a miss still
 collected about 5. ETA ~20:05.
 
 
-# Run 4 (started 19:28, self-play from run 3's 900k checkpoint)
+# Run 4 = 2.2-cushion-income-selfplay (started 19:28, self-play from run 3's 900k checkpoint)
 
 Run 3 at 900k (stopped there): patience on goals worked as a lever (the
 multiplier on scored goals 0.48 -> 0.66), on-target 46-47%, but traps
@@ -420,7 +424,7 @@ Changes (commit below), all unit-tested (`tests/test_run2_changes.py`):
 puck near and puck far).
 
 
-# Run 5 (self-play from run 4's ~1M checkpoint)
+# Run 5 = 2.3-control-gate-selfplay (self-play from run 4's ~1M checkpoint)
 
 Run 4 at 1M: cushioning rose 127 -> 173 per 10k (touches that slow the
 puck are learned), but traps and hold stayed at zero and 79% of shots
@@ -445,7 +449,7 @@ climb well above run 4's ~15/10k) and the controlled multiplier
 (`shots/patience_sum / shots/on_target`, 0.05 = none controlled).
 
 
-# Run 6 (started 21:06, self-play from run 5's 680k checkpoint, WITH demonstrations)
+# Run 6 = 2.4-demos-selfplay (started 21:06, self-play from run 5's 680k checkpoint, WITH demonstrations)
 
 Run 5 at 680k: held-puck income collected on ~2.7% of steps and rising,
 10-15% of on-target shots from controlled possessions (up from ~2%),
@@ -471,7 +475,7 @@ AGENT's shots (`shots/patience_sum / shots/on_target`, 0.05 = none), not
 the demo/* lines, which are the bot.
 
 
-# Run 7 (self-play from run 6's checkpoint, demonstrations + behaviour cloning)
+# Run 7 = 2.5-behaviour-cloning-selfplay (self-play from run 6's checkpoint, demonstrations + behaviour cloning)
 
 Run 6 at 500k: the demonstrations were in the buffer and the agent did
 not take them up -- its held-puck income 313 -> 169 per 10k, 14% of
@@ -492,7 +496,7 @@ has seen the chain can pick it. `--bc-coef 0.5`, logged as `loss/pi_bc`.
 and controlled multiplier.
 
 
-# Run 8 (from run 7's 550k checkpoint: the reward's economy, fixed)
+# Run 8 = 2.6-held-gate-no-defense-selfplay (from run 7's 550k checkpoint: the reward's economy, fixed)
 
 Run 7 at 500k, the agent's numbers unchanged (hold 230/10k, 8% of shots
 controlled). Playing its checkpoint with the planner and with the PRIOR
@@ -545,7 +549,7 @@ controlled multiplier; the value function now has a reason to take the
 prior's proposals.
 
 
-# Run 9 (from run 8's 1M checkpoint: hold income capped, no demonstrations)
+# Run 9 = 2.7-hold-cap-selfplay (from run 8's 1M checkpoint: hold income capped, no demonstrations)
 
 Run 8 learned to hold. Per 10k steps, the agent's held possessions went
 1.6 -> 22 by 600k (the bot: 6.4), traps 0.6 -> 7, and the controlled
@@ -570,7 +574,7 @@ back toward the bot.
 draws against itself.
 
 
-# Run 10 (from run 9's 700k checkpoint: shots pay by speed, shot clock)
+# Run 10 = 2.8-speed-ramp-shot-clock-selfplay (from run 9's 700k checkpoint: shots pay by speed, shot clock)
 
 Run 9 at 500k held 21 possessions per 10k (stable) but scored 0.22 per
 game against the weak goalie with 55 draws in 72, and 0-0 against a
@@ -599,7 +603,7 @@ real shots only) and goals per 10k; and re-run the held-puck eval
 (shot speed median should climb past 3 m/s, hold time under 1.5 s).
 
 
-# Run 11 (from run 10's 550k checkpoint: demonstrations of a wound-up shot)
+# Run 11 = 2.9-windup-demos-selfplay (from run 10's 550k checkpoint: demonstrations of a wound-up shot)
 
 Run 10 at 500k: the shot clock works -- median hold 1.0-1.6 s (was
 2.2-2.7), max 3-7 s (was 14) -- and the shot is still a nudge: median
@@ -623,7 +627,7 @@ in the buffer and in the prior's proposals.
 held-puck eval's shot speed (want the median past 3 m/s).
 
 
-# Run 12 (from run 11's 600k checkpoint: the wind-up is paid)
+# Run 12 = 2.10-windup-income-selfplay (from run 11's 600k checkpoint: the wind-up is paid)
 
 Run 11 at 500k, with the wound-up demonstrations in the buffer: goals
 1.0 -> 3.4 per 10k, real on-target shots 2.8 per 10k, accel fraction
@@ -651,7 +655,7 @@ on-target per 10k and goals per 10k (it is used), and the held-puck
 eval's shot speed.
 
 
-# Run 13 (from run 12's 600k checkpoint: the drive is paid)
+# Run 13 = 2.11-drive-income-selfplay (from run 12's 600k checkpoint: the drive is paid)
 
 Run 12 at 500k found the wind-up -- 63 -> 172 wound-up steps per 10k --
 and sat in it: the shot clock cost rose 178 -> 662, real on-target
@@ -675,7 +679,7 @@ on-target reward in the data often enough to be learned in turn.
 per 10k and goals per 10k, and the held-puck eval's shot speed.
 
 
-# Run 14 (from run 13's 600k checkpoint: the drive pays by speed squared)
+# Run 14 = 2.12-drive-squared-selfplay (from run 13's 600k checkpoint: the drive pays by speed squared)
 
 Run 13 at 500k collected the drive income (45-57 per 10k) and the
 checkpoint's shots after a hold were a median 0.5-0.7 m/s: it drives
@@ -694,7 +698,7 @@ is 2 m/s.
 speed is the one that matters.
 
 
-# Run 15 (from run 14's final checkpoint: planning horizon 5 -> 8)
+# Run 15 = 3.0-horizon8-selfplay (from run 14's final checkpoint: planning horizon 5 -> 8)
 
 Run 14 is the first checkpoint that strikes: after a hold, a median
 2.2 m/s shot against the weak goalie (was 0.6) and 5-0 in the eval;
@@ -809,7 +813,7 @@ possession where the slap style got several, and the goalie bot
 stops a fair share of 3.5 m/s shots.
 
 
-# Run 16 (from run 15's final: same reward, no demonstrations, 1M)
+# Run 16 = 3.1-no-demos-selfplay (from run 15's final: same reward, no demonstrations, 1M)
 
 Does the strike hold? Partly. Held-puck eval of its checkpoints:
 
@@ -831,7 +835,7 @@ Two table candidates, then: `run15_selfplay` scores more, `run16_selfplay`
 defends better. Start with run 15.
 
 
-# Run 17 (from run 16's final: the shot clock bites, wind-up income gone)
+# Run 17 = 3.2-shot-clock-selfplay (from run 16's final: the shot clock bites, wind-up income gone)
 
 The user watched the recordings: it stops the puck and never shoots.
 Correct -- against a blocker (a copy of itself, a person) a held puck
@@ -850,7 +854,7 @@ the held-puck eval against itself: relaunch endings must go to ~0 and
 the shot-after-hold share up.
 
 
-# Run 18 (from run 17's 350k: the relaunch is a turnover, the clock has no reach)
+# Run 18 = 3.3-turnover-selfplay (from run 17's 350k: the relaunch is a turnover, the clock has no reach)
 
 Run 17 at 300k: shots up (6.6 per 10k, goals 4.2) and against a copy of
 itself still 0-0 with a fifth of its held possessions ending in the
