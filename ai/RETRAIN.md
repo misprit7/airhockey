@@ -866,3 +866,16 @@ has no relaunch at all, which is what "never shoots" looked like.
 `--resume runs/run17_selfplay/agent.pt --steps 600000 --horizon 8
 --demo-envs 0 --run-name run18_selfplay`, log `logs/run18.log`. The
 held-puck eval against itself: relaunch endings to ~0.
+
+
+Run 18 at 300k (15:38) -- it stops, holds and SHOOTS, against everyone:
+
+    vs weak goalie   held 42 of 43, hold 0.9 s, shot after 76% at 4.4 m/s, 5-0
+    vs sniper        hold 1.0 s, shot after 78% at 4.1 m/s, 6-10
+    vs itself        hold 1.3 s, shot after 73% at 4.3 m/s, 1-1
+    relaunch endings 7-12% (run 17: 17-20%; runs 15-16: up to 49%)
+
+In training: real on-target shots 11.6 per 10k (run 17: 6.6, all
+earlier runs under 6), games against itself 15-15-85 rather than all
+draws. Pinned as `runs/run18_300k`. The turnover rule and the clock
+without reach were the two things that ended the waiting.
