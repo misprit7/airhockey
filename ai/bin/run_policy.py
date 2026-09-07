@@ -118,10 +118,16 @@ HISTORY_S = 0.200
 STALE_S = 0.150
 
 # Beyond THIS, the puck is not blinking, it is gone -- off the table, under
-# an arm, or the tracker has died. An order of magnitude above STALE_S on
-# purpose: the two answer different questions and must not be one number.
-# See PuckWatchdog.
-DEFAULT_PUCK_TIMEOUT_S = 2.0
+# an arm, or the tracker has died -- and the policy is paused. See
+# PuckWatchdog. Sized to the SIM (2026-09-07): its tracker coasts 150 ms
+# and then reports the puck frozen at zero velocity, and the longest the
+# sim ever leaves a puck unseen is a slow crossing of the ring's blind spot,
+# about half a second. Past that the observation is one the policy never
+# trained on -- a puck at rest that is not there -- and at the old 2.0 s it
+# drove at the phantom, 113-400 mm of target change per tick at 32 m/s^2,
+# and tripped a drive's RMS overload.
+DEFAULT_PUCK_TIMEOUT_S = 0.5
+SIM_MAX_UNSEEN_S = 0.5
 
 # The first-live-run preset. Slow enough that a wrong sign or a bad
 # calibration is something you watch happen rather than something you hear.
@@ -783,7 +789,8 @@ def _bot_config(caps: Caps):
 
 
 def _load_tdmpc2(name: str, caps: Caps, plan_iters: int, device: str | None,
-                 shot_mode: str = "none", cmd_hz: float = ACTION_HZ):
+                 shot_mode: str = "none", cmd_hz: float = ACTION_HZ,
+                 puck_timeout: float = DEFAULT_PUCK_TIMEOUT_S):
     """A TD-MPC2 checkpoint through airhockey.deploy.TDMPC2Policy.
 
     Prints the resolved checkpoint, the mode, the measured cost per decision
@@ -811,12 +818,12 @@ def _load_tdmpc2(name: str, caps: Caps, plan_iters: int, device: str | None,
                "TIGHT" if ms < budget else "DOES NOT FIT -- use --plan 0")
     print(f"  cost: {ms:.2f} ms per decision against a {budget:.0f} ms tick "
           f"({verdict})")
-    print(alignment_report(policy, caps, plan_iters, shot_mode, cmd_hz))
+    print(alignment_report(policy, caps, plan_iters, shot_mode, cmd_hz, puck_timeout))
     return policy
 
 
 def alignment_report(policy, caps: Caps, plan_iters: int, shot_mode: str,
-                     cmd_hz: float) -> str:
+                     cmd_hz: float, puck_timeout: float = DEFAULT_PUCK_TIMEOUT_S) -> str:
     """Sim vs table, line by line, before the first live command.
 
     Every setting the table can differ from training in, with what training
@@ -845,6 +852,8 @@ def alignment_report(policy, caps: Caps, plan_iters: int, shot_mode: str,
         line("accel floor", f"{caps.accel_min:.0f} mm/s^2", f"{Caps.accel_min:.0f} mm/s^2",
              caps.accel_min <= Caps.accel_min),
         line("command rate", f"{cmd_hz:.0f} Hz", f"{ACTION_HZ:.0f} Hz", abs(cmd_hz - ACTION_HZ) < 1e-6),
+        line("puck timeout", f"hold after {puck_timeout:.2f} s unseen",
+             f"<= {SIM_MAX_UNSEEN_S:.1f} s unseen, ever", puck_timeout <= SIM_MAX_UNSEEN_S),
     ]
     inherent = [
         "    inherent      opponent: a person; trained against a copy of itself (60%),",
@@ -861,7 +870,7 @@ def alignment_report(policy, caps: Caps, plan_iters: int, shot_mode: str,
 
 def load_policy(spec: str, caps: Caps, plan_iters: int | None = None,
                 device: str | None = None, shot_mode: str = "mix",
-                cmd_hz: float = ACTION_HZ):
+                cmd_hz: float = ACTION_HZ, puck_timeout: float = DEFAULT_PUCK_TIMEOUT_S):
     """Turn a --policy string into a callable(obs) -> Command or 4-tuple.
 
         heuristic:<name>   a bot from ai/airhockey/heuristics.py
@@ -875,7 +884,7 @@ def load_policy(spec: str, caps: Caps, plan_iters: int | None = None,
         from airhockey.policy_loader import PLAN_ITERATIONS   # noqa: PLC0415
         if plan_iters is None:
             plan_iters = PLAN_ITERATIONS
-        return _load_tdmpc2(name, caps, plan_iters, device, shot_mode, cmd_hz)
+        return _load_tdmpc2(name, caps, plan_iters, device, shot_mode, cmd_hz, puck_timeout)
     if kind == "sac":
         return _load_sac(name, caps)
     if kind == "builtin":
@@ -1392,7 +1401,8 @@ def run(args) -> int:
     policy = load_policy(args.policy, caps, getattr(args, "plan", None),
                          getattr(args, "device", None),
                          shot_mode=getattr(args, "shot_type", "none"),
-                         cmd_hz=float(getattr(args, "cmd_hz", ACTION_HZ)))
+                         cmd_hz=float(getattr(args, "cmd_hz", ACTION_HZ)),
+                         puck_timeout=float(getattr(args, "puck_timeout", DEFAULT_PUCK_TIMEOUT_S)))
 
     client = None
     if args.live:
