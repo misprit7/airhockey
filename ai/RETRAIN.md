@@ -443,3 +443,29 @@ Changes (commit below):
 run5_selfplay`, log `logs/run5.log`. Read `shots/hold_steps` (should
 climb well above run 4's ~15/10k) and the controlled multiplier
 (`shots/patience_sum / shots/on_target`, 0.05 = none controlled).
+
+
+# Run 6 (started 21:06, self-play from run 5's 680k checkpoint, WITH demonstrations)
+
+Run 5 at 680k: held-puck income collected on ~2.7% of steps and rising,
+10-15% of on-target shots from controlled possessions (up from ~2%),
+goal multiplier 0.5-0.66 -- movement, but slow, and play worse meanwhile
+(sniper 26-29-14, all draws vs self).
+
+The reward route was converging too slowly, so the chain is now put in
+the buffer directly. `airhockey/cushion_bot.py` is a scripted controller
+that waits on the puck's path with room behind it, retreats along the
+puck's motion as it arrives (a 0.47x retreat stops it dead in the
+physics), holds ~1.2 s, then strikes at the far mouth. Measured in the
+sim: controls the puck in 57% of fast possessions vs the weak goalie and
+27% vs the sniper, 600-2400 held steps per 16 x 30 s. `train_selfplay.py
+--demo-envs 8 --demo-until 1000000` steps eight such envs alongside the
+agent's 32 and stores their episodes, shaped rewards and all; the value
+function then knows what a controlled possession is worth. Logged under
+`demo/*` next to `shots/*`.
+
+`--resume runs/run5_selfplay/agent.pt --steps 1500000 --demo-envs 8
+--demo-until 1000000 --run-name run6_selfplay`, log `logs/run6.log`,
+ETA ~22:35. Read `shots/hold_steps` and the controlled multiplier on the
+AGENT's shots (`shots/patience_sum / shots/on_target`, 0.05 = none), not
+the demo/* lines, which are the bot.
