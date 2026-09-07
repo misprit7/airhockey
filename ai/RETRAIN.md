@@ -469,3 +469,24 @@ function then knows what a controlled possession is worth. Logged under
 ETA ~22:35. Read `shots/hold_steps` and the controlled multiplier on the
 AGENT's shots (`shots/patience_sum / shots/on_target`, 0.05 = none), not
 the demo/* lines, which are the bot.
+
+
+# Run 7 (self-play from run 6's checkpoint, demonstrations + behaviour cloning)
+
+Run 6 at 500k: the demonstrations were in the buffer and the agent did
+not take them up -- its held-puck income 313 -> 169 per 10k, 14% of
+on-target shots controlled, while the bot alongside held 1028/10k with
+34% controlled. Off-policy value learning alone did not transfer the
+actions.
+
+Change: every stored step carries a `demo` flag and the local TD-MPC2
+(`bc_coef`, commit in ~/dev/p-airhockey/tdmpc2) pulls the prior's mean
+toward the demonstrated action on those steps -- the RL + BC recipe
+(TD3+BC, DAPG). The planner seeds 24 of its 256 samples from the prior,
+so the retreat is now among its proposals, and the value function that
+has seen the chain can pick it. `--bc-coef 0.5`, logged as `loss/pi_bc`.
+
+`--resume runs/run6_selfplay/agent.pt --steps 1500000 --demo-envs 8
+--bc-coef 0.5 --demo-until 1000000 --run-name run7_selfplay`, log
+`logs/run7.log`. Same numbers to read: the AGENT's `shots/hold_steps`
+and controlled multiplier.
