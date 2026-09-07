@@ -1335,8 +1335,15 @@ CURRICULUM: dict[str, dict] = {
         # possession having been controlled rather than on elapsed time --
         # runs 1-3 never once stopped the puck under a time-based ramp.
         trap_reward=10.0, controlled_shot_bonus=2.0,
-        cushion_weight=1.5, hold_income=0.2, control_gate=True, overstay_cost=0.1,
-        windup_income=0.2, drive_weight=0.25,
+        cushion_weight=1.5, hold_income=0.2, control_gate=True, overstay_cost=1.0,
+        # Run 17: the clock BITES. Runs 15-16 stop the puck and, against a
+        # blocker, never shoot: a held puck cannot be scored against, the
+        # sim relaunches it after 5 s, and at 0.1 a step the clock cost
+        # 35 for the wait -- less than one conceded goal. 1.0 a step is
+        # -50 per second past the clock, a goal's worth. The wind-up
+        # income is gone: it paid for not shooting yet, and the strike
+        # is learned.
+        windup_income=0.0, drive_weight=0.25,
         # Run 3: full accel for a whole 30 s episode costs 60 (run 2's 0.02
         # settled the mean fraction at 0.52; the user wants it lower), and
         # patience floors at 0.2 ON THE GOAL AS WELL: a goal from an instant

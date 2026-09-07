@@ -829,3 +829,22 @@ against a copy of itself. The strike is learned, not yet settled.
 
 Two table candidates, then: `run15_selfplay` scores more, `run16_selfplay`
 defends better. Start with run 15.
+
+
+# Run 17 (from run 16's final: the shot clock bites, wind-up income gone)
+
+The user watched the recordings: it stops the puck and never shoots.
+Correct -- against a blocker (a copy of itself, a person) a held puck
+cannot be scored against, the sim relaunches it after 5 s, and at 0.1
+a step the wait past the clock cost 35, less than one conceded goal.
+Half of its held possessions against itself ended in the relaunch.
+
+Changes: `overstay_cost` 0.1 -> 1.0 per step (-50 per second past the
+1.5 s clock, a goal's worth), and `windup_income` 0.2 -> 0, since it
+paid for not shooting yet and the strike is learned. Hold income (1 s
+cap) and the drive pay stay.
+
+`--resume runs/run16_selfplay/agent.pt --steps 600000 --horizon 8
+--demo-envs 0 --run-name run17_selfplay`, log `logs/run17.log`. Read
+the held-puck eval against itself: relaunch endings must go to ~0 and
+the shot-after-hold share up.
