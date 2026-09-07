@@ -166,6 +166,23 @@ HOLD_PAY_MAX_S = 1.0
 # up to 14 s, waiting for the relaunch).
 SHOT_SPEED_MIN = 1.5
 SHOT_SPEED_FULL = 4.0
+# Run 12: the WIND-UP is paid. Run 11 held and still nudged (0.8-1.1 m/s)
+# with demonstrations of a 5 m/s wound-up strike in the buffer: the bot's
+# wind-ups are ~2 per 10k demo steps, and a pull-back-then-strike is 15
+# steps the planner's 100 ms horizon cannot see. So `windup_income` per
+# step while a HELD puck sits slow on our half and the paddle is
+# WINDUP_MIN..WINDUP_MAX behind it on the line to the far goal (within
+# WINDUP_LINE_TOL of it), for at most WINDUP_PAY_MAX_S per possession.
+# From there the strike is one forward drive inside the horizon.
+# The shot clock is now a clock: `overstay_cost` per step once
+# SHOT_CLOCK_S have passed since the hold was established and the puck
+# is still slow on our half within SHOT_CLOCK_REACH of the paddle.
+WINDUP_MIN = 0.12
+WINDUP_MAX = 0.30
+WINDUP_LINE_TOL = 0.06
+WINDUP_PAY_MAX_S = 0.5
+SHOT_CLOCK_S = 1.5
+SHOT_CLOCK_REACH = 0.35
 
 
 def predict_shot(x, y, vx, vy, width: float = _TABLE_W, height: float = _GOAL_CY,
@@ -503,6 +520,7 @@ class BatchRewardShaper:
         cushion_weight: float = 0.0,
         hold_income: float = 0.0,
         overstay_cost: float = 0.0,
+        windup_income: float = 0.0,
         control_gate: bool = False,
         config=None,
     ):
@@ -515,6 +533,7 @@ class BatchRewardShaper:
         self.cushion_weight = cushion_weight
         self.hold_income = hold_income
         self.overstay_cost = overstay_cost
+        self.windup_income = windup_income
         self.control_gate = control_gate
         self.dt = ACTION_DT
         # The patience multiplier at the agent's last hit of the current
@@ -524,6 +543,8 @@ class BatchRewardShaper:
         self._visit_min_near = np.full(n_envs, 9.0)
         self._held_s = np.zeros(n_envs)
         self._hold_paid_s = np.zeros(n_envs)
+        self._windup_paid_s = np.zeros(n_envs)
+        self._since_held_s = np.zeros(n_envs)
         from airhockey.physics import TableConfig    # noqa: PLC0415
         cfg = config or TableConfig()
         self._cfg = cfg
@@ -546,6 +567,7 @@ class BatchRewardShaper:
                       "patience_sum": 0.0, "accel_frac_sum": 0.0, "steps": 0,
                       "goal_patience_sum": 0.0, "goals": 0,
                       "cushion_sum": 0.0, "hold_steps": 0, "held": 0, "overstay_steps": 0,
+                      "windup_steps": 0,
                       **{"pay_" + k: 0.0 for k in ("prox", "hit", "trap", "cushion", "hold",
                                                    "shot", "field", "goal", "penalty", "accel",
                                                    "idle")}}
@@ -645,6 +667,8 @@ class BatchRewardShaper:
         self._visit_min_near[idx] = 9.0
         self._held_s[idx] = 0.0
         self._hold_paid_s[idx] = 0.0
+        self._windup_paid_s[idx] = 0.0
+        self._since_held_s[idx] = 0.0
         # Read puck velocity from info (truth) or obs (indices 2-3)
         puck_vx = obs[idx, 2]
         puck_vy = obs[idx, 3]
@@ -792,6 +816,8 @@ class BatchRewardShaper:
             self._visit_min_near[entered] = 9.0
             self._held_s[entered] = 0.0
             self._hold_paid_s[entered] = 0.0
+            self._windup_paid_s[entered] = 0.0
+            self._since_held_s[entered] = 0.0
         self._in_half[:] = in_half
         self._visit_max_speed = np.where(in_half, np.maximum(self._visit_max_speed, puck_speed),
                                          self._visit_max_speed)
@@ -802,6 +828,7 @@ class BatchRewardShaper:
         newly_held = (self._held_s < HOLD_MIN_S) & (self._held_s + add >= HOLD_MIN_S)
         self._held_s += add
         self.stats["held"] += int(newly_held.sum())
+        self._since_held_s += np.where(in_half & (self._held_s >= HOLD_MIN_S), self.dt, 0.0)
 
         # Trap: the puck brought to rest under the paddle after arriving
         # fast. Once per visit, so bump-stop-bump earns nothing extra.
@@ -837,15 +864,30 @@ class BatchRewardShaper:
             slowness = np.clip(1.0 - puck_speed / HOLD_SPEED_SCALE, 0.0, 1.0)
             pay = np.where(within, self.hold_income * slowness, 0.0)
             shaped += pay
-            if self.overstay_cost > 0:
-                # The shot clock: the puck slow within reach past the paid
-                # second (judged before this step's second is counted).
-                over = (in_half & (dist < TRAP_DIST) & (puck_speed < HELD_SPEED)
-                        & (self._hold_paid_s >= HOLD_PAY_MAX_S))
-                shaped -= np.where(over, self.overstay_cost, 0.0)
-                self.stats["overstay_steps"] += int(over.sum())
             self._hold_paid_s += np.where(pay > 0, self.dt, 0.0)
             self.stats["hold_steps"] += int((pay > 0).sum())
+        if self.windup_income > 0:
+            # Wound up: a held puck, slow, and the paddle behind it on the
+            # line to the far goal's centre, at striking distance.
+            gx, gy = self._cfg.width / 2.0 - puck_x, self._H - puck_y
+            gn = np.maximum(np.hypot(gx, gy), 1e-6)
+            ux, uy = gx / gn, gy / gn
+            rx, ry = pad_x - puck_x, pad_y - puck_y
+            along = rx * ux + ry * uy
+            lateral = np.abs(rx * uy - ry * ux)
+            wound = (in_half & (puck_speed < HELD_SPEED) & (self._held_s >= HOLD_MIN_S)
+                     & (along < -WINDUP_MIN) & (along > -WINDUP_MAX) & (lateral < WINDUP_LINE_TOL)
+                     & (self._windup_paid_s < WINDUP_PAY_MAX_S))
+            shaped += np.where(wound, self.windup_income, 0.0)
+            self._windup_paid_s += np.where(wound, self.dt, 0.0)
+            self.stats["windup_steps"] += int(wound.sum())
+        if self.overstay_cost > 0:
+            # The shot clock: SHOT_CLOCK_S after the hold was established,
+            # the puck still slow on our half within reach costs per step.
+            over = (in_half & (dist < SHOT_CLOCK_REACH) & (puck_speed < HELD_SPEED)
+                    & (self._since_held_s > SHOT_CLOCK_S))
+            shaped -= np.where(over, self.overstay_cost, 0.0)
+            self.stats["overstay_steps"] += int(over.sum())
 
         _mark("hold")
 
@@ -868,8 +910,9 @@ class BatchRewardShaper:
                                0.0, 1.0)
                 on_target &= ramp > 0
                 if np.any(on_target):
-                    # The bonus is for a trap that was HELD, not a touch-and-go.
-                    held = self._trapped & (self._held_s >= HOLD_MIN_S)
+                    # The bonus is for a HELD puck (run 12: the held rule alone;
+                    # the bot's holds creep at 0.3-0.5 m/s and never formally trap).
+                    held = self._held_s >= HOLD_MIN_S
                     mult = np.where(held, self.controlled_shot_bonus, 1.0) * patience * ramp
                     shaped += np.where(on_target,
                                        (self.on_target_reward
@@ -983,6 +1026,8 @@ class BatchRewardShaper:
             self._visit_min_near[goal_mask] = 9.0
             self._held_s[goal_mask] = 0.0
             self._hold_paid_s[goal_mask] = 0.0
+            self._windup_paid_s[goal_mask] = 0.0
+            self._since_held_s[goal_mask] = 0.0
 
         _mark("idle")
         return shaped.astype(np.float32)
@@ -1240,6 +1285,7 @@ CURRICULUM: dict[str, dict] = {
         # runs 1-3 never once stopped the puck under a time-based ramp.
         trap_reward=10.0, controlled_shot_bonus=2.0,
         cushion_weight=1.5, hold_income=0.2, control_gate=True, overstay_cost=0.1,
+        windup_income=0.2,
         # Run 3: full accel for a whole 30 s episode costs 60 (run 2's 0.02
         # settled the mean fraction at 0.52; the user wants it lower), and
         # patience floors at 0.2 ON THE GOAL AS WELL: a goal from an instant
@@ -1287,7 +1333,7 @@ _OUTCOME_KEYS = ("on_target_reward", "shot_speed_weight", "trap_reward",
                  "controlled_shot_bonus", "shot_type_reward",
                  "accel_cost_weight", "patience_s", "patience_floor",
                  "patience_on_goals", "cushion_weight", "hold_income", "control_gate",
-                 "overstay_cost")
+                 "overstay_cost", "windup_income")
 
 
 def curriculum_episode_steps(name: str, action_dt: float = ACTION_DT) -> int:

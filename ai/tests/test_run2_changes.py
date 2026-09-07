@@ -122,11 +122,11 @@ def _shaper(**kw):
     return R.BatchRewardShaper(1, stage=R.STAGE_SCORING, **base)
 
 
-def _info(px, py, pvx, pvy, t_side=0.0):
+def _info(px, py, pvx, pvy, t_side=0.0, pad_x=0.5, pad_y=0.3):
     z = np.zeros(1)
     return {"puck_x": np.array([px]), "puck_y": np.array([py]),
             "puck_vx": np.array([pvx]), "puck_vy": np.array([pvy]),
-            "pad_x": np.array([0.5]), "pad_y": np.array([0.3]),
+            "pad_x": np.array([pad_x]), "pad_y": np.array([pad_y]),
             "opp_x": np.array([0.5]), "opp_y": np.array([1.8]),
             "score_agent": z.astype(int), "score_opponent": z.astype(int),
             "shot_type": np.zeros(1, dtype=np.int8), "t_side": np.array([t_side])}
@@ -173,7 +173,7 @@ def test_patience_beats_the_discount_by_design():
     assert kw["accel_cost_weight"] == 0.04 and kw["patience_on_goals"] is True
     assert kw["control_gate"] is True and kw["cushion_weight"] == 1.5 and kw["hold_income"] == 0.2
     assert kw["on_target_reward"] == 30.0 and kw["trap_reward"] == 10.0 and kw["controlled_shot_bonus"] == 2.0
-    assert kw["overstay_cost"] == 0.1
+    assert kw["overstay_cost"] == 0.1 and kw["windup_income"] == 0.2
     assert kw["patience_floor"] == 0.05
     assert R.curriculum_env_kwargs("proximity")["action_mode"] == "profile_a"
     assert R.curriculum_env_kwargs("selfplay")["action_mode"] == "profile_a"
@@ -333,17 +333,51 @@ def test_on_target_pays_by_shot_speed_and_a_nudge_keeps_the_shot_open():
     assert pay(1.0, then=R.SHOT_SPEED_FULL) == (0.0, pytest.approx(30.0))
 
 
-def test_overstay_costs_per_step_past_the_paid_second():
+def test_shot_clock_costs_per_step_after_the_hold_is_established():
     sh = _shaper(hold_income=0.2, overstay_cost=0.1, patience_s=1.5, control_gate=True)
     obs = np.zeros((1, 22), dtype=np.float32)
     fast = _info(0.5, 0.6, 0.0, -2.0)
     sh.reset(obs, info=fast); sh.compute(obs, np.zeros(1), info=fast)
     stopped = _info(0.5, 0.36, 0.0, 0.0)
     cap_steps = int(round(R.HOLD_PAY_MAX_S / R.ACTION_DT))
-    paid = [float(sh.compute(obs, np.zeros(1), info=stopped)[0]) for _ in range(cap_steps + 10)]
+    clock_steps = int(round((R.HOLD_MIN_S + R.SHOT_CLOCK_S) / R.ACTION_DT))
+    paid = [float(sh.compute(obs, np.zeros(1), info=stopped)[0]) for _ in range(clock_steps + 10)]
     assert all(r == pytest.approx(0.2) for r in paid[:cap_steps])
-    assert all(r == pytest.approx(-0.1) for r in paid[cap_steps:])
-    assert sh.stats["overstay_steps"] == 10
+    first_neg = next(i for i, r in enumerate(paid) if r < 0)
+    assert abs(first_neg - clock_steps) <= 3
+    assert all(r == 0.0 for r in paid[cap_steps:first_neg])
+    assert all(r == pytest.approx(-0.1) for r in paid[first_neg:])
+    assert sh.stats["overstay_steps"] == len(paid) - first_neg
+    # ...wound up 0.24 m behind the puck is still within the clock's reach
+    back = _info(0.5, 0.40, 0.0, 0.0, pad_x=0.5, pad_y=0.16)
+    assert float(sh.compute(obs, np.zeros(1), info=back)[0]) == pytest.approx(-0.1)
+
+
+def test_windup_income_pays_behind_a_held_puck_on_the_shot_line():
+    def run(pad_x, pad_y, windup_income=0.2):
+        sh = _shaper(windup_income=windup_income, patience_s=1.5, control_gate=True)
+        obs = np.zeros((1, 22), dtype=np.float32)
+        fast = _info(0.5, 0.6, 0.0, -2.0)
+        sh.reset(obs, info=fast); sh.compute(obs, np.zeros(1), info=fast)
+        hold_steps = int(round(R.HOLD_MIN_S / R.ACTION_DT))
+        for _ in range(hold_steps):
+            sh.compute(obs, np.zeros(1), info=_info(0.5, 0.36, 0.0, 0.0))
+        wound = _info(0.5, 0.40, 0.0, 0.0, pad_x=pad_x, pad_y=pad_y)
+        return [float(sh.compute(obs, np.zeros(1), info=wound)[0]) for _ in range(40)], sh
+    cap = int(round(R.WINDUP_PAY_MAX_S / R.ACTION_DT))
+    paid, sh = run(0.5, 0.40 - 0.2)                    # 0.2 m straight behind, on the centre line
+    assert all(r == pytest.approx(0.2) for r in paid[:cap]) and all(r == 0.0 for r in paid[cap:])
+    assert sh.stats["windup_steps"] == cap
+    assert run(0.5, 0.40 - 0.05)[0][0] == 0.0, "touching is not wound up"
+    assert run(0.5, 0.40 - 0.4)[0][0] == 0.0, "too far back"
+    assert run(0.62, 0.40 - 0.2)[0][0] == 0.0, "off the shot line"
+    assert run(0.5, 0.40 + 0.2)[0][0] == 0.0, "in front of the puck"
+    # not paid unless the puck was held first
+    sh = _shaper(windup_income=0.2, patience_s=1.5, control_gate=True)
+    obs = np.zeros((1, 22), dtype=np.float32)
+    fast = _info(0.5, 0.6, 0.0, -2.0)
+    sh.reset(obs, info=fast); sh.compute(obs, np.zeros(1), info=fast)
+    assert float(sh.compute(obs, np.zeros(1), info=_info(0.5, 0.40, 0.0, 0.0, pad_x=0.5, pad_y=0.2))[0]) == 0.0
 
 
 def test_hold_income_is_capped_per_possession():

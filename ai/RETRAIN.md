@@ -621,3 +621,31 @@ in the buffer and in the prior's proposals.
 `logs/run11.log`. Read on-target per 10k (real shots), goals per 10k,
 `shots/accel_frac_sum` (a strike needs 1.0 for a few steps), and the
 held-puck eval's shot speed (want the median past 3 m/s).
+
+
+# Run 12 (from run 11's 600k checkpoint: the wind-up is paid)
+
+Run 11 at 500k, with the wound-up demonstrations in the buffer: goals
+1.0 -> 3.4 per 10k, real on-target shots 2.8 per 10k, accel fraction
+0.33 -- the strike did not transfer. The bot winds up ~2 times per 10k
+demo steps; a pull-back-then-strike is 15 steps that the planner's
+100 ms horizon cannot see, so it has to come from the value function,
+from a handful of examples. Not enough.
+
+Change: make the wind-up itself worth reaching. `windup_income` 0.2 per
+step while a HELD puck sits slow on our half and the paddle is
+0.12-0.30 m behind it on the line to the far goal's centre (within
+0.06 m of the line), for at most 0.5 s per possession (max 10). From
+there the strike is one forward drive at full accel, and the collision
+and its on-target reward land inside the planner's horizon. The shot
+clock is now a clock -- `overstay_cost` per step from 1.5 s after the
+hold was established, within 0.35 m (so a wound-up sit is on the
+clock) -- and the controlled-shot bonus follows the held rule alone
+(the bot's holds creep at 0.3-0.5 m/s and never formally trapped, so
+its strikes earned no bonus and its chain looked poor to the learner).
+
+`--resume runs/run11_selfplay/agent.pt --steps 1000000 --demo-envs 8
+--bc-coef 0.5 --demo-until 800000 --run-name run12_selfplay`, log
+`logs/run12.log`. Read `shots/windup_steps` (the position is found),
+on-target per 10k and goals per 10k (it is used), and the held-puck
+eval's shot speed.
