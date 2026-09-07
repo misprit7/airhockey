@@ -30,7 +30,7 @@ cd "$(dirname "$0")/../.."
 export PYTHONPATH=ai PYTHONUNBUFFERED=1
 
 POLICY=tdmpc2:latest
-MASTER_ARGS=()
+TENSION=0        # mm of cable pretension at ENABLE; 0 = slack, as the tracking test ran
 LIVE=1
 ARGS=()
 while [ $# -gt 0 ]; do
@@ -38,8 +38,8 @@ while [ $# -gt 0 ]; do
         --dry) LIVE=0; shift ;;
         --policy) POLICY=$2; shift 2 ;;
         --policy=*) POLICY=${1#--policy=}; shift ;;
-        --tension) MASTER_ARGS+=(--tension "$2"); shift 2 ;;
-        --tension=*) MASTER_ARGS+=(--tension "${1#--tension=}"); shift ;;
+        --tension) TENSION=$2; shift 2 ;;
+        --tension=*) TENSION=${1#--tension=}; shift ;;
         *) ARGS+=("$1"); shift ;;
     esac
 done
@@ -79,11 +79,11 @@ PY
         echo "hardware mode) is running. Stop it, or run without this launcher."
         exit 1
     fi
-    echo "starting cdpr_master ${MASTER_ARGS[*]:-}..."
+    echo "starting cdpr_master --tension $TENSION  (mm of pretension at ENABLE; 0 = slack)"
     # The master writes logs/cdpr_master.log itself (overwritten per run);
     # cleanup() keeps a stamped copy next to the runner's session log.
     mkdir -p logs
-    sw/build/cdpr_master "${MASTER_ARGS[@]}" > /dev/null &
+    sw/build/cdpr_master --tension "$TENSION" > /dev/null &
     MASTER_PID=$!
     for _ in $(seq 1 100); do
         python3 - <<'PY' 2>/dev/null && break
