@@ -140,10 +140,16 @@ def test_trap_pays_once_and_only_after_a_fast_arrival():
 
 
 def test_controlled_shot_multiplies_the_on_target_reward():
-    seq_fast = [(0.5, 0.6, 0.0, -2.0), (0.5, 0.36, 0.0, 0.05), (0.5, 0.40, 0.0, 4.0)]
+    # trapped, then HELD for HOLD_MIN_S (run 8: a touch-and-go trap earns
+    # the trap reward but not the bonus), then shot
+    hold_steps = int(round(R.HOLD_MIN_S / R.ACTION_DT))
+    seq_fast = [(0.5, 0.6, 0.0, -2.0)] + [(0.5, 0.36, 0.0, 0.05)] * hold_steps + [(0.5, 0.40, 0.0, 4.0)]
     sh = _shaper(on_target_reward=10.0, trap_reward=2.0, controlled_shot_bonus=1.5)
     r = _run(sh, seq_fast)
-    assert r[1] == pytest.approx(2.0) and r[2] == pytest.approx(15.0)
+    assert r[1] == pytest.approx(2.0) and r[-1] == pytest.approx(15.0)
+    sh = _shaper(on_target_reward=10.0, trap_reward=2.0, controlled_shot_bonus=1.5)
+    r = _run(sh, seq_fast[:2] + seq_fast[-1:])
+    assert r[1] == pytest.approx(2.0) and r[-1] == pytest.approx(10.0)
     # the same shot without the trap first
     sh = _shaper(on_target_reward=10.0, trap_reward=2.0, controlled_shot_bonus=1.5)
     r = _run(sh, [(0.5, 0.6, 0.0, -2.0), (0.5, 0.40, 0.0, 4.0)])

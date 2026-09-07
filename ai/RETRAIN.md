@@ -490,3 +490,40 @@ has seen the chain can pick it. `--bc-coef 0.5`, logged as `loss/pi_bc`.
 --bc-coef 0.5 --demo-until 1000000 --run-name run7_selfplay`, log
 `logs/run7.log`. Same numbers to read: the AGENT's `shots/hold_steps`
 and controlled multiplier.
+
+
+# Run 8 (from run 7's 550k checkpoint: controlled means HELD, bot blocks)
+
+Run 7 at 500k, the agent's numbers unchanged (hold 230/10k, 8% of shots
+controlled). Playing its checkpoint with the planner and with the PRIOR
+alone, 16 envs x 30 s each:
+
+    vs weak goalie   controlled possessions   goals    reward/10k
+      planner              29%                15-1       1412
+      prior alone          66%                 4-6        486
+    vs sniper
+      planner               9%                11-15      4089
+      prior alone          21%                17-29      1367
+
+The cloning works -- the prior controls more possessions than the bot
+it was cloned from -- and the planner overrides it because, under run
+7's reward, the slap style earns three times as much. The gate counted
+a slap on a slow puck (relaunch, rebound) as "controlled" (slowed
+within reach, or arrived slowly and waited 1.5 s), so the planner's
+goals paid in full (goal multiplier 0.6-0.8) and goals dominate.
+
+Two changes, and a fresh start from run 7's checkpoint:
+
+1. CONTROLLED = HELD. The outcome gate opens only once the puck has sat
+   under 0.3 m/s within 0.2 m of the paddle for 0.3 s this possession
+   (`HOLD_MIN_S`), whatever speed it arrived at. An uncontrolled goal
+   pays 5, a controlled one 100; the controlled-shot bonus needs the
+   hold too. A puck that must be held still first cannot be slapped.
+2. The bot BLOCKS a fast goal-bound shot instead of retreating from it
+   (23-61 -> 30-35 vs the sniper, reward rate 1085 -> 1720/10k), so the
+   demonstrations are net positive against every opponent.
+
+`--resume runs/run7_selfplay/agent.pt --steps 1500000 --demo-envs 8
+--bc-coef 0.5 --demo-until 1000000 --run-name run8_selfplay`, log
+`logs/run8.log`. Read the agent's `shots/hold_steps` and the controlled
+multiplier; the planner now has a reason to take the prior's proposals.

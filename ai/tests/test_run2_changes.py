@@ -312,44 +312,56 @@ def test_holding_a_trapped_puck_pays_income_until_the_shot():
     assert float(sh.compute(obs, np.zeros(1), info=_info(0.5, 0.45, 0.0, 3.0))[0]) == 0.0
 
 
-def test_control_gate_pays_the_floor_for_an_uncontrolled_shot_and_full_for_a_trapped_one():
-    def shot(controlled, t_side=3.0):
+def test_control_gate_pays_the_floor_for_an_uncontrolled_shot_and_full_for_a_held_one():
+    hold_steps = int(round(R.HOLD_MIN_S / R.ACTION_DT))
+
+    def shot(held_steps, t_side=3.0):
         sh = _shaper(on_target_reward=15.0, trap_reward=3.0, controlled_shot_bonus=1.5,
                      patience_s=1.5, patience_floor=0.2,
                      control_gate=True, goal_reward=100.0, patience_on_goals=True)
         obs = np.zeros((1, 22), dtype=np.float32)
         fast = _info(0.5, 0.6, 0.0, -2.0, t_side)
         sh.reset(obs, info=fast); sh.compute(obs, np.zeros(1), info=fast)
-        if controlled:
+        for _ in range(held_steps):
             sh.compute(obs, np.zeros(1), info=_info(0.5, 0.36, 0.0, 0.05, t_side))
         r_hit = float(sh.compute(obs, np.zeros(1), info=_info(0.5, 0.40, 0.0, 4.0, t_side))[0])
         sh.compute(obs, np.zeros(1), info=_info(0.5, 1.5, 0.0, 4.0, t_side))
         goal = _info(0.5, 1.0, 0.0, 1.0, 0.0); goal["score_agent"] = np.array([1])
         r_goal = float(sh.compute(obs, np.zeros(1), info=goal)[0])
         return r_hit, r_goal
-    hit_c, goal_c = shot(True)
-    hit_u, goal_u = shot(False)
+    hit_c, goal_c = shot(hold_steps)
+    hit_u, goal_u = shot(0)
     assert hit_u == pytest.approx(0.2 * 15.0) and goal_u == pytest.approx(20.0)
     assert hit_c == pytest.approx(1.5 * 15.0) and goal_c == pytest.approx(100.0)
-    # time on side does NOT substitute for control when the puck arrived fast...
-    assert shot(False, t_side=5.0)[0] == pytest.approx(0.2 * 15.0)
-    # ...but a puck that never arrived fast is controlled by patience alone
+    # a touch-and-go stop is not a hold
+    assert shot(hold_steps // 3)[0] == pytest.approx(0.2 * 15.0)
+    # time on side does NOT substitute for holding, fast arrival or slow
+    assert shot(0, t_side=5.0)[0] == pytest.approx(0.2 * 15.0)
     sh = _shaper(on_target_reward=15.0, patience_s=1.5, patience_floor=0.2, control_gate=True)
     obs = np.zeros((1, 22), dtype=np.float32)
     slow = _info(0.5, 0.35, 0.0, -0.5, 2.0)
     sh.reset(obs, info=slow); sh.compute(obs, np.zeros(1), info=slow)
-    assert float(sh.compute(obs, np.zeros(1), info=_info(0.5, 0.40, 0.0, 4.0, 2.0))[0]) == pytest.approx(15.0)
+    assert float(sh.compute(obs, np.zeros(1), info=_info(0.5, 0.40, 0.0, 4.0, 2.0))[0]) == pytest.approx(0.2 * 15.0)
 
 
-def test_a_puck_slowed_under_the_paddle_counts_as_controlled_without_a_formal_trap():
-    sh = _shaper(on_target_reward=15.0, patience_s=1.5, patience_floor=0.05, control_gate=True)
+def test_a_slow_puck_held_under_the_paddle_counts_as_controlled_without_a_formal_trap():
+    # Arrived too slowly for a trap (no trap reward), but held at rest for
+    # HOLD_MIN_S: the outcome gate opens all the same.
+    hold_steps = int(round(R.HOLD_MIN_S / R.ACTION_DT))
+    sh = _shaper(on_target_reward=15.0, trap_reward=3.0, patience_s=1.5, patience_floor=0.05,
+                 control_gate=True)
     obs = np.zeros((1, 22), dtype=np.float32)
-    fast = _info(0.5, 0.6, 0.0, -2.0)
-    sh.reset(obs, info=fast); sh.compute(obs, np.zeros(1), info=fast)
-    sh.compute(obs, np.zeros(1), info=_info(0.5, 0.38, 0.0, 0.5))     # 0.5 m/s under the paddle: below CONTROL_SPEED
+    slow = _info(0.5, 0.45, 0.0, -0.5)
+    sh.reset(obs, info=slow); sh.compute(obs, np.zeros(1), info=slow)
+    for _ in range(hold_steps):
+        assert float(sh.compute(obs, np.zeros(1), info=_info(0.5, 0.36, 0.0, 0.05))[0]) == 0.0
+    assert sh.stats["traps"] == 0
     r = float(sh.compute(obs, np.zeros(1), info=_info(0.5, 0.40, 0.0, 4.0))[0])
     assert r == pytest.approx(15.0)
+    # merely SLOWED within reach (0.5 m/s, above TRAP_SPEED) is not control
     sh2 = _shaper(on_target_reward=15.0, patience_s=1.5, patience_floor=0.05, control_gate=True)
+    fast = _info(0.5, 0.6, 0.0, -2.0)
     sh2.reset(obs, info=fast); sh2.compute(obs, np.zeros(1), info=fast)
-    sh2.compute(obs, np.zeros(1), info=_info(0.5, 0.38, 0.0, 1.2))    # never slow enough
+    for _ in range(hold_steps):
+        sh2.compute(obs, np.zeros(1), info=_info(0.5, 0.38, 0.0, 0.5))
     assert float(sh2.compute(obs, np.zeros(1), info=_info(0.5, 0.40, 0.0, 4.0))[0]) == pytest.approx(0.05 * 15.0)
