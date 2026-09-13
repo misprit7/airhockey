@@ -957,3 +957,16 @@ holds end in the clock turnover: a slow puck handed over at the centre
 is a milder outcome than a shot into a good blocker, and the value
 function knows it. Training games against itself: 23-31-149 (3.4:
 13-22-155).
+
+3.5 FINAL (1M, 19:08), held pucks:
+
+    vs weak goalie   14-0,  54 possessions, shot after 42% of holds at 3.2 m/s, longest sit 1.6 s
+    vs sniper        42-21, 265 possessions, shot after 33% at 4.3 m/s, longest sit 1.9 s
+    vs itself        1-0,   70 possessions, shot after 48% at 3.3 m/s, longest sit 1.5 s
+
+No sit past 2 s against anyone; it holds a fifth of what 3.4 did and
+plays the puck on. The clock turnovers it still takes (42-68% of the
+holds it does make) are its own choice against a good blocker. Whole
+run against itself 34-52-314, the most decided self-play so far.
+Standard eval not run; the table is the test. Command:
+`bash ai/bin/play.sh --policy tdmpc2:3.5-shot-clock-turnover-selfplay`
