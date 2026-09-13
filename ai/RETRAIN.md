@@ -928,7 +928,11 @@ overstay steps, and whether games against itself have scores.
 steps (cost 490 -> 806 per 10k), on-target shots 12.4 -> 7.2 per 10k,
 goals 6.6 -> 3.6. Against the sniper a held puck cannot be scored
 against, and 0.5 a step past the clock is cheaper than the goals it
-would risk by releasing it. The tax was paid, not avoided.
+would risk by releasing it. The tax was paid, not avoided. Its final checkpoint on held pucks:
+against itself a median 3.8 s sitting slow near the paddle, 44% of held
+possessions ending in the relaunch, 0-0; against the sniper 15-8 with a
+median 3.9 m/s shot after 42% of holds. The stall is a self-play habit:
+two copies that both hoard.
 
 # 3.5-shot-clock-turnover-selfplay (from 3.4's final; 2026-09-13)
 
