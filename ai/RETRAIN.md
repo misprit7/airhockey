@@ -947,3 +947,13 @@ Everything else as 3.4: no setup shaping, outcomes pay by time on side
 (20% at once, full at 2 s). The table has no referee, which is the
 point -- the policy has to learn to release the puck before the sim's
 referee does.
+
+3.5 at 500k, held pucks: no sit longer than 2.3 s against anyone (the
+referee's cap), and the play is open -- 56 possessions against the weak
+goalie (9-0, shot after 77% of holds at 3.6 m/s), 260 against the sniper
+(51-25, 2.7 m/s), 96 against itself (0-0, 2.3 m/s). It holds a quarter
+as often as 3.4 and plays the puck on instead. Against itself half its
+holds end in the clock turnover: a slow puck handed over at the centre
+is a milder outcome than a shot into a good blocker, and the value
+function knows it. Training games against itself: 23-31-149 (3.4:
+13-22-155).
