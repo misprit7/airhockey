@@ -174,7 +174,7 @@ def test_patience_beats_the_discount_by_design():
     # 3.4: nothing about the setup is prescribed
     assert kw["control_gate"] is False and kw["cushion_weight"] == 0.0 and kw["hold_income"] == 0.0
     assert kw["on_target_reward"] == 30.0 and kw["trap_reward"] == 0.0 and kw["controlled_shot_bonus"] == 1.0
-    assert kw["overstay_cost"] == 0.5 and kw["windup_income"] == 0.0 and kw["drive_weight"] == 0.0
+    assert kw["overstay_cost"] == 0.0 and kw["windup_income"] == 0.0 and kw["drive_weight"] == 0.0
     assert kw["patience_floor"] == 0.2 and kw["trap_reward"] == 0.0
     assert R.curriculum_env_kwargs("proximity")["action_mode"] == "profile_a"
     assert R.curriculum_env_kwargs("selfplay")["action_mode"] == "profile_a"
@@ -480,3 +480,30 @@ def test_a_puck_that_dies_on_our_side_is_a_turnover():
             relaunched = True
             break
     assert relaunched
+
+
+def test_the_shot_clock_turns_the_puck_over():
+    """3.5: past SHOT_CLOCK_S on the agent's side the puck goes to the
+    opponent at the turnover fine, even with the paddle on it."""
+    from airhockey.batch_env import BatchAirHockeyEnv
+    e = BatchAirHockeyEnv(4, opponent_policy="idle", action_mode="profile_a")
+    e.reset(seed=5)
+    W, H = e.table_config.width, e.table_config.height
+    # a puck creeping on our side with the paddle attending it (no stuck rule before 5 s)
+    e.engine.puck_x[:] = W / 2; e.engine.puck_y[:] = H * 0.3
+    e.engine.puck_vx[:] = 0.0; e.engine.puck_vy[:] = 0.0
+    e.engine.paddle_agent_x[:] = W / 2; e.engine.paddle_agent_y[:] = H * 0.3 - 0.1
+    e._t_side[:] = 0.0
+    a = np.zeros((4, 3), dtype=np.float32)
+    a[:, 0] = 0.0; a[:, 1] = (H * 0.3 - 0.1 - e._action_low[1]) / (e._action_high[1] - e._action_low[1]) * 2 - 1
+    a[:, 2] = -1.0
+    t_turn = None
+    for k in range(int(4.0 / e.action_dt)):
+        _o, _r, _t, _tr, info = e.step(a)
+        fined = info["penalty"] <= -1.0
+        if np.any(fined):
+            assert np.allclose(info["penalty"][fined], e.STUCK_TURNOVER_PENALTY, atol=0.01)
+            assert np.all(info["puck_vy"][fined] > 0), "turned over to the opponent"
+            t_turn = (k + 1) * e.action_dt
+            break
+    assert t_turn is not None and abs(t_turn - e.SHOT_CLOCK_S) < 0.15, t_turn

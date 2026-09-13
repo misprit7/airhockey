@@ -162,6 +162,15 @@ class BatchAirHockeyEnv:
     # against a copy of themselves ended that way, and on the table
     # nothing relaunches, so they held for ever.
     STUCK_TURNOVER_PENALTY = -20.0
+    # The SHOT CLOCK (3.5, 2026-09-13): past SHOT_CLOCK_S on the agent's
+    # side the puck is turned over -- relaunched to the opponent at the
+    # turnover fine -- like a dead puck. 3.4 taxed the time past the clock
+    # instead (0.5 a step) and learned to pay it: against the sniper a
+    # held puck cannot be scored against, and by 1M it spent 16% of all
+    # steps past the clock. A referee takes the puck; so does the sim.
+    # 0 disables it. The table has no referee, which is why the policy
+    # must learn to release the puck here.
+    SHOT_CLOCK_S = 3.0
 
     # Scripted far-side opponents on a FREE body (ai/RETRAIN.md item 5).
     # Neither is a copy of the machine: the sniper exists to put fast shots
@@ -1034,23 +1043,20 @@ class BatchAirHockeyEnv:
             rewards[on_agent_side] += self.STUCK_TURNOVER_PENALTY
             stuck_penalty = np.where(on_agent_side, self.STUCK_TURNOVER_PENALTY, 0.0)
 
-            n_stuck = int(stuck.sum())
-            rng = self._rng
-            toward = (rng.random(n_stuck) < 0.5) & ~on_agent_side[stuck]
-            angle = np.where(
-                toward,
-                rng.uniform(-np.pi * 0.8, -np.pi * 0.2, size=n_stuck),
-                rng.uniform(np.pi * 0.2, np.pi * 0.8, size=n_stuck),
-            )
-            speed = rng.uniform(0.3, 1.5, size=n_stuck)
-            cfg = self.table_config
-            self.engine.puck_x[stuck] = cfg.width / 2 + rng.uniform(-0.15, 0.15, size=n_stuck)
-            self.engine.puck_y[stuck] = cfg.height / 2
-            self.engine.puck_vx[stuck] = speed * np.cos(angle)
-            self.engine.puck_vy[stuck] = speed * np.sin(angle)
-            self._puck_slow_count[stuck] = 0
+            self._relaunch(stuck, to_opponent=on_agent_side[stuck])
 
         self._update_possessions()
+
+        # The shot clock: past SHOT_CLOCK_S on the agent's side, the puck is
+        # turned over (see the constant).
+        if self.SHOT_CLOCK_S > 0:
+            late = (self.engine.puck_y < self.table_config.height / 2) & (self._t_side > self.SHOT_CLOCK_S)
+            if np.any(late):
+                rewards[late] += self.STUCK_TURNOVER_PENALTY
+                stuck_penalty = stuck_penalty + np.where(late, self.STUCK_TURNOVER_PENALTY, 0.0)
+                self._relaunch(late, to_opponent=np.ones(int(late.sum()), dtype=bool))
+                self._t_side[late] = 0.0
+                self._update_possessions()
         obs = self._make_obs()  # applies camera delay if configured
 
         # Termination / truncation
@@ -1166,6 +1172,25 @@ class BatchAirHockeyEnv:
             self._shot_type[mask] = draw
         else:
             self._shot_type_opp[mask] = draw
+
+    def _relaunch(self, mask: np.ndarray, to_opponent: np.ndarray) -> None:
+        """Put the puck back at the centre, moving off at 0.3-1.5 m/s: toward
+        the opponent where `to_opponent` (a turnover), else either way."""
+        n = int(mask.sum())
+        rng = self._rng
+        toward_agent = (rng.random(n) < 0.5) & ~to_opponent
+        angle = np.where(
+            toward_agent,
+            rng.uniform(-np.pi * 0.8, -np.pi * 0.2, size=n),
+            rng.uniform(np.pi * 0.2, np.pi * 0.8, size=n),
+        )
+        speed = rng.uniform(0.3, 1.5, size=n)
+        cfg = self.table_config
+        self.engine.puck_x[mask] = cfg.width / 2 + rng.uniform(-0.15, 0.15, size=n)
+        self.engine.puck_y[mask] = cfg.height / 2
+        self.engine.puck_vx[mask] = speed * np.cos(angle)
+        self.engine.puck_vy[mask] = speed * np.sin(angle)
+        self._puck_slow_count[mask] = 0
 
     def _update_possessions(self) -> None:
         """Track the puck entering each half; a new possession draws a

@@ -922,3 +922,20 @@ Resumed from 3.3's final so it starts out knowing how to stop and
 strike, and can now choose when. Horizon 8, no demonstrations, 1M.
 Read: shot speed and time on side at the shot (held-puck eval), goals,
 overstay steps, and whether games against itself have scores.
+
+
+3.4 at 1M: the stalling grew. Steps past the 3 s clock 10% -> 16% of all
+steps (cost 490 -> 806 per 10k), on-target shots 12.4 -> 7.2 per 10k,
+goals 6.6 -> 3.6. Against the sniper a held puck cannot be scored
+against, and 0.5 a step past the clock is cheaper than the goals it
+would risk by releasing it. The tax was paid, not avoided.
+
+# 3.5-shot-clock-turnover-selfplay (from 3.4's final; 2026-09-13)
+
+The clock takes the puck. Past `SHOT_CLOCK_S` (3 s) on the agent's side
+the env turns it over: relaunched toward the opponent at the turnover
+fine (-20), exactly as a dead puck is. The per-step clock cost is off.
+Everything else as 3.4: no setup shaping, outcomes pay by time on side
+(20% at once, full at 2 s). The table has no referee, which is the
+point -- the policy has to learn to release the puck before the sim's
+referee does.

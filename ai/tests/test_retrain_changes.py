@@ -371,6 +371,7 @@ def test_puck_dropout_coasts_then_rests_then_reacquires_without_a_spike():
 def test_stuck_relaunch_waits_longer_for_an_attended_puck():
     def stall(attended: bool):
         e = BatchAirHockeyEnv(1, opponent_policy="idle")
+        e.SHOT_CLOCK_S = 0.0    # this test is about the stuck rule; the 3 s shot clock would take the puck first
         e.reset(seed=0)
         ws = e._ws
         # Paddle parked at the top of its box, puck just beyond reach of a

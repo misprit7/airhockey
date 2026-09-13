@@ -1344,7 +1344,9 @@ CURRICULUM: dict[str, dict] = {
         # dead puck on our side a turnover (batch_env). How it gets from
         # arrival to a shot is its own business.
         trap_reward=0.0, controlled_shot_bonus=1.0,
-        cushion_weight=0.0, hold_income=0.0, control_gate=False, overstay_cost=0.5,
+        # 3.5: the env turns the puck over at SHOT_CLOCK_S (batch_env); the
+        # per-step clock cost is off -- 3.4 paid it and hoarded anyway.
+        cushion_weight=0.0, hold_income=0.0, control_gate=False, overstay_cost=0.0,
         windup_income=0.0, drive_weight=0.0,
         accel_cost_weight=0.04, patience_s=2.0, patience_floor=0.2, patience_on_goals=True,
         # The env draws a shot type per possession (shot_types=True) and
