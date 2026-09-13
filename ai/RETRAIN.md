@@ -897,3 +897,28 @@ Training log at the end: vs itself 26-30-185, vs sniper GF 0.83 / GA
 to the table (`run18_selfplay`); `run18_300k` stays pinned as the
 fallback. Against the sniper it now trades goals evenly (11-10) where
 runs 15-17 lost by half.
+
+
+# 3.4-patience-ramp-selfplay (from 3.3's final; 2026-09-13)
+
+The user's design, after 3.3 on the table stopped the puck and did not
+shoot it: on the robot's side NOTHING is prescribed about the setup,
+hitting straight back pays less, and stalling still costs.
+
+Off: the setup incomes of 2.2-3.3 (cushion, trap, hold, wind-up, drive)
+and the held-puck gate. On:
+
+- an on-target shot (30, speed-scaled: nothing under 2 m/s, full from
+  4) and the goal it makes (100) pay by TIME ON SIDE: 20% for a hit
+  straight back, rising to full at 2 s (`patience_s` 2.0, floor 0.2);
+  the shot-type match (10) the same way
+- past 3 s on our side every step costs 0.5, whatever the puck is doing
+  (`SHOT_CLOCK_S` 3.0, `overstay_cost` 0.5); a dead puck on our side is
+  a turnover (batch_env, -20, relaunched to the opponent)
+- the idle and smoothness hygiene unchanged (home 0.05, smooth 0.2,
+  accel tax 0.04): the user is happy with that part
+
+Resumed from 3.3's final so it starts out knowing how to stop and
+strike, and can now choose when. Horizon 8, no demonstrations, 1M.
+Read: shot speed and time on side at the shot (held-puck eval), goals,
+overstay steps, and whether games against itself have scores.

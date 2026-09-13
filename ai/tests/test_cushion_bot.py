@@ -20,8 +20,13 @@ def _possessions(opp, seconds=25.0, n=16, seed=11):
     e = BatchAirHockeyEnv(n, opponent_policy=opp, opponent_body="robot",
                           domain_randomize=True, **sensing_kwargs(True), **kw,
                           max_episode_time=seconds + 5)
+    # The bot is scored with the setup incomes ON (2.2-3.3's cushion, hold,
+    # trap, held gate): the test is that it earns them, whatever the current
+    # self-play stage pays (3.4 pays none of them by design).
     sh = BatchRewardShaper(n, stage=STAGE_SCORING, workspace=e._ws,
-                           **curriculum_shaper_kwargs("selfplay"))
+                           **{**curriculum_shaper_kwargs("selfplay"), "cushion_weight": 1.5,
+                              "hold_income": 0.2, "trap_reward": 10.0, "control_gate": True,
+                              "overstay_cost": 0.0})
     o = e.reset(seed=seed)
     bot = CushionBot(e, np.random.default_rng(0))
     sh.reset(o, info={"puck_y": e.engine.puck_y, "puck_vx": e.engine.puck_vx,

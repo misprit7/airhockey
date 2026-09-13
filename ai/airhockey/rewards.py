@@ -181,7 +181,10 @@ WINDUP_MIN = 0.12
 WINDUP_MAX = 0.30
 WINDUP_LINE_TOL = 0.06
 WINDUP_PAY_MAX_S = 0.5
-SHOT_CLOCK_S = 1.5
+# 3.4: the clock runs on TIME ON SIDE, not on the hold, and does not care
+# what the puck is doing: past SHOT_CLOCK_S on the robot's side every step
+# costs overstay_cost. It is the one rule about the setup -- finish it.
+SHOT_CLOCK_S = 3.0
 # Run 13: the DRIVE is paid. Run 12 found the wind-up (170 steps per
 # 10k) and sat there: median shot 0.7-0.9 m/s still. The strike's payoff
 # is one rare event (a fast controlled hit, ~2 per 10k demo steps) the
@@ -928,11 +931,12 @@ class BatchRewardShaper:
 
         _mark("drive")
 
-        if self.overstay_cost > 0:
-            # The shot clock: SHOT_CLOCK_S after the hold was established,
-            # the puck still slow on our half costs per step -- wherever the
-            # paddle is (run 18: stepping back out of reach was free).
-            over = in_half & (puck_speed < HELD_SPEED) & (self._since_held_s > SHOT_CLOCK_S)
+        if self.overstay_cost > 0 and info is not None and "t_side" in info:
+            # The shot clock: past SHOT_CLOCK_S on our side, every step costs,
+            # whatever the puck is doing and wherever the paddle is. (Through
+            # 3.3 it ran from the hold and only on a slow puck; 3.4 runs it on
+            # time on side so nothing about the setup is prescribed.)
+            over = in_half & (info["t_side"] > SHOT_CLOCK_S)
             shaped -= np.where(over, self.overstay_cost, 0.0)
             self.stats["overstay_steps"] += int(over.sum())
 
@@ -1329,26 +1333,20 @@ CURRICULUM: dict[str, dict] = {
         # a goal: trap 10 + hold 0.2/step (a second held = 10) + on-target
         # 30 x 2 controlled + type 10; a slap on target still 1.5.
         on_target_reward=30.0, shot_speed_weight=1.0,
-        # Run 4: pay the path to control (cushion 1.5 per m/s absorbed, 0.03
-        # per step held, trap 3) and gate the shot and goal rewards on the
-        # possession having been controlled rather than on elapsed time --
-        # runs 1-3 never once stopped the puck under a time-based ramp.
-        trap_reward=10.0, controlled_shot_bonus=2.0,
-        cushion_weight=1.5, hold_income=0.2, control_gate=True, overstay_cost=1.0,
-        # Run 17: the clock BITES. Runs 15-16 stop the puck and, against a
-        # blocker, never shoot: a held puck cannot be scored against, the
-        # sim relaunches it after 5 s, and at 0.1 a step the clock cost
-        # 35 for the wait -- less than one conceded goal. 1.0 a step is
-        # -50 per second past the clock, a goal's worth. The wind-up
-        # income is gone: it paid for not shooting yet, and the strike
-        # is learned.
-        windup_income=0.0, drive_weight=0.25,
-        # Run 3: full accel for a whole 30 s episode costs 60 (run 2's 0.02
-        # settled the mean fraction at 0.52; the user wants it lower), and
-        # patience floors at 0.2 ON THE GOAL AS WELL: a goal from an instant
-        # slap pays 20, one from a shot after 1.5 s of control pays 100.
-        # Run 5: the uncontrolled floor is 0.05 -- a slap is nearly worthless.
-        accel_cost_weight=0.04, patience_s=1.5, patience_floor=0.05, patience_on_goals=True,
+        # 3.4 (2026-09-13), the user's design: NOTHING is prescribed about
+        # how the puck is set up on the robot's side. The setup incomes of
+        # 2.2-3.3 (cushion, trap, hold, wind-up, drive) are off and the
+        # held-puck gate is off. What remains: an on-target shot (speed-
+        # scaled, nothing under 2 m/s) and the goal it makes pay by how
+        # long the puck has been on the robot's side -- a hit straight
+        # back pays 20%, full after patience_s -- and past SHOT_CLOCK_S on
+        # our side every step costs, whatever the puck is doing, with a
+        # dead puck on our side a turnover (batch_env). How it gets from
+        # arrival to a shot is its own business.
+        trap_reward=0.0, controlled_shot_bonus=1.0,
+        cushion_weight=0.0, hold_income=0.0, control_gate=False, overstay_cost=0.5,
+        windup_income=0.0, drive_weight=0.0,
+        accel_cost_weight=0.04, patience_s=2.0, patience_floor=0.2, patience_on_goals=True,
         # The env draws a shot type per possession (shot_types=True) and
         # the far side is drawn per episode from opponent_mix.
         shot_type_reward=10.0, shot_types=True,

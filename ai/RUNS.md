@@ -41,6 +41,7 @@ and their recordings were renamed. Older runs (`curriculum_*`, `sac_*`,
 | `3.1-no-demos-selfplay` | `3.0` | same reward, demonstrations off (run16) |
 | `3.2-shot-clock-selfplay` | `3.1` | shot clock 1.0/step, wind-up income off (run17) |
 | `3.3-turnover-selfplay` | `3.2` | a dead puck on our side is a turnover; the clock has no reach (run18); -300k pinned |
+| `3.4-patience-ramp-selfplay` | `3.3` | nothing prescribed about the setup: cushion/trap/hold/wind-up/drive incomes and the held gate off; shots and goals pay by time on side (20% at once, full at 2 s); clock on time on side (3 s), turnover kept |
 
 Lineages: **1.x** position-only action (20-wide obs). **2.x** accel in
 the action, 22-wide obs, horizon 5. **3.x** horizon 8 (deploy plans at 8

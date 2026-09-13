@@ -186,7 +186,8 @@ def test_curriculum_table_carries_the_new_terms():
         assert kw["directed_hit_weight"] <= kw["on_target_reward"] / 30
     for name in ("scoring", "goalie", "selfplay"):
         kw = R.curriculum_shaper_kwargs(name)
-        assert kw["trap_reward"] > 0 and kw["controlled_shot_bonus"] > 1.0
+        if name != "selfplay":        # 3.4: self-play prescribes nothing about the setup
+            assert kw["trap_reward"] > 0 and kw["controlled_shot_bonus"] > 1.0
     assert R.curriculum_shaper_kwargs("selfplay")["shot_type_reward"] == 10.0
     env_kw = R.curriculum_env_kwargs("selfplay")
     assert env_kw["shot_types"] is True
