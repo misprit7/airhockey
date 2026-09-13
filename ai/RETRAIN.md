@@ -929,10 +929,14 @@ steps (cost 490 -> 806 per 10k), on-target shots 12.4 -> 7.2 per 10k,
 goals 6.6 -> 3.6. Against the sniper a held puck cannot be scored
 against, and 0.5 a step past the clock is cheaper than the goals it
 would risk by releasing it. The tax was paid, not avoided. Its final checkpoint on held pucks:
-against itself a median 3.8 s sitting slow near the paddle, 44% of held
-possessions ending in the relaunch, 0-0; against the sniper 15-8 with a
-median 3.9 m/s shot after 42% of holds. The stall is a self-play habit:
-two copies that both hoard.
+
+    vs weak goalie   4-0,  shot after 22% of holds at 3.5 m/s, 39% relaunched, sits 2.5 s median / 10 s max
+    vs sniper        14-5, shot after 18% at 3.7 m/s, 39% relaunched, sits 2.1 s median / 16 s max
+    vs itself        0-0,  shot after 31% at 0.9 m/s, 44% relaunched, sits 3.8 s median
+
+It shoots hard when it shoots, wins against the scripted opponents,
+and hoards two fifths of the pucks it stops. The stall is a self-play
+habit: two copies that both hoard.
 
 # 3.5-shot-clock-turnover-selfplay (from 3.4's final; 2026-09-13)
 
