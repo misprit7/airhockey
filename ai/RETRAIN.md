@@ -1061,3 +1061,9 @@ nothing.
 One change: `STUCK_TURNOVER_PENALTY` -20 -> -50. Losing the puck to the
 clock costs what losing it to the net does, so holding to the referee
 is no longer the safe play; a controlled shot (30 + the goal) is.
+
+Planner jitter in eval mode (target change per tick, 16 envs x 30 s vs the
+weak goalie), 3.5 (smooth 0.2) against 3.9 (smooth 0.5):
+
+    3.5-shot-clock-turnover-selfplay puck near standstill: median   53 mm  p90  212 mm  (n=1694) | puck away: median   21 mm  p90   85 mm  (n=18058) | in play: median   40 mm  p90  161 mm  (n=4232)
+    3.9-drive-band-selfplay          puck near standstill: median   23 mm  p90   87 mm  (n=3528) | puck away: median    7 mm  p90   18 mm  (n=16648) | in play: median   22 mm  p90   89 mm  (n=3808)
