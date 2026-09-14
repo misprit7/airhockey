@@ -1029,3 +1029,19 @@ One change: `drive_weight` 0.25 again (0.25 x speed^2 toward a held puck
 per step, 8 per possession). It pays the SHOT's motion, not the setup,
 and it is what turned holds into strikes in 2.12-3.3. Gate at 5%,
 referee at 3 s, smooth 0.5, no other setup income.
+
+
+3.8 at 500k: the drive pay was not collected -- 6-8 per 10k against
+40-77 in 3.0-3.3 -- and on held pucks it still nudges (1.0-1.3 m/s
+after a hold, 51-67% of holds ending in the turnover; 9-0, 53-20, 3-0).
+The drive paid only from a 6 cm lane behind the puck on the line to
+the goal, and with the wind-up income off the paddle holds the puck
+from wherever it stopped it, which is almost never there.
+
+# 3.9-drive-band-selfplay (from 3.8 at 550k; 2026-09-14)
+
+One change: the drive's own band. Any goalward drive at a held puck
+from within 0.15 m of the line and 0.40 m behind pays (`DRIVE_LINE_TOL`,
+`DRIVE_ALONG_MAX`); a sideways sweep still earns nothing because the
+paid component is along the puck-to-goal line. Gate at 5%, referee at
+3 s, smooth 0.5, no setup income.
