@@ -992,3 +992,17 @@ Resumed from 3.5, which already stops and strikes when it chooses to.
 Read: held per 10k (want 15+, as 2.6-3.3 had), shot speed after the
 hold, the idle line of the pay breakdown (the jitter's cost), and the
 recordings with the puck slow.
+
+
+3.6 at 500k: not stopping the puck. Held 3-5 per 10k, a quarter of its
+on-target shots controlled, and the most shots and goals of any run
+(15-22 on target per 10k, 8.4 goals, 56-0 against the weak goalie): at
+a 20% floor the uncontrolled shot is worth taking and volume makes up
+the rest. The smoothness cost halved over the half run (2179 -> 1136
+per 10k at the new weight), so that part is taking.
+
+# 3.7-gate-floor-5pct-selfplay (from 3.6 at 500k; 2026-09-14)
+
+One change: the uncontrolled floor 0.2 -> 0.05, as the gated runs that
+did stop the puck (2.6-3.3) had. A slap pays 1.5 and a slapped goal 5;
+control is the only income. Referee at 3 s, no setup incomes, smooth 0.5.

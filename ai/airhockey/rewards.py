@@ -1354,7 +1354,12 @@ CURRICULUM: dict[str, dict] = {
         # incomes stay off and the referee still takes the puck at 3 s.
         cushion_weight=0.0, hold_income=0.0, control_gate=True, overstay_cost=0.0,
         windup_income=0.0, drive_weight=0.0,
-        accel_cost_weight=0.04, patience_s=2.0, patience_floor=0.2, patience_on_goals=True,
+        # 3.7: the floor is 0.05. At 0.2, 3.6 took the uncontrolled shot at a
+        # fifth of the pay and made it up on volume (held 3-5 per 10k, a
+        # quarter of shots controlled, 56-0 against the weak goalie). The
+        # gated runs that did stop the puck (2.6-3.3) had 0.05: a slap is
+        # worth nearly nothing, so control is the only income.
+        accel_cost_weight=0.04, patience_s=2.0, patience_floor=0.05, patience_on_goals=True,
         # The env draws a shot type per possession (shot_types=True) and
         # the far side is drawn per episode from opponent_mix.
         shot_type_reward=10.0, shot_types=True,
