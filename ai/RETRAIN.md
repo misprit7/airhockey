@@ -1089,3 +1089,21 @@ creep still nothing. Turnover 50, gate 5%, drive band wide, smooth 0.5.
 From 3.9's 500k checkpoint (pinned `3.9-drive-band-selfplay-500k`), the
 one that shot after three quarters of its holds -- the table candidate
 meanwhile.
+
+
+3.11 at 500k on held pucks: held 40 of 53 / 87 of 229 / 50 of 65, shot
+after 50-64% at 2.2-3.1 m/s, referee endings 64-85%. 4-0 / 44-25 / 2-0.
+
+3.11 FINAL (1M, 16:59) -- the best stop-and-shoot checkpoint so far:
+
+    vs weak goalie   11-1,  held 37 of 50,  shot after 78% of holds at 2.7 m/s, referee 54%
+    vs sniper        38-15, held 93 of 213, shot after 96% at 2.5 m/s, referee 43%
+    vs itself        1-1,   held 70 of 82,  shot after 93% at 2.3 m/s, referee 27%
+    hold median 0.8 s, longest 2.1 s
+
+It stops the puck in most possessions, holds under a second, and
+shoots after nearly all of its holds; the referee still takes a
+quarter to a half because a 2.5 m/s shot into a blocker often stays on
+its side. Whole run against itself 22-34-338; 72-2 vs the weak goalie.
+Planner jitter at a standstill halved by the 0.5 smoothness tax (3.9
+row above; 3.11 carries it). Table: `3.11-shot-ramp-selfplay`.
