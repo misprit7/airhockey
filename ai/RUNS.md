@@ -45,6 +45,7 @@ and their recordings were renamed. Older runs (`curriculum_*`, `sac_*`,
 | `3.5-shot-clock-turnover-selfplay` | `3.4` | the clock takes the puck: past 3 s on our side it is turned over to the opponent at -20 (env), no per-step clock cost |
 | `3.6-held-gate-smooth-selfplay` | `3.5` | a shot or goal pays in full only after the puck was under control (held 0.3 s), 20% otherwise; smoothness tax 0.2 -> 0.5 |
 | `3.7-gate-floor-5pct-selfplay` | `3.6` (500k) | an uncontrolled shot or goal pays 5% instead of 20%; otherwise as 3.6 |
+| `3.8-drive-pay-selfplay` | `3.7` (550k) | the drive toward a held puck pays again (0.25 x v^2, 8 per possession): the shot's motion, not the setup |
 
 Lineages: **1.x** position-only action (20-wide obs). **2.x** accel in
 the action, 22-wide obs, horizon 5. **3.x** horizon 8 (deploy plans at 8

@@ -1353,7 +1353,13 @@ CURRICULUM: dict[str, dict] = {
         # possession, 20% otherwise. WHAT must happen, not how; the setup
         # incomes stay off and the referee still takes the puck at 3 s.
         cushion_weight=0.0, hold_income=0.0, control_gate=True, overstay_cost=0.0,
-        windup_income=0.0, drive_weight=0.0,
+        # 3.8: the drive pays again (0.25 x speed^2 toward a held puck, 8 per
+        # possession). 3.7 stopped the puck and then nudged it at 0.7-1.1 m/s
+        # until the referee took it, 72-79% of holds. This pays the SHOT's
+        # motion, not the setup; it is what turned holds into 4 m/s strikes
+        # in 2.12-3.3, and 3.5 kept striking without it only because it did
+        # not stop first.
+        windup_income=0.0, drive_weight=0.25,
         # 3.7: the floor is 0.05. At 0.2, 3.6 took the uncontrolled shot at a
         # fifth of the pay and made it up on volume (held 3-5 per 10k, a
         # quarter of shots controlled, 56-0 against the weak goalie). The

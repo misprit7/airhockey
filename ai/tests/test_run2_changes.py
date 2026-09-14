@@ -175,7 +175,7 @@ def test_patience_beats_the_discount_by_design():
     assert kw["control_gate"] is True and kw["cushion_weight"] == 0.0 and kw["hold_income"] == 0.0
     assert kw["smooth_weight"] == 0.5
     assert kw["on_target_reward"] == 30.0 and kw["trap_reward"] == 0.0 and kw["controlled_shot_bonus"] == 1.0
-    assert kw["overstay_cost"] == 0.0 and kw["windup_income"] == 0.0 and kw["drive_weight"] == 0.0
+    assert kw["overstay_cost"] == 0.0 and kw["windup_income"] == 0.0 and kw["drive_weight"] == 0.25
     assert kw["patience_floor"] == 0.05 and kw["trap_reward"] == 0.0
     assert R.curriculum_env_kwargs("proximity")["action_mode"] == "profile_a"
     assert R.curriculum_env_kwargs("selfplay")["action_mode"] == "profile_a"

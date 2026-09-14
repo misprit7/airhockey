@@ -1012,3 +1012,20 @@ per 10k at the new weight), so that part is taking.
 One change: the uncontrolled floor 0.2 -> 0.05, as the gated runs that
 did stop the puck (2.6-3.3) had. A slap pays 1.5 and a slapped goal 5;
 control is the only income. Referee at 3 s, no setup incomes, smooth 0.5.
+
+
+3.7 at 500k: the stop is back (held 5.6 -> 12.2 per 10k in training;
+on held pucks 36 of 58 possessions against the weak goalie, 61 of 195
+against the sniper, 61 of 89 against itself) and so is the old failure:
+after a hold it nudges at 0.7-1.1 m/s and lets the referee take the
+puck, 72-79% of holds against the scripted opponents (38% against
+itself, where it shoots after 82% of holds -- at 1.1 m/s). 7-0, 36-19,
+1-0. The strike from a standstill weakens back to a nudge whenever the
+drive is not paid; 3.5 struck at 3-4 m/s only because it never stopped.
+
+# 3.8-drive-pay-selfplay (from 3.7 at 550k; 2026-09-14)
+
+One change: `drive_weight` 0.25 again (0.25 x speed^2 toward a held puck
+per step, 8 per possession). It pays the SHOT's motion, not the setup,
+and it is what turned holds into strikes in 2.12-3.3. Gate at 5%,
+referee at 3 s, smooth 0.5, no other setup income.
