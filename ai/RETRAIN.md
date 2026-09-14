@@ -1001,6 +1001,12 @@ a 20% floor the uncontrolled shot is worth taking and volume makes up
 the rest. The smoothness cost halved over the half run (2179 -> 1136
 per 10k at the new weight), so that part is taking.
 
+3.6 at 500k on held pucks (for the record):
+
+    vs weak_goalie : goals 19-0 | possessions 49, held 13 | time slow near paddle: median 0.5s mean 0.7s max 1.5s | held ending in relaunch 38%, shot after hold 62% | shot speed median 4.5 m/s
+    vs sniper      : goals 79-15 | possessions 211, held 14 | time slow near paddle: median 0.7s mean 0.7s max 1.3s | held ending in relaunch 71%, shot after hold 57% | shot speed median 2.3 m/s
+    vs external    : goals 1-0 | possessions 85, held 31 | time slow near paddle: median 0.8s mean 0.8s max 1.9s | held ending in relaunch 71%, shot after hold 68% | shot speed median 2.0 m/s
+
 # 3.7-gate-floor-5pct-selfplay (from 3.6 at 500k; 2026-09-14)
 
 One change: the uncontrolled floor 0.2 -> 0.05, as the gated runs that
