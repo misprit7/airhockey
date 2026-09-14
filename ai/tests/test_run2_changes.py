@@ -508,3 +508,48 @@ def test_the_shot_clock_turns_the_puck_over():
             t_turn = (k + 1) * e.action_dt
             break
     assert t_turn is not None and abs(t_turn - e.SHOT_CLOCK_S) < 0.15, t_turn
+
+
+def test_drive_income_pays_a_goalward_drive_at_a_held_puck():
+    """0.25 x speed^2 per step toward a held puck, DRIVE_PAY_MAX per
+    possession, from anywhere behind or beside it within the band (3.9);
+    nothing sideways, nothing backing away, nothing without a hold first."""
+    def held_shaper(drive_weight=0.25):
+        sh = _shaper(drive_weight=drive_weight, patience_s=1.5, control_gate=True)
+        obs = np.zeros((1, 22), dtype=np.float32)
+        fast = _info(0.5, 0.6, 0.0, -2.0)
+        sh.reset(obs, info=fast); sh.compute(obs, np.zeros(1), info=fast)
+        for _ in range(int(round(R.HOLD_MIN_S / R.ACTION_DT))):
+            sh.compute(obs, np.zeros(1), info=_info(0.5, 0.36, 0.0, 0.0))
+        return sh, obs
+
+    def drive(sh, obs, x0, y0, dx, dy, steps=2):
+        sh.compute(obs, np.zeros(1), info=_info(0.5, 0.40, 0.0, 0.0, pad_x=x0, pad_y=y0))
+        return [float(sh.compute(obs, np.zeros(1), info=_info(0.5, 0.40, 0.0, 0.0, pad_x=x0 + dx * k, pad_y=y0 + dy * k))[0])
+                for k in range(1, steps + 1)]
+    # straight behind, driving at 2 m/s (0.04 m per step): 0.25 x 4 = 1.0 per step
+    sh, obs = held_shaper()
+    assert drive(sh, obs, 0.5, 0.20, 0.0, 0.04) == [pytest.approx(1.0), pytest.approx(1.0)]
+    assert sh.stats["drive_sum"] == pytest.approx(2.0)
+    # at 1 m/s a quarter of that
+    sh, obs = held_shaper()
+    assert drive(sh, obs, 0.5, 0.20, 0.0, 0.02, 1) == [pytest.approx(0.25)]
+    # capped per possession
+    sh, obs = held_shaper(drive_weight=5.0)
+    assert drive(sh, obs, 0.5, 0.20, 0.0, 0.04) == [pytest.approx(R.DRIVE_PAY_MAX), 0.0]
+    # beside-and-behind (0.1 m off the line) a goalward drive pays; 0.25 m off it does not
+    sh, obs = held_shaper()
+    assert drive(sh, obs, 0.60, 0.20, 0.0, 0.04, 1)[0] > 0.0
+    sh, obs = held_shaper()
+    assert drive(sh, obs, 0.75, 0.20, 0.0, 0.04, 1) == [0.0]
+    # sideways or backing away pays nothing
+    sh, obs = held_shaper()
+    assert drive(sh, obs, 0.5, 0.20, 0.04, 0.0, 1) == [0.0]
+    sh, obs = held_shaper()
+    assert drive(sh, obs, 0.5, 0.24, 0.0, -0.04, 1) == [0.0]
+    # and nothing without a hold first
+    sh = _shaper(drive_weight=0.25, patience_s=1.5, control_gate=True)
+    obs = np.zeros((1, 22), dtype=np.float32)
+    fast = _info(0.5, 0.6, 0.0, -2.0)
+    sh.reset(obs, info=fast); sh.compute(obs, np.zeros(1), info=fast)
+    assert drive(sh, obs, 0.5, 0.20, 0.0, 0.04, 1) == [0.0]

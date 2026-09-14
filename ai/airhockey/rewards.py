@@ -199,6 +199,16 @@ SHOT_CLOCK_S = 3.0
 # puck left at 0.5-0.7 m/s. Quadratic, the 3 m/s drive earns 9x per step.
 DRIVE_MIN_TOWARD = 0.5
 DRIVE_PAY_MAX = 8.0
+# 3.9: the drive's own band, wider than the wind-up lane. With the wind-up
+# income off (3.4 on) the paddle holds the puck from wherever it stopped
+# it, and a 6 cm lane behind the puck on the line to the goal is almost
+# never where it is: 3.8 collected 6-8 per 10k of drive pay against
+# 40-77 in 3.0-3.3. Any goalward drive from behind or beside a held puck
+# pays now; the direction is still the puck-to-goal line, so a sideways
+# sweep earns nothing.
+DRIVE_ALONG_MAX = 0.40
+DRIVE_ALONG_FRONT = 0.05
+DRIVE_LINE_TOL = 0.15
 
 
 def predict_shot(x, y, vx, vy, width: float = _TABLE_W, height: float = _GOAL_CY,
@@ -921,7 +931,8 @@ class BatchRewardShaper:
             vpx = np.where(known, (pad_x - np.nan_to_num(self._prev_pad_x)) / self.dt, 0.0)
             vpy = np.where(known, (pad_y - np.nan_to_num(self._prev_pad_y)) / self.dt, 0.0)
             toward = vpx * ux + vpy * uy
-            driving = (held_now & (along < 0.0) & (along > -WINDUP_MAX) & (lateral < WINDUP_LINE_TOL)
+            driving = (held_now & (along < DRIVE_ALONG_FRONT) & (along > -DRIVE_ALONG_MAX)
+                       & (lateral < DRIVE_LINE_TOL)
                        & (toward > DRIVE_MIN_TOWARD) & (self._drive_paid < DRIVE_PAY_MAX))
             pay = np.where(driving, np.minimum(self.drive_weight * toward ** 2,
                                                DRIVE_PAY_MAX - self._drive_paid), 0.0)
