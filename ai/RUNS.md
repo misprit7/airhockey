@@ -48,6 +48,7 @@ and their recordings were renamed. Older runs (`curriculum_*`, `sac_*`,
 | `3.8-drive-pay-selfplay` | `3.7` (550k) | the drive toward a held puck pays again (0.25 x v^2, 8 per possession): the shot's motion, not the setup |
 | `3.9-drive-band-selfplay` | `3.8` (550k) | the drive pays from anywhere behind or beside a held puck (0.15 m off the line, 0.40 m back), not only a 6 cm lane |
 | `3.10-turnover-50-selfplay` | `3.9` | the referee's turnover costs 50, a conceded goal's worth, instead of 20 |
+| `3.11-shot-ramp-selfplay` | `3.9` (500k, pinned as `-500k`) | on-target pay ramps 1.5 -> 3 m/s instead of 2 -> 4, so a 2.5 m/s strike from a hold pays; turnover 50 |
 
 Lineages: **1.x** position-only action (20-wide obs). **2.x** accel in
 the action, 22-wide obs, horizon 5. **3.x** horizon 8 (deploy plans at 8

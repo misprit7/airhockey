@@ -1067,3 +1067,25 @@ weak goalie), 3.5 (smooth 0.2) against 3.9 (smooth 0.5):
 
     3.5-shot-clock-turnover-selfplay puck near standstill: median   53 mm  p90  212 mm  (n=1694) | puck away: median   21 mm  p90   85 mm  (n=18058) | in play: median   40 mm  p90  161 mm  (n=4232)
     3.9-drive-band-selfplay          puck near standstill: median   23 mm  p90   87 mm  (n=3528) | puck away: median    7 mm  p90   18 mm  (n=16648) | in play: median   22 mm  p90   89 mm  (n=3808)
+
+
+3.10 at 500k on held pucks: the other end of the dial. At -50 it holds
+less (19 of 52 possessions against the weak goalie, 3.9: 27 of 37) and
+still lets the referee take 74-95% of the holds it makes, shooting
+after 26-32% at 1.1-2.4 m/s. 7-0 / 44-26 / 2-0. In training it shoots
+moving pucks more (16-18 on target per 10k). Neither end of the
+turnover's cost gives "hold and strike".
+
+Why: the strike from a standstill in this lineage leaves the puck at
+2.0-2.5 m/s, and the on-target ramp (2 -> 4 m/s) paid that 0-8 against
+a turnover of 20-50. The strike is real (3.9 at 500k: after 73-77% of
+holds) and unpaid.
+
+# 3.11-shot-ramp-selfplay (from 3.9 at 500k; 2026-09-14)
+
+One change: `SHOT_SPEED_MIN` 2.0 -> 1.5, `SHOT_SPEED_FULL` 4.0 -> 3.0. A
+2.5 m/s controlled shot pays two thirds of 30 plus the goal; a 1 m/s
+creep still nothing. Turnover 50, gate 5%, drive band wide, smooth 0.5.
+From 3.9's 500k checkpoint (pinned `3.9-drive-band-selfplay-500k`), the
+one that shot after three quarters of its holds -- the table candidate
+meanwhile.

@@ -164,8 +164,15 @@ HOLD_PAY_MAX_S = 1.0
 # one paid shot. And a SHOT CLOCK: sitting on the puck past the paid
 # second costs `overstay_cost` per step (run 9 sat a median 2.2-2.7 s,
 # up to 14 s, waiting for the relaunch).
-SHOT_SPEED_MIN = 2.0      # run 14: was 1.5; a 1 m/s creep into the puck made 1.9
-SHOT_SPEED_FULL = 4.0
+# 3.11 (2026-09-14): 1.5 -> 3.0. A strike from a standstill in the 3.x
+# lineage leaves the puck at 2.0-2.5 m/s (3.9 at 500k, after three
+# quarters of its holds); under the 2 -> 4 ramp that paid 0-8 against a
+# turnover of 20-50, so the gated runs held and let the referee take the
+# puck (3.7-3.9) or stopped holding (3.10). A 2.5 m/s shot crosses the far
+# half in a second; it is a shot, and it pays two thirds now. A 1 m/s
+# creep still pays nothing.
+SHOT_SPEED_MIN = 1.5
+SHOT_SPEED_FULL = 3.0
 # Run 12: the WIND-UP is paid. Run 11 held and still nudged (0.8-1.1 m/s)
 # with demonstrations of a 5 m/s wound-up strike in the buffer: the bot's
 # wind-ups are ~2 per 10k demo steps, and a pull-back-then-strike is 15
