@@ -161,7 +161,12 @@ class BatchAirHockeyEnv:
     # 1.2 s for a free new puck -- a fifth of their held possessions
     # against a copy of themselves ended that way, and on the table
     # nothing relaunches, so they held for ever.
-    STUCK_TURNOVER_PENALTY = -20.0
+    # 3.10 (2026-09-14): -50, a conceded goal's worth. At -20 the gated runs
+    # 3.7-3.9 learned that holding until the referee takes the puck is the
+    # safe play -- 72-93% of their holds ended that way -- because a
+    # turnover cost less than half a goal against. Losing the puck to the
+    # clock now costs what losing it to the net does.
+    STUCK_TURNOVER_PENALTY = -50.0
     # The SHOT CLOCK (3.5, 2026-09-13): past SHOT_CLOCK_S on the agent's
     # side the puck is turned over -- relaunched to the opponent at the
     # turnover fine -- like a dead puck. 3.4 taxed the time past the clock

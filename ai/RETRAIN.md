@@ -1045,3 +1045,19 @@ from within 0.15 m of the line and 0.40 m behind pays (`DRIVE_LINE_TOL`,
 `DRIVE_ALONG_MAX`); a sideways sweep still earns nothing because the
 paid component is along the puck-to-goal line. Gate at 5%, referee at
 3 s, smooth 0.5, no setup income.
+
+
+3.9 at 500k on held pucks: shot after 73-77% of holds at 2.0-2.5 m/s
+(3.8: 1.0-1.3), 6-0 / 47-19 / 0-0. At 1M: it holds more (27 of 37
+possessions against the weak goalie) and shoots less -- after 41-45% of
+holds, at 0.9 m/s against the weak goalie, 5.0 against the sniper, 2.1
+against itself -- and 72-93% of its holds end with the referee taking
+the puck. 1-0 / 44-18 / 2-0. The turnover has become the plan: at -20
+it costs less than half a goal against, and a held puck concedes
+nothing.
+
+# 3.10-turnover-50-selfplay (from 3.9's final; 2026-09-14)
+
+One change: `STUCK_TURNOVER_PENALTY` -20 -> -50. Losing the puck to the
+clock costs what losing it to the net does, so holding to the referee
+is no longer the safe play; a controlled shot (30 + the goal) is.
