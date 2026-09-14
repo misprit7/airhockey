@@ -172,7 +172,8 @@ def test_patience_beats_the_discount_by_design():
     assert kw["patience_s"] == 2.0
     assert kw["accel_cost_weight"] == 0.04 and kw["patience_on_goals"] is True
     # 3.4: nothing about the setup is prescribed
-    assert kw["control_gate"] is False and kw["cushion_weight"] == 0.0 and kw["hold_income"] == 0.0
+    assert kw["control_gate"] is True and kw["cushion_weight"] == 0.0 and kw["hold_income"] == 0.0
+    assert kw["smooth_weight"] == 0.5
     assert kw["on_target_reward"] == 30.0 and kw["trap_reward"] == 0.0 and kw["controlled_shot_bonus"] == 1.0
     assert kw["overstay_cost"] == 0.0 and kw["windup_income"] == 0.0 and kw["drive_weight"] == 0.0
     assert kw["patience_floor"] == 0.2 and kw["trap_reward"] == 0.0

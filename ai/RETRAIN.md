@@ -970,3 +970,25 @@ holds it does make) are its own choice against a good blocker. Whole
 run against itself 34-52-314, the most decided self-play so far.
 Standard eval not run; the table is the test. Command:
 `bash ai/bin/play.sh --policy tdmpc2:3.5-shot-clock-turnover-selfplay`
+
+
+# 3.6-held-gate-smooth-selfplay (from 3.5's final; 2026-09-14)
+
+The user on 3.5: "it still doesn't make any attempt to actually stop
+and control the puck. It's also still really jittery when the puck is
+close to a standstill." Both true of the design: 3.4/3.5 paid by TIME
+on side, so waiting was enough, and it played the puck on; and the
+smoothness tax at 0.2 did not tame the planner on a flat landscape.
+
+Two changes:
+1. The held gate, alone. A shot or goal pays in full only once the puck
+   has been under 0.5 m/s within 0.2 m of the paddle for 0.3 s this
+   possession, 20% otherwise (`control_gate` True, floor 0.2). WHAT
+   must happen, not how: the setup incomes of 2.2-3.3 stay off, and
+   the referee still turns the puck over at 3 s.
+2. `smooth_weight` 0.2 -> 0.5.
+
+Resumed from 3.5, which already stops and strikes when it chooses to.
+Read: held per 10k (want 15+, as 2.6-3.3 had), shot speed after the
+hold, the idle line of the pay breakdown (the jitter's cost), and the
+recordings with the puck slow.

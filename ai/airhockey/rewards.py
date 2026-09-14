@@ -1346,7 +1346,13 @@ CURRICULUM: dict[str, dict] = {
         trap_reward=0.0, controlled_shot_bonus=1.0,
         # 3.5: the env turns the puck over at SHOT_CLOCK_S (batch_env); the
         # per-step clock cost is off -- 3.4 paid it and hoarded anyway.
-        cushion_weight=0.0, hold_income=0.0, control_gate=False, overstay_cost=0.0,
+        # 3.6: the gate is back, alone. 3.5 waited out the ramp and played
+        # the puck on without stopping it; the user wants it stopped and
+        # controlled. A shot or goal pays in full only once the puck has
+        # been under HELD_SPEED within TRAP_DIST for HOLD_MIN_S this
+        # possession, 20% otherwise. WHAT must happen, not how; the setup
+        # incomes stay off and the referee still takes the puck at 3 s.
+        cushion_weight=0.0, hold_income=0.0, control_gate=True, overstay_cost=0.0,
         windup_income=0.0, drive_weight=0.0,
         accel_cost_weight=0.04, patience_s=2.0, patience_floor=0.2, patience_on_goals=True,
         # The env draws a shot type per possession (shot_types=True) and
@@ -1370,7 +1376,11 @@ CURRICULUM: dict[str, dict] = {
         # goal's 100; at home it costs nothing. The two-hot value bins
         # resolve ~0.6 near zero, so a discounted 0.05/step (~5) is visible
         # where 0.005 was not.
-        home_weight=0.05, jitter_weight=0.0, smooth_weight=0.2),
+        # 3.6: smooth 0.2 -> 0.5. On the table and in the replays the planner
+        # still jitters with the puck near a standstill (a flat value
+        # landscape); a corner-to-corner flip now costs 1.4, a strike's
+        # target jump ~0.5 against the 30 it earns.
+        home_weight=0.05, jitter_weight=0.0, smooth_weight=0.5),
 }
 CURRICULUM_ORDER = ["proximity", "contact", "scoring", "goalie", "selfplay"]
 # Run 2: position plus an accel fraction (BatchAirHockeyEnv "profile_a").

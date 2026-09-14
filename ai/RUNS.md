@@ -43,6 +43,7 @@ and their recordings were renamed. Older runs (`curriculum_*`, `sac_*`,
 | `3.3-turnover-selfplay` | `3.2` | a dead puck on our side is a turnover; the clock has no reach (run18); -300k pinned |
 | `3.4-patience-ramp-selfplay` | `3.3` | nothing prescribed about the setup: cushion/trap/hold/wind-up/drive incomes and the held gate off; shots and goals pay by time on side (20% at once, full at 2 s); clock on time on side (3 s), turnover kept |
 | `3.5-shot-clock-turnover-selfplay` | `3.4` | the clock takes the puck: past 3 s on our side it is turned over to the opponent at -20 (env), no per-step clock cost |
+| `3.6-held-gate-smooth-selfplay` | `3.5` | a shot or goal pays in full only after the puck was under control (held 0.3 s), 20% otherwise; smoothness tax 0.2 -> 0.5 |
 
 Lineages: **1.x** position-only action (20-wide obs). **2.x** accel in
 the action, 22-wide obs, horizon 5. **3.x** horizon 8 (deploy plans at 8
