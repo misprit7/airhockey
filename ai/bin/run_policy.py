@@ -832,12 +832,10 @@ def alignment_report(policy, caps: Caps, plan_iters: int, shot_mode: str,
     user's rule (2026-09-07): the table reproduces training unless an
     experiment says otherwise, and every difference is said out loud.
     """
-    from airhockey.policy_loader import (PLAN_HORIZON, HORIZON_8_RUNS,   # noqa: PLC0415
-                                         PLAN_ITERATIONS)
+    from airhockey.policy_loader import PLAN_ITERATIONS, trained_horizon   # noqa: PLC0415
     from airhockey.dynamics import AGENT_DR_SPEED_M_S, AGENT_DR_ACCEL_M_S2   # noqa: PLC0415
     cfg = policy.agent.cfg
-    run = getattr(policy, "run", None) or ""
-    trained_h = 8 if run in HORIZON_8_RUNS else PLAN_HORIZON
+    trained_h = trained_horizon(Path(str(policy.ckpt)).parent)
     sim_v, sim_a = AGENT_DR_SPEED_M_S[1] * 1000.0, AGENT_DR_ACCEL_M_S2[1] * 1000.0
 
     def line(label, value, trained, same):

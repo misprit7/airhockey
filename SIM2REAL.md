@@ -15,6 +15,49 @@ you at the table for about an hour total.
 
 ---
 
+## Update 2026-09-19 — what changed since the sections below were written
+
+The sections below are kept as the record of how each constant was measured;
+these are the facts that supersede numbers in them.
+
+| | now | was |
+|---|---|---|
+| control rate | **50 Hz** (`dynamics.ACTION_HZ`), so a 6-iteration plan fits the 20 ms tick | 100 Hz |
+| accel cap | **40 m/s²**, pinned (`AGENT_DR_ACCEL_M_S2`); speed 12 m/s | 20 → 60 → 40 |
+| planning horizon | 5 steps for 1.x/2.x, **8 for 3.x**; eval and the table read it from `runs/<run>/run.json` | 5 |
+| standing rule | **the table reproduces training by default** and `run_policy` prints a sim/real alignment block naming every deviation | — |
+
+**Measured on the rig (2026-09-06, `ai/airhockey/follow_test.py`):** the drives
+follow 20, 40 and 60 m/s² moves CLOSE (camera-vs-controller 4/6/8 mm p50 at
+speed, 0 at rest); step scale 1.000 on all four; encoder reads arrive ~40 ms
+after the STATUS read (fitted out per motor). The binding physical limit is
+**thermal**: `RMSOverloadShutdown` after 20-30 s of flat-out play, or after a
+few seconds of the planner jittering into a phantom puck. **The sim does not
+model heat.** The accel tax and the smoothness tax are the proxies; a duty
+model in the sim is the aligned fix and is not done.
+
+**Sensing, aligned:** the runner sheds stale frames and warns
+(`FrameShedder`); it uses the camera's own-mallet fix only when the loop is
+≤30 ms behind and the fix is within 300 mm of the controller's; it pauses the
+policy after **0.5 s** without a puck (`DEFAULT_PUCK_TIMEOUT_S`), the sim's
+longest unseen spell — at the old 2 s the policy drove at a puck frozen at
+its last position and tripped a drive.
+
+**Two differences that cannot be removed** (the alignment block names them
+every run): the opponent is a person (training: a copy of itself 60%, a
+scripted sniper 20%, a weak goalie 20%), and the table has no referee — the
+sim relaunches a dead puck (1.2 s unattended / 5 s attended) and turns the
+puck over after 3 s on the robot's side (`batch_env.SHOT_CLOCK_S`); on the
+table a policy that waits for the referee waits for ever. That is exactly what
+3.3 looked like on the table on 2026-09-07 ("stops the puck but never shoots").
+
+**Not done from the list below:** paddle restitution is still a guess (0.9);
+the spool-radius tape measurement; collapsing the two env implementations.
+`ai/RETRAIN.md` has the training-side history; `CLAUDE.md` the current
+design.
+
+---
+
 ## Done
 
 | | what |

@@ -16,6 +16,7 @@ and therefore the server -- stays cheap until a policy is actually loaded.
 
 from __future__ import annotations
 
+import json
 import sys
 from pathlib import Path
 
@@ -78,16 +79,39 @@ PLAN_SMOOTH_COEF = 0.0   # parked: see memory; planner cost code stays inert
 # The cost is launch-bound, not compute-bound: 128 samples cost the same as
 # 512, so the knobs that matter are iterations and horizon.
 PLAN_ITERATIONS = 6
-# Planning horizon, steps at ACTION_HZ. Every checkpoint up to run 14 was
-# trained at 5 (100 ms); runs 15-18 at 8 (160 ms), which is what let the
-# strike from a standstill into the plan. The model is horizon-agnostic
-# but a longer rollout than it was trained on is extrapolation, so the
-# default is 5 and the horizon-8 runs pass horizon=8 to load_agent.
+# Planning horizon, steps at ACTION_HZ. The 1.x and 2.x lineages trained at
+# 5 (100 ms); 3.x at 8 (160 ms), which is what let the strike from a
+# standstill into the plan. Eval and deploy plan at the horizon the run
+# TRAINED at -- `trained_horizon()` below; a longer or shorter rollout than
+# the model learned on is extrapolation -- and load_agent takes an explicit
+# horizon only for experiments. PLAN_HORIZON is the fallback for a run that
+# carries no run.json and no lineage in its name.
 PLAN_HORIZON = 5
-HORIZON_8_RUNS = ("3.0-horizon8-selfplay", "3.1-no-demos-selfplay", "3.2-shot-clock-selfplay",
-                  "3.3-turnover-selfplay", "3.3-turnover-selfplay-300k",
-                  # the same runs by their pre-scheme names (symlinks under runs/)
-                  "run15_selfplay", "run16_selfplay", "run17_selfplay", "run18_selfplay", "run18_300k")
+HORIZON_8_LEGACY = ("run15_selfplay", "run16_selfplay", "run17_selfplay",
+                    "run18_selfplay", "run18_300k")
+
+
+def trained_horizon(run_dir: str | Path) -> int:
+    """The planning horizon a run was trained at.
+
+    From `runs/<run>/run.json` (both trainers write it since 2026-09-19),
+    else from the lineage in the name: major 3 (and the pre-scheme names
+    run15-run18) trained at 8, everything else at PLAN_HORIZON. Until
+    2026-09-19 only 3.0-3.3 were listed by name, so 3.4-3.11 were evaluated
+    and deployed at 5 against checkpoints trained at 8.
+    """
+    run_dir = Path(run_dir)
+    meta = run_dir / "run.json"
+    if meta.exists():
+        try:
+            return int(json.loads(meta.read_text()).get("horizon", PLAN_HORIZON))
+        except (ValueError, OSError):
+            pass
+    from airhockey.run_names import parse   # noqa: PLC0415
+    p = parse(run_dir.name)
+    if (p and p["major"] == 3) or run_dir.name in HORIZON_8_LEGACY:
+        return 8
+    return PLAN_HORIZON
 # Execute the elite MEAN in eval mode, not a sampled elite (local TD-MPC2
 # flag plan_eval_mean). Stock MPPI draws one elite trajectory even in eval
 # mode, and on a flat value landscape -- the puck parked far away, nothing
@@ -104,16 +128,15 @@ def load_agent(run_name: str, iterations: int | None = PLAN_ITERATIONS,
                model_size: int = DEFAULT_MODEL_SIZE,
                ckpt: str | Path | None = None,
                plan_smooth: float = PLAN_SMOOTH_COEF,
-               horizon: int = PLAN_HORIZON):
+               horizon: int | None = None):
     """Build a TDMPC2 agent and load a checkpoint into it.
 
     run_name resolves through resolve_checkpoint() unless `ckpt` names the
     file directly.
 
-    iterations: MPPI iterations for inference. The training default of 6
-    costs ~13 ms per plan, which stalls an interactive 60 fps loop with two
-    agents; 3 halves that for a modest quality cost. Pass None to keep the
-    training default.
+    iterations: MPPI iterations for inference; the default is training's
+    (PLAN_ITERATIONS). horizon: None = the horizon the run trained at
+    (trained_horizon); pass a number only for an experiment.
     """
     ckpt = Path(ckpt) if ckpt is not None else resolve_checkpoint(run_name)
     if not ckpt.exists():
@@ -136,7 +159,7 @@ def load_agent(run_name: str, iterations: int | None = PLAN_ITERATIONS,
     overrides = OmegaConf.create({
         "task": "airhockey", "obs": "state", "episodic": True,
         "steps": 1_000_000, "model_size": model_size,
-        "horizon": 8 if run_name in HORIZON_8_RUNS and horizon == PLAN_HORIZON else horizon,
+        "horizon": trained_horizon(ckpt.parent) if horizon is None else horizon,
         "eval_freq": 100_000, "eval_episodes": 1, "save_video": False,
         "enable_wandb": False, "save_csv": False,
         "work_dir": str(ckpt.parent), "compile": False,

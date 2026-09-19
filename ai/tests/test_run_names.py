@@ -25,3 +25,21 @@ def test_next_name_takes_the_next_minor(tmp_path: Path):
     assert next_name(3, "shot-clock", "selfplay", tmp_path) == "3.2-shot-clock-selfplay"
     assert next_name(2, "x", "goalie", tmp_path) == "2.13-x-goalie"
     assert next_name(4, "strike-primitive", "proximity", tmp_path) == "4.0-strike-primitive-proximity"
+
+
+def test_trained_horizon_from_run_json_then_lineage(tmp_path: Path):
+    """Eval and deploy plan at the horizon a run trained at: run.json first,
+    else the lineage (3.x and the pre-scheme run15-18 names = 8)."""
+    from airhockey.policy_loader import PLAN_HORIZON, trained_horizon
+    d = tmp_path / "3.4-patience-ramp-selfplay"; d.mkdir()
+    assert trained_horizon(d) == 8
+    (d / "run.json").write_text('{"horizon": 5}')
+    assert trained_horizon(d) == 5
+    d2 = tmp_path / "2.3-control-gate-selfplay"; d2.mkdir()
+    assert trained_horizon(d2) == PLAN_HORIZON
+    d3 = tmp_path / "run18_300k"; d3.mkdir()
+    assert trained_horizon(d3) == 8
+    d4 = tmp_path / "4.0-strike-primitive-selfplay"; d4.mkdir()
+    (d4 / "run.json").write_text('{"horizon": 10}')
+    assert trained_horizon(d4) == 10
+    assert trained_horizon(tmp_path / "curriculum_selfplay_smooth6") == PLAN_HORIZON

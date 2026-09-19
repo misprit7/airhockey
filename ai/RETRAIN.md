@@ -2,6 +2,99 @@
 > `ai/RUNS.md` is the registry. The "Run N" numbers below are the old
 > names (`runs/runN_selfplay`, kept as symlinks).
 
+# Handoff -- where this stands (2026-09-19)
+
+Read this first. Everything after it is the run-by-run record (22 runs,
+2026-09-06 to 09-14) and is left as it was written at the time.
+
+**State.** The self-play reward and env rules as of `3.11-shot-ramp-selfplay`
+are what `rewards.CURRICULUM["selfplay"]` and `batch_env` contain and are
+summarised in `CLAUDE.md` under "Reward and env rules, current". In sim,
+3.11 stops the puck in most possessions, holds about 0.8 s and shoots
+after most of its holds at 2-3 m/s (rows at the end of this file; see the
+horizon caveat). It has NOT been run on the table. The last checkpoint on
+the table was `2.3-control-gate-selfplay` (2026-09-07); 3.3 was tried the
+same day and "stopped the puck but never shot it", which is the referee
+lesson below. `ai/RUNS.md` has every run with its parent.
+
+**Table candidate and command.** Defaults reproduce training; the runner
+prints a sim/real alignment block before the first live command and marks
+every deviation. `play.sh` starts the master itself.
+
+    bash ai/bin/play.sh --policy tdmpc2:3.11-shot-ramp-selfplay --gentle   # first run of a new checkpoint
+    bash ai/bin/play.sh --policy tdmpc2:3.11-shot-ramp-selfplay
+
+Fallbacks: `3.9-drive-band-selfplay-500k` (stops and shoots, softer) and
+`2.3-control-gate-selfplay` (the user's pick from the replays before the
+control work: fast, slaps, does not stop; jittery on the table under the
+planner, calm under the prior).
+
+**Caveat on the eval rows below (found 2026-09-19).** Until today
+`policy_loader` listed only 3.0-3.3 as horizon-8 runs, so every
+`hold_eval` row for 3.4-3.11 was measured with the planner at horizon 5
+against checkpoints trained at 8. Training was at 8 throughout (the
+trainer takes `--horizon 8`), so the training-log numbers and the
+decisions taken from them stand; the eval rows are a horizon-5 view.
+Fixed: `policy_loader.trained_horizon` reads `runs/<run>/run.json`, which
+both trainers now write. 3.11's row is re-measured at 8 at the very end
+of this file.
+
+**Tools** (`ai/bin`; each prints the planner settings it used, horizon
+included):
+
+- `hold_eval.py <run>` -- stop / hold / shoot / referee, per opponent; the
+  row format used throughout this file
+- `income_breakdown.py <run>` -- reward per term for the bot, the prior
+  alone and the planner; run BEFORE changing a reward
+- `jitter_eval.py <runs>` -- planner target change per tick at a standstill
+- `run_stats.py logs/<run>.log` -- a run's counters, first / middle / last
+- `python -m airhockey.run_names 3 <description> selfplay` -- the next name
+
+Recordings for the web UI's replay tab land in `ai/recordings/<run>_step_*.json`
+every 50k steps; the UI is `PYTHONPATH=ai python -m airhockey.server`
+on port 8420.
+
+**Learned, and not.**
+
+- Stopping the puck: learned since 2.6 and stable (15-20 held possessions
+  per 10k steps). The root cause of runs 1-7 never stopping it was the
+  per-step defense income (paid 10x the goals, switched off by holding).
+- The strike from a hold: learned at horizon 8 (3.0) and again in 3.11
+  (2.3-2.7 m/s). Fragile: the same run has gained and lost it between
+  checkpoints (2.12), and without the drive pay it decays to a 1 m/s
+  nudge (3.7). A strike primitive in the action space is the parked
+  alternative ("Where this stands (2026-09-07)" below).
+- Not solved: games against a copy of itself are ~90% draws (both copies
+  block well); the referee still ends a quarter to a half of 3.11's held
+  possessions after a shot too soft to clear its side; the planner
+  jitters 2-3x the prior at a standstill (halved by the 0.5 smoothness
+  tax, not gone); the sim has no thermal model and the drives trip RMS
+  overload after 20-30 s of flat-out play or a few seconds of jitter.
+
+**Standing rules from the user** (also in the agent memory):
+
+- Never initiate robot motion; the user runs `play.sh`. Building, flashing
+  and restarting the UI are fine.
+- The table reproduces training by default, and every sim/real deviation
+  is named up front. No deploy-side conveniences as defaults.
+- Flags, never environment variables. Commands run from the repo root.
+- Run names `<major>.<minor>-<description>-<stage>`; one line per run in
+  `ai/RUNS.md`. Commit and push at checkpoints without asking.
+- Simple, direct explanations. The user watches the replays and judges by
+  them ("it stops but never shoots" beat every counter).
+
+**If the training work continues, in this order:**
+
+1. Put 3.11 on the table and watch. The alignment block and
+   `logs/run_policy/<stamp>.ticks.csv` record what it saw and asked.
+2. Self-play draws: the copy of itself is the blocker it cannot beat --
+   the opponent mix shares, or a stronger scripted goalie, are the levers.
+3. A soft strike: `SHOT_SPEED_FULL` is 3.0; the body can do 4+ from a hold
+   with a wind-up (CushionBot does 5 m/s). Or the strike primitive.
+4. Anything that changes the action space, observation, horizon or model
+   is a new lineage: 4.0, from scratch, `bash ai/bin/run_full_pipeline.sh
+   4.0-<description>` (~4.7 h).
+
 # Retrain checklist (from scratch, curriculum pipeline)
 
 Started 2026-09-06. The plan is to stop patching `curriculum_selfplay_smooth6`

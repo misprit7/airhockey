@@ -210,3 +210,34 @@ type: project
 - Continue self-play training once curriculum completes
 - Physical hardware: sw/ directory has motor test code for Teknic ClearPath-SC motors
 - System identification: need to collect real hardware dynamics data
+
+### Sessions 2026-09-05 to 2026-09-19 (table bring-up, the control retrain, handoff)
+
+Full detail: `ai/RETRAIN.md` (run by run), `ai/RUNS.md` (registry),
+`SIM2REAL.md` ("Update 2026-09-19"), `CLAUDE.md` (current design).
+
+- **Rig measured** with the tracking test (`ai/airhockey/follow_test.py`,
+  web UI button): drives follow 20/40/60 m/s² CLOSE, step scale 1.000,
+  encoder reads ~40 ms stale (fitted out). Thermal is the real limit
+  (RMS overload after 20-30 s flat out). Accel pinned at 40 m/s²,
+  speed 12, control rate 50 Hz.
+- **Retrain, 22 runs (1.0 to 3.11)** under the versioned naming scheme.
+  Root cause of "never controls the puck": the per-step defense income.
+  Current reward: on-target shots gated on the puck having been held,
+  5% otherwise; drive at a held puck paid v²; the env turns the puck over
+  after 3 s on the robot's side at -50; smoothness 0.5. 3.11 stops and
+  shoots in sim; not yet on the table.
+- **Sim/real runner**: defaults reproduce training, alignment block with
+  DEVIATION lines, frame shedding, own-mallet lag/plausibility gate,
+  policy paused 0.5 s after the puck is lost (the 2 s phantom-puck bug
+  tripped a drive), `--accel-floor` as a flagged experiment only.
+  `play.sh` takes flags (`--policy`, `--tension`), no env vars.
+- **Local TD-MPC2 commits**: plan_eval_mean, warm-start buffer for CUDA
+  graphs, bc_coef with a per-step demo flag (on top of batched MPPI and
+  pi_smooth).
+- **Handoff (09-19)**: diagnostics rebuilt into `ai/bin`
+  (`hold_eval.py`, `income_breakdown.py`, `jitter_eval.py`,
+  `run_stats.py`); `trained_horizon()` from `runs/<run>/run.json` after
+  finding that 3.4-3.11 had been evaluated at horizon 5 against
+  checkpoints trained at 8; docs brought current.
+

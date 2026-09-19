@@ -1,7 +1,7 @@
 # Air Hockey RL Project
 
 ## Overview
-Robotic air hockey table that uses reinforcement learning trained in simulation, then transferred to physical hardware. The mechanical design is likely a cable-driven parallel robot (CDPR) with 4 motors, though a CoreXY gantry is also under consideration.
+Robotic air hockey table that uses reinforcement learning trained in simulation, then transferred to physical hardware. The robot is a built and running cable-driven parallel robot (CDPR): four ClearPath servos driven step/dir by a Teensy, a FLIR camera tracking the puck at 200 Hz, and TD-MPC2 policies trained in the sim and run through `ai/bin/play.sh`. The current state of the training work and the table candidate are at the top of `ai/RETRAIN.md`; the sim-to-real status is in `SIM2REAL.md`.
 
 ## Approach
 1. **System identification**: Learn physical dynamics from real hardware (motor response, cable compliance, friction, latency)
@@ -26,11 +26,14 @@ Robotic air hockey table that uses reinforcement learning trained in simulation,
       Wall bounces use the MEASURED rail coefficients rather than specular
       reflection, so a one-bounce prediction lands where the puck does.
     - `deploy.py` - The OTHER direction: a tracker report in table mm -> the
-      15-dim kinematic observation a checkpoint trained on (same estimators
-      as the sim's tracker model) -> the action back to a target in mm.
+      22-dim observation a checkpoint trained on (same estimators as the
+      sim's tracker model; shot request and time on side tracked from the
+      reports) -> the action back to a target in mm plus the accel cap.
       `ReportEncoder` is checkpoint-free and tested against the env's own
-      observation; `TDMPC2Policy` adds the agent. Prior-only fits the 10 ms
-      tick on a CPU; `--plan N` adds MPPI on the GPU and prints its cost.
+      observation; `TDMPC2Policy` adds the agent, planning under CUDA
+      graphs at training's iterations and the run's horizon (~6-8 ms
+      against the 20 ms tick). The prior alone (`--plan 0`) is a
+      DEVIATION from training and is reported as one.
     - `heuristic_bridge.py` - SimBridge: BatchAirHockeyEnv history obs <-> the
       mm interface above. Reads observations only, never engine state — a bot
       scored against ground truth is scored on a table that does not exist.
@@ -50,32 +53,95 @@ Robotic air hockey table that uses reinforcement learning trained in simulation,
       While it runs it OWNS the master socket — the UI's mouse path,
       limits and peak reset are gated until it finishes. Unit-tested
       against the firmware's profile body in virtual time.
+    - `policy_loader.py` - Resolves a run name to a checkpoint (`latest`,
+      pinned `-<step>k` snapshots, pre-scheme symlinks), remaps older
+      15/17/20-wide observation layouts (`OBS_LAYOUTS`), and builds the
+      agent at TRAINING's planner settings: `PLAN_ITERATIONS` 6,
+      `PLAN_EVAL_MEAN`, and the horizon the run trained at
+      (`trained_horizon`: `runs/<run>/run.json`, else the lineage -- 3.x
+      is 8). Eval and the table both go through it.
+    - `cushion_bot.py` - Scripted stop / hold / wind-up / strike controller:
+      the demonstrator for `train_selfplay --demo-envs` and the "bot"
+      style in `bin/income_breakdown.py`. Physics: a paddle retreating at
+      0.47x the puck's speed stops it dead (restitution 0.9).
+    - `eval_play.py` - The shared play loop for the checkpoint diagnostics
+      in `bin/` (env vs one named opponent, planner or prior, the far side
+      driven by the same checkpoint when "external").
+    - `run_names.py` - The `<major>.<minor>-<description>-<stage>` scheme,
+      enforced by both trainers (see "Run names").
+    - `perception.py` - The sim's tracker model: 6-frame slope estimator,
+      back-projection noise, the IR blind spot and puck dropouts as a coast
+      of up to 150 ms and then a frozen zero-velocity report.
     - `web/` - Browser-based visualization UI
-  - `bin/` - Training scripts
-    - `train.py` - SAC curriculum training
-    - `train_tdmpc2.py` - TD-MPC2 model-based training (vectorized envs)
+  - `bin/` - Training, evaluation, diagnostics, the table
+    - `train.py` - SAC curriculum training (legacy)
+    - `train_tdmpc2.py` - TD-MPC2 pretrain stages (`--curriculum-stage`),
+      vectorized envs; writes `runs/<run>/run.json`
     - `train_tdmpc2_fast.py` - Optimized TD-MPC2 (batched MPPI, all speedups, self-play)
-    - `train_selfplay.py` - Self-play training with TD-MPC2
-    - `run_full_pipeline.sh` - Pretrain + self-play pipeline
+    - `train_selfplay.py` - Self-play with TD-MPC2: TF32, 256 planner
+      samples, CUDA graphs on both planners, the opponent mix, optional
+      CushionBot demonstrations (`--demo-envs N --demo-until S`) with a
+      behaviour-cloning term (`--bc-coef`), per-opponent W/L/D and the
+      shaper's counters every 10k steps. `--run-name` is required and
+      must follow the run-name scheme.
+    - `run_full_pipeline.sh <major>.<minor>-<description>` - Pretrain
+      (4 stages, 750k steps) then self-play (3M)
+    - `hold_eval.py` - What a checkpoint does with a puck it has stopped:
+      hold time, shot after the hold and its speed, possessions ended by
+      the sim's relaunch. The number behind every 2.x/3.x decision.
+    - `income_breakdown.py` - Reward per term (`stats["pay_*"]`) for the
+      bot, the prior alone and the planner on the same table. Run it
+      BEFORE changing a reward.
+    - `jitter_eval.py` - Planner target change per tick with the puck at a
+      standstill / away / in play (the smoothness-tax number).
+    - `run_stats.py` - Trend of the shaper's counters over a
+      `train_selfplay` log (first / middle / last windows).
+    - `bench_planner.py`, `profile_selfplay.py` - Planner cost per config;
+      where a self-play iteration spends its time.
     - `profile_loop.py` - Training loop profiler (per-component timing)
     - `eval_heuristics.py` - Tournament harness for the heuristic bots:
       each vs the scripted opponents, realistic sensing + DR, shared fixtures
     - `eval_policy.py` - A trained policy on the SAME terms (90 s games, same
       seed, same opponents) so its rows compare line-for-line with the bots'
+    - `follow_test_rescore.py` - Re-judge a tracking-test CSV with the
+      current scoring
     - `run_policy.py` - Drives the table from a policy: heuristic bots or a
       TD-MPC2 checkpoint (`--policy tdmpc2:<run>|latest`, via
       `airhockey/deploy.py`). Dry-run by default; `--live` moves the robot.
-      Every session logs to `logs/run_policy/<stamp>.log` (all output) and
-      `<stamp>.ticks.csv` (per tick: what the policy saw, the encoded obs,
-      what it asked, what was sent, caps, lag, cost). The master keeps
-      `logs/cdpr_master.log`; `play.sh` stamps a copy on exit.
+      DEFAULTS REPRODUCE TRAINING (planner iterations, the run's horizon,
+      shot requests drawn per possession, the sim body's caps, 50 Hz, the
+      policy paused 0.5 s after the puck is lost) and it prints a sim/real
+      alignment block before the first live command, marking every
+      DEVIATION (`--gentle`, `--plan 0`, `--accel-floor`, `--cmd-hz`...)
+      and the two inherent ones (the opponent; no referee). Sheds stale
+      camera frames with a warning; trusts the camera's own-mallet fix only
+      when the loop is <=30 ms behind and the fix is within 300 mm of the
+      controller's. Every session logs to `logs/run_policy/<stamp>.log`
+      (all output) and `<stamp>.ticks.csv` (per tick: what the policy saw,
+      the encoded obs, what it asked, what was sent, caps, lag, cost). The
+      master keeps `logs/cdpr_master.log`; `play.sh` stamps a copy on exit.
     - `play.sh` - Turn it on and it plays: starts `cdpr_master`, the camera
       and `run_policy.py --live` in one command; Ctrl-C brakes and stops all.
-  - `tests/` - Test suite
+      Its own flags: `--policy <spec>`, `--tension <mm>` (master pretension
+      at ENABLE; default 0 = slack, the setting the tracking test
+      validated), `--dry`; everything else passes to `run_policy.py`.
+      Flags only, never environment variables.
+  - `tests/` - Test suite. Run it with the SYSTEM python:
+    `PYTHONPATH=ai:vision/bin python3 -m pytest ai` (the venv's tensordict
+    0.11 fails 5 TD-MPC2 tests; the system 0.13 passes).
     - `test_batch_physics.py` - Vectorized physics correctness tests
     - `test_validation.py` - Reward shaping equivalence and env consistency tests
     - `test_heuristics.py` - Bot prediction maths, the mm<->sim/action round
       trips, workspace and cap containment, and end-to-end play
+    - `test_retrain_changes.py`, `test_run2_changes.py` - every reward term
+      and env rule of the 2.x/3.x retrain pinned on scripted state
+      sequences: the shot predictor, held gate, speed ramp, drive pay, shot
+      clock, turnover, stuck relaunch, layout remap, deploy encoder
+    - `test_cushion_bot.py`, `test_run_names.py`, `test_deploy.py`,
+      `test_run_policy.py`, `test_follow_test.py`, `test_pi_smooth.py` -
+      the demonstrator; the naming scheme and `trained_horizon`; encoder vs
+      env parity; the runner's shedder, lag gate, caps and watchdog; the
+      tracking test in virtual time; the planner smoothness flags
 - `shared/` - Geometry shared by every control path. **Canonical.**
   - `cdpr_geometry.h` - Table frame, motor anchors, spool, paddle attachment,
     and the cable-length model (tangency + wrap). Included by `fw/` and
@@ -225,37 +291,59 @@ goals conceded from 0.10 to 0.04 per game.
   that is a random target every tick, which is what the 2026-09-05 table
   runs showed and the sim reproduces on a static scene. Halves the target
   jumps and doubled goals vs the goalie in sim.
+  **Planning horizon** is per lineage: 5 steps (100 ms) for 1.x and 2.x,
+  **8** (160 ms) for 3.x -- the change that let a strike from a standstill
+  into the plan (2026-09-07). `policy_loader.trained_horizon` reads it from
+  `runs/<run>/run.json` (both trainers write it), so eval and the table
+  plan at what the run trained at. Until 2026-09-19 the loader listed only
+  3.0-3.3 by name, so the `hold_eval` rows for 3.4-3.11 in `ai/RETRAIN.md`
+  were measured at horizon 5; 3.11's row is re-measured there at 8.
 - **Observation space**: Puck (pos + vel), own paddle (pos + vel), opponent paddle (pos + vel) — all in 2D — then a side flag, two cap ratios (constants since the band was pinned), the PREVIOUS ACTION (2026-09-03: needed for the smoothness term to be learnable from a frame), the SHOT TYPE REQUESTED (2026-09-06: one-hot bank-left / bank-right / straight, all zero = no preference; x = 0 rail is LEFT facing the far goal), and TIME ON SIDE (seconds since the puck last crossed the centre line, clipped at 5 s and divided by it). 22 dims; the previous action is three wide (x, y, accel fraction). Older 15-, 17- and 20-wide checkpoints load with their columns moved into place and zero weight on the new inputs (`policy_loader.OBS_LAYOUTS`, `load_checkpoint`). Camera delay is applied to observations to simulate real sensing latency.
-- **Retrain (2026-09-06, `ai/RETRAIN.md` is the checklist)**: accel pinned
-  at the nominal 20 m/s² (the drives follow 20-24, not 60); rewards pay
-  shot OUTCOMES — `rewards.predict_shot` traces the puck through the
-  measured lossy-wall model and an on-target shot earns `on_target_reward`
-  (10) + `shot_speed_weight` per m/s, once per possession, ten times a
-  merely forward hit; bringing the puck to rest under the paddle first
-  earns `trap_reward` and lifts the on-target reward by
-  `controlled_shot_bonus`; in self-play the env draws a shot type per
-  possession (`shot_types=True`) and a match pays `shot_type_reward`; the
-  far side is drawn per episode from `opponent_mix` (60% copy of self,
-  20% `sniper` — a scripted striker on a FREE body putting 8-12 m/s shots
-  at the robot, 20% `weak_goalie`); and 20% of episodes get sensing fuzz
-  (`fuzz_p`: the opponent's mallet hidden for 0.3-1.5 s spells, shown as
-  the deploy encoder's fallback; 50-150 ms puck dropouts through the
-  tracker's coast). The stuck-puck relaunch waits 3 s for an attended puck
-  (1.2 s unattended) so control is possible. `rewards.curriculum_env_kwargs`
-  hands these to the env; `train_selfplay.py` logs win rate per opponent
-  kind and the shaper's shot counters.
-  **Run 2 (2026-09-06)** after run 1 never stopped the puck and drove the
-  paddle 33 m in 20 s on the table: the hit rewards are multiplied by
-  `patience_floor + (1 - floor) * min(1, t_side / patience_s)` (0.5 at an
-  instant slap, 1.0 after 1.5 s of the puck on the robot's side), the
-  discount goes to 0.995 so 1.5 s of waiting keeps 69% of a reward, the
-  accel fraction is taxed per step, the attended stuck relaunch waits
-  5 s, and the four pretrain budgets are halved to 750k steps in total
-  with UTD 0.5 (`--updates-per-step 16`).
+- **Reward and env rules, current** (the self-play stage of
+  `rewards.CURRICULUM` as of 3.11, 2026-09-14; the four pretrain stages
+  keep their 2026-09-06 terms). `ai/RETRAIN.md` is the run-by-run record
+  of how each rule was arrived at, 22 runs; this is where it stands:
+  - Accel pinned at **40 m/s²** (`AGENT_DR_ACCEL_M_S2`; the drives follow
+    it CLOSE in the tracking test), speed 12 m/s. The cap features stay in
+    the observation as constants. Discount 0.995.
+  - An ON-TARGET shot (`rewards.predict_shot` traces the puck through the
+    measured lossy-wall model; once per possession) pays 30 + 1 per m/s,
+    scaled by shot speed -- nothing under 1.5 m/s, full from 3 -- and a
+    matching shot type pays 10. A shot or goal pays IN FULL only once the
+    puck has been under control this possession (`control_gate`: under
+    0.5 m/s within 0.2 m of the paddle for 0.3 s), **5%** otherwise
+    (`patience_floor`). Goals +100 / -50.
+  - The paddle's DRIVE at a held puck pays 0.25 x speed² per step from
+    anywhere behind or beside it (0.15 m off the puck-to-goal line, 0.40 m
+    back), 8 per possession: the strike's motion. Nothing else about the
+    setup is prescribed -- the cushion, trap, hold and wind-up incomes
+    still exist in `BatchRewardShaper` and are OFF.
+  - The env is the referee: a puck on the robot's side for more than
+    **3 s** (`batch_env.SHOT_CLOCK_S`), or dead there (1.2 s unattended /
+    5 s attended), is TURNED OVER -- relaunched toward the opponent at
+    **-50** (`STUCK_TURNOVER_PENALTY`). A per-step tax was tried first and
+    was paid rather than avoided.
+  - Hygiene: the accel fraction taxed 0.04 per step, smoothness 0.5 per
+    unit of action change, home pull 0.05 while the puck is away, defense
+    0.05 (was 1.0: it paid ten times the goals for every style and
+    switched off whenever the puck was held -- why runs 1-7 never stopped
+    it).
+  - Opponent mix per episode: 60% a copy of itself on the robot's body,
+    20% `sniper` (a scripted striker on a FREE body, 5-8 m/s shots), 20%
+    `weak_goalie`; a shot type drawn per possession; 20% of episodes get
+    sensing fuzz (the opponent's mallet hidden for 0.3-1.5 s spells, shown
+    as the deploy encoder's fallback; 50-150 ms puck dropouts through the
+    tracker's coast). `rewards.curriculum_env_kwargs` hands these to the
+    env.
+  - Result in sim (3.11): stops the puck in most possessions, holds
+    ~0.8 s, shoots after 78-96% of its holds at 2.3-2.7 m/s; games against
+    itself are mostly draws. NOT yet run on the table.
 - **Action space**: Target (x, y) position for the paddle, plus (run 2,
   2026-09-06, `action_mode="profile_a"`, 3 dims) the ACCEL CAP for this
-  command as a fraction of the machine's (slot [-1, 1] -> 5%..100%,
-  `BatchAirHockeyEnv.accel_fraction`); speed stays at the clamp. The
+  command as a fraction of the machine's (`BatchAirHockeyEnv.accel_fraction`,
+  quadratic: slot -1 -> 5%, 0 -> 29%, +1 -> 100%); speed stays at the
+  clamp. Under the accel tax the policies settle at a mean fraction of
+  ~0.35, i.e. ~13 m/s², and ask for ~3 m/s² on most idle ticks. The
   reward taxes the fraction (`accel_cost_weight`), so a high cap is spent
   on strikes and saves, not on wandering -- heat is torque and torque is
   accel, and run 1 tripped a drive after 20 s of continuous traversal.
@@ -287,6 +375,11 @@ minor = a recipe change resumed within it, stage = curriculum stage or
 with each run's parent; `airhockey/run_names.py` enforces it in both
 trainers; `python -m airhockey.run_names <major> <description> <stage>`
 prints the next free name. Pre-scheme names (`runN_selfplay`) are symlinks.
+Every run directory carries a `run.json` (horizon, action rate, model size,
+parent) that `policy_loader.trained_horizon` reads; a pinned snapshot is a
+directory whose `agent.pt` is a symlink to one of the run's
+`agent_step_*.pt` files. `runs/` is not in git; the machine at the table is
+the only copy of the checkpoints.
 
 ## Commands
 
@@ -308,34 +401,36 @@ bash ai/bin/run_full_pipeline.sh 4.0-<description>   # runs named <major>.<minor
 # Run SAC curriculum training
 python ai/bin/train.py --curriculum
 
-# Run TD-MPC2 training (original)
-python ai/bin/train_tdmpc2.py --steps 500000
+# One pretrain stage of the TD-MPC2 curriculum
+python ai/bin/train_tdmpc2.py --curriculum-stage contact --steps 150000 --run-name 4.0-<description>-contact
 
-# Run TD-MPC2 fast training (batched MPPI, all speedups)
-python ai/bin/train_tdmpc2_fast.py --steps 2000000
+# Self-play, resumed within the current lineage (3.x = horizon 8). Logs go to
+# logs/<run>.log by convention; the trainer prints per-opponent W/L/D and the
+# shaper's counters every 10k steps. ~1 h per 1M steps on the 4090.
+python -m airhockey.run_names 3 <description> selfplay          # the next free name
+python ai/bin/train_selfplay.py --resume runs/3.11-shot-ramp-selfplay/agent.pt --steps 1000000 \
+    --n-envs 32 --model-size 5 --horizon 8 --run-name 3.12-<description>-selfplay \
+    --record-freq 50000 --opponent-update-freq 50000 > logs/3.12-<description>-selfplay.log 2>&1
 
-# Fast training with full MPPI quality (no speed reduction)
-python ai/bin/train_tdmpc2_fast.py --no-fast --steps 2000000
+# Checkpoint diagnostics in sim (~10 min each at the defaults; they print the
+# planner settings they used, horizon included)
+python ai/bin/hold_eval.py 3.11-shot-ramp-selfplay                 # stop / hold / shoot / referee, per opponent
+python ai/bin/income_breakdown.py 3.11-shot-ramp-selfplay          # reward per term: bot vs prior vs planner
+python ai/bin/jitter_eval.py 3.5-shot-clock-turnover-selfplay 3.11-shot-ramp-selfplay
+python ai/bin/run_stats.py logs/3.11-shot-ramp-selfplay.log        # a run's counters, first / middle / last
 
-# Auto-curriculum (stages 1-4, auto-advancing on plateau)
+# Fast trainer (batched MPPI, auto-curriculum); older entry point
 python ai/bin/train_tdmpc2_fast.py --curriculum --steps 5000000
 
-# Run a specific curriculum stage only
-python ai/bin/train_tdmpc2_fast.py --stage 4 --steps 1000000
-
-# Fast training self-play (resumes from pretrained agent)
-python ai/bin/train_tdmpc2_fast.py --resume runs/tdmpc2_pretrain/agent.pt --steps 5000000
-
-# Run self-play (original)
-python ai/bin/train_selfplay.py --resume runs/tdmpc2_pretrain/agent.pt
-
-# Profile training loop components
+# Profile training loop components / the planner
 python ai/bin/profile_loop.py
+python ai/bin/profile_selfplay.py --run 3.11-shot-ramp-selfplay --n-envs 32
+python ai/bin/bench_planner.py --run 3.11-shot-ramp-selfplay --compile
 
 # Heuristic-bot tournament (the non-ML baseline a policy has to beat)
 python ai/bin/eval_heuristics.py
 python ai/bin/eval_heuristics.py --bots goalie,striker --opponents random
-python ai/bin/eval_policy.py curriculum_goalie          # a checkpoint on the same terms
+python ai/bin/eval_policy.py 3.11-shot-ramp-selfplay --iterations 6   # a checkpoint on the same terms
 ```
 
 ## Hardware
@@ -374,8 +469,8 @@ make -C fw/test                  # host tests for the motion profile
 # Play with the trained policy (from the repo root)
 # Defaults reproduce training; the runner prints a sim/real alignment block
 # and marks every DEVIATION. Flags only, no environment variables.
-bash ai/bin/play.sh --policy tdmpc2:2.3-control-gate-selfplay --gentle   # FIRST run of a new checkpoint
-bash ai/bin/play.sh --policy tdmpc2:2.3-control-gate-selfplay            # as trained
+bash ai/bin/play.sh --policy tdmpc2:3.11-shot-ramp-selfplay --gentle   # FIRST run of a new checkpoint
+bash ai/bin/play.sh --policy tdmpc2:3.11-shot-ramp-selfplay            # as trained
 bash ai/bin/play.sh --policy tdmpc2:latest --dry                          # camera + policy, commands nothing
 bash ai/bin/play.sh --policy tdmpc2:latest --tension 1.5                  # master pretension, mm (default 0)
 python ai/bin/run_policy.py --policy tdmpc2:latest --opponent   # dry-run, no master
@@ -426,19 +521,31 @@ describe. That fork (GRUCell dynamics, prioritized replay, tuple-returning
 act) lived at `/home/rbhagat/projects/tdmpc2`, which does not exist on this
 machine; discovered 2026-08-29 when training crashed on its missing pieces.
 
-What the local checkout DOES carry, as a local commit (`git log` in that
-repo), is **batched MPPI planning**: `act()` accepts `(N, obs_dim)`
-observations with a per-env bool `t0` mask and plans every env in one call
-(`_plan_batch`), warm-starting from `_prev_mean_batch [N, horizon,
-action_dim]`. `train_tdmpc2_fast.py` requires this — collection is
-vectorized — and its prioritized-replay path degrades to uniform sampling
-with a warning because stock `Buffer` has no `set_beta`. Measured 3x over
-sequential planning at N=32; single-env plan is ~13 ms at 512 samples / 6
-iterations, which does NOT fit a 100 Hz deployment loop — deploy with fewer
-iterations or the policy prior.
+What the local checkout DOES carry, as LOCAL commits (`git log` in that
+repo; it is NOT a github fork with a remote -- do not `git pull --rebase`
+them away):
+- **batched MPPI planning**: `act()` accepts `(N, obs_dim)` observations
+  with a per-env bool `t0` mask and plans every env in one call
+  (`_plan_batch`), warm-starting from a persistent `[N, horizon,
+  action_dim]` buffer allocated OUTSIDE the planner so
+  `torch.compile(mode="reduce-overhead")` (CUDA graphs) can wrap it. Both
+  trainers and `deploy.py` use it. `train_tdmpc2_fast.py`'s
+  prioritized-replay path degrades to uniform sampling with a warning
+  because stock `Buffer` has no `set_beta`.
+- `plan_eval_mean` (execute the elite mean in eval mode), `pi_smooth_coef`
+  (temporal smoothness regulariser on the prior, in pre-squash space),
+  `plan_smooth_coef` + `prev_action_start` (an MPPI action-change cost,
+  parked at 0).
+- `bc_coef`: behaviour cloning of the prior toward demonstrated actions,
+  with a per-step `demo` flag carried through the buffer
+  (`sample_with_demo`). Used with `train_selfplay --demo-envs`.
 
-That repo is NOT a github fork with a remote — the batched-MPPI commit
-exists only locally. Do not `git pull --rebase` it away.
+Costs on the 4090 (`ai/bin/bench_planner.py`): a 6-iteration single-env
+plan is ~12.6 ms eager / ~6.3 ms under CUDA graphs at horizon 5, ~26%
+more at 8 -- why the control rate is 50 Hz and the table plans at
+training's settings. At 32 envs the planner is compute-bound: TF32 + 256
+samples + CUDA graphs gave ~3x (`ai/bin/profile_selfplay.py`); self-play
+collects ~200-300 env-steps/s, ~1 h per 1M steps.
 
 ## Tech Stack
 - Python, NumPy for physics/env
@@ -451,7 +558,8 @@ exists only locally. Do not `git pull --rebase` it away.
 ## Training Learnings
 - **Algorithm**: SAC works much better than PPO for this continuous control task.
 - **Curriculum learning**: Train on proximity-only reward first (`exp(-3*dist)`), then add full rewards. This bootstraps the agent to move toward the puck before learning what to do with it.
-- **Reward design**:
+- **Reward design (SAC era, 2026-03; the TD-MPC2 curriculum's terms are in
+  `rewards.CURRICULUM` and described under "Key Design Decisions")**:
   - Exponential proximity: `0.1 * exp(-3*dist)` — dense signal that pulls the paddle toward the puck.
   - Goal scored: +100.
   - Goal conceded: -5 (kept low intentionally — a large penalty discourages hitting the puck at all).
@@ -467,18 +575,49 @@ exists only locally. Do not `git pull --rebase` it away.
   (`--human-opponent` restores the human model). Before this the sparring
   partner was the human model, which the learner had never been in the
   body of, and it played far worse than the robot. The robot's accel DR
-  band is pinned at 60 m/s² (was 10–60); the cap features stay in the
-  observation as constants so the band can be reopened without reshaping
-  the network. `eval_policy.py A --vs B` plays two checkpoints on equal
-  bodies; `--human-body` reproduces the pre-change ladder.
-- **Smoothness (2026-09-03)**: the self-play stage taxes step-to-step action
-  change everywhere (`smooth_weight` 0.2/unit; a full corner-to-corner flip
-  costs 0.57, sized to TD-MPC2's value-bin resolution -- 0.02 was invisible
-  to the two-hot heads) plus a tiny idle pull to the goal's centre line
-  while the puck is away. The previous action is in the observation so the
-  term is learnable from a frame. The first live run showed the prior flipping its target
-  corner to corner on a quarter of all ticks; the sim's body followed it,
-  the table's could not.
+  band is pinned (40 m/s² since the retrain; was 10–60, then 60); the cap
+  features stay in the observation as constants so the band can be
+  reopened without reshaping the network. `eval_policy.py A --vs B` plays
+  two checkpoints on equal bodies; `--human-body` reproduces the
+  pre-change ladder.
+- **Smoothness (2026-09-03, raised 2026-09-14)**: the self-play stage taxes
+  step-to-step action change everywhere (`smooth_weight` 0.5/unit since
+  3.6, 0.2 before; a full corner-to-corner flip costs 1.4, a strike's
+  target jump ~0.5 against the 30 it earns; 0.02 was invisible to the
+  two-hot value heads) plus a tiny idle pull to the goal's centre line
+  while the puck is away. The previous action is in the observation so
+  the term is learnable from a frame. Measured with `ai/bin/jitter_eval.py`:
+  0.2 -> 0.5 took the planner's target change with the puck at a
+  standstill from 53 to 23 mm per tick (p90 212 -> 87); the planner still
+  moves 2-3x more than the prior alone, and on the table that jitter is
+  what tripped a drive's RMS overload on 2026-09-07 together with the
+  phantom-puck bug (now the 0.5 s puck timeout).
+- **Retrain lessons (2.x-3.x, 2026-09-06 to 09-14; every run's numbers in
+  `ai/RETRAIN.md`)**:
+  - A per-step income that the wanted behaviour switches off will prevent
+    it: the defense term paid ten times the goals and holding the puck
+    ended it. Look at `income_breakdown.py` before touching a reward.
+  - "Controlled" must be defined strictly (held at rest for a time); a
+    gate that accepted "slowed within reach" or "waited N seconds" was
+    slapped through.
+  - A tax on stalling gets paid whenever stalling is safe (a held puck
+    concedes nothing). The env taking the puck at a goal's cost is what
+    worked; and the table has no referee, so a policy that stalls in sim
+    stalls for ever on the table (3.3, 2026-09-07).
+  - Demonstrations in the replay buffer did not transfer through value
+    learning alone; cloning transferred them into the prior, and the
+    planner then overrode the prior wherever the reward preferred
+    otherwise. Compare prior vs planner.
+  - A strike from a standstill needed three things at once: its payoff
+    inside the planning horizon (8 steps), the drive's motion paid densely
+    (0.25 x v²), and an on-target ramp that covers the speed this body
+    produces from a hold (2-2.5 m/s at its habitual ~13 m/s²).
+  - Judge a checkpoint with `hold_eval.py`, not the training counters,
+    and check the 500k and the final checkpoint separately: the same run
+    has gained and lost a skill within 1M steps (2.12).
+  - Table side: pause the policy 0.5 s after the puck is lost (the sim's
+    longest unseen spell), shed stale frames, plan at the run's horizon,
+    and remember the sim has no thermal limit -- the drives do.
 - **Training throughput**: SAC's bottleneck is gradient updates, not environment stepping. Using `train_freq=32` with `gradient_steps=4` gives roughly 3x speedup over the default.
 - **Episode init**: Puck should start heading toward the agent so it encounters the puck quickly and gets reward signal faster.
 - **Network size**: 128x128 MLP is sufficient for basic play. Will likely need larger networks for strategic/competitive play.

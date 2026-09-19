@@ -55,6 +55,11 @@ def test_encoder_matches_the_simulators_observation():
     # what the encoder writes; with it off the env reads nominal (1.0).
     env = BatchAirHockeyEnv(n_envs=1, opponent_policy="follow",
                             realistic_perception=False, domain_randomize=True)
+    # The referee's turnover (3.5: a puck on our side past SHOT_CLOCK_S is
+    # relaunched at the centre) is a sim-only event; the encoder can only
+    # see a crossing, so its time-on-side would be one step off for that
+    # tick. This test is about sensing parity, not the referee.
+    env.SHOT_CLOCK_S = 0.0
     obs = env.reset(seed=3)
     enc = ReportEncoder(env.table_config)
     hist: list[tuple[float, float, float]] = []

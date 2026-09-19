@@ -27,6 +27,8 @@ import os
 os.environ['LAZY_LEGACY_OP'] = '0'
 
 import argparse
+from datetime import datetime
+import json
 import sys
 import warnings
 from pathlib import Path
@@ -231,6 +233,10 @@ def main():
     root = Path(__file__).resolve().parents[2]
     run_dir = root / "runs" / args.run_name
     run_dir.mkdir(parents=True, exist_ok=True)
+    # What eval and deploy must reproduce (policy_loader.trained_horizon).
+    (run_dir / "run.json").write_text(json.dumps({
+        "horizon": args.horizon, "action_hz": ACTION_HZ, "model_size": args.model_size,
+        "resume": args.resume, "started": datetime.now().isoformat(timespec="seconds")}, indent=1))
     recordings_dir = root / "ai" / "recordings"
     writer = SummaryWriter(str(run_dir / "logs"))
 

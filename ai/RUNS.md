@@ -13,7 +13,16 @@ Names follow `<major>.<minor>-<description>-<stage>` (`airhockey/run_names.py`):
 
 The trainers refuse any other name (names starting with `_` are scratch).
 `python -m airhockey.run_names 3 shot-clock selfplay` prints the next free
-minor under a major. The full pipeline takes `PREFIX=<major>.<minor>-<description>`.
+minor under a major. The full pipeline takes the version as its argument:
+`bash ai/bin/run_full_pipeline.sh 4.0-<description>`.
+
+Every run directory carries a `run.json` (horizon, action rate, model
+size, parent) written by the trainer; `policy_loader.trained_horizon` reads
+it so eval and the table plan at the horizon the run trained at. Pinned
+snapshots of a run are directories holding a symlink to one of its
+`agent_step_*.pt` files: `1.1-resumed-selfplay-1950k`,
+`2.12-drive-squared-selfplay-500k`, `3.3-turnover-selfplay-300k`,
+`3.9-drive-band-selfplay-500k`.
 
 The pre-scheme names (`retrain40_*`, `runN_*`) are symlinks under `runs/`
 and their recordings were renamed. Older runs (`curriculum_*`, `sac_*`,
@@ -51,6 +60,12 @@ and their recordings were renamed. Older runs (`curriculum_*`, `sac_*`,
 | `3.11-shot-ramp-selfplay` | `3.9` (500k, pinned as `-500k`) | on-target pay ramps 1.5 -> 3 m/s instead of 2 -> 4, so a 2.5 m/s strike from a hold pays; turnover 50 |
 
 Lineages: **1.x** position-only action (20-wide obs). **2.x** accel in
-the action, 22-wide obs, horizon 5. **3.x** horizon 8 (deploy plans at 8
-for these, `policy_loader.HORIZON_8_RUNS`). The next from-scratch
-curriculum is **4.0**.
+the action, 22-wide obs, horizon 5. **3.x** horizon 8. The next
+from-scratch curriculum is **4.0**.
+
+**Table candidate (2026-09-19): `3.11-shot-ramp-selfplay`** -- stops the
+puck in most possessions, holds under a second, shoots after 78-96% of
+its holds at 2.3-2.7 m/s (`ai/bin/hold_eval.py`). Not yet run on the
+table. `3.9-drive-band-selfplay-500k` is the fallback; `2.3-control-gate-selfplay`
+is the one the user liked in the replays before the control work and the
+last one that was on the table (2026-09-07).

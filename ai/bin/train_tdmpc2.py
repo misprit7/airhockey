@@ -15,6 +15,8 @@ os.environ['LAZY_LEGACY_OP'] = '0'
 os.environ['TORCHDYNAMO_INLINE_INBUILT_NN_MODULES'] = '1'
 
 import argparse
+from datetime import datetime
+import json
 import copy
 import sys
 import warnings
@@ -306,6 +308,12 @@ def main():
     check_run_name(args.run_name)   # <major>.<minor>-<description>-<stage>, see ai/RUNS.md
 
     run_dir = Path("runs") / args.run_name
+    run_dir.mkdir(parents=True, exist_ok=True)
+    # What eval and deploy must reproduce (policy_loader.trained_horizon).
+    (run_dir / "run.json").write_text(json.dumps({
+        "horizon": args.horizon, "action_hz": round(1.0 / ACTION_DT), "model_size": args.model_size,
+        "resume": getattr(args, "resume", None), "stage": args.curriculum_stage,
+        "started": datetime.now().isoformat(timespec="seconds")}, indent=1))
     # The web UI's replay tab reads ai/recordings (server.py RECORDINGS_DIR).
     # This was Path("recordings"), i.e. relative to WHEREVER the trainer was
     # launched from -- recordings landed at the repo root and the UI never
