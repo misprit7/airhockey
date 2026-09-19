@@ -64,8 +64,8 @@ the action, 22-wide obs, horizon 5. **3.x** horizon 8. The next
 from-scratch curriculum is **4.0**.
 
 **Table candidate (2026-09-19): `3.11-shot-ramp-selfplay`** -- stops the
-puck in most possessions, holds under a second, shoots after 78-96% of
-its holds at 2.3-2.7 m/s (`ai/bin/hold_eval.py`). Not yet run on the
+puck in most possessions, holds under a second, shoots after 92-95% of
+its holds at 3.4-4.1 m/s (`ai/bin/hold_eval.py`, horizon 8). Not yet run on the
 table. `3.9-drive-band-selfplay-500k` is the fallback; `2.3-control-gate-selfplay`
 is the one the user liked in the replays before the control work and the
 last one that was on the table (2026-09-07).

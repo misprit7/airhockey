@@ -297,7 +297,8 @@ goals conceded from 0.10 to 0.04 per game.
   `runs/<run>/run.json` (both trainers write it), so eval and the table
   plan at what the run trained at. Until 2026-09-19 the loader listed only
   3.0-3.3 by name, so the `hold_eval` rows for 3.4-3.11 in `ai/RETRAIN.md`
-  were measured at horizon 5; 3.11's row is re-measured there at 8.
+  were measured at horizon 5; 3.11 re-measured at 8 (end of that file)
+  shoots after 92-95% of its holds at 3.4-4.1 m/s.
 - **Observation space**: Puck (pos + vel), own paddle (pos + vel), opponent paddle (pos + vel) — all in 2D — then a side flag, two cap ratios (constants since the band was pinned), the PREVIOUS ACTION (2026-09-03: needed for the smoothness term to be learnable from a frame), the SHOT TYPE REQUESTED (2026-09-06: one-hot bank-left / bank-right / straight, all zero = no preference; x = 0 rail is LEFT facing the far goal), and TIME ON SIDE (seconds since the puck last crossed the centre line, clipped at 5 s and divided by it). 22 dims; the previous action is three wide (x, y, accel fraction). Older 15-, 17- and 20-wide checkpoints load with their columns moved into place and zero weight on the new inputs (`policy_loader.OBS_LAYOUTS`, `load_checkpoint`). Camera delay is applied to observations to simulate real sensing latency.
 - **Reward and env rules, current** (the self-play stage of
   `rewards.CURRICULUM` as of 3.11, 2026-09-14; the four pretrain stages
@@ -335,9 +336,10 @@ goals conceded from 0.10 to 0.04 per game.
     as the deploy encoder's fallback; 50-150 ms puck dropouts through the
     tracker's coast). `rewards.curriculum_env_kwargs` hands these to the
     env.
-  - Result in sim (3.11): stops the puck in most possessions, holds
-    ~0.8 s, shoots after 78-96% of its holds at 2.3-2.7 m/s; games against
-    itself are mostly draws. NOT yet run on the table.
+  - Result in sim (3.11, at its trained horizon 8): stops the puck in
+    most possessions, holds ~0.9 s, shoots after 92-95% of its holds at
+    3.4-4.1 m/s; games against itself are mostly draws. NOT yet run on
+    the table.
 - **Action space**: Target (x, y) position for the paddle, plus (run 2,
   2026-09-06, `action_mode="profile_a"`, 3 dims) the ACCEL CAP for this
   command as a fraction of the machine's (`BatchAirHockeyEnv.accel_fraction`,

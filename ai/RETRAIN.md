@@ -36,8 +36,9 @@ against checkpoints trained at 8. Training was at 8 throughout (the
 trainer takes `--horizon 8`), so the training-log numbers and the
 decisions taken from them stand; the eval rows are a horizon-5 view.
 Fixed: `policy_loader.trained_horizon` reads `runs/<run>/run.json`, which
-both trainers now write. 3.11's row is re-measured at 8 at the very end
-of this file.
+both trainers now write. 3.11's weak-goalie and sniper rows are
+re-measured at 8 at the very end of this file (the vs-itself row was not
+re-run: `python ai/bin/hold_eval.py 3.11-shot-ramp-selfplay --opponents external`).
 
 **Tools** (`ai/bin`; each prints the planner settings it used, horizon
 included):
@@ -1200,3 +1201,13 @@ quarter to a half because a 2.5 m/s shot into a blocker often stays on
 its side. Whole run against itself 22-34-338; 72-2 vs the weak goalie.
 Planner jitter at a standstill halved by the 0.5 smoothness tax (3.9
 row above; 3.11 carries it). Table: `3.11-shot-ramp-selfplay`.
+
+3.11 FINAL re-measured at its trained horizon 8 (2026-09-19; the rows
+above were at 5):
+
+    vs weak goalie   20-0,  held 40 of 53,  shot after 95% of holds at 3.4 m/s, referee 25%, hold 0.9 s median / 1.8 s max
+    vs sniper        53-29, held 85 of 213, shot after 92% at 4.1 m/s, referee 25%, hold 0.9 s / 1.8 s
+
+Better on every column than the horizon-5 view: it shoots after nearly
+every hold, a metre per second harder, and the referee takes half as
+many. The vs-itself row was not re-run.
