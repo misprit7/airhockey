@@ -7,7 +7,9 @@ exposing a TCP interface for position commands and live status.
 from __future__ import annotations
 
 import math
+import json
 import socket
+import time
 import sys
 from pathlib import Path
 
@@ -166,6 +168,27 @@ class CDPRClient:
             return float(parts[1]), float(parts[2]), float(parts[3]), float(parts[4])
         raise RuntimeError(f"CDPR pos failed: {resp}")
 
+    def get_position_sample(self) -> tuple[float, float, float, float, float]:
+        """Cached position/velocity plus its real age in seconds.
+
+        POS appends the master's CLOCK_MONOTONIC receive timestamp. This
+        localhost protocol shares the host clock; a fast TCP reply does not
+        make an old controller sample fresh. Older masters have unknown age
+        and return infinity so callers can prefer a real camera measurement.
+        """
+        resp = self._send("POS")
+        parts = resp.split()
+        if not parts or parts[0] != "OK" or len(parts) < 5:
+            raise RuntimeError(f"CDPR pos failed: {resp}")
+        values = tuple(float(v) for v in parts[1:5])
+        age = math.inf
+        if len(parts) >= 6:
+            received = float(parts[5])
+            now = time.monotonic()
+            if math.isfinite(received) and 0 < received <= now:
+                age = now - received
+        return (*values, age)
+
     def set_limits(self, speed_mm_s: float, accel_mm_s2: float) -> None:
         """Set the Teensy's trajectory speed and acceleration caps."""
         resp = self._send(f"LIMITS {speed_mm_s:.2f} {accel_mm_s2:.2f}",
@@ -202,6 +225,21 @@ class CDPRClient:
                 "trq": [float(v) for v in p[9:13]],
             }
         raise RuntimeError(f"CDPR enc failed: {resp}")
+
+    def get_motor_load(self, *, metadata_only: bool = False) -> dict:
+        """Read the master's cached load snapshot or recording source.
+
+        Does not query/enable drives. Each value includes its own acquisition
+        timestamps and validity; callers must not treat stale values as fresh.
+        Use this on the existing client's connection (master has one owner).
+        """
+        resp = self._send("LOADMETA" if metadata_only else "LOAD")
+        if not resp.startswith("OK "):
+            raise RuntimeError(f"CDPR motor load unavailable: {resp}")
+        data = json.loads(resp[3:])
+        if not isinstance(data, dict):
+            raise ValueError("invalid motor-load response")
+        return data
 
     def get_status(self) -> dict:
         """Get full status including motor step counts.

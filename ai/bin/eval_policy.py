@@ -20,6 +20,7 @@ drives its opponent, which is the comparison that picks a deploy candidate.
 from __future__ import annotations
 
 import argparse
+import json
 import sys
 import time
 from pathlib import Path
@@ -30,12 +31,14 @@ sys.path.insert(0, str(Path(__file__).resolve().parents[1]))
 
 from airhockey.batch_env import BatchAirHockeyEnv, sensing_kwargs  # noqa: E402
 from airhockey.policy_loader import load_agent  # noqa: E402
+from airhockey.rewards import BatchRewardShaper, curriculum_shaper_kwargs  # noqa: E402
 
 DEFAULT_OPPONENTS = ("goalie", "follow", "random")
 
 
 def run_match(agent, run_name: str, opponent: str, games: int, seconds: float,
-              seed: int, rival=None, human_body: bool = False) -> tuple[np.ndarray, np.ndarray]:
+              seed: int, rival=None, human_body: bool = False,
+              accel_range=None, results=None) -> tuple[np.ndarray, np.ndarray]:
     """`opponent` names a scripted policy, or "external" with `rival` an
     agent that plays the far side through the mirrored observation."""
     import torch
@@ -49,11 +52,20 @@ def run_match(agent, run_name: str, opponent: str, games: int, seconds: float,
         # scripted opponents keep the human model they were written for.
         opponent_body="robot" if rival is not None and not human_body else "human",
         domain_randomize=True,
+        agent_accel_range=accel_range,
+        shot_types=True,
         max_score=10 ** 6,
         max_episode_time=seconds + 1.0,
         **sensing_kwargs(True),
     )
     obs = env.reset(seed=seed)
+    # Independent of the run's reward recipe: compare the same shot metric
+    # on both checkpoints, while the scoreboard measures actual outcomes.
+    shaper = BatchRewardShaper(games, workspace=env._ws,
+                              **curriculum_shaper_kwargs("selfplay"))
+    e = env.engine
+    shaper.reset(obs, info={"puck_y": e.puck_y, "puck_vx": e.puck_vx,
+                           "puck_vy": e.puck_vy})
     t0 = torch.ones(games, dtype=torch.bool)
     n_steps = int(round(seconds / env.action_dt))
     wall = time.perf_counter()
@@ -72,6 +84,7 @@ def run_match(agent, run_name: str, opponent: str, games: int, seconds: float,
                 env._ext_opp_target_y[:] = ty
             act = agent.act(torch.from_numpy(obs).float(), t0=t0, eval_mode=True)
         obs, _, _, _, info = env.step(act.numpy())
+        shaper.compute(obs, np.zeros(games), actions=act.numpy(), info=info)
         t0 = torch.zeros(games, dtype=torch.bool)
 
     gf = info["score_agent"].astype(float)
@@ -80,6 +93,17 @@ def run_match(agent, run_name: str, opponent: str, games: int, seconds: float,
     print(f"  {run_name:<20s} vs {opponent:<7s}  "
           f"GF {gf.mean():5.2f}  GA {ga.mean():5.2f}  "
           f"{w}-{d}-{l}  ({time.perf_counter() - wall:.1f}s)", flush=True)
+    attempts = shaper.stats["shot_attempts"]
+    aimed = shaper.stats["aimed_attempts"]
+    print(f"    on-target strikes: {aimed}/{attempts}; accel {env.agent_accel_range} m/s^2")
+    if results is not None:
+        results.append(dict(run=run_name, opponent=opponent, seed=seed,
+                            seconds=seconds, games=games,
+                            accel_range=list(env.agent_accel_range),
+                            goals_for=gf.tolist(), goals_against=ga.tolist(),
+                            wins=w, draws=d, losses=l,
+                            shot_attempts=attempts, on_target=aimed,
+                            on_target_fraction=aimed / attempts if attempts else None))
     return gf, ga
 
 
@@ -108,7 +132,23 @@ def main() -> None:
                          "is the deployable mode -- 0.1 ms on a CPU against a "
                          "10 ms tick, where even one MPPI iteration is 15 ms "
                          "on a GPU -- so measure it on the same terms")
+    ap.add_argument("--max-accel", type=float, default=None,
+                    help="simulation-only override, m/s^2; otherwise uses run.json or defaults")
+    ap.add_argument("--json", type=Path, default=None, help="write match results as JSON")
     args = ap.parse_args()
+    if args.max_accel is not None and (not np.isfinite(args.max_accel) or args.max_accel <= 0):
+        ap.error("--max-accel must be finite and positive")
+    meta_path = Path(__file__).resolve().parents[2] / "runs" / args.run / "run.json"
+    meta = json.loads(meta_path.read_text()) if meta_path.exists() else {}
+    accel_range = ([args.max_accel] * 2 if args.max_accel is not None
+                   else meta.get("agent_accel_range"))
+    results = []
+
+    def save_results():
+        if args.json is not None:
+            args.json.parent.mkdir(parents=True, exist_ok=True)
+            args.json.write_text(json.dumps({"iterations": args.iterations,
+                                            "prior": args.prior, "matches": results}, indent=2))
 
     agent = load_agent(args.run, iterations=args.iterations)
     if args.prior:
@@ -121,12 +161,16 @@ def main() -> None:
         if args.prior:
             rival.cfg.mpc = False
         run_match(agent, args.run, "external", args.games, args.seconds,
-                  args.seed, rival=rival, human_body=args.human_body)
+                  args.seed, rival=rival, human_body=args.human_body,
+                  accel_range=accel_range, results=results)
         print(f"  (far side: {args.vs}, "
               f"{'human model' if args.human_body else 'robot body'})")
+        save_results()
         return
     for opp in args.opponents.split(","):
-        run_match(agent, args.run, opp.strip(), args.games, args.seconds, args.seed)
+        run_match(agent, args.run, opp.strip(), args.games, args.seconds, args.seed,
+                  accel_range=accel_range, results=results)
+        save_results()
 
 
 if __name__ == "__main__":

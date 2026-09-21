@@ -40,17 +40,21 @@ while [ $# -gt 0 ]; do
         --policy=*) POLICY=${1#--policy=}; shift ;;
         --tension) MASTER_ARGS+=(--tension "$2"); shift 2 ;;
         --tension=*) MASTER_ARGS+=(--tension "${1#--tension=}"); shift ;;
+        --load-hz) MASTER_ARGS+=(--load-hz "$2"); shift 2 ;;
+        --load-hz=*) MASTER_ARGS+=(--load-hz "${1#--load-hz=}"); shift ;;
         *) ARGS+=("$1"); shift ;;
     esac
 done
-# Caps: run_policy's defaults are the sim body's (12000 mm/s, 40000 mm/s^2)
+# Caps: run_policy reads the selected checkpoint's training limits from run.json
+# (12000 mm/s, 60000 mm/s^2 for 3.12; legacy runs fall back to 40000 mm/s^2)
 # so the table runs what the policy trained on; --gentle or --speed/--accel
 # override (and are reported as deviations), --governor trims when the
 # paddle falls behind.
 
 [ -x vision/build/blobtrack ] || make -C vision
 if [ "$LIVE" = 1 ]; then
-    [ -x sw/build/cdpr_master ] || make -C sw
+    # Rebuild when sources change, even if an older binary already exists.
+    make -C sw build/cdpr_master || exit 1
 fi
 
 MASTER_PID=""

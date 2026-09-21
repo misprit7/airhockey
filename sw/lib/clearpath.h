@@ -1,6 +1,7 @@
 #pragma once
 
 #include "pubSysCls.h"
+#include "motor_load.h"
 
 // Minimal ClearPath-SC power/enable control over sFoundation.
 //
@@ -80,6 +81,11 @@ public:
   // `posn` is in encoder counts, `res` the counts per revolution needed to
   // turn it into cable millimetres. Returns false if nothing could be read.
   bool readEncoders(double posn[4], unsigned res[4], double trq[4]);
+
+  // One read-only telemetry field. Caller serializes against enable/disable
+  // and the watchdog, releasing its mutex between fields. Never changes units,
+  // limits, enable state or alerts. Failures remain invalid, not zero load.
+  LoadValue readLoad(unsigned node, LoadField field);
 
   bool connected() const { return connected_; }
   bool enabled() const { return enabled_; }

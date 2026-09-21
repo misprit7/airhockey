@@ -35,14 +35,14 @@ def sensing_kwargs(realistic: bool = True) -> dict[str, Any]:
     test that checks physics through a noise model. Training is where it
     belongs, and training should always have it on.
 
-    Note the delay is quantised by action_dt. At 100 Hz the measured
-    5.1-10.3 ms band rounds to one step either way, i.e. a flat 10 ms -- real,
-    but 30% above the 7.7 ms mean, and no longer randomised. Sub-step delay
-    would need interpolation the ring buffer does not do.
+    Camera delay is sampled on the camera clock. Command delay is separate:
+    September 20 telemetry measures ~19 ms frame-to-command age, including
+    ~7.7 ms camera transport, leaving ~12 ms computation and command I/O.
     """
     if not realistic:
         return {"camera_delay": 0.0, "realistic_perception": False}
-    return {"camera_delay": CAMERA_DELAY_RANGE_S, "realistic_perception": True}
+    return {"camera_delay": CAMERA_DELAY_RANGE_S, "realistic_perception": True,
+            "command_delay_s": 0.012}
 
 # Per-env opponent policy IDs
 OPP_IDLE = 0
@@ -276,6 +276,7 @@ class BatchAirHockeyEnv:
         opponent_policy: str = "idle",
         opponent_mix: dict[str, int] | None = None,
         camera_delay: float | tuple[float, float] = 0.0,
+        command_delay_s: float = 0.0,
         domain_randomize: bool = False,
         frame_stack: int = 1,  # kept for API compat, must be 1
         score_handicap: bool = False,
@@ -325,6 +326,7 @@ class BatchAirHockeyEnv:
         opponent_body: str = "human",      # "human" | "robot"
         # Shot-type requests in the observation ([17:20]); see OBS_DIM.
         shot_types: bool = False,
+        symmetric_referee: bool = False,
         shot_type_probs: tuple[float, float, float, float] = (0.25, 0.25, 0.25, 0.25),
         # Per-EPISODE opponent draw: {policy name: probability}. Each env
         # rolls a fresh opponent kind at every reset, so one batch plays a
@@ -335,8 +337,19 @@ class BatchAirHockeyEnv:
         # Sensing fuzz: fraction of episodes that get dropout spells (needs
         # realistic_perception; ignored without the camera ring).
         fuzz_p: float = 0.0,
+        # Per-run absolute acceleration band for the robot under DR.
+        # None preserves the shared deployment/training defaults.
+        agent_accel_range: tuple[float, float] | None = None,
     ):
         self.n_envs = n_envs
+        # Optional simulation instrumentation; disabled on the legacy path.
+        self.motion_callback = None
+        self.agent_accel_range = (AGENT_DR_ACCEL_M_S2 if agent_accel_range is None
+                                  else tuple(agent_accel_range))
+        if (len(self.agent_accel_range) != 2
+                or not np.isfinite(self.agent_accel_range).all()
+                or not 0 < self.agent_accel_range[0] <= self.agent_accel_range[1]):
+            raise ValueError("agent_accel_range must be finite, positive, and ordered")
         self.table_config = table_config or TableConfig()
         if obs_mode not in ("kinematic", "history"):
             raise ValueError(f"unknown obs_mode {obs_mode!r}")
@@ -351,6 +364,9 @@ class BatchAirHockeyEnv:
         self.physics_dt = physics_dt
         self.action_dt = action_dt
         self.max_episode_time = max_episode_time
+        # Isolated skill trials must not receive referee-generated replacement
+        # pucks. None retains the normal game rules for every environment.
+        self.referee_active_mask = None
         self.max_episode_steps = max_episode_steps  # None = use time-based truncation
         self.max_score = max_score
         self.opponent_policy = opponent_policy
@@ -393,6 +409,10 @@ class BatchAirHockeyEnv:
         cfg = self.table_config
         self.n_substeps = max(1, int(action_dt / physics_dt))
         self.sub_dt = action_dt / self.n_substeps
+        if not np.isfinite(command_delay_s) or not 0 <= command_delay_s < action_dt:
+            raise ValueError("command_delay_s must be finite and in [0, action_dt)")
+        # Quantized to a physics boundary (12 ms -> 12.5 ms at 400 Hz).
+        self.command_delay_s = command_delay_s
 
         # Action rescaling bounds: the FULL half, for both sides and both
         # settings of constrain_to_workspace.
@@ -618,6 +638,7 @@ class BatchAirHockeyEnv:
         if shot_types and obs_mode == "history":
             raise NotImplementedError("shot types are kinematic-obs only")
         self.shot_types = bool(shot_types)
+        self.symmetric_referee = bool(symmetric_referee)
         self._shot_type_p = np.asarray(shot_type_probs, dtype=float)
         if self._shot_type_p.shape != (4,) or abs(self._shot_type_p.sum() - 1.0) > 1e-6:
             raise ValueError("shot_type_probs must be four probabilities summing to 1")
@@ -664,9 +685,9 @@ class BatchAirHockeyEnv:
             "y": np.zeros(n),
             "vx": np.zeros(n),
             "vy": np.zeros(n),
-            "max_speed": np.full(n, max_speed),
-            "max_accel": np.full(n, max_accel),
-            "time_constant": np.full(n, tc),
+            "max_speed": np.full(n, max_speed, dtype=float),
+            "max_accel": np.full(n, max_accel, dtype=float),
+            "time_constant": np.full(n, tc, dtype=float),
             # The caps this side is NOMINALLY built with, kept as scalars so
             # domain randomisation can scale each side by its own limits.
             # The arrays above get overwritten on every randomised reset.
@@ -677,6 +698,9 @@ class BatchAirHockeyEnv:
             # (x_min, x_max, y_min, y_max) in mm for the profile law's path
             # containment; set by the constructor once the boxes are known.
             "bounds_mm": None,
+            "command_x": np.zeros(n), "command_y": np.zeros(n),
+            "command_speed": np.full(n, max_speed, dtype=float),
+            "command_accel": np.full(n, max_accel, dtype=float),
         }
 
     def _reset_agent_into_workspace(self, mask: np.ndarray | None) -> None:
@@ -777,7 +801,7 @@ class BatchAirHockeyEnv:
             a["max_speed"][idx] = self._rng.uniform(
                 AGENT_DR_SPEED_M_S[0], AGENT_DR_SPEED_M_S[1], size=n)
             a["max_accel"][idx] = self._rng.uniform(
-                AGENT_DR_ACCEL_M_S2[0], AGENT_DR_ACCEL_M_S2[1], size=n)
+                *self.agent_accel_range, size=n)
             a["time_constant"][idx] = self._rng.uniform(0.01, 0.04, size=n)
 
             o = self._opp_dyn
@@ -882,6 +906,11 @@ class BatchAirHockeyEnv:
             else:
                 self._cam_lag[idx] = 0
         self._prev_action[idx] = 0.0
+        # Pending commands from an old episode must not survive a reset.
+        for dyn in (self._agent_dyn, self._opp_dyn, self._opp_dyn_free):
+            for key, source in (("command_x", "x"), ("command_y", "y"),
+                                ("command_speed", "max_speed"), ("command_accel", "max_accel")):
+                dyn[key][idx] = dyn[source][idx]
 
         self._prev_agent_x[idx] = self.engine.paddle_agent_x[idx]
         self._prev_agent_y[idx] = self.engine.paddle_agent_y[idx]
@@ -993,17 +1022,25 @@ class BatchAirHockeyEnv:
         for sub in range(self.n_substeps):
             dt = self.sub_dt
 
+            if self.motion_callback is not None:
+                old_agent_v = np.column_stack((self._agent_dyn["vx"], self._agent_dyn["vy"]))
+                old_opp_v = np.column_stack((self._opp_dyn["vx"], self._opp_dyn["vy"]))
+
             # Update agent paddle through dynamics
             ax, ay = self._update_dynamics(self._agent_dyn, target_x, target_y,
                                            dt, speed_cap=agent_speed_cap,
-                                           accel_cap=agent_accel_cap)
+                                           accel_cap=agent_accel_cap,
+                                           defer_command=sub * dt < self.command_delay_s)
             ax, ay = self._clamp_to_half(ax, ay, agent=True)
             self.engine.update_paddle_agent(ax, ay, dt)
 
             # Update opponent
-            ox, oy = self._opponent_action(dt)
+            ox, oy = self._opponent_action(dt, defer_command=sub * dt < self.command_delay_s)
             ox, oy = self._clamp_to_half(ox, oy, agent=False)
             self.engine.update_paddle_opponent(ox, oy, dt)
+
+            if self.motion_callback is not None:
+                self.motion_callback(dt, old_agent_v, old_opp_v)
 
             self.engine.step(dt)
 
@@ -1017,6 +1054,11 @@ class BatchAirHockeyEnv:
             rewards += np.where(self.engine.goal_scored == 1, 1.0, 0.0)
             rewards += np.where(self.engine.goal_scored == -1, -1.0, 0.0)
 
+        for dyn in (self._agent_dyn, self._opp_dyn):
+            queued = dyn.get("queued_command")
+            if queued is not None:
+                for key, value in zip(("command_x", "command_y", "command_speed", "command_accel"), queued):
+                    dyn[key][:] = value
         self._step_count += 1
 
         # Puck-stuck relaunch: a puck at rest with NOBODY near it for
@@ -1039,6 +1081,8 @@ class BatchAirHockeyEnv:
         limit = np.where(attended, self._stuck_attended_steps,
                          self._stuck_unattended_steps)
         stuck = self._puck_slow_count >= limit
+        if self.referee_active_mask is not None:
+            stuck &= self.referee_active_mask
         stuck_penalty = np.zeros(self.n_envs)
         if np.any(stuck):
             # A puck stalled on the agent's side is the agent's turnover:
@@ -1048,18 +1092,24 @@ class BatchAirHockeyEnv:
             rewards[on_agent_side] += self.STUCK_TURNOVER_PENALTY
             stuck_penalty = np.where(on_agent_side, self.STUCK_TURNOVER_PENALTY, 0.0)
 
-            self._relaunch(stuck, to_opponent=on_agent_side[stuck])
+            self._relaunch(stuck, to_opponent=on_agent_side[stuck],
+                           to_agent=~on_agent_side[stuck] if self.symmetric_referee else None)
 
         self._update_possessions()
 
         # The shot clock: past SHOT_CLOCK_S on the agent's side, the puck is
         # turned over (see the constant).
         if self.SHOT_CLOCK_S > 0:
-            late = (self.engine.puck_y < self.table_config.height / 2) & (self._t_side > self.SHOT_CLOCK_S)
+            own_half = self.engine.puck_y < self.table_config.height / 2
+            late = (own_half | self.symmetric_referee) & (self._t_side > self.SHOT_CLOCK_S)
+            if self.referee_active_mask is not None:
+                late &= self.referee_active_mask
             if np.any(late):
-                rewards[late] += self.STUCK_TURNOVER_PENALTY
-                stuck_penalty = stuck_penalty + np.where(late, self.STUCK_TURNOVER_PENALTY, 0.0)
-                self._relaunch(late, to_opponent=np.ones(int(late.sum()), dtype=bool))
+                own_late = late & own_half
+                rewards[own_late] += self.STUCK_TURNOVER_PENALTY
+                stuck_penalty = stuck_penalty + np.where(own_late, self.STUCK_TURNOVER_PENALTY, 0.0)
+                self._relaunch(late, to_opponent=own_half[late],
+                               to_agent=~own_half[late] if self.symmetric_referee else None)
                 self._t_side[late] = 0.0
                 self._update_possessions()
         obs = self._make_obs()  # applies camera delay if configured
@@ -1178,12 +1228,14 @@ class BatchAirHockeyEnv:
         else:
             self._shot_type_opp[mask] = draw
 
-    def _relaunch(self, mask: np.ndarray, to_opponent: np.ndarray) -> None:
+    def _relaunch(self, mask: np.ndarray, to_opponent: np.ndarray, to_agent=None) -> None:
         """Put the puck back at the centre, moving off at 0.3-1.5 m/s: toward
         the opponent where `to_opponent` (a turnover), else either way."""
         n = int(mask.sum())
         rng = self._rng
         toward_agent = (rng.random(n) < 0.5) & ~to_opponent
+        if to_agent is not None:
+            toward_agent |= to_agent
         angle = np.where(
             toward_agent,
             rng.uniform(-np.pi * 0.8, -np.pi * 0.2, size=n),
@@ -1435,6 +1487,7 @@ class BatchAirHockeyEnv:
         dt: float,
         speed_cap: np.ndarray | None = None,
         accel_cap: np.ndarray | None = None,
+        defer_command: bool = False,
     ) -> tuple[np.ndarray, np.ndarray]:
         """Vectorized dynamics update. Returns new (x, y) arrays.
 
@@ -1446,6 +1499,16 @@ class BatchAirHockeyEnv:
         """
         v_cap = dyn["max_speed"] if speed_cap is None else speed_cap
         a_cap = dyn["max_accel"] if accel_cap is None else accel_cap
+        # Preserve a request even if its delay rounds to the entire interval.
+        dyn["queued_command"] = (target_x, target_y, v_cap, a_cap)
+        if defer_command:
+            target_x, target_y = dyn["command_x"], dyn["command_y"]
+            v_cap, a_cap = dyn["command_speed"], dyn["command_accel"]
+        else:
+            dyn["command_x"][:] = target_x
+            dyn["command_y"][:] = target_y
+            dyn["command_speed"][:] = v_cap
+            dyn["command_accel"][:] = a_cap
         if dyn["type"] == "profile":
             # The real firmware control law, via fw/host. Millimetres, because
             # that is what the Teensy works in -- the law itself is
@@ -1515,7 +1578,7 @@ class BatchAirHockeyEnv:
 
         return dyn["x"].copy(), dyn["y"].copy()
 
-    def _opponent_action(self, dt: float) -> tuple[np.ndarray, np.ndarray]:
+    def _opponent_action(self, dt: float, defer_command: bool = False) -> tuple[np.ndarray, np.ndarray]:
         """Vectorized per-env opponent policies. Returns target (x, y) arrays."""
         cfg = self.table_config
 
@@ -1567,7 +1630,8 @@ class BatchAirHockeyEnv:
             opp_accel_cap = np.where(self._opp_policy_id == OPP_EXTERNAL,
                                      self._ext_opp_accel_frac, 1.0) * self._opp_dyn["max_accel"]
         mx, my = self._update_dynamics(self._opp_dyn, target_x, target_y, dt,
-                                       accel_cap=opp_accel_cap)
+                                       accel_cap=opp_accel_cap,
+                                       defer_command=defer_command and self.opponent_body == "robot")
         if not np.any(free):
             return mx, my
         fx, fy = self._update_dynamics(self._opp_dyn_free, target_x, target_y, dt)

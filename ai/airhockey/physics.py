@@ -68,15 +68,13 @@ class TableConfig:
     # To fix: shoot the puck at a mallet held still, or resting free.
     paddle_restitution: float = 0.9
 
-    # Fraction of TANGENTIAL velocity surviving a rail bounce. 1.0 is a
-    # frictionless rail and specular reflection, which is what the sim did
-    # until now and is wrong by a third.
-    #
-    # Measured 0.678 (2026-08-23) and 0.645 (2026-08-29); per-rail on the
-    # later session 0.603 / 0.646 / 0.726. This is where the tangential
-    # momentum goes, and it does NOT come back as spin -- the puck needs no
-    # orientation state, only this coefficient.
-    wall_tangential: float = 0.66
+    # Fraction of tangential velocity surviving a side-rail bounce.
+    # The earlier 0.66 aggregate is retained for unmeasured end rails.
+    # September 20: 53 side-rail contacts; fit on first 45 s = 0.897,
+    # held-out velocity RMSE 0.160 vs 0.482 m/s at 0.66. A constant remains
+    # approximate at low tangential speed. End rails were not identified.
+    wall_tangential: float = 0.90
+    end_wall_tangential: float = 0.66
     # MEASURED 380 mm, centred on each end rail. Derived from the canonical
     # geometry rather than restated, since it is a fact about the table. The
     # 0.25 that was here predates the table existing and was 34% narrow --

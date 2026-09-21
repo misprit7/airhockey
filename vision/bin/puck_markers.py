@@ -150,7 +150,7 @@ def square_angle(pts, centre):
                              float(np.cos(4 * a).mean()))
 
 
-def find_puck(world, prev=None):
+def find_puck(world, prev=None, max_distance=None):
     """Locate the puck's marker square. (centre, theta, member_idx, rms)."""
     world = np.asarray(world, float)
     if len(world) < 2:
@@ -169,6 +169,9 @@ def find_puck(world, prev=None):
             if fit is None:
                 continue
             c, rms = fit
+            if (prev is not None and max_distance is not None
+                    and np.linalg.norm(c - prev) > max_distance):
+                continue
             # More corners first, then a tighter fit. A real four-corner
             # square beats a two-corner coincidence even when the pair
             # happens to measure closer to the model.

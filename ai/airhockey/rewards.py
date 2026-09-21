@@ -16,6 +16,7 @@ from typing import Any
 
 import gymnasium as gym
 import numpy as np
+from airhockey.physics import TableConfig
 
 from airhockey.dynamics import ACTION_DT
 
@@ -101,7 +102,7 @@ def _is_bank_shot(px, py, vx, vy):
 # One definition of "on target", shared by every term that scores a shot
 # (the on-target reward, the shot-type reward, the SAC exchange shaper). The
 # path is traced through the MEASURED lossy-wall model -- normal 0.785,
-# tangential 0.66, the coefficients the heuristic bots aim with -- so a bank
+# tangential from TableConfig, also used by the heuristic bots -- so a bank
 # is scored where it actually lands rather than where a mirror says. The
 # opponent is deliberately ignored: the question is whether it WOULD go in
 # with nobody there, which is what makes it a statement about the shot.
@@ -219,7 +220,8 @@ DRIVE_LINE_TOL = 0.15
 
 
 def predict_shot(x, y, vx, vy, width: float = _TABLE_W, height: float = _GOAL_CY,
-                 puck_radius: float = 0.0407, e_n: float = 0.785, e_t: float = 0.66,
+                 puck_radius: float = 0.0407, e_n: float = TableConfig.wall_restitution,
+                 e_t: float = TableConfig.wall_tangential,
                  max_bounces: int = SHOT_MAX_BOUNCES):
     """Trace a puck's free path to the far goal line.
 
@@ -514,6 +516,7 @@ class BatchRewardShaper:
         #   shot_type_reward   the shot's rail history matches the type the
         #                      env asked for (info["shot_type"])
         on_target_reward: float = 0.0,
+        off_target_penalty: float = 0.0,
         shot_speed_weight: float = 0.0,
         trap_reward: float = 0.0,
         controlled_shot_bonus: float = 1.0,
@@ -588,6 +591,9 @@ class BatchRewardShaper:
         self._cfg = cfg
         self._H = cfg.height
         self.on_target_reward = on_target_reward
+        if not np.isfinite(off_target_penalty) or off_target_penalty < 0:
+            raise ValueError("off_target_penalty must be finite and nonnegative")
+        self.off_target_penalty = off_target_penalty
         self.shot_speed_weight = shot_speed_weight
         self.trap_reward = trap_reward
         self.controlled_shot_bonus = controlled_shot_bonus
@@ -598,10 +604,13 @@ class BatchRewardShaper:
         self._in_half = np.zeros(n_envs, dtype=bool)
         self._trapped = np.zeros(n_envs, dtype=bool)
         self._shot_paid = np.zeros(n_envs, dtype=bool)
+        self._miss_penalized = np.zeros(n_envs, dtype=bool)
         self._visit_max_speed = np.zeros(n_envs)
         # Counters for the trainer's logs: traps, on-target shots and
         # type matches since the last read.
         self.stats = {"traps": 0, "on_target": 0, "type_matched": 0, "shots": 0,
+                      "shot_attempts": 0, "aimed_attempts": 0, "off_target": 0,
+                      "pay_miss": 0.0,
                       "patience_sum": 0.0, "accel_frac_sum": 0.0, "steps": 0,
                       "goal_patience_sum": 0.0, "goals": 0,
                       "cushion_sum": 0.0, "hold_steps": 0, "held": 0, "overstay_steps": 0,
@@ -700,6 +709,7 @@ class BatchRewardShaper:
         self._in_half[idx] = py < self._H / 2.0
         self._trapped[idx] = False
         self._shot_paid[idx] = False
+        self._miss_penalized[idx] = False
         self._visit_max_speed[idx] = 0.0
         self._last_hit_patience[idx] = self.patience_floor if self.control_gate else 1.0
         self._visit_min_near[idx] = 9.0
@@ -852,6 +862,7 @@ class BatchRewardShaper:
         if np.any(entered):
             self._trapped[entered] = False
             self._shot_paid[entered] = False
+            self._miss_penalized[entered] = False
             self._visit_max_speed[entered] = 0.0
             self._last_hit_patience[entered] = self.patience_floor if self.control_gate else 1.0
             self._visit_min_near[entered] = 9.0
@@ -963,7 +974,7 @@ class BatchRewardShaper:
         # Shot outcome, scored at the hit from the puck's outgoing velocity
         # and paid once per visit. A hit that was already paid this visit
         # (dribbling) earns nothing more until the puck leaves and returns.
-        if self.on_target_reward > 0 or self.shot_type_reward > 0:
+        if self.on_target_reward > 0 or self.shot_type_reward > 0 or self.off_target_penalty > 0:
             scoring = hit & ~self._shot_paid
             if np.any(scoring):
                 x_goal, _t, n_b, first = predict_shot(
@@ -977,6 +988,19 @@ class BatchRewardShaper:
                 # SHOT_SPEED_FULL; a nudge leaves the possession's paid shot open.
                 ramp = np.clip((puck_speed - SHOT_SPEED_MIN) / (SHOT_SPEED_FULL - SHOT_SPEED_MIN),
                                0.0, 1.0)
+                # Only outgoing strikes above the shot-speed threshold count;
+                # cushioning and slow setup touches are not missed shots.
+                # One miss charge per possession, independent of patience:
+                # an immediate wild slap must not get a discounted penalty.
+                attempt = scoring & (ramp > 0)
+                missed = attempt & ~on_target & ~self._miss_penalized
+                miss_cost = np.where(missed, self.off_target_penalty * ramp, 0.0)
+                shaped -= miss_cost
+                self.stats["shot_attempts"] += int(attempt.sum())
+                self.stats["aimed_attempts"] += int((attempt & on_target).sum())
+                self.stats["off_target"] += int(missed.sum())
+                self.stats["pay_miss"] -= float(miss_cost.sum())
+                self._miss_penalized |= missed
                 on_target &= ramp > 0
                 if np.any(on_target):
                     # The bonus is for a HELD puck (run 12: the held rule alone;
@@ -1090,6 +1114,7 @@ class BatchRewardShaper:
             self._in_half[goal_mask] = puck_y[goal_mask] < self._H / 2.0
             self._trapped[goal_mask] = False
             self._shot_paid[goal_mask] = False
+            self._miss_penalized[goal_mask] = False
             self._visit_max_speed[goal_mask] = 0.0
             self._last_hit_patience[goal_mask] = self.patience_floor if self.control_gate else 1.0
             self._visit_min_near[goal_mask] = 9.0
@@ -1425,7 +1450,7 @@ _SHAPER_KEYS = ("proximity_weight", "contact_reward", "directed_hit_weight",
 # keeps accepting every pretrain stage's kwargs.
 _IDLE_KEYS = ("home_weight", "jitter_weight", "smooth_weight")
 # Shot-outcome terms, likewise batch-only and passed through only when set.
-_OUTCOME_KEYS = ("on_target_reward", "shot_speed_weight", "trap_reward",
+_OUTCOME_KEYS = ("on_target_reward", "off_target_penalty", "shot_speed_weight", "trap_reward",
                  "controlled_shot_bonus", "shot_type_reward",
                  "accel_cost_weight", "patience_s", "patience_floor",
                  "patience_on_goals", "cushion_weight", "hold_income", "control_gate",

@@ -24,7 +24,7 @@ which a lossless model gets right as long as the puck never bounces. The moment
 it bounces that stops being true, because the measured rail is not specular:
 
     normal component  x  0.785   (wall_restitution)
-    tangent component x  0.66    (wall_tangential)
+    tangent component x  0.90    (wall_tangential, side rails)
 
 so the outgoing ray is steeper than the incoming one by e/t = 1.19. A one-bounce
 prediction made with specular reflection lands in the wrong place, and a

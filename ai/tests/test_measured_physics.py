@@ -73,7 +73,7 @@ def test_puck_decelerates_monotonically_and_stops():
 
 
 def test_wall_bounce_is_not_specular():
-    """A rail keeps only ~2/3 of the tangential component.
+    """The measured side rail keeps ~90% of the tangential component.
 
     Reflection used to be specular, which puts every bank shot off at the
     wrong angle -- and banking is the skill worth learning.
@@ -91,7 +91,7 @@ def test_wall_bounce_is_not_specular():
     # consequence and the thing a specular model gets wrong
     ang_in = np.degrees(np.arctan2(3.0, 4.0))
     ang_out = np.degrees(np.arctan2(float(e.puck_vy[0]), float(e.puck_vx[0])))
-    assert ang_in - ang_out > 3.0
+    assert ang_out - ang_in > 3.0
 
 
 @pytest.mark.parametrize("wall", ["left", "right", "bottom", "top"])
@@ -111,7 +111,8 @@ def test_every_rail_takes_tangential_momentum(wall):
     tan_in = abs(setup[3] if wall in ("left", "right") else setup[2])
     e._collide_walls()
     tan_out = abs(float(e.puck_vy[0] if wall in ("left", "right") else e.puck_vx[0]))
-    assert tan_out == pytest.approx(tan_in * c.wall_tangential, rel=1e-6), wall
+    retention = c.wall_tangential if wall in ("left", "right") else c.end_wall_tangential
+    assert tan_out == pytest.approx(tan_in * retention, rel=1e-6), wall
 
 
 def test_domain_randomisation_brackets_the_measurements():

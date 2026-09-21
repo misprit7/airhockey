@@ -17,6 +17,7 @@ and therefore the server -- stays cheap until a policy is actually loaded.
 from __future__ import annotations
 
 import json
+import math
 import sys
 from pathlib import Path
 
@@ -29,12 +30,20 @@ TDMPC2_DIR = _REPO_ROOT.parent / "tdmpc2" / "tdmpc2"
 DEFAULT_MODEL_SIZE = 5
 
 
+def deployment_ready(run_dir: Path) -> bool:
+    """Explicit simulation experiments must not silently become physical latest."""
+    meta = Path(run_dir) / "run.json"
+    return not meta.exists() or json.loads(meta.read_text()).get("deployment_ready", True) is not False
+
+
 def list_checkpoints() -> list[dict]:
     """Every runs/<name>/agent.pt, newest first."""
     runs = _REPO_ROOT / "runs"
     out = []
     if runs.is_dir():
         for p in runs.glob("*/agent.pt"):
+            if not deployment_ready(p.parent):
+                continue
             out.append({"run": p.parent.name, "mtime": p.stat().st_mtime})
     out.sort(key=lambda d: d["mtime"], reverse=True)
     return out
@@ -51,6 +60,7 @@ def resolve_checkpoint(run_name: str) -> Path:
     runs = _REPO_ROOT / "runs"
     if run_name == "latest":
         cands = [c for d in runs.iterdir() if d.is_dir() and not d.name.startswith("_")
+                 and deployment_ready(d)
                  for c in list(d.glob("agent_step_*.pt")) + list(d.glob("agent.pt"))]
         if not cands:
             raise FileNotFoundError(f"no checkpoints under {runs}")
@@ -62,6 +72,30 @@ def resolve_checkpoint(run_name: str) -> Path:
     if steps:
         return steps[-1]
     raise FileNotFoundError(d / "agent.pt")
+
+
+def trained_limits(run_dir: str | Path) -> tuple[float, float]:
+    """Training speed/acceleration ceilings in m/s and m/s².
+
+    Legacy checkpoints without actuator metadata used 12 m/s and 40 m/s².
+    Invalid metadata is an error: deployment must not guess actuator limits.
+    For randomized ranges, use the upper endpoint as the deployment ceiling.
+    """
+    meta = Path(run_dir) / "run.json"
+    data = json.loads(meta.read_text()) if meta.exists() else {}
+    if not isinstance(data, dict):
+        raise ValueError(f"{meta}: expected an object")
+
+    def ceiling(key, fallback):
+        band = data.get(key, [fallback, fallback])
+        if (not isinstance(band, list) or len(band) != 2
+                or any(isinstance(v, bool) or not isinstance(v, (int, float))
+                       or not math.isfinite(v) or v <= 0 for v in band)
+                or band[0] > band[1]):
+            raise ValueError(f"{meta}: invalid {key}: {band!r}")
+        return float(band[1])
+
+    return ceiling("agent_speed_range", 12.0), ceiling("agent_accel_range", 40.0)
 
 
 # The MPPI action-change cost, in reward units per squared unit of action

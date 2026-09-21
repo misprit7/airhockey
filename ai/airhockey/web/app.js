@@ -12,6 +12,7 @@ let replayData = null;
 let replayIndex = 0;
 let replayPlaying = false;
 let replaySpeed = 1;
+let replayFps = 60;
 let replayTimer = null;
 let scale = 1;
 let offsetX = 0;
@@ -822,6 +823,8 @@ async function loadRecording(path, li) {
         // API returns {frames, metadata} or legacy flat array
         replayData = data.frames || data;
         const metadata = data.metadata || null;
+        stopReplay();
+        replayFps = metadata?.fps > 0 ? metadata.fps : 60;
         replayIndex = 0;
         puckTrail = [];
 
@@ -845,6 +848,9 @@ async function loadRecording(path, li) {
                 text += ` \u2022 Step ${stepLabel}`;
             }
             stageEl.textContent = text;
+            stageEl.classList.remove("hidden");
+        } else if (metadata && metadata.policy_sides) {
+            stageEl.textContent = `${metadata.match_type}: ${metadata.policy_sides}`;
             stageEl.classList.remove("hidden");
         } else {
             stageEl.classList.add("hidden");
@@ -887,7 +893,7 @@ document.getElementById("btn-play-pause").addEventListener("click", () => {
             } else {
                 stopReplay();
             }
-        }, (1000 / 60) / replaySpeed);
+        }, (1000 / replayFps) / replaySpeed);
     }
 });
 
@@ -916,7 +922,7 @@ document.getElementById("replay-speed").addEventListener("change", (e) => {
             } else {
                 stopReplay();
             }
-        }, (1000 / 60) / replaySpeed);
+        }, (1000 / replayFps) / replaySpeed);
     }
 });
 
@@ -986,6 +992,7 @@ async function loadLatestRecording() {
             const recData = await recResp.json();
             replayData = recData.frames || recData;
             const metadata = recData.metadata || null;
+            replayFps = metadata?.fps > 0 ? metadata.fps : 60;
             replayIndex = 0;
             const controls = document.getElementById("replay-controls");
             controls.classList.remove("hidden");
@@ -1003,6 +1010,9 @@ async function loadLatestRecording() {
                     text += ` \u2022 Step ${stepLabel}`;
                 }
                 stageEl.textContent = text;
+                stageEl.classList.remove("hidden");
+            } else if (metadata && metadata.policy_sides) {
+                stageEl.textContent = `${metadata.match_type}: ${metadata.policy_sides}`;
                 stageEl.classList.remove("hidden");
             } else {
                 stageEl.classList.add("hidden");

@@ -21,6 +21,12 @@ all: $(LIB)
 $(LIB): motion_batch.cpp ../include/motion_profile.h | $(BUILD)
 	$(CXX) $(CXXFLAGS) -shared -o $@ $< -lm
 
+$(BUILD)/libmotion_limits.so: motion_limits.cpp ../include/motion_profile.h | $(BUILD)
+	$(CXX) $(CXXFLAGS) -shared -o $@ $< -lm
+
+$(BUILD)/libintercept_motion.so: intercept_motion.cpp ../include/motion_profile.h | $(BUILD)
+	$(CXX) $(CXXFLAGS) -shared -o $@ $< -lm
+
 $(BUILD):
 	mkdir -p $(BUILD)
 

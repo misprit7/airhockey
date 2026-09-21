@@ -1,0 +1,7 @@
+{
+  "off_target_penalty": 15.0,
+  "on_target_reward": 40.0,
+  "patience_on_goals": false,
+  "smooth_weight": 0.2,
+  "accel_cost_weight": 0.06
+}

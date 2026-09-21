@@ -6,6 +6,66 @@
 
 using namespace sFnd;
 
+LoadValue ClearPath::readLoad(unsigned node, LoadField field) {
+  LoadValue out;
+  out.start = loadMonotonic();
+  try {
+    if (!connected_ || !port_ || node >= static_cast<unsigned>(node_count_)) {
+      out.error = "disconnected";
+    } else {
+      INode &n = port_->Nodes(node);
+      int parameter = -1;
+      switch (field) {
+        // Info.Ex.Parameter returns the SDK's engineering-unit conversion,
+        // without the extra RMS scaling applied by ValueDouble/TrqUnit.
+        case LoadField::Rms: parameter = CPM_P_DRV_RMS_LVL; break;
+        case LoadField::RmsSlow: parameter = CPM_P_DRV_RMS_SLOW_LVL; break;
+        case LoadField::TorqueAmps: parameter = CPM_P_DRV_TRQ_MEAS; break;
+        case LoadField::Encoder: parameter = CPM_P_POSN_MEAS; break;
+        case LoadField::Velocity: parameter = CPM_P_VEL_MEAS; break;
+        case LoadField::PeakAmps: parameter = CPM_P_DRV_I_MAX; break;
+        case LoadField::RmsLimitAmps: parameter = CPM_P_DRV_RMS_LIM; break;
+        case LoadField::RmsTimeSeconds: parameter = CPM_P_DRV_RMS_TC; break;
+        case LoadField::SlowLimitAmps: parameter = CPM_P_DRV_RMS_SLOW_LIM; break;
+        case LoadField::SlowTimeMinutes: parameter = CPM_P_DRV_RMS_SLOW_TC; break;
+        case LoadField::TorqueLimitAmps: parameter = CPM_P_DRV_TRQ_LIM; break;
+        case LoadField::EncoderResolution:
+          n.Info.PositioningResolution.Refresh(); out.value = n.Info.PositioningResolution.Value(); break;
+        case LoadField::Serial:
+          n.Info.SerialNumber.Refresh(); out.value = n.Info.SerialNumber.Value(); break;
+        case LoadField::Firmware:
+          n.Info.FirmwareVersionCode.Refresh(); out.value = n.Info.FirmwareVersionCode.Value(); break;
+        case LoadField::Status: {
+          n.Status.RT.Refresh();
+          auto st = n.Status.RT.Value();
+          out.bits = {{static_cast<unsigned>(st.cpm.Enabled), static_cast<unsigned>(st.cpm.AlertPresent), 0}};
+          break;
+        }
+        case LoadField::Alerts: {
+          n.Status.Alerts.Refresh();
+          auto a = n.Status.Alerts.Value();
+          out.bits = {{a.bits[0], a.bits[1], a.bits[2]}};
+          break;
+        }
+        default: out.error = "unknown field"; break;
+      }
+      if (parameter >= 0) out.value = n.Info.Ex.Parameter(static_cast<nodeparam>(parameter));
+      out.valid = out.error.empty() && std::isfinite(out.value);
+      if (!std::isfinite(out.value)) out.error = "nonfinite";
+      if ((field == LoadField::Rms || field == LoadField::RmsSlow) &&
+          (out.value < 0 || out.value > 100)) {
+        out.valid = false; out.error = "RMS outside percent-of-shutdown range";
+      }
+    }
+  } catch (mnErr &e) {
+    char error[640];
+    snprintf(error, sizeof(error), "0x%08x %s", e.ErrorCode, e.ErrorMsg);
+    out.error = error;
+  }
+  out.end = loadMonotonic();
+  return out;
+}
+
 ClearPath::~ClearPath() {
   if (enabled_) disable();
   if (connected_) disconnect();

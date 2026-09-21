@@ -492,6 +492,8 @@ def test_watchdog_message_is_once_per_transition_not_once_per_tick():
 def test_watchdog_recovers_and_can_trip_again():
     w = rp.PuckWatchdog(timeout_s=1.0)
     w.update(2.0)
+    for k in range(12):
+        w.observe(k * .01, 1400, 500)
     msg = w.update(0.0)
     assert msg is not None and "reacquired" in msg
     assert not w.blind
@@ -527,9 +529,78 @@ def test_report_staleness_is_what_drives_the_watchdog():
     assert math.isinf(r.staleness(0.0)["puck"])
     assert w.update(r.staleness(0.0)["puck"]) is not None   # never seen
     r.add_puck(10.0, 1400.0, 500.0)
-    assert w.update(r.staleness(10.0)["puck"]) is not None  # reacquired
+    for k in range(12):
+        w.observe(9.89 + k * .01, 1400, 500)
+    assert w.update(r.staleness(10.0)["puck"]) is not None  # stable reacquisition
     assert w.update(r.staleness(13.0)["puck"]) is not None  # gone again
     assert w.blind
+
+
+@pytest.mark.parametrize("end,direction", [(geom.RAIL_MIN_X, -1), (geom.RAIL_MAX_X, 1)])
+def test_seen_goal_pauses_even_when_puck_remains_visible(end, direction):
+    w = rp.PuckWatchdog(.5)
+    w.observe(0, end + direction * 10, 480)
+    assert "goal" in w.update(0)
+    for k in range(1, 100):
+        w.observe(k * .01, end + direction * 10, 480)
+        assert w.update(0) is None
+    assert w.blind and w.n_trips == 1
+    # A single false in-table fix must not restart the policy.
+    w.observe(1, 1400, 500)
+    assert w.update(0) is None and w.blind
+    # Nor may repeated decision ticks turn that one fix into a stable track.
+    for _ in range(20):
+        assert w.update(0) is None and w.blind
+    messages = []
+    for k in range(12):
+        w.observe(1.2 + .01 * k, 1400 - k, 500)
+        messages.append(w.update(0))
+    assert sum(m is not None for m in messages) == 1 and not w.blind
+
+
+@pytest.mark.parametrize("end,direction", [(geom.RAIL_MIN_X, -1), (geom.RAIL_MAX_X, 1)])
+def test_missing_puck_on_goal_trajectory_pauses_early(end, direction):
+    w = rp.PuckWatchdog(.5)
+    for k in range(7):
+        w.observe(k * .005, end - direction * (110 - k * 10), 480)
+        assert w.update(0) is None
+    assert w.update(.04) is None
+    assert "goal" in w.update(.065)
+    assert w.blind
+
+
+@pytest.mark.parametrize("x,y,vx,vy", [
+    (1000, 480, 1000, 0),       # normal center blind spot
+    (1950, 200, 1000, 0),      # headed into solid end wall
+    (1950, 480, -1000, 0),     # moving away from goal
+    (1950, 900, 1000, 200),     # side/end corner
+])
+def test_non_goal_dropouts_keep_configured_timeout(x, y, vx, vy):
+    w = rp.PuckWatchdog(.5)
+    for k in range(7):
+        t = k * .005
+        w.observe(t, x + vx * t, y + vy * t)
+    assert w.update(.15) is None and not w.blind
+    assert w.update(.51) is not None and w.blind
+
+
+def test_reacquisition_requires_uninterrupted_fixes():
+    w = rp.PuckWatchdog(.5)
+    w.update(math.inf)
+    for t in [0, .03, .06, .2, .23, .26, .4, .43, .46]:
+        w.observe(t, 1400, 500)
+        assert w.update(0) is None and w.blind
+
+
+def test_puck_hold_uses_fresh_current_position_and_rejects_stale_fallback():
+    r = rp.ReportBuilder()
+    r.set_controller_mallet(1, 1600, 400)
+    r.add_mallet(1, 1700, 500)
+    assert rp.puck_hold_target(r, 1) == (1600, 400)
+    r.add_mallet(2, 1650, 450)
+    assert rp.puck_hold_target(r, 2) == (1650, 450)
+    with pytest.raises(RuntimeError, match="no fresh paddle"):
+        rp.puck_hold_target(r, 3)
 
 
 # ── --gentle preset ─────────────────────────────────────────────────────
@@ -549,6 +620,43 @@ def test_gentle_sets_the_documented_first_run_caps():
 def test_without_gentle_the_normal_ceilings_apply():
     assert rp.resolve_limits(_limits_args()) == \
         (rp.Caps.speed_max, rp.Caps.accel_max)
+
+
+@pytest.mark.parametrize("gentle,speed,accel,expected", [
+    (False, None, None, (12000.0, 60000.0)),
+    (True, None, None, (500.0, 2000.0)),
+    (False, 8000.0, 30000.0, (8000.0, 30000.0)),
+    (True, None, 30000.0, (500.0, 30000.0)),
+])
+def test_checkpoint_limits_and_overrides(tmp_path, monkeypatch, gentle, speed, accel, expected):
+    from airhockey import policy_loader
+
+    (tmp_path / "run.json").write_text('{"agent_accel_range": [60, 60]}')
+    checkpoint = tmp_path / "agent.pt"
+    monkeypatch.setattr(policy_loader, "resolve_checkpoint", lambda name: checkpoint)
+    args = _limits_args(gentle=gentle, speed=speed, accel=accel)
+    args.policy = "tdmpc2:latest"
+    assert rp.resolve_limits(args) == expected
+    assert args.resolved_checkpoint == str(checkpoint)
+    # Loading must retain this checkpoint even if latest changes meanwhile.
+    monkeypatch.setattr(policy_loader, "resolve_checkpoint", lambda name: pytest.fail("resolved twice"))
+    received = []
+    monkeypatch.setattr(rp, "_load_tdmpc2", lambda *a: received.append(a[-1]))
+    rp.load_policy(args.policy, rp.Caps(), ckpt=args.resolved_checkpoint)
+    assert received == [str(checkpoint)]
+
+
+def test_alignment_uses_checkpoint_acceleration(tmp_path):
+    from types import SimpleNamespace
+
+    (tmp_path / "run.json").write_text('{"horizon": 8, "agent_accel_range": [60, 60]}')
+    policy = SimpleNamespace(ckpt=tmp_path / "agent.pt",
+                             agent=SimpleNamespace(cfg=SimpleNamespace(horizon=8)))
+    for accel in (40000.0, 60000.0, 70000.0):
+        report = rp.alignment_report(policy, rp.Caps(accel_max=accel), 6, "mix", 50)
+        row = next(r for r in report.splitlines() if "accel cap" in r)
+        assert "trained: 60000 mm/s^2" in row
+        assert ("DEVIATION" in row) == (accel != 60000.0)
 
 
 def test_an_explicit_flag_beats_gentle():
@@ -616,6 +724,9 @@ class _FakeClient:
 
     def get_position(self):
         return self.pos[0], self.pos[1], 0.0, 0.0
+
+    def get_position_sample(self):
+        return (*self.get_position(), 0.0)
 
     def set_limits(self, s, a):
         self.calls.append(("LIMITS", s, a))
@@ -690,7 +801,7 @@ def test_shutdown_is_a_noop_in_dry_run():
 # ── The loop itself ─────────────────────────────────────────────────────
 
 
-def _install_fake_camera(monkeypatch, blank_from_s=None, duration_s=2.0):
+def _install_fake_camera(monkeypatch, blank_from_s=None, duration_s=2.0, puck_path=None):
     """Replace BlobStream with a synthetic one and return its class.
 
     Blobs are synthesised in PIXELS by projecting a puck and the robot
@@ -732,8 +843,10 @@ def _install_fake_camera(monkeypatch, blank_from_s=None, duration_s=2.0):
                 mallet = [(1600.0, 400.0), (1600.0 - ar, 400.0),
                           (1600.0 + ar, 400.0)]
                 groups = [project(mallet, 33.0)]
-                if blank_from_s is None or t < blank_from_s:
-                    px, py = 1400.0 - 300.0 * t, 500.0 + 200.0 * t
+                puck_xy = (puck_path(t) if puck_path is not None else
+                           (1400.0 - 300.0 * t, 500.0 + 200.0 * t))
+                if (blank_from_s is None or t < blank_from_s) and puck_xy is not None:
+                    px, py = puck_xy
                     a = 0.3 + np.arange(4) * (math.pi / 2)
                     groups.insert(0, project(
                         [(px + r * math.cos(v), py + r * math.sin(v))
@@ -833,6 +946,92 @@ def test_dry_run_loop_writes_a_session_log(monkeypatch, capsys, tmp_path):
     assert first["mallet_src"] in ("camera", "controller", "fallback")
     assert first["cmd_x"] and first["cmd_speed"]
     assert f"[log] {logs[0]}" in out
+    import json
+    replay = list(tmp_path.glob("*.replay.jsonl"))
+    assert len(replay) == 1
+    events = [json.loads(line) for line in replay[0].read_text().splitlines()]
+    assert events[0]["type"] == "meta" and events[0]["live"] is False
+    assert sum(e["type"] == "frame" for e in events) > len(rows)
+    assert any(e["type"] == "command" for e in events)
+    assert events[-1]["type"] == "end"
+
+
+def test_full_replay_keeps_frames_during_policy_holds(monkeypatch, capsys, tmp_path):
+    import json
+    _install_fake_camera(monkeypatch, blank_from_s=0.5, duration_s=4.0)
+    assert rp.run(_loop_args(log_dir=str(tmp_path))) == 0
+    events = [json.loads(line) for line in next(tmp_path.glob("*.replay.jsonl")).read_text().splitlines()]
+    frames = [e for e in events if e["type"] == "frame"]
+    assert len(frames) == 800
+    assert frames[-1]["t"] == pytest.approx(3.995)
+    assert all(e["puck"] is None for e in frames if e["t"] > .6)
+
+
+def test_goal_hold_brakes_once_at_current_position_and_resets_policy(monkeypatch, tmp_path):
+    """Real runner/trackers with synthetic camera and a wholly fake client."""
+    import json
+    from airhockey import hardware
+
+    def path(t):
+        if t < .3:
+            return 1900 + 600 * t, 480
+        if t < 1:
+            return None
+        return 1200 - 100 * (t - 1), 480
+
+    _install_fake_camera(monkeypatch, duration_s=1.5, puck_path=path)
+    import track_mallet
+    monkeypatch.setattr(track_mallet, "measure", lambda: (1600, 400))
+
+    class FakeClient(_FakeClient):
+        def connect(self):
+            pass
+
+        def set_ramp(self, ramp):
+            pass
+
+        def get_motor_load(self, **kwargs):
+            raise RuntimeError("fake master")
+
+        def command_position(self, x, y, v, a=None):
+            self.calls.append(("CMD", x, y, v, a))
+            # Movement/noise after the first hold must not retarget it.
+            if v == 0:
+                self.pos = (self.pos[0] + 1, self.pos[1] + 1)
+
+    client = FakeClient()
+    monkeypatch.setattr(hardware, "CDPRClient", lambda: client)
+    monkeypatch.setattr(rp, "_shutdown", lambda *args: None)
+
+    class Policy:
+        calls = []
+        resets = 0
+
+        def __call__(self, obs):
+            self.calls.append(obs)
+            return 1800, 700, 8000, 24000
+
+        def reset(self):
+            self.resets += 1
+
+    policy = Policy()
+    monkeypatch.setattr(rp, "load_policy", lambda *args, **kwargs: policy)
+    assert rp.run(_loop_args(live=True, no_enable=True, log_dir=str(tmp_path))) == 0
+    events = [json.loads(s) for s in next(tmp_path.glob("*.replay.jsonl")).read_text().splitlines()]
+    transitions = [e for e in events if e["type"] == "puck_watchdog"]
+    assert len(transitions) == 2
+    pause, resume = transitions
+    assert pause["paused"] and pause["reason"] == "goal" and pause["t"] < .3
+    assert not resume["paused"] and resume["t"] >= 1.1
+    assert all(not pause["t"] <= o["t_s"] < resume["t"] for o in policy.calls)
+    assert policy.resets == 1
+    resumed = next(o for o in policy.calls if o["t_s"] >= resume["t"])
+    assert min(p[2] for p in resumed["puck"]) >= 1
+    holds = [c for c in client.calls if c[0] == "CMD" and c[3] == 0]
+    assert len(holds) > 20
+    assert all(c == ("CMD", 1600, 400, 0, None) for c in holds)
+    assert not any(c[0] == "LIMITS" for c in client.calls[client.calls.index(holds[0]):
+                                                   client.calls.index(holds[-1])])
 
 
 def test_a_single_stall_does_not_trip_the_lag_warning():
@@ -987,3 +1186,24 @@ def test_accel_floor_lifts_a_lazy_ask():
     assert caps.clamp_accel(3045.0) == 15000.0
     assert caps.clamp_accel(30000.0) == 30000.0
     assert caps.clamp_accel(50000.0) == 40000.0
+
+
+def test_stale_cached_controller_cannot_override_fresh_camera_after_fast_traverse():
+    # Recording 50.869 s: old controller was >500 mm from the actual paddle.
+    report = rp.ReportBuilder()
+    report.add_mallet(50.869, 1361.09, 707.90)
+    report.set_controller_mallet(50.869, 1833.87, 512.26, age_s=.34)
+    assert report.observation(50.869)[rp.OBS_MALLET] == (1361.09, 707.90)
+    assert report.mallet_disagreement(50.869) is None
+    assert rp.puck_hold_target(report, 50.869) == (1361.09, 707.90)
+    # Re-reading that cached sample must not restart the freshness clock.
+    report.set_controller_mallet(50.889, 1833.87, 512.26, age_s=.36)
+    assert report.t_controller == pytest.approx(50.529)
+    assert report.observation(50.889)[rp.OBS_MALLET] == (1361.09, 707.90)
+
+
+def test_unknown_controller_age_prefers_camera():
+    report = rp.ReportBuilder()
+    report.add_mallet(1, 1500, 400)
+    report.set_controller_mallet(1, 1800, 700, age_s=math.inf)
+    assert report.observation(1)[rp.OBS_MALLET] == (1500, 400)

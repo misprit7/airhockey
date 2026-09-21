@@ -58,10 +58,12 @@ and their recordings were renamed. Older runs (`curriculum_*`, `sac_*`,
 | `3.9-drive-band-selfplay` | `3.8` (550k) | the drive pays from anywhere behind or beside a held puck (0.15 m off the line, 0.40 m back), not only a 6 cm lane |
 | `3.10-turnover-50-selfplay` | `3.9` | the referee's turnover costs 50, a conceded goal's worth, instead of 20 |
 | `3.11-shot-ramp-selfplay` | `3.9` (500k, pinned as `-500k`) | on-target pay ramps 1.5 -> 3 m/s instead of 2 -> 4, so a 2.5 m/s strike from a hold pays; turnover 50 |
+| `3.12-accel60-accuracy-selfplay` | `3.11` (final, 1M) | 5M-step continuation; simulation accel 60 m/s², off-target penalty up to 15, on-target reward 40, full goal reward, smoothness 0.2; `ai/recipes/accel60-accuracy.json` |
+
+| `4.0-arrival-rms-selfplay` | `3.12` encoder only | 6M-step arrival-action curriculum; optimized demonstrations, per-motor fast/slow load state and penalties, simulation cap 60 m/s²; compiled updates; simulation-only, see `ai/ARRIVAL_TRAINING.md` |
 
 Lineages: **1.x** position-only action (20-wide obs). **2.x** accel in
-the action, 22-wide obs, horizon 5. **3.x** horizon 8. The next
-from-scratch curriculum is **4.0**.
+the action, 22-wide obs, horizon 5. **3.x** horizon 8. **4.x** introduces arrival actions and motor-load observations; its action-dependent heads are newly trained.
 
 **Table candidate (2026-09-19): `3.11-shot-ramp-selfplay`** -- stops the
 puck in most possessions, holds under a second, shoots after 92-95% of

@@ -223,6 +223,11 @@ class PuckTracker:
         self.theta = float("nan")   # radians, UNWRAPPED (see _track_spin)
         self.omega = 0.0            # rad/s about the puck's own axis
         self.n_markers = 0          # corners used for the last fix
+        self.frame_blobs = None
+        self.frame_candidates = None
+        self.frame_puck_members = None
+        self.frame_t = None
+        self.rejected_jumps = 0
 
     # ── blob -> table ────────────────────────────────────────────────────
     def _to_table(self, px_xy, z):
@@ -261,11 +266,24 @@ class PuckTracker:
         want position keep their four-tuple.
         """
         _kept, world = self.candidates(blobs)
+        self.frame_blobs = blobs
+        self.frame_candidates = (_kept, world)
+        self.frame_puck_members = None
+        self.frame_t = t
         if len(world) == 0:
             return self._coast(t)
 
         prev = (self._hist[-1][1], self._hist[-1][2]) if self._hist else None
-        got = find_puck(world, prev)
+        # A speed envelope survives impacts (which can reverse velocity),
+        # unlike gating against a straight-line prediction. 15 m/s plus
+        # 10 mm measurement slack exceeds the measured physical peak.
+        age = t - self._hist[-1][0] if self._hist else None
+        if age is not None and age <= 0:
+            return self._coast(t)
+        reach = 15000.0 * age + 10.0 if age is not None and age <= 0.15 else None
+        got = find_puck(world, prev, max_distance=reach)
+        if got is None and reach is not None and find_puck(world, prev) is not None:
+            self.rejected_jumps += 1
         if got is None:
             # One visible corner is not a fix: the centre is 21.85 mm away in
             # an unknown direction, and reporting that as a position is worse
@@ -273,6 +291,11 @@ class PuckTracker:
             return self._coast(t)
 
         c, theta, members, _rms = got
+        self.frame_puck_members = members
+        # Never fit a velocity across a long reacquisition gap.
+        if age is not None and age > 0.03:
+            self._hist.clear()
+            self._spin.clear()
         x, y = float(c[0]), float(c[1])
         self.n_markers = len(members)
         self._track_spin(t, theta)

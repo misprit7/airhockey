@@ -45,7 +45,8 @@ def _report_from_truth(env, hist, t):
     return {"puck": list(hist), "mallet": (mx, my), "opponent": (qx, qy), "t_s": t}
 
 
-def test_encoder_matches_the_simulators_observation():
+@pytest.mark.parametrize("accel", [40.0, 60.0])
+def test_encoder_matches_the_simulators_observation(accel):
     """Feed the encoder reports built from the sim's TRUE state and compare
     with the sim's own (truth) observation of that state, tick by tick.
     Positions must agree to float precision; the puck velocity is a 30 ms
@@ -54,14 +55,15 @@ def test_encoder_matches_the_simulators_observation():
     # DR on so the cap features are the pinned training constants, which is
     # what the encoder writes; with it off the env reads nominal (1.0).
     env = BatchAirHockeyEnv(n_envs=1, opponent_policy="follow",
-                            realistic_perception=False, domain_randomize=True)
+                            realistic_perception=False, domain_randomize=True,
+                            agent_accel_range=(accel, accel))
     # The referee's turnover (3.5: a puck on our side past SHOT_CLOCK_S is
     # relaunched at the centre) is a sim-only event; the encoder can only
     # see a crossing, so its time-on-side would be one step off for that
     # tick. This test is about sensing parity, not the referee.
     env.SHOT_CLOCK_S = 0.0
     obs = env.reset(seed=3)
-    enc = ReportEncoder(env.table_config)
+    enc = ReportEncoder(env.table_config, accel_m_s2=accel)
     hist: list[tuple[float, float, float]] = []
     t = 0.0
     n_checked = 0
@@ -188,13 +190,14 @@ def test_deploy_path_scores_in_the_simulator():
 
 
 @pytest.mark.skipif(_latest() is None, reason="no checkpoint under runs/")
-def test_runner_drives_a_checkpoint_through_its_own_clamp():
+@pytest.mark.parametrize("accel", [2000.0, 60000.0])
+def test_runner_drives_a_checkpoint_through_its_own_clamp(accel, monkeypatch):
     path = _ROOT / "ai" / "bin" / "run_policy.py"
     spec = importlib.util.spec_from_file_location("run_policy_deploy_test", path)
     rp = importlib.util.module_from_spec(spec)
     sys.modules[spec.name] = rp
     spec.loader.exec_module(rp)
-    caps = rp.Caps()
+    caps = rp.Caps(accel_max=accel)
     # prior only: this test is about the clamp, and its 5 ms budget is the
     # prior's (the default now reproduces training's 6 planner iterations)
     policy = rp.load_policy("tdmpc2:latest", caps, plan_iters=0)
@@ -209,9 +212,15 @@ def test_runner_drives_a_checkpoint_through_its_own_clamp():
             action, _flags = rp.plan(policy, report, t, caps, prev)
             assert geom.in_workspace(action.x_mm, action.y_mm)
             assert action.speed_mm_s == caps.speed_max
+            assert action.accel_mm_s2 <= accel
+            assert policy.last_obs[14] == pytest.approx(accel / 20000.0)
             prev = (action.x_mm, action.y_mm)
         n += 1
     assert policy.last_ms < 5.0
+    # Exercise the upper endpoint even when this checkpoint chooses a softer shot.
+    monkeypatch.setattr(policy, "act", lambda obs: np.array([0.0, 0.0, 1.0]))
+    action, _ = rp.plan(policy, report, t, caps, prev)
+    assert action.accel_mm_s2 == accel
 
 
 def test_a_scored_puck_reads_as_the_sims_post_goal_state():

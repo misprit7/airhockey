@@ -28,6 +28,7 @@ os.environ['LAZY_LEGACY_OP'] = '0'
 
 import argparse
 from datetime import datetime
+from dataclasses import asdict
 import json
 import sys
 import warnings
@@ -49,7 +50,8 @@ from common import MODEL_SIZE  # noqa: E402
 from tdmpc2 import TDMPC2  # noqa: E402
 
 from airhockey.batch_env import BatchAirHockeyEnv, sensing_kwargs  # noqa: E402
-from airhockey.dynamics import ACTION_DT  # noqa: E402
+from airhockey.physics import TableConfig  # noqa: E402
+from airhockey.dynamics import ACTION_DT, ACTION_HZ, AGENT_DR_ACCEL_M_S2  # noqa: E402
 from airhockey.recorder import FrameData, Recorder  # noqa: E402
 from airhockey.run_names import check_run_name  # noqa: E402
 from airhockey.policy_loader import (PLAN_ITERATIONS, PLAN_SMOOTH_COEF,  # noqa: E402
@@ -82,6 +84,9 @@ def make_env(args, n_envs, stage_kwargs: bool = True):
     extra = curriculum_env_kwargs("selfplay") if stage_kwargs else {}
     if getattr(args, "no_opponent_mix", False):
         extra.pop("opponent_mix_probs", None)
+    if getattr(args, "max_accel", None) is not None:
+        extra.update(dynamics_max_accel=args.max_accel,
+                     agent_accel_range=(args.max_accel, args.max_accel))
     return BatchAirHockeyEnv(
         n_envs=n_envs,
         **extra,
@@ -227,16 +232,44 @@ def main():
     parser.add_argument("--updates-per-iter", type=int, default=1,
                         help="gradient updates per vectorised step; March "
                              "used 1 (i.e. one update per n_envs transitions)")
+    parser.add_argument("--max-accel", type=float, default=None,
+                        help="simulation-only robot acceleration cap in m/s^2; "
+                             "applies to both robots, including every DR reset")
+    parser.add_argument("--reward-config", type=Path, default=None,
+                        help="JSON object overriding self-play shaper kwargs for this run")
     args = parser.parse_args()
     check_run_name(args.run_name)   # <major>.<minor>-<description>-<stage>, see ai/RUNS.md
+    if args.max_accel is not None and (not np.isfinite(args.max_accel) or args.max_accel <= 0):
+        parser.error("--max-accel must be finite and positive")
+    shaper_kwargs = curriculum_shaper_kwargs("selfplay")
+    if args.reward_config is not None:
+        import inspect
+        overrides = json.loads(args.reward_config.read_text())
+        allowed = set(inspect.signature(BatchRewardShaper).parameters) - {
+            "n_envs", "stage", "workspace", "config"}
+        if not isinstance(overrides, dict) or set(overrides) - allowed:
+            parser.error("--reward-config must contain only BatchRewardShaper reward parameters")
+        shaper_kwargs.update(overrides)
+    # Validate the reward configuration before creating a run or loading CUDA.
+    BatchRewardShaper(1, stage=STAGE_SCORING, **shaper_kwargs)
 
     root = Path(__file__).resolve().parents[2]
     run_dir = root / "runs" / args.run_name
-    run_dir.mkdir(parents=True, exist_ok=True)
+    run_dir.mkdir(parents=True, exist_ok=False)
     # What eval and deploy must reproduce (policy_loader.trained_horizon).
     (run_dir / "run.json").write_text(json.dumps({
         "horizon": args.horizon, "action_hz": ACTION_HZ, "model_size": args.model_size,
-        "resume": args.resume, "started": datetime.now().isoformat(timespec="seconds")}, indent=1))
+        "resume": str(Path(args.resume).resolve()),
+        "started": datetime.now().isoformat(timespec="seconds"),
+        "agent_accel_range": ([args.max_accel, args.max_accel] if args.max_accel is not None
+                              else list(AGENT_DR_ACCEL_M_S2)),
+        "simulation": {
+            "command_delay_s": sensing_kwargs(args.realistic_sensing).get("command_delay_s", 0.0),
+            "table_config": asdict(TableConfig()),
+        },
+        "reward_kwargs": shaper_kwargs,
+        "args": {k: str(v) if isinstance(v, Path) else v for k, v in vars(args).items()},
+    }, indent=2))
     recordings_dir = root / "ai" / "recordings"
     writer = SummaryWriter(str(run_dir / "logs"))
 
@@ -270,7 +303,7 @@ def main():
     n_envs = args.n_envs
     env = make_env(args, n_envs)
     shaper = BatchRewardShaper(n_envs, stage=STAGE_SCORING, workspace=env._ws,
-                               **curriculum_shaper_kwargs("selfplay"))
+                               **shaper_kwargs)
     demo_env = demo_bot = demo_shaper = None
     if args.demo_envs > 0:
         # The demonstrator plays the scripted opponents only (no planner
@@ -280,7 +313,7 @@ def main():
                                           _OPP_POLICY_MAP["goalie"]], dtype=np.int8)
         demo_env._opp_mix_p = np.array([0.4, 0.4, 0.2])
         demo_shaper = BatchRewardShaper(args.demo_envs, stage=STAGE_SCORING, workspace=demo_env._ws,
-                                        **curriculum_shaper_kwargs("selfplay"))
+                                        **shaper_kwargs)
     episode_length = int(round(30.0 / ACTION_DT))   # 30 s
     cfg = OmegaConf.merge(cfg, OmegaConf.create({
         "obs_shape": {"state": [env.obs_dim]},
@@ -327,6 +360,8 @@ def main():
           f"CUDA graphs {'on' if args.compile_plan and torch.cuda.is_available() else 'off'}; "
           f"TF32 on")
     print(f"  Planning horizon: {args.horizon}   Goals: +{GOAL_REWARD:.0f} / {GOAL_PENALTY:.0f}")
+    print(f"  Robot acceleration range: {env.agent_accel_range} m/s^2 (simulation only)")
+    print(f"  Reward settings: {shaper_kwargs}")
     print(f"  Sensing: {'on' if args.realistic_sensing else 'off'}   "
           f"DR: {'on' if args.domain_randomize else 'off'}   obs {env.obs_dim} dims")
     print(f"  Output: {run_dir}\n")

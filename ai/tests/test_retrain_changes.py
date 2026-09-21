@@ -53,7 +53,7 @@ def test_bank_lands_where_the_lossy_rail_puts_it_not_where_a_mirror_says():
     t_wall = (0.2 - r) / 1.0
     y_wall = 1.0 + 3.0 * t_wall
     x_mirror = r + 1.0 * (H - y_wall) / 3.0
-    x_lossy = r + (1.0 * 0.785) * (H - y_wall) / (3.0 * 0.66)
+    x_lossy = r + CFG.wall_restitution * (H - y_wall) / (3.0 * CFG.wall_tangential)
     assert int(nb) == 1 and int(first) == R.SHOT_RAIL_LEFT
     assert float(xg) == pytest.approx(x_lossy, abs=1e-6)
     assert abs(float(xg) - x_mirror) > 0.02
@@ -158,9 +158,9 @@ def test_controlled_shot_multiplies_the_on_target_reward():
 
 def test_shot_type_reward_needs_the_matching_rail_history():
     straight = ((0.5, 0.40, 0.0, 4.0), (0.5, 0.3))
-    # From x=0.2 at (-1, 4): off the left rail at y~1.04, then to x~0.33 on
+    # From x=0.2 at (-1.5, 4): off the left rail, then to x~0.43 on
     # the line -- inside the mouth. The paddle sits where the hit happens.
-    bank_left = ((0.2, 0.40, -1.0, 4.0), (0.25, 0.3))
+    bank_left = ((0.2, 0.40, -1.5, 4.0), (0.25, 0.3))
     for (shot, pad), want, other in ((straight, R.SHOT_TYPE_STRAIGHT, R.SHOT_TYPE_LEFT),
                                      (bank_left, R.SHOT_TYPE_LEFT, R.SHOT_TYPE_RIGHT)):
         slow = (shot[0], shot[1] - 0.05, 0.0, -0.5)

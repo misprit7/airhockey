@@ -30,6 +30,7 @@ class BatchPhysicsEngine:
         self.puck_friction = np.full(n_envs, cfg.puck_friction)
         self.wall_restitution = np.full(n_envs, cfg.wall_restitution)
         self.wall_tangential = np.full(n_envs, cfg.wall_tangential)
+        self.end_wall_tangential = np.full(n_envs, cfg.end_wall_tangential)
         self.drag_b = np.full(n_envs, cfg.PUCK_DRAG_B)
         self.paddle_restitution = np.full(n_envs, cfg.paddle_restitution)
         self.puck_mass = np.full(n_envs, cfg.puck_mass)
@@ -62,6 +63,10 @@ class BatchPhysicsEngine:
         # is invisible in training and fatal to any evaluation that compares
         # two controllers on "the same" fixtures.
         self._rng = np.random.default_rng()
+        # Optional instrumentation at the actual impulse, before the speed
+        # backstop. Disabled in training unless a caller installs a callback.
+        self.contact_callback = None
+        self.goal_callback = None
 
     def reset(
         self,
@@ -100,13 +105,18 @@ class BatchPhysicsEngine:
             # wall e:   per-rail 0.756-0.813, and it falls ~0.012 per m/s of
             #           impact speed over a 9 m/s range, so the range has to
             #           cover the speed dependence the sim does not model.
-            # tangential: 0.603-0.726 across rails and sessions.
+            # tangential: September 20 side-rail fit ~0.90; end rails retain
+            # the earlier calibration. This remains a coarse friction model.
             # paddle e: UNMEASURED, so this stays deliberately wide -- the one
             #           parameter randomisation is genuinely papering over.
             self.puck_friction[idx] = rng.uniform(0.0005, 0.0030, size=n)
             self.drag_b[idx] = rng.uniform(0.030, 0.040, size=n)
             self.wall_restitution[idx] = rng.uniform(0.72, 0.86, size=n)
-            self.wall_tangential[idx] = rng.uniform(0.58, 0.76, size=n)
+            # One surface-condition draw for both rail pairs preserves seeded
+            # initial states across this calibration change.
+            rail_draw = rng.random(n)
+            self.wall_tangential[idx] = 0.82 + 0.16 * rail_draw
+            self.end_wall_tangential[idx] = 0.58 + 0.18 * rail_draw
             self.paddle_restitution[idx] = rng.uniform(0.60, 0.95, size=n)
             self.puck_mass[idx] = rng.uniform(0.01, 0.04, size=n)
 
@@ -157,6 +167,8 @@ class BatchPhysicsEngine:
     def step(self, dt: float) -> None:
         """Advance all N environments by dt seconds."""
         self.goal_scored[:] = 0
+        if self.contact_callback is not None:
+            self._contact_time = self.time + dt
         self._apply_friction(dt)
         self._move_puck(dt)
         self._collide_walls()
@@ -219,11 +231,8 @@ class BatchPhysicsEngine:
         cfg = self.config
         r = cfg.puck_radius
         e = self.wall_restitution  # per-env [N]
-        # The rail also takes a THIRD of the tangential velocity. Reflection
-        # was specular here, which makes every bank shot leave at the wrong
-        # angle -- and banking is precisely the skill worth learning. The
-        # momentum is lost to friction, not stored as spin, so a coefficient
-        # is the entire model and the puck needs no orientation state.
+        # Side and end rails have separate calibrations. The September 20
+        # data identifies side rails only; do not extrapolate it to ends.
         t = self.wall_tangential  # per-env [N]
         goal_left = (cfg.width - cfg.goal_width) / 2
         goal_right = (cfg.width + cfg.goal_width) / 2
@@ -246,7 +255,7 @@ class BatchPhysicsEngine:
         bounce_bottom = hit_bottom & ~in_goal_bottom
         self.puck_y = np.where(bounce_bottom, r, self.puck_y)
         self.puck_vy = np.where(bounce_bottom, np.abs(self.puck_vy) * e, self.puck_vy)
-        self.puck_vx = np.where(bounce_bottom, self.puck_vx * t, self.puck_vx)
+        self.puck_vx = np.where(bounce_bottom, self.puck_vx * self.end_wall_tangential, self.puck_vx)
 
         # Top wall (opponent's side) — skip goal opening
         hit_top = self.puck_y + r > cfg.height
@@ -254,7 +263,7 @@ class BatchPhysicsEngine:
         bounce_top = hit_top & ~in_goal_top
         self.puck_y = np.where(bounce_top, cfg.height - r, self.puck_y)
         self.puck_vy = np.where(bounce_top, -np.abs(self.puck_vy) * e, self.puck_vy)
-        self.puck_vx = np.where(bounce_top, self.puck_vx * t, self.puck_vx)
+        self.puck_vx = np.where(bounce_top, self.puck_vx * self.end_wall_tangential, self.puck_vx)
 
     def _collide_paddle(
         self,
@@ -297,6 +306,20 @@ class BatchPhysicsEngine:
         e = self.paddle_restitution  # per-env [N]
         impulse = -(1 + e) * rel_v_normal
 
+        if self.contact_callback is not None:
+            idx = np.flatnonzero(resolve)
+            self.contact_callback({
+                "body": "agent" if pad_x is self.paddle_agent_x else "opponent",
+                "indices": idx,
+                "time": getattr(self, "_contact_time", self.time)[idx].copy(),
+                "normal": np.column_stack((nx[idx], ny[idx])),
+                "incoming": np.column_stack((self.puck_vx[idx], self.puck_vy[idx])),
+                "outgoing_before_speed_cap": np.column_stack((
+                    self.puck_vx[idx] + impulse[idx] * nx[idx],
+                    self.puck_vy[idx] + impulse[idx] * ny[idx])),
+                "paddle_velocity": np.column_stack((pad_vx[idx], pad_vy[idx])),
+            })
+
         self.puck_vx = np.where(resolve, self.puck_vx + impulse * nx, self.puck_vx)
         self.puck_vy = np.where(resolve, self.puck_vy + impulse * ny, self.puck_vy)
 
@@ -319,6 +342,15 @@ class BatchPhysicsEngine:
 
         n_opp = int(opp_scored.sum())
         n_agent = int(agent_scored.sum())
+
+        if self.goal_callback is not None and n_opp + n_agent:
+            idx = np.flatnonzero(opp_scored | agent_scored)
+            plane = np.where(agent_scored[idx], cfg.height, 0.0)
+            # Crossing point on this integration segment, before goal reset.
+            back = np.divide(self.puck_y[idx] - plane, self.puck_vy[idx],
+                             out=np.zeros(len(idx)), where=abs(self.puck_vy[idx]) > 1e-12)
+            self.goal_callback(dict(indices=idx, agent=agent_scored[idx],
+                                    crossing_x=self.puck_x[idx] - back * self.puck_vx[idx]))
 
         if n_opp > 0:
             self.score_opponent[opp_scored] += 1

@@ -10,6 +10,7 @@
 #include <atomic>
 #include <thread>
 #include <chrono>
+#include <memory>
 #include <unistd.h>
 #include <sys/socket.h>
 #include <netinet/in.h>
@@ -21,6 +22,7 @@
 #include <dirent.h>
 #include "cdpr_geometry.h"
 #include "clearpath.h"
+#include "serial_lines.h"
 
 static volatile sig_atomic_t g_stop = 0;
 
@@ -141,6 +143,7 @@ struct TeensyStatus {
     double sfrac, afrac;        // 0..1 of each cap right now
     double speak, apeak;        // ... and the peak since the last reset
     bool valid;          // at least one status received
+    double received_monotonic;
 };
 
 static std::mutex g_status_mutex;
@@ -157,6 +160,7 @@ static bool parseStatus(const char *line, TeensyStatus &st) {
                    &st.sfrac, &st.afrac, &st.speak, &st.apeak);
     if (n < 8) return false;
     st.valid = true;
+    st.received_monotonic = loadMonotonic();
     return true;
 }
 
@@ -190,16 +194,51 @@ static std::atomic<bool> g_fault{false};
 static std::atomic<int> g_fault_node{-1};
 static char g_fault_why[512] = "";
 static std::atomic<bool> g_fault_unreported{false};
+static std::atomic<bool> g_watchdog_waiting{false};
+static std::atomic<double> g_watchdog_checked{0}, g_watchdog_gap_ms{0};
+static std::atomic<double> g_watchdog_max_gap_ms{0};
+static MotorLoadLogger *g_motor_load = nullptr;
+
+static std::string loadContext(double tension_mm) {
+    std::lock_guard<std::mutex> lock(g_status_mutex);
+    const auto &s = g_status;
+    return "{\"startup_tension_mm\":" + loadNumber(tension_mm) +
+        ",\"spool_radius_mm\":" + loadNumber(SPOOL_RADIUS_MM) +
+        ",\"motors_enabled\":" + std::string(g_motors_enabled ? "true" : "false") +
+        ",\"fault\":" + (g_fault ? "true" : "false") +
+        ",\"fault_node\":" + std::to_string(g_fault_node.load()) +
+        ",\"watchdog_checked_monotonic\":" + loadNumber(g_watchdog_checked.load()) +
+        ",\"watchdog_last_gap_ms\":" + loadNumber(g_watchdog_gap_ms.load()) +
+        ",\"watchdog_max_gap_ms\":" + loadNumber(g_watchdog_max_gap_ms.load()) +
+        ",\"controller\":{\"valid\":" + (s.valid ? "true" : "false") +
+        ",\"received_monotonic\":" + loadNumber(s.received_monotonic) +
+        ",\"x_mm\":" + loadNumber(s.x) + ",\"y_mm\":" + loadNumber(s.y) +
+        ",\"vx_mm_s\":" + loadNumber(s.vx) + ",\"vy_mm_s\":" + loadNumber(s.vy) +
+        ",\"speed_limit_mm_s\":" + loadNumber(s.vlim) +
+        ",\"accel_limit_mm_s2\":" + loadNumber(s.alim) +
+        ",\"limit_flags\":" + std::to_string(s.limit_flags) +
+        ",\"step_counts\":[" + std::to_string(s.c0) + "," + std::to_string(s.c1) +
+        "," + std::to_string(s.c2) + "," + std::to_string(s.c3) + "]}}";
+}
 
 static void faultWatchdog(ClearPath *robot, int teensy_fd) {
     char why[512];
     while (!g_stop) {
         std::this_thread::sleep_for(std::chrono::milliseconds(FAULT_POLL_MS));
-        if (!g_motors_enabled || g_fault) continue;
+        if (!g_motors_enabled || g_fault) { g_watchdog_checked = 0; continue; }
         int bad;
+        g_watchdog_waiting = true;
         {
             std::lock_guard<std::mutex> lock(g_robot_mutex);
+            g_watchdog_waiting = false;
             bad = robot->checkDrives(why, sizeof(why));
+            const double now = loadMonotonic();
+            const double previous = g_watchdog_checked.exchange(now);
+            if (previous > 0) {
+                const double gap = (now - previous) * 1000;
+                g_watchdog_gap_ms = gap;
+                if (gap > g_watchdog_max_gap_ms) g_watchdog_max_gap_ms = gap;
+            }
             if (bad < 0) continue;
             // Torque off everything NOW, before anything else.
             robot->disable();
@@ -208,6 +247,7 @@ static void faultWatchdog(ClearPath *robot, int teensy_fd) {
         g_fault_node = bad;
         g_fault = true;
         g_motors_enabled = false;
+        if (g_motor_load) g_motor_load->command(std::string("WATCHDOG DISABLED: ") + why, loadMonotonic());
         // Stop the step generator. A bare write: the main thread owns the
         // reads on this fd, and the "OK STOP" it swallows is harmless.
         const char stop[] = "STOP\n";
@@ -222,62 +262,55 @@ static void faultWatchdog(ClearPath *robot, int teensy_fd) {
 // Override with --tension <mm>.
 static double g_tension_mm = 0.0;
 
-// Wait for "OK" from Teensy (with timeout). Returns true if OK received.
-static bool waitTeensyOK(int teensy_fd, int timeout_ms = 5000) {
-    char buf[256];
-    int pos = 0;
-    int elapsed = 0;
-    while (elapsed < timeout_ms) {
-        int n = read(teensy_fd, buf + pos, sizeof(buf) - pos - 1);
-        if (n > 0) {
-            pos += n;
-            buf[pos] = '\0';
-            // Check for OK line
-            char *start = buf;
-            char *nl;
-            while ((nl = strchr(start, '\n')) != NULL) {
-                *nl = '\0';
-                if (strncmp(start, "OK", 2) == 0) {
-                    logf("  Teensy: %s\n", start);
-                    return true;
-                } else if (strncmp(start, "ERR", 3) == 0) {
-                    logf("  Teensy error: %s\n", start);
-                    return false;
-                } else if (start[0] == 'S') {
-                    // Status line — update global state while waiting
-                    TeensyStatus st;
-                    if (parseStatus(start, st)) {
-                        std::lock_guard<std::mutex> lock(g_status_mutex);
-                        g_status = st;
-                    }
-                }
-                start = nl + 1;
-            }
-            // Move remaining to front
-            if (start > buf) {
-                pos = buf + pos - start;
-                memmove(buf, start, pos);
-            }
-            // If a reply line ever exceeds the buffer (or several queued
-            // status lines arrive ahead of the OK), the buffer fills with
-            // no newline to consume: sizeof(buf)-pos-1 hits zero, read()
-            // returns 0 forever, and this loop spins out the full timeout
-            // as a silent 5 s stall. Drop the unparseable head instead --
-            // losing one garbled line beats wedging the control path.
-            if (pos >= (int)sizeof(buf) - 1) {
-                pos = 0;
-            }
-        }
-        usleep(1000);
-        elapsed++;
+// Both ordinary reads and command waits feed this same persistent framer.
+static SerialLines g_teensy_lines;
+
+static void receiveTeensyLine(const char *line) {
+    TeensyStatus st;
+    if (line[0] == 'S' && line[1] == ' ' && parseStatus(line, st)) {
+        std::lock_guard<std::mutex> lock(g_status_mutex);
+        g_status = st;
+    } else if (*line) {
+        logf("  Teensy: %s\n", line);
     }
-    logf("  Teensy: timeout waiting for OK\n");
+}
+
+// Process the ENTIRE read, including status after OK, before returning.
+static bool waitTeensyOK(int teensy_fd, int timeout_ms = 5000) {
+    const double deadline = loadMonotonic() + timeout_ms / 1000.0;
+    while (loadMonotonic() < deadline) {
+        char bytes[4096];
+        int n = read(teensy_fd, bytes, sizeof(bytes));
+        int reply = 0;
+        if (n > 0) {
+            g_teensy_lines.feed(bytes, static_cast<std::size_t>(n), [&](const char *line) {
+                receiveTeensyLine(line);
+                if (!reply && strncmp(line, "OK", 2) == 0) reply = 1;
+                else if (!reply && strncmp(line, "ERR", 3) == 0) reply = -1;
+            });
+        }
+        if (reply) return reply > 0;
+        usleep(1000);
+    }
+    logf("  Teensy response timed out\n");
     return false;
 }
 
-// Return: 1 = continue, 0 = quit, -1 = error
 static int handleCommand(const char *line, ClearPath &robot, int client_fd, int teensy_fd) {
-    char resp[256];
+    if (!strcmp(line, "LOAD") || !strcmp(line, "LOADMETA")) {
+        // Copies cached JSON only: no drive calls, no file reads, no enabling.
+        const std::string response = g_motor_load ? "OK " +
+            (!strcmp(line, "LOADMETA") ? g_motor_load->source() : g_motor_load->cached()) + "\n"
+            : "ERR motor-load logging unavailable\n";
+        // Never block the control thread on a slow telemetry consumer. A short
+        // write disconnects it so it cannot mistake a partial JSON for a reply.
+        ssize_t sent = send(client_fd, response.data(), response.size(), MSG_DONTWAIT | MSG_NOSIGNAL);
+        return sent == static_cast<ssize_t>(response.size()) ? 1 : 0;
+    }
+    if (g_motor_load && (strncmp(line, "CMD ", 4) == 0 || strncmp(line, "ENABLE", 6) == 0 ||
+        strncmp(line, "DISABLE", 7) == 0 || strncmp(line, "LIMITS", 6) == 0 || strncmp(line, "RAMP", 4) == 0))
+        g_motor_load->command(line, loadMonotonic());
+    char resp[1024];
     // speed MUST be initialized: "CMD x y" parses two fields (sscanf >= 2
     // accepts it) and leaves speed untouched -- previously indeterminate
     // stack memory, which "if (speed > 0.0)" then happily forwarded to the
@@ -483,8 +516,9 @@ static int handleCommand(const char *line, ClearPath &robot, int client_fd, int 
     } else if (strncmp(line, "POS", 3) == 0) {
         std::lock_guard<std::mutex> lock(g_status_mutex);
         if (g_status.valid) {
-            snprintf(resp, sizeof(resp), "OK %.2f %.2f %.2f %.2f\n",
-                     g_status.x, g_status.y, g_status.vx, g_status.vy);
+            snprintf(resp, sizeof(resp), "OK %.2f %.2f %.2f %.2f %.9f\n",
+                     g_status.x, g_status.y, g_status.vx, g_status.vy,
+                     g_status.received_monotonic);
         } else {
             snprintf(resp, sizeof(resp), "ERR no status available\n");
         }
@@ -581,6 +615,7 @@ int main(int argc, char *argv[]) {
 
     int port = DEFAULT_PORT;
     const char *teensy_path = nullptr;
+    double load_hz = 10.0;
 
     // One parser for everything. Note the bare-argument case: anything not
     // recognised used to become the Teensy path silently, so a flag handled
@@ -594,11 +629,18 @@ int main(int argc, char *argv[]) {
             teensy_path = argv[++i];
         } else if (!strcmp(a, "--tension") && i + 1 < argc) {
             g_tension_mm = atof(argv[++i]);
+        } else if (!strcmp(a, "--load-hz") && i + 1 < argc) {
+            char *end = nullptr;
+            load_hz = strtod(argv[++i], &end);
+            if (!end || end == argv[i] || *end || !std::isfinite(load_hz) || load_hz < 0 || load_hz > 50) {
+                fprintf(stderr, "--load-hz must be 0 (off) or between 0 and 50\n"); return 1;
+            }
         } else if (!strcmp(a, "-h") || !strcmp(a, "--help")) {
             printf("usage: cdpr_master [--teensy /dev/ttyACMx] [--port N]\n"
-                   "                   [--tension MM]\n\n"
+                   "                   [--tension MM] [--load-hz HZ]\n\n"
                    "  --tension MM  retract every cable by MM on ENABLE to\n"
-                   "                take up slack (default 0, cables loose)\n");
+                   "                take up slack (default 0, cables loose)\n"
+                   "  --load-hz HZ  background motor logging (default 10, 0 off)\n");
             return 0;
         } else if (a[0] == '-') {
             fprintf(stderr, "unknown option '%s' (try --help)\n", a);
@@ -702,10 +744,44 @@ int main(int argc, char *argv[]) {
     char tcp_buf[4096];
     int tcp_len = 0;
 
-    // Teensy read buffer
-    char ser_buf[4096];
-    int ser_len = 0;
 
+    std::unique_ptr<MotorLoadLogger> load_logger;
+    std::thread telemetry;
+    if (load_hz > 0) {
+        mkdir("logs/motor_load", 0755);
+        char path[256];
+        snprintf(path, sizeof(path), "logs/motor_load/%.0f-%d.jsonl", loadWallTime() * 1000000, getpid());
+        load_logger.reset(new MotorLoadLogger(path, load_hz,
+            [&robot](unsigned node, LoadField field) {
+                // Yield to safety/enable operations between EVERY SDK field.
+                // An SDK transaction already in progress cannot be preempted;
+                // its actual duration and watchdog gaps are recorded.
+                while (!g_stop) {
+                    if (!g_watchdog_waiting) {
+                        std::unique_lock<std::mutex> lock(g_robot_mutex, std::try_to_lock);
+                        if (lock.owns_lock() && !g_watchdog_waiting)
+                            return robot.readLoad(node, field);
+                    }
+                    usleep(200);
+                }
+                LoadValue stopped; stopped.error = "stopping";
+                stopped.start = stopped.end = loadMonotonic(); return stopped;
+            }, []() { return loadContext(g_tension_mm); }));
+        if (load_logger->open()) {
+            g_motor_load = load_logger.get();
+            logf("Motor-load log: %s (target %.1f Hz, enabled and disabled)\n", path, load_hz);
+            telemetry = std::thread([&load_logger, load_hz]() {
+                while (!g_stop) {
+                    double next = loadMonotonic() + 1.0 / load_hz;
+                    load_logger->sample();
+                    // No catch-up bursts after slow I/O. Remain responsive to exit.
+                    while (!g_stop && loadMonotonic() < next) usleep(2000);
+                }
+            });
+        } else {
+            logf("WARNING: cannot create motor-load log %s: %s\n", path, strerror(errno));
+        }
+    }
     std::thread watchdog(faultWatchdog, &robot, teensy_fd);
 
     double lastHealth = 0;
@@ -766,34 +842,9 @@ int main(int argc, char *argv[]) {
 
         // ── Read from Teensy ──
         {
-            int n = read(teensy_fd, ser_buf + ser_len, sizeof(ser_buf) - ser_len - 1);
-            if (n > 0) {
-                ser_len += n;
-                ser_buf[ser_len] = '\0';
-
-                char *start = ser_buf;
-                char *nl;
-                while ((nl = strchr(start, '\n')) != NULL) {
-                    *nl = '\0';
-                    // Parse status lines
-                    if (start[0] == 'S' && start[1] == ' ') {
-                        TeensyStatus st;
-                        if (parseStatus(start, st)) {
-                            std::lock_guard<std::mutex> lock(g_status_mutex);
-                            g_status = st;
-                        }
-                    } else if (start[0] != '\0') {
-                        // Log other Teensy output (OK, ERR, etc.)
-                        logf("  Teensy: %s\n", start);
-                    }
-                    start = nl + 1;
-                }
-
-                if (start > ser_buf) {
-                    ser_len = ser_buf + ser_len - start;
-                    memmove(ser_buf, start, ser_len);
-                }
-            }
+            char bytes[4096];
+            int n = read(teensy_fd, bytes, sizeof(bytes));
+            if (n > 0) g_teensy_lines.feed(bytes, static_cast<std::size_t>(n), receiveTeensyLine);
         }
 
         // ── Read from TCP client ──
@@ -856,10 +907,15 @@ int main(int argc, char *argv[]) {
         robot.disable();
     }
 
+    // Slow/full disks must not make telemetry joining precede de-energizing.
+    if (telemetry.joinable()) telemetry.join();
+
     if (client_fd >= 0) close(client_fd);
     close(server_fd);
     close(teensy_fd);
     robot.disconnect();
+    if (load_logger) load_logger->close();
+    g_motor_load = nullptr;
     logf("Done.\n");
     if (g_log) fclose(g_log);
     return 0;

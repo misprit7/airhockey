@@ -1,0 +1,171 @@
+<!doctype html>
+<html lang="en">
+  <head>
+    <meta charset="utf-8" />
+    <meta name="viewport" content="width=device-width,initial-scale=1" />
+    <title>Air Hockey · Sim / Real</title>
+    <link rel="stylesheet" href="/compare.css" />
+  </head>
+  <body>
+    <header>
+      <div>
+        <span class="eyebrow">AIR HOCKEY / ANALYSIS</span>
+        <h1>Sim / Real</h1>
+      </div>
+      <span class="badge">Offline replay</span>
+    </header>
+    <div class="layout">
+      <aside>
+        <div class="section-head">
+          <h2>Recordings</h2>
+          <button id="refresh" title="Refresh recordings">↻</button>
+        </div>
+        <input
+          id="search"
+          type="search"
+          placeholder="Filter sessions…"
+          aria-label="Filter sessions"
+        />
+        <div id="sessions" role="list"></div>
+        <p class="small">
+          Camera tracks and issued robot commands. New sessions appear here
+          automatically after recording.
+        </p>
+      </aside>
+      <main>
+        <div class="section-head">
+          <div>
+            <h2 id="session-title">Choose a recording</h2>
+            <p id="session-info" class="small">
+              Browse a session, then compare its motion with the simulator.
+            </p>
+          </div>
+          <span id="status" role="status"></span>
+        </div>
+        <div id="warnings" class="notice" hidden></div>
+        <section class="viewer">
+          <div class="canvas-wrap">
+            <canvas
+              id="table"
+              width="420"
+              height="760"
+              aria-label="Measured and simulated table replay"
+            ></canvas>
+          </div>
+          <div class="inspector">
+            <div class="legend">
+              <span class="real">● Camera</span
+              ><span class="sim">◌ Simulation</span
+              ><span class="human">● Human input</span>
+            </div>
+            <div class="clock" id="clock">00:00.000</div>
+            <p id="rollout-label">No simulation selected</p>
+            <button id="simulate" class="primary" disabled>
+              Simulate from this time
+            </button>
+            <div class="metrics">
+              <div>
+                <span>Puck error</span><strong id="puck-error">—</strong>
+              </div>
+              <div>
+                <span>Robot error</span><strong id="agent-error">—</strong>
+              </div>
+            </div>
+            <p id="stop-reason" class="small"></p>
+            <label class="toggle"
+              ><input id="show-real" type="checkbox" checked /> Camera
+              overlay</label
+            >
+            <label class="toggle"
+              ><input id="show-sim" type="checkbox" checked /> Simulation
+              overlay</label
+            >
+            <label class="toggle"
+              ><input id="show-trails" type="checkbox" checked /> Recent
+              trails</label
+            >
+            <details>
+              <summary>How the comparison works</summary>
+              <p>
+                Each segment starts from measured puck and robot positions.
+                Initial velocities use the preceding 40 ms of measurements;
+                unavailable velocities and initial profile acceleration start at
+                zero.
+              </p>
+              <p>
+                After that, only recorded robot commands and the measured human
+                paddle enter the simulator. The puck and robot are never
+                corrected to the recording.
+              </p>
+              <p>
+                The environment’s physics and firmware motion profile run
+                without training resets. A segment ends at a simulated goal, a
+                recorded stop, or a human tracking gap over 150 ms. Missing
+                camera measurements are hidden.
+              </p>
+              <label
+                >Command timing offset
+                <input
+                  id="timing"
+                  type="number"
+                  min="-100"
+                  max="100"
+                  step="1"
+                  value="0"
+                />
+                ms</label
+              >
+              <p>
+                Positive values apply commands later. Changing this reruns the
+                grid.
+              </p>
+              <button id="apply-timing">Apply timing</button>
+            </details>
+          </div>
+        </section>
+        <section class="transport">
+          <input
+            id="scrub"
+            type="range"
+            min="0"
+            max="1"
+            step="0.001"
+            value="0"
+            disabled
+            aria-label="Recording time"
+          />
+          <div class="section-head">
+            <div class="buttons">
+              <button id="back" aria-label="Previous frame">‹</button
+              ><button id="play" disabled>Play</button
+              ><button id="forward" aria-label="Next frame">›</button
+              ><select id="speed" aria-label="Playback speed">
+                <option value="0.25">0.25×</option>
+                <option value="0.5">0.5×</option>
+                <option value="1" selected>1×</option>
+                <option value="2">2×</option>
+              </select>
+            </div>
+            <span class="small"
+              >Scroll over the table to scrub · ← / → step · Space to play</span
+            >
+          </div>
+        </section>
+        <section>
+          <div class="section-head">
+            <div>
+              <h2>10-second comparisons</h2>
+              <p class="small">
+                Each tile starts a new simulation from its own measured state.
+                Click to inspect.
+              </p>
+            </div>
+            <button id="grid-reset" disabled>Return to grid</button>
+          </div>
+          <div id="segments"></div>
+        </section>
+      </main>
+    </div>
+    <script src="/compare.js"></script>
+  </body>
+</html>

@@ -1,5 +1,42 @@
 # Sim-to-real: status and what's left
 
+## Update 2026-09-20 — replay-backed corrections
+
+The 11:36 session (`3.11`, 40 m/s²) identified puck/robot identity swaps and
+excessive side-rail tangential loss. Analysis and plots are in
+`logs/analysis/20260920-113611/report.md`.
+
+- The puck tracker rejects candidate jumps outside a 15 m/s + 10 mm envelope
+  and selects reachable candidates before ranking marker fits. Robot tracking
+  shares that frame's accepted puck markers, rejects workspace-inconsistent
+  detections, and applies its own 12 m/s + 15 mm continuity envelope. Long puck
+  reacquisitions restart velocity fitting. These are tested mitigations; the
+  old recording lacks raw marker blobs, so it cannot prove every swap is fixed.
+- Side-rail tangential retention is now 0.90 (randomization 0.82–0.98), versus
+  0.66 previously. A fit on the first 45 seconds produced 0.897; later contacts
+  validated the improvement. End rails remain at 0.66 because this session did
+  not identify them. Physics, shot prediction and heuristic aiming share the
+  side-rail parameter. Constant retention remains an approximation, especially
+  at small tangential speed.
+- `sensing_kwargs(True)` adds 12 ms of command delay, separate from camera
+  transport. At the default 400 Hz physics rate this applies at 12.5 ms. Both
+  self-play robot bodies retain their previous target and caps during this
+  interval; episode resets clear pending commands. The current implementation
+  requires command delay shorter than an action interval. Offline hardware
+  replay uses recorded application times and does not add this delay again.
+- Future self-play metadata records the physics and command-delay settings.
+  Deployment diagnostics flag the mismatch for older checkpoints, whose learned
+  dynamics do not change when these source defaults change. Replay logs include
+  raw marker blobs on rejected puck jumps to diagnose any remaining failures.
+
+No new training or hardware session was started for these corrections.
+Validation: the new tracking, rail and command-delay regression tests pass.
+The full AI suite passes 407 of 408 tests. The remaining existing performance
+benchmark is `CushionBot` controlling >40% of fast possessions against the weak
+goalie; under the corrected simulator it controls 17/62 (~27%). That benchmark
+has not been weakened. The scripted demonstrator needs qualification/improvement
+before its data is reused for the next training run.
+
 Living document. The point of it is the split between **what you have to do at
 the table** (nobody else can) and **what is software** (I can).
 

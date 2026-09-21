@@ -85,15 +85,21 @@ class MalletTracker:
 
     def update(self, blobs):
         """Return (x, y, n_markers) in table mm, or None if not found."""
-        kept, world_puck = self.t.candidates(blobs)
+        shared = getattr(self.t, "frame_blobs", None) is blobs
+        kept, world_puck = (self.t.frame_candidates if shared
+                            else self.t.candidates(blobs))
         if len(kept) == 0:
             return None
 
         # Take the puck out of the running before looking for anything else.
         free = np.ones(len(kept), bool)
-        got = find_puck(world_puck)
-        if got is not None:
-            free[got[2]] = False
+        if shared:
+            members = self.t.frame_puck_members
+        else:
+            got = find_puck(world_puck)
+            members = None if got is None else got[2]
+        if members is not None:
+            free[members] = False
         if not free.any():
             return None
 
@@ -105,6 +111,19 @@ class MalletTracker:
         if found is None:
             return None
         c, n = found
+        # A robot detection cannot teleport or leave its reachable box.
+        # Apply only to the robot; the human has a different workspace.
+        if self.markers == 3:
+            if not (geom.WS_MIN_X - 80 <= c[0] <= geom.WS_MAX_X + 80
+                    and geom.WS_MIN_Y - 80 <= c[1] <= geom.WS_MAX_Y + 80):
+                return None
+            t = self.t.frame_t if shared else None
+            last_t = getattr(self, "_last_t", None)
+            if t is not None and last_t is not None and self._last is not None:
+                age = t - last_t
+                if 0 < age <= 0.15 and np.linalg.norm(c - self._last) > 12000 * age + 15:
+                    return None
+            self._last_t = t
         self._last = (float(c[0]), float(c[1]))
         return self._last[0], self._last[1], n
 

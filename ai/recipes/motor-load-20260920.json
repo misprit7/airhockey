@@ -1,0 +1,74 @@
+{
+  "schema": 1,
+  "status": "provisional_one_session_with_explicit_conservative_priors",
+  "source": "logs/motor_load/1789924164533988-285173.jsonl",
+  "motion_features": [
+    "constant",
+    "grid_ax_squared_over_3600",
+    "grid_ay_squared_over_3600",
+    "grid_speed_squared_over_16"
+  ],
+  "coefficients_amps_squared": [
+    [
+      0.0,
+      0.0,
+      0.0,
+      61.981269927751
+    ],
+    [
+      1.4049715701363787,
+      24.669092785546272,
+      0.0,
+      0.0
+    ],
+    [
+      5.379056726531428,
+      94.73385783234109,
+      0.0,
+      15.072036878948841
+    ],
+    [
+      1.1469053670509646,
+      23.32441660959281,
+      0.0,
+      0.0
+    ]
+  ],
+  "fast_limit_amps": [
+    4.00000041904,
+    5.79999965031,
+    4.00000041904,
+    5.79999965031
+  ],
+  "slow_limit_amps": [
+    4.00000041904,
+    4.09999960832,
+    4.00000041904,
+    4.09999960832
+  ],
+  "fast_tau_s": [
+    25.34440466493626,
+    25.34440466493626,
+    25.34440466493626,
+    25.34440466493626
+  ],
+  "slow_tau_s": [
+    2543.338654024278,
+    509.45259528593164,
+    2543.338654024278,
+    509.45259528593164
+  ],
+  "edge_hold_amps": [
+    0.14,
+    1.54,
+    2.94,
+    1.72
+  ],
+  "accel_prior_amps_squared": [
+    4,
+    2,
+    4,
+    2
+  ],
+  "notes": "Edge holding floor and isotropic acceleration cost are conservative training priors, not independently fitted motor physics. Raw motion-only fit had zero acceleration coefficients on some axes. No overload guarantee."
+}

@@ -27,7 +27,6 @@ policy then arrives late rather than wrong.
 """
 from __future__ import annotations
 
-import math
 import sys
 import time
 from pathlib import Path
@@ -65,7 +64,9 @@ RESYNC_GAP_S = 0.100
 # policy a puck sitting in a goal -- a goal resets it to the centre at once
 # -- and on the table the policy chased a scored puck along the rail at full
 # caps until a drive overloaded (2026-09-05). Such a fix is reported as the
-# sim's post-goal state instead: a puck at the centre, at rest.
+# sim's post-goal state instead: a puck at the centre, at rest. This encoder
+# fallback alone does not stop motion: run_policy.PuckWatchdog now pauses
+# before calling the policy on a goal and resets it after stable reacquisition.
 GOAL_MOUTH_MARGIN_MM = 30.0     # sideways slack on the mouth
 GOAL_LINE_TOL_MM = 5.0          # the sim scores when the CENTRE crosses the line
 
@@ -102,7 +103,11 @@ class ReportEncoder:
     is empty. `reset()` clears it.
     """
 
-    def __init__(self, table: TableConfig | None = None, shot_mode: str = "none"):
+    def __init__(self, table: TableConfig | None = None, shot_mode: str = "none",
+                 *, speed_m_s: float = AGENT_DR_SPEED_M_S[1],
+                 accel_m_s2: float = AGENT_DR_ACCEL_M_S2[1]):
+        if not all(np.isfinite(v) and v > 0 for v in (speed_m_s, accel_m_s2)):
+            raise ValueError("actuator ceilings must be finite and positive")
         if shot_mode not in SHOT_MODES:
             raise ValueError(f"shot_mode must be one of {SHOT_MODES}, not {shot_mode!r}")
         self.shot_mode = shot_mode
@@ -114,8 +119,8 @@ class ReportEncoder:
         # Where the env parks an opponent it has not been told about.
         self._opp_default = (cfg.width / 2.0, cfg.height * 0.85)
         self.side = 1.0                                   # BatchAirHockeyEnv.ROBOT_SIDE
-        self.cap_features = (AGENT_DR_SPEED_M_S[1] / MAX_SPEED_M_S,
-                             AGENT_DR_ACCEL_M_S2[1] / MAX_ACCEL_M_S2)
+        self.cap_features = (speed_m_s / MAX_SPEED_M_S,
+                             accel_m_s2 / MAX_ACCEL_M_S2)
         self.reset()
 
     def reset(self) -> None:
@@ -230,14 +235,21 @@ class TDMPC2Policy:
 
         from airhockey.batch_env import BatchAirHockeyEnv   # noqa: PLC0415
         from airhockey.policy_loader import (load_agent,    # noqa: PLC0415
-                                             resolve_checkpoint)
+                                             resolve_checkpoint, deployment_ready)
+
+        selected = Path(ckpt) if ckpt is not None else resolve_checkpoint(run)
+        if not deployment_ready(selected.parent):
+            raise ValueError(f"{selected.parent.name} is a simulation-only experiment; "
+                             "its action/observation adapter has not been enabled for deployment")
 
         self._torch = torch
         # The env is the authority on the layout and the action rescale; one
         # instance, never stepped.
         env = BatchAirHockeyEnv(n_envs=1)
         assert env.OBS_DIM == OBS_DIM
-        self.encoder = ReportEncoder(env.table_config, shot_mode=shot_mode)
+        self.encoder = ReportEncoder(env.table_config, shot_mode=shot_mode,
+                                     speed_m_s=speed_mm_s / 1000.0,
+                                     accel_m_s2=accel_mm_s2 / 1000.0)
         self._low = np.asarray(env._action_low, dtype=float)
         self._high = np.asarray(env._action_high, dtype=float)
         self.width, self.half_h = env.table_config.width, env.table_config.height / 2.0
@@ -350,17 +362,18 @@ class TDMPC2Policy:
         return float(np.median(times[5:]))
 
     def describe(self, caps_speed: float, caps_accel: float) -> str:
+        from airhockey.policy_loader import trained_limits  # noqa: PLC0415
+
         mode = (f"{self.agent.cfg.iterations} MPPI iterations on {self.device}"
                 + (" (CUDA graphs)" if self.compiled else "")
                 if self.plan else f"policy prior only on {self.device}")
         mode += (", commands its own accel" if self.agent.cfg.action_dim >= 3
                  else ", position only")
-        trained_v = AGENT_DR_SPEED_M_S[1] * 1000.0
-        trained_a = AGENT_DR_ACCEL_M_S2[1] * 1000.0
+        trained_v, trained_a = (v * 1000.0 for v in trained_limits(self.ckpt.parent))
         lines = [f"tdmpc2: {self.ckpt}", f"  mode: {mode}"]
-        if caps_accel < trained_a or caps_speed < trained_v:
+        if caps_accel != trained_a or caps_speed != trained_v:
             lines.append(
                 f"  NOTE: trained at {trained_v:.0f} mm/s, {trained_a:.0f} mm/s^2; "
-                f"this run caps at {caps_speed:.0f}, {caps_accel:.0f}. The policy "
-                f"will arrive later than it expects -- late, not wrong.")
+                f"this run caps at {caps_speed:.0f}, {caps_accel:.0f}. "
+                "Observations encode these applied ceilings; dynamics differ from training.")
         return "\n".join(lines)
