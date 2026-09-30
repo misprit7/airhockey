@@ -19,8 +19,36 @@ def load(path):
         path = path / "agent.pt"
     meta_path = path.parent / "run.json"
     meta = json.loads(meta_path.read_text()) if meta_path.exists() else {}
+
+    def finish(policy):
+        policy.requires_motion_guard = bool(
+            meta.get("motion_guard", False)
+            or meta.get("controller") in {"observed_interception_v1", "arrival_play_v1"}
+            or meta.get("action_mode") == "shot_intent"
+        )
+        return policy
+
+    if meta.get("action_mode") == "shot_intent":
+        from airhockey.shot_intent import INTENTS, IntentValue, ShotIntentPolicy
+
+        if not np.array_equal(np.asarray(meta.get("intents")), INTENTS):
+            raise ValueError(
+                "checkpoint shot intents differ from this controller version"
+            )
+        selector = IntentValue().cuda()
+        state = torch.load(path, map_location="cuda", weights_only=False)
+        selector.load_state_dict(state["selector"])
+        return finish(
+            ShotIntentPolicy(
+                load(path.parent / "fallback/agent.pt"),
+                selector,
+                controller_options=meta.get("controller_options"),
+                interception_options=meta.get("interception_options"),
+                fast_prior=meta.get("fast_prior", False),
+            )
+        )
     if meta.get("obs_dim") != 42:
-        return load_agent(path.parent.name, ckpt=path)
+        return finish(load_agent(path.parent.name, ckpt=path))
     cfg = config(argparse.Namespace(**meta["args"]), path.parent)
     cfg.obs_shape, cfg.action_dim = {"state": [42]}, 3
     cfg.discount_max, cfg.episode_length = 0.99, 3000
@@ -38,10 +66,24 @@ def load(path):
     if controller == "observed_interception_v1":
         from airhockey.interception import InterceptionPolicy
 
-        return InterceptionPolicy(agent)
+        return finish(InterceptionPolicy(agent))
+    if controller == "arrival_play_v1":
+        from airhockey.interception import InterceptionPolicy, InterceptionController
+        from airhockey.arrival_play import ArrivalPlayPolicy
+
+        fallback = InterceptionPolicy(agent)
+        fallback.controller = InterceptionController(
+            **meta.get("interception_options", {})
+        )
+        policy = ArrivalPlayPolicy(fallback, **meta.get("controller_options", {}))
+        if meta.get("thermal_budget") is not None:
+            from airhockey.load_budget import LoadBudgetPolicy
+
+            policy = LoadBudgetPolicy(policy, **meta["thermal_budget"])
+        return finish(policy)
     if controller is not None:
         raise ValueError(f"unknown checkpoint controller: {controller}")
-    return agent
+    return finish(agent)
 
 
 def match(
@@ -54,7 +96,25 @@ def match(
     record=None,
     guard=False,
     shot_requests=False,
+    self_play=None,
+    policy_labels=None,
+    initial_load=None,
 ):
+    guard = guard or any(
+        getattr(p, "requires_motion_guard", False) for p in (agent, rival)
+    )
+    if policy_labels is not None and len(policy_labels) != 2:
+        raise ValueError("replay policy labels must identify both sides")
+    if initial_load is not None and (
+        len(initial_load) != 2
+        or any(
+            v is not None and (not np.isfinite(v) or not 0 <= v < 1)
+            for v in initial_load
+        )
+    ):
+        raise ValueError(
+            "initial load requires two normalized levels in [0,1), or None"
+        )
     env = LegacyPracticeEnv(
         games,
         seed=seed,
@@ -68,7 +128,17 @@ def match(
     env.base.shot_types = shot_requests
     env.base.symmetric_referee = True
     obs = env.reset(seed=seed, opponent="external")
+    if initial_load is not None:
+        for side, level in enumerate(initial_load):
+            if level is not None:
+                env.loads[side].h[:] = level**2
+                env.loads[side].observed[:] = env.loads[side].levels
+        obs[:, 22:30] = env.loads[0].features()
     e = env.engine
+    budget_start = {
+        id(p): (getattr(p, "frames", 0), getattr(p, "cooling_frames", 0))
+        for p in (agent, rival)
+    }
     shots, aimed, contacts, blocks = [np.zeros((2, games), int) for _ in range(4)]
     peak, over_time, accel_peak, speed_peak = [np.zeros((2, games)) for _ in range(4)]
     accel_energy, high_accel_time, commanded_cap = [
@@ -258,7 +328,8 @@ def match(
                 )
             )
             print(
-                f"[match] t={e.time[0]:.0f}s score={e.score_agent.sum()}-{e.score_opponent.sum()} peak={peak.max():.3f}",
+                f"[match] t={e.time[0]:.0f}s score={e.score_agent.sum()}-{e.score_opponent.sum()} "
+                f"peak_robot={peak[0].max():.3f} peak_opponent={peak[1].max():.3f}",
                 flush=True,
             )
     flight_goals = np.zeros((2, games), int)
@@ -274,6 +345,7 @@ def match(
         games=games,
         seconds=seconds,
         seed=seed,
+        initial_load=initial_load,
         wall_s=time.perf_counter() - start,
         goals_for=e.score_agent.tolist(),
         goals_against=e.score_opponent.tolist(),
@@ -318,6 +390,23 @@ def match(
             },
         )
     result["on_goal_returns_including_banks"] = return_goals.tolist()
+    if any(hasattr(p, "cooling_frames") for p in (agent, rival)):
+        result["cooldown"] = []
+        for policy in (agent, rival):
+            if not hasattr(policy, "cooling_frames"):
+                result["cooldown"].append(None)
+                continue
+            prior_frames, prior_cooling = budget_start[id(policy)]
+            result["cooldown"].append(
+                dict(
+                    fraction=(policy.cooling_frames - prior_cooling)
+                    / max(1, policy.frames - prior_frames),
+                    start=policy.start,
+                    resume=policy.resume,
+                    slow_budget=getattr(policy, "slow_budget", None),
+                    shared_across_sides=agent is rival,
+                )
+            )
     result["shot_definition"] = "armed outgoing vy>1.5 m/s and speed gain>0.2 m/s"
     result["return_definition"] = (
         "first outgoing vy>1.5 m/s per exchange, including passive rebounds"
@@ -331,6 +420,11 @@ def match(
             },
         )
     if rec:
+        self_play = agent is rival if self_play is None else self_play
+        labels = policy_labels or [
+            getattr(p, "training_algorithm", "TD-MPC2") for p in (agent, rival)
+        ]
+        modes = ["MPC" if p.cfg.mpc else "prior" for p in (agent, rival)]
         record = Path(record)
         record.parent.mkdir(parents=True, exist_ok=True)
         rec.save(
@@ -338,9 +432,10 @@ def match(
             metadata=dict(
                 algo=getattr(agent, "training_algorithm", "TD-MPC2") + " pilot",
                 fps=50,
-                opponent="self" if agent is rival else "reference",
-                match_type="self-play" if agent is rival else "head-to-head",
-                policy_sides=f"robot: {'MPC' if agent.cfg.mpc else 'prior'}; opponent: {'MPC' if rival.cfg.mpc else 'prior'}",
+                opponent="self" if self_play else "reference",
+                match_type="self-play" if self_play else "head-to-head",
+                policy_sides=f"robot: {labels[0]} ({modes[0]}); opponent: {labels[1]} ({modes[1]})",
+                policy_labels=list(map(str, labels)),
                 simulation_only=True,
                 accel_cap_m_s2=60,
                 shot_requests="mixed" if shot_requests else "none",
@@ -397,6 +492,7 @@ def main():
         record=args.record,
         guard=args.guard,
         shot_requests=args.shot_requests,
+        policy_labels=[str(args.checkpoint), str(args.rival or args.checkpoint)],
     )
     result.update(
         checkpoint=str(args.checkpoint),

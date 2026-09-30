@@ -69,6 +69,15 @@ int main(int argc, char *argv[]) {
         printf("  Serial:   %d\n", node.Info.SerialNumber.Value());
         printf("  Model:    %s\n", node.Info.Model.Value());
 
+        // One physical revolution, independent of the old enhanced encoder.
+        node.Info.PositioningResolution.Refresh();
+        const int MOVE_COUNTS = node.Info.PositioningResolution.Value();
+        if (MOVE_COUNTS <= 0) {
+            printf("ERROR: Invalid encoder resolution; refusing motor test.\n");
+            mgr->PortsClose();
+            return 1;
+        }
+
         // Enable node
         printf("\nEnabling motor...\n");
         node.EnableReq(false);
@@ -102,7 +111,6 @@ int main(int argc, char *argv[]) {
         printf("Current position: %.0f counts\n", node.Motion.PosnMeasured.Value());
 
         // Move back and forth
-        const int MOVE_COUNTS = 6400;  // ~1 revolution with enhanced encoder
         const int NUM_CYCLES = 3;
 
         printf("\n--- Moving back and forth (%d cycles, %d counts each) ---\n",

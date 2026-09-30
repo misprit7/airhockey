@@ -21,7 +21,7 @@ import cdpr_geometry as geom  # noqa: E402  (path set by follow_test)
 
 BOX = (geom.WS_MIN_X, geom.WS_MAX_X, geom.WS_MIN_Y, geom.WS_MAX_Y)
 MM_PER_COUNT = geom.SPOOL_CIRCUMFERENCE_MM / TEENSY_COUNTS_PER_REV
-ENC_RES = (6400, 800, 6400, 800)        # the two ClearPath models
+ENC_RES = (800, 800, 800, 800)          # four CPM-SCSK-2331S-RLNA drives
 
 
 class VirtualClock:

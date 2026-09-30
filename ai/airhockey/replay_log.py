@@ -6,6 +6,7 @@ import time
 from dataclasses import asdict
 
 from airhockey.physics import TableConfig
+from airhockey.thermal import DEFAULT_MODEL
 
 
 class ReplayLog:
@@ -24,6 +25,7 @@ class ReplayLog:
                 ramp=args.ramp,
                 camera_delay_s=0.0077,
                 table_config=asdict(TableConfig()),
+                motor_profile=json.loads(DEFAULT_MODEL.read_text()),
                 speed_mm_s=getattr(args, "speed", None),
                 accel_mm_s2=getattr(args, "accel", None),
                 checkpoint=getattr(args, "resolved_checkpoint", None),
@@ -56,8 +58,21 @@ class ReplayLog:
         if self.frames % 100 == 0:
             self.file.flush()
 
-    def tracking_diagnostics(self, t, tracker, blobs):
+    def tracking_diagnostics(self, t, tracker, blobs, report=None):
         """Preserve marker evidence when temporal association rejects a fix."""
+        # Raw marker evidence is especially useful when apparent overlap could
+        # be marker confusion, lift, or a real grazing collision. Tracks alone
+        # cannot distinguish these; retain the underlying detections nearby.
+        if (report is not None and report.puck and report.mallet is not None
+                and report.t_puck == t and report.t_mallet == t
+                and math.hypot(report.puck[0][0]-report.mallet[0],
+                               report.puck[0][1]-report.mallet[1]) < 150):
+            members = getattr(tracker, "frame_puck_members", None)
+            self._write(dict(type="near_contact_tracking", t=t,
+                             puck=list(report.puck[0][:2]), agent=list(report.mallet),
+                             puck_markers=getattr(tracker, "n_markers", None),
+                             puck_members=None if members is None else list(map(int, members)),
+                             blobs_px=blobs.tolist()))
         if tracker.rejected_jumps != self._rejected_jumps:
             self._rejected_jumps = tracker.rejected_jumps
             self._write(dict(type="tracking_rejection", t=t,

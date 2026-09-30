@@ -98,10 +98,9 @@ def sim_to_table_mm(sim_x: float, sim_y: float, sim_width: float = 1.0,
 # How these sit against the machine, so a transfer failure is not mysterious:
 #
 #   SPEED  exactly the firmware clamp (MAX_VELOCITY_MM_S = 12000), and 93% of
-#          the motors' own 12968 mm/s of cable (2580 rpm -- the slower of the
-#          two drive models -- over a 301.6 mm circumference). On a CDPR every
-#          cable moves together, so the system takes the worse of the two
-#          models. Nothing here can ask for more than the Teensy will pass.
+#          motors' 12968 mm/s of cable (all four are now 2580 rpm
+#          CPM-SCSK-2331S-RLNA, over a 301.6 mm circumference).
+#          The motor replacement does not change this speed ceiling.
 #
 #   ACCEL  well under the firmware ceiling of 120000, and under what the
 #          cables can make across most of the workspace: cdpr_config.h's solve

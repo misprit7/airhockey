@@ -393,3 +393,295 @@ Useful artifacts: corrected `logs/foundation/baseline.json`, diagnostic
   navigation cap 10 m/s²; all 100 contact the puck. It is poor on moving pucks
   (19/100), so the next full-game combination applies it only below 0.15 m/s.
   This is being evaluated separately; it is not wired into the training run.
+
+### Arrival-controller and tactical-selector follow-up
+
+The direct motor-policy training has repeatedly preserved aligned contact skills
+without learning reliable setup from arbitrary paddle positions. Successful
+teacher trajectories alone do not solve this: 10,000 supervised updates achieved
+held-out command MSE about 0.0022 but only 37% stationary and 25% moving goals
+from arbitrary starts. Low command MSE is not a closed-loop qualification metric.
+The demonstration-assisted PPO continuation is still running; through 1.6M steps
+its arbitrary-start rates regressed from 42/38 to 38/29. Earlier checkpoints are
+preserved. No newer policy is promoted automatically.
+
+A physics-based approach now navigates around the puck, settles behind it, and
+executes a 160 ms arrival contact with the ordinary firmware motion profile.
+Reachable home recovery and the earlier observed interception controller complete
+the policy; a frozen learned policy handles other states and cushioning. It uses
+only policy observations, not simulator parameters or future opponent actions.
+The reusable implementation is `airhockey/arrival_play.py`. The fixed center-shot
+version matches the original probe's commands within 2e-6 across 1,280 test inputs,
+including committed contacts. A cushioning request explicitly cancels a shot.
+
+Development seed 20261108, 100 arbitrary-start trials each, direct 3 m/s shots:
+98 stationary goals, 66 moving goals; 99/72 trials had on-goal contact. The first
+8 x 60 s match against the old full MPC policy won 8–2, but an independent
+8 x 180 s replication lost 10–13. Peak candidate modeled load was 0.972 in that
+replication (below overload 1, above our conservative promotion threshold 0.95).
+This is promising controlled behavior, not evidence of general superiority.
+The reversed-side and 15-minute continuous self-play checks are in progress.
+
+An optional incoming-flight predictor includes calibrated rail damping and
+friction, plus slow incoming pucks. It matched independent nominal physics
+crossings within 1.5 cm and 10 ms in randomized unit tests. It saved 100/100
+isolated defense trials but lost its full-game comparison 5–10, versus the
+original controller's 8–2 on that seed. It remains opt-in and is not the selected
+defense controller. Better prediction alone did not improve match performance.
+
+`train_shot_intent.py` now tests a separate tactical approach: semi-Markov Double
+DQN chooses one of ten bounded shot intents (goal location, desired puck speed,
+and direct/left-bank/right-bank). The original neural policy and encoder remain
+frozen. A zero-initialized tactical head exactly selects the tested center-shot
+baseline before learning. Each selected intent remains committed through setup
+and contact; the actual discounted rewards accrue until the next decision or
+finite episode endpoint. Controller ticks are not mislabeled as policy choices.
+A diverse scripted/frozen-self-play mix and random-start skills train together;
+more match training and peer updates require measured skill, match, and load
+checks. Initial tactical run `_foundation-shot-intent-pilot` failed before its
+first rollout due to a reset-mask type mismatch; this is corrected and the active
+successor is `_foundation-shot-intent-pilot-v2` (1M pilot steps, 200k evaluation
+interval). Checkpoints bundle their frozen fallback policy. All runs remain
+simulation-only and explicitly not deployment ready. Final held-out seeds
+20261201/02/03 remain unopened.
+
+The demonstration-assisted continuation was stopped gracefully at 2,334,720
+additional steps after its 1.6M checkpoint lost 3–14 in an independent reference
+match. Final optimizer state and all earlier checkpoints remain available.
+The 1M shot-intent pilot completed: at 400k it passed the short skill/load gates
+(97/60/97/100 skill successes per 100) and beat the fixed controller 2–0 over
+8 x 60 s. At 600k it lost 4–5, and the final checkpoint did not improve that
+reference score. These are small development samples, not held-out superiority.
+
+A harder defense suite now optionally randomizes the initial paddle over the
+reachable workspace. The original intercept tolerance saved 269/300; requiring
+12 mm predicted center error saved 289/300. Friction-predictor variants did not
+improve this. The original 60 m/s² shot controller exceeded modeled load in
+15-minute continuous self-play: peak 1.055, score 54–57 across 8 games.
+Earlier recovery after outgoing contacts fixes much unnecessary motion: five
+minutes of self-play with the original interceptor peaked at 0.935, and with
+centered slow-puck interception at 0.933. The latter had 646/665 forward returns
+and only 18/22 referee turnovers, so low scoring was not simply inactivity.
+
+A settled 3 m/s shot does not need the full acceleration ceiling: over 300
+arbitrary-start fixtures, caps 20/30/40 m/s² gave stationary 297/297/297 and
+moving 208/216/217 goals, versus 297/218 for cap 60 on that development seed.
+The combined candidate uses cap 30 for arrival shots, cap 10 for setup,
+reachable low-cap recovery, and up to 60 when interception needs it. It is saved
+as `_foundation-efficient-arrival-controller`, explicitly an experimental
+controller bundle over frozen learned skills, not newly learned motor weights.
+Longer games in both roles and 900-second self-play are being evaluated.
+
+`_foundation-shot-intent-efficient` continues the 400k tactical checkpoint on
+that improved controller for 4M additional transitions. Its body/controller
+parameters are serialized with the checkpoint; the fallback policy is bundled.
+It starts with fresh replay because the controller changed. Future compatible
+continuations retain option replay, target values and optimizer state. Frozen
+actor-mean inference avoids unused sampling/log-probability work: measured median
+16-environment inference fell from 0.212 ms to 0.097 ms without compilation and
+0.079 ms compiled. Compilation produced at most 2.9e-5 normalized-action
+roundoff in the probes (well below 0.1 mm target displacement). The new run uses
+this optional compiled path; the fixed-controller comparisons keep the original
+inference path. No firmware or physical deployment defaults were changed.
+
+### Frozen-candidate qualification (in progress; load margin failed)
+
+The fixed efficient controller won the two development reference matches 21–8
+and 24–6 on opposite sides (8 x 180 s each); candidate peak modeled loads were
+0.910 and 0.897. Eight 900-second continuous self-play games peaked at 0.884,
+with zero overload time and actual acceleration within numerical tolerance of
+60 m/s². Those games contained 1,149/1,164 forward returns and 65/57 referee
+turnovers; strong defense produced a 1–1 aggregate score.
+
+The 4M-transition tactical continuation completed but did not beat the fixed
+controller. Its final arbitrary-start rates were 88/57 versus the fixed
+controller's roughly 99/70; it is not selected. All checkpoints, replay and
+optimizer/target-network state remain available. The selected experimental
+bundle is `_foundation-efficient-arrival-controller`, with frozen neural skills,
+30 m/s² arrival strokes, early recovery, centered interception up to 60 m/s²,
+and the external motion guard. No physical deployment promotion was made.
+
+The candidate was frozen before opening seeds 20261201 onward. On 500 held-out
+trials each it scored 493 stationary and 356 moving goals, cushioned 489 pucks,
+and saved 500/500 home-position shots at 2–8 m/s. Random-pose defense saved
+472/500 on the next seed. A separate 8–12 m/s challenge (seed 20261207) saved
+490/500. An earlier requested 8–14 m/s challenge was capped by the simulator's
+12 m/s puck ceiling; that file is explicitly annotated and must not be reported
+as a realized 14 m/s test. Benchmark input validation now rejects speeds above
+the simulator's actual puck ceiling.
+
+The first held-out full match won 29–8 but reached 0.989 modeled load. There was
+no overload, yet this FAILED the predeclared conservative 0.95 promotion margin.
+Do not relax that gate after seeing the result. The opposite-role and four
+one-hour self-play tests continue unchanged. New experiments use development
+seeds, and any replacement candidate requires a fresh held-out suite.
+
+One such experiment adds a broad goal-threat envelope before interception:
+commands for clear end-rail misses return home quietly, while any shot that
+could enter the mouth under a range of rail damping coefficients retains the
+full defender. This is opt-in (`threat_only`) and is being evaluated; it is NOT
+part of the frozen candidate. More aggressive arrival power, learned cushioning
+before setup, swept-circle clearance and forecasted navigation avoidance did not
+improve the selected controller; failed variants are preserved under
+`logs/foundation`, not enabled. Contact diagnostics explain the remaining
+moving-shot issue: 202/221 first contacts during or shortly after a planned
+strike were on goal, while 45 earlier setup contacts were all off goal.
+
+### Explicit thermal reserve candidate
+
+The threat-envelope defender won 18–4 on development seed 20261136, peak load
+0.889. An independent paired test on seed 20261137 reproduced the original
+controller's margin failure: 15–5, peak 0.955. A simple return-home cooldown at
+observed level 0.88 until 0.82 reduced peak to 0.880 and won 11–9, active for
+2.08% of play. That probe used `probe_load_budget_v1.py`; its lack of pending-shot
+cancellation is corrected in the reusable implementation.
+
+`airhockey/load_budget.py` now cancels a vetoed arrival and retains gentle
+8 m/s² goal-threat interception during cooldown. Heat hysteresis persists across
+points; the external kinematic guard still governs braking. Tests cover fast
+and slow memory triggers, point resets, acceleration encoding, pending-action
+cancellation and low-budget threat tracking. This is an observed thermal
+reserve, not a hardware safety certification.
+
+`_foundation-budgeted-arrival-controller` bundles the unchanged learned motor
+weights with threat-aware centered interception, early recovery, 30 m/s²
+arrival shots and the observed 0.88/0.82 reserve. A fresh qualification suite
+starts at seed 20261501; the earlier held-out seeds are not reused to claim
+qualification. The development match in progress leads 14–0 at 90 seconds;
+full forward/reversed results are pending. The earlier candidate's one-hour
+self-play is still running, peak 0.902 after 51 simulated minutes, but that
+candidate already failed its forward-reference load-margin gate.
+
+The self-play replay label now accepts an explicit match type, so two separately
+loaded copies of the same policy are not mislabeled as reference matches.
+Previously generated known same-policy recordings were corrected; the first
+qualification process predates this metadata fix and its final continuous
+self-play recording must be corrected after it finishes. These changes affect
+labels only, not simulation results.
+
+### Final candidate validation in progress (2026-09-21)
+
+The previous candidate completed four one-hour games at peak load 0.902,
+zero overload, score 3–1, and 2,840/2,817 forward returns. It remains failed
+because of its earlier 0.989 reference-match peak. Its continuous replay's
+self-play metadata is corrected, and its overview plot explicitly shows failure.
+
+The budgeted candidate won development matches 26–1 and 20–6, peak candidate
+load 0.869/0.833. Fresh held-out matches won 17–2 and 31–7, peak 0.811/0.876.
+Held-out skills scored 492 stationary goals, 347 moving goals, 486 cushions and
+500 home-position saves per 500 trials; random-pose defense saved 479/500.
+Extra fresh direct-shot defense at 8–12 m/s saved 491/500. A separate bank-shot
+challenge saved 500/500; every incoming bank was verified to score without a
+defender under the exact randomized trial physics, with no privileged parameters
+given to the policy. Its bank aims were near goal center, not the full mouth.
+
+A hot-start skill diagnostic initialized every fast/slow memory to 0.90 and
+saved 473/500 direct shots at 2–8 m/s. Requested cooldown acceleration is 8 m/s²,
+but the external guard retains up to 60 m/s² braking authority. A sustained
+hot-start reference match and final hour-long qualification remain in progress.
+See `ai/POLICY_RESULTS.md` for the concise candidate description and simulation
+review command. No physical activation or deployment promotion occurred.
+
+### Preserve urgent defense while cooling
+
+The sustained hot-start probe exposed a real weakness hidden by short defense
+trials: the 8 m/s² cooldown candidate lost 3–26 with every fast/slow memory
+initialized at 0.90. On identical development seed 20261141, allowing defensive
+caps 8/15 lost 6–10, 8/25 lost 1–6, and the normal 8/15/25/40/60 feasibility
+selection won 8–1. All four variants stayed below their initial 0.90 peak load.
+Suppressing attacks while retaining necessary interception acceleration is the
+useful thermal compromise; an unconditional low defensive cap is not.
+
+`LoadBudgetPolicy` now accepts `defense_caps` and a separate observed-load
+`defense_ceiling`. Defaults preserve the earlier candidate's 8 m/s² behavior.
+The new frozen `_foundation-reserve-arrival-controller` uses all five defensive
+caps below 0.91, with gentle-only defense at or above 0.91. Attack suppression
+still starts at 0.88 and persists until 0.82. The extra ceiling reserves margin
+for quantized 10 Hz telemetry; it is not a certified hardware bound. A test
+verifies urgent acceleration is available at 0.90 and unavailable at 0.91.
+
+Qualification v2 adds 0.90 hot-start reference games from both sides, keeps all
+previous gates, checks skill load/acceleration too, and freezes runtime metadata,
+the fitted thermal model, geometry and host binaries as well as policy/source
+hashes. New seeds begin at 20261601. Initial results: 493 stationary goals,
+340 moving goals, 486 cushions and 500 home saves per 500 trials; random-pose
+defense 467/500. Full reference, hot-start and one-hour self-play cases remain
+running. Fourteen focused controller/arrival/thermal tests pass. Under concurrent
+evaluation, single-state inference was 1.82 ms median / 5.58 ms p99 ordinarily,
+and 2.48 ms / 6.11 ms while hot (maximum observed 6.62 ms).
+
+New replay metadata explicitly identifies both policies and their inference
+modes, including swapped-side comparisons. Existing qualification recordings
+that predate this metadata addition will be annotated after completion.
+
+### Isolated rebound gains did not justify a new defender
+
+An observed-state controller predicted settled paddle contact normals aimed at
+the far goal. On development seed 20261143 it increased random-pose defensive
+trials with an on-goal return from 97/300 to 212/300, saves 290 to 291. However,
+predicting aim through a future rail bounce regressed fast bank saves from
+298/300 to 286/300. Restricting aim to paths with no future bank restored those
+saves (and preserved 296/300 fast direct saves), but did not meaningfully improve
+full-game returns: 375/795 on goal versus 318/683 for the original defender.
+The full match won 22–3 versus baseline 24–1, with higher peak load .889 versus
+.820. The nominal restitution .9 versus midpoint .775 ablation also produced
+only small, mixed skill changes. None is selected. Prototypes, an extracted
+module and its tests, mathematical/equivalence checks, and decision evidence are
+archived under `logs/foundation`; no aimed-return controller is enabled.
+
+### Independent fast and slow load reserves
+
+The original budgeted candidate completed its v1 qualification: peak .846,
+no overload in four one-hour games. It remains rejected because its supplemental
+hot-start match lost 3–26. The reserve-defender successor passed cold matches
+14–1 and 13–4, and one hot match 2–1, but lost the opposite hot role 3–4. This
+fails v2's predeclared score gate even though all observed loads stayed safe.
+Its one-hour run continues for the load record; it is not promoted.
+
+A fast-load cooldown had been latched by a different, slow memory still above
+the fast release threshold. In the .90 hot-start probe, this disabled attacks
+for the entire three minutes even though short-term load had cooled. The new
+opt-in `slow_budget` keeps separate hysteresis states: fast .88/.82, slow
+.92/.89, with defensive reserve ceilings .91 fast and .94 slow. Legacy/default
+behavior is preserved when `slow_budget` is absent. Both latches persist across
+points, and unit tests exercise independent triggering and release.
+
+The dual-memory development candidate won its .90 hot-start match 6–3, peak
+.900, with cooldown active only 6.26% of play. A .93 initial-load challenge is
+running. `_foundation-dual-load-arrival-controller` is frozen for v3 qualification
+on seeds starting 20261701. V3 retains prior gates and additionally requires
+98% saves on 500 fast direct and 500 fast bank trials. Bank fixtures are checked
+against no-defender rollouts under each trial's actual randomized physics;
+those parameters never reach the policy. High-speed reporting now includes
+8–10 and 10–12 m/s bins. Physical defaults and hardware remain untouched.
+
+### Selected simulation candidate
+
+`_foundation-dual-load-arrival-controller` passed the complete frozen v3 suite.
+On 500 held-out attempts per task: stationary goals 497, moving goals 339,
+cushioning 488, home defense 500, random-pose defense 478, fast direct defense
+494, and fast single-bank defense 497. Both ordinary reference roles won
+(25–4 and 30–7), as did both .90 hot-start roles (3–1 and 7–1). Peak candidate
+loads were .862/.842 cold and .904/.900 hot. The separate .93 development
+stress test won 10–3 without increasing its starting peak load.
+
+Four continuous one-hour self-play games finished at peak load .860, zero
+overload time, peak actual acceleration 60.00094 m/s² (numerical tolerance),
+and maximum speed 5.740 m/s. The aggregate score was 2–3. Eleven unresolved
+guard forecasts were logged, without a measured acceleration-limit violation;
+these remain part of the deployment limitations. In ordinary reference games,
+the candidate spent 2.79% of time above 40 m/s² versus the reference's 20.34%.
+
+The checkpoint, run configuration, control/physics sources and host libraries
+were verified unchanged through qualification. Twenty-one focused regression
+tests and lint checks pass. The evaluation loader now automatically retains
+the saved motion-guard requirement; all qualification calls had already enabled
+that guard explicitly. New progress logs show each side's load separately.
+
+Selection is recorded in the run's `decision.json`; the untouched `run.json`
+still has `deployment_ready: false`. This is a validated simulation improvement,
+not proof of real-drive safety or superhuman performance against humans. Moving
+puck setup remains the main weakness. The concise report and review command
+are in `ai/POLICY_RESULTS.md`; the qualification directory contains raw metrics,
+frozen source/configuration snapshots, verification evidence and `overview.png`.
+No physical hardware was activated, and no deployment defaults were changed.

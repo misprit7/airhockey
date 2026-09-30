@@ -35,6 +35,11 @@ def test_recorder_preserves_units_errors_timestamps_and_disabled_samples(recordi
     a, b = samples
     assert a["motors"][0]["rms_pct"]["value"] == 42
     assert a["motors"][0]["torque_amps"]["value"] == -2.5
+    assert a["motors"][0]["bus_voltage_v"]["value"] == 74.5
+    # Voltage is dynamic: it must update on the next sample, not once/minute.
+    assert b["motors"][0]["bus_voltage_v"]["value"] == 10.0
+    assert a["motors"][1]["bus_voltage_v"]["value"] is None
+    assert not a["motors"][1]["bus_voltage_v"]["valid"]
     assert b["motors"][0]["rms_pct"]["value"] is None
     assert not b["motors"][0]["rms_pct"]["valid"]
     assert b["motors"][0]["rms_pct"]["error"] == "read timeout"
@@ -48,6 +53,9 @@ def test_recorder_preserves_units_errors_timestamps_and_disabled_samples(recordi
         for motor in sample["motors"]:
             for key in ("rms_pct", "torque_amps", "status"):
                 field = motor[key]
+                assert sample["monotonic_start"] <= field["start"] <= field["end"] <= sample["monotonic"]
+            field = motor["bus_voltage_v"]
+            if field["valid"]:
                 assert sample["monotonic_start"] <= field["start"] <= field["end"] <= sample["monotonic"]
     assert b["context"]["fault"]
     assert cache["sample"] == b and cache["logging_ok"]

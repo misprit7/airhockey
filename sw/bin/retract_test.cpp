@@ -43,13 +43,10 @@ static const int CW_API_SIGN = -1;  // negative counts = clockwise
 static const double TEST_SPEED_MM_S = 5.0;   // slow: ~2 s per 10mm phase
 static const double ACCEL_RPM_PER_S = 300;   // gentle ramp
 
-// Encoder counts per revolution by motor type.
-// RLNA = Regular (800), ELNA = Enhanced (6400).
+// Read the actual encoder resolution; do not infer it from a model suffix.
 static int countsPerRev(INode &node) {
-    std::string model = node.Info.Model.Value();
-    if (model.find("-EL") != std::string::npos)
-        return 6400;
-    return 800;
+    node.Info.PositioningResolution.Refresh();
+    return static_cast<int>(node.Info.PositioningResolution.Value());
 }
 
 static int mmToCounts(double mm, int cpr) {

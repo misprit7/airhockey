@@ -11,7 +11,9 @@ import json
 import numpy as np
 from airhockey.dynamics import _geom as geom
 
-DEFAULT_MODEL = Path(__file__).resolve().parents[1] / "recipes/motor-load-20260920.json"
+LEGACY_MODEL = Path(__file__).resolve().parents[1] / "recipes/motor-load-20260920.json"
+# Current physical topology. Pass LEGACY_MODEL explicitly for pre-swap studies.
+DEFAULT_MODEL = Path(__file__).resolve().parents[1] / "recipes/motor-load-20260929.json"
 
 
 class MotorThermal:

@@ -231,6 +231,17 @@ button:active {
     flex-shrink: 0;
 }
 
+#hardware-error {
+    color: var(--amber);
+    background: var(--red-soft);
+    border: 1px solid var(--red);
+    padding: 10px;
+    margin: 8px 0;
+    font-size: 13px;
+    line-height: 1.4;
+    overflow-wrap: anywhere;
+}
+
 #hw-overlay-toggle {
     display: flex;
     align-items: center;
@@ -278,6 +289,14 @@ button:active {
 }
 .mode-btn.active:hover { background: var(--red); color: var(--ink); }
 
+.training-link {
+    color: #9bc7ff;
+    font-size: 13px;
+    display: inline-block;
+    padding: 8px;
+    min-width: 0;
+}
+
 #replay-panel {
     display: flex;
     flex-direction: column;
@@ -309,8 +328,10 @@ button:active {
 }
 #recording-list .run-head {
     display: grid;
-    grid-template-columns: 10px 1fr auto;
-    grid-template-areas: "caret name algo" ". meta meta";
+    /* Descriptive policy labels need their own row so they cannot squeeze
+       a long run name into a column only one character wide. */
+    grid-template-columns: 10px minmax(0, 1fr);
+    grid-template-areas: "caret name" ". algo" ". meta";
     column-gap: 6px;
     row-gap: 1px;
     padding: 7px 10px;
@@ -341,6 +362,7 @@ button:active {
     letter-spacing: 0.1em;
     text-transform: uppercase;
     color: var(--blue);
+    overflow-wrap: anywhere;
     align-self: start;
     padding-top: 2px;
 }
@@ -362,7 +384,7 @@ button:active {
 
 #recording-list li.rec {
     display: grid;
-    grid-template-columns: auto 1fr;
+    grid-template-columns: minmax(0, 1fr) auto;
     grid-template-areas: "step score" "meta meta";
     align-items: baseline;
     column-gap: 8px;
@@ -382,8 +404,17 @@ button:active {
     border-color: var(--blue);
     color: var(--ink);
 }
-#recording-list .rec-step { grid-area: step; font-weight: 700; color: var(--ink); }
-#recording-list .rec-score { grid-area: score; color: var(--amber); }
+#recording-list .rec-step {
+    grid-area: step;
+    font-weight: 700;
+    color: var(--ink);
+    overflow-wrap: anywhere;
+}
+#recording-list .rec-score {
+    grid-area: score;
+    color: var(--amber);
+    white-space: nowrap;
+}
 #recording-list .rec-meta {
     grid-area: meta;
     font-size: 10px;
@@ -407,6 +438,7 @@ button:active {
     border-radius: var(--r);
     border: 1px solid var(--line);
     text-align: center;
+    overflow-wrap: anywhere;
 }
 
 #replay-slider {

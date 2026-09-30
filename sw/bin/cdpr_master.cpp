@@ -11,6 +11,7 @@
 #include <thread>
 #include <chrono>
 #include <memory>
+#include <functional>
 #include <unistd.h>
 #include <sys/socket.h>
 #include <netinet/in.h>
@@ -231,6 +232,12 @@ static void faultWatchdog(ClearPath *robot, int teensy_fd) {
         {
             std::lock_guard<std::mutex> lock(g_robot_mutex);
             g_watchdog_waiting = false;
+            // DISABLE may have completed while this poll waited for the SDK
+            // mutex. Do not diagnose an intentional disable as a drive fault.
+            if (g_stop || !g_motors_enabled || g_fault) {
+                g_watchdog_checked = 0;
+                continue;
+            }
             bad = robot->checkDrives(why, sizeof(why));
             const double now = loadMonotonic();
             const double previous = g_watchdog_checked.exchange(now);
@@ -254,6 +261,25 @@ static void faultWatchdog(ClearPath *robot, int teensy_fd) {
         ssize_t ignored = write(teensy_fd, stop, sizeof(stop) - 1);
         (void)ignored;
         g_fault_unreported = true;
+    }
+}
+
+// Human-readable diagnostics perform several slow SDK transactions. They
+// must never run on the TCP/Teensy command thread: a once-per-second 40ms
+// stall there interrupts a 100Hz trajectory. Keep SDK access serialized and
+// yield to an already-waiting fault watchdog before starting a health poll.
+// The callback also lets host tests block diagnostics without opening drives.
+static void backgroundHealth(const std::function<void()> &poll) {
+    double next = loadMonotonic() + 1.0;
+    while (!g_stop) {
+        if (g_motors_enabled && !g_fault && !g_watchdog_waiting && loadMonotonic() >= next) {
+            std::unique_lock<std::mutex> lock(g_robot_mutex, std::try_to_lock);
+            if (lock.owns_lock() && !g_stop && g_motors_enabled && !g_fault && !g_watchdog_waiting) {
+                poll();
+                next = loadMonotonic() + 1.0;
+            }
+        }
+        usleep(2000);
     }
 }
 
@@ -783,30 +809,18 @@ int main(int argc, char *argv[]) {
         }
     }
     std::thread watchdog(faultWatchdog, &robot, teensy_fd);
+    std::thread health([&robot]() { backgroundHealth([&robot]() { robot.pollHealth(); }); });
 
-    double lastHealth = 0;
     while (!g_stop) {
         if (g_fault_unreported.exchange(false)) {
             logf("\n!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!\n"
                  "!!  DRIVE FAULT: motor %d %s\n"
                  "!!  All four drives disabled and the Teensy stopped, so the\n"
-                 "!!  other three could not keep pulling. Re-ENABLE to clear;\n"
-                 "!!  an RMS overload will not clear until the drive has cooled.\n"
+                 "!!  other three could not keep pulling. Resolve the reported\n"
+                 "!!  fault before re-enabling.\n"
                  "!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!\n\n",
                  g_fault_node.load(), g_fault_why);
         }
-        // Watch the servos a few times a second while they run: torque and
-        // the human-readable alert dump. The fast enabled/alert check is
-        // the watchdog thread's.
-        if (g_motors_enabled) {
-            double now = (double)time(NULL);
-            if (now - lastHealth >= 1.0) {
-                lastHealth = now;
-                std::lock_guard<std::mutex> lock(g_robot_mutex);
-                robot.pollHealth();
-            }
-        }
-
         // ── Accept TCP connections ──
         //
         // One client at a time, deliberately: two things steering the same
@@ -909,6 +923,7 @@ int main(int argc, char *argv[]) {
 
     // Slow/full disks must not make telemetry joining precede de-energizing.
     if (telemetry.joinable()) telemetry.join();
+    health.join();
 
     if (client_fd >= 0) close(client_fd);
     close(server_fd);

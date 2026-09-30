@@ -71,3 +71,22 @@ def test_interceptor_changes_only_incoming_game_states():
 def test_forecast_rejects_invalid_horizons():
     with pytest.raises(ValueError):
         forecast(np.zeros((1, 6)), np.ones((1, 3)), np.ones((1, 3)), [-1])
+
+
+def test_threat_filter_parks_for_clear_misses_without_changing_direct_defense():
+    obs = np.zeros((2, 42), np.float32)
+    obs[:, :4] = [0.5, 1.2, 0, -5]
+    obs[:, 4:6] = [0.5, 0.25]
+    obs[:, 33] = 1
+    obs[:, 13] = 12 / MAX_SPEED_M_S
+    obs[:, 14] = 60 / MAX_ACCEL_M_S2
+    obs[:, 40] = 0.5
+    obs[1, 0] = 0.08  # A straight shot into the end rail, far outside the mouth.
+    original, _ = InterceptionController()(obs, np.zeros((2, 3)))
+    guarded, used = InterceptionController(threat_only=True)(obs, np.zeros((2, 3)))
+    np.testing.assert_allclose(guarded[0], original[0])
+    assert used.all()
+    np.testing.assert_allclose(guarded[1, 0], 0, atol=1e-6)
+    obs[1, 14] = 40 / MAX_ACCEL_M_S2
+    with pytest.raises(ValueError):
+        InterceptionController(threat_only=True)(obs, np.zeros((2, 3)))

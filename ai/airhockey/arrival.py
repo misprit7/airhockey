@@ -35,6 +35,22 @@ def copy_cart(cart: CartState) -> CartState:
     return result
 
 
+def damped_velocity_step(jx, jy, residual, damping=0.1):
+    """Solve the 2-D damped least-squares correction without determinant cancellation."""
+    jx, jy, residual = (np.asarray(a, dtype=np.float64) for a in (jx, jy, residual))
+    xx = np.sum(jx * jx, axis=1)
+    yy = np.sum(jy * jy, axis=1)
+    xy = np.sum(jx * jy, axis=1)
+    rx = np.sum(jx * residual, axis=1)
+    ry = np.sum(jy * residual, axis=1)
+    cross = jx[:, 0] * jy[:, 1] - jx[:, 1] * jy[:, 0]
+    # Expanding det(J.T J + damping I) as positive terms retains damping
+    # even when large, nearly parallel Jacobian columns cancel in xx*yy-xy².
+    determinant = cross**2 + damping * (xx + yy) + damping**2
+    return np.column_stack((((yy + damping) * rx - xy * ry) / determinant,
+                            ((xx + damping) * ry - xy * rx) / determinant))
+
+
 class ArrivalDecoder:
     """Minimum-energy arrival guidance followed by inverse profile control.
 
@@ -141,14 +157,7 @@ class ArrivalDecoder:
             jx = (endpoint_velocity(target + [epsilon, 0]) - base) / epsilon
             jy = (endpoint_velocity(target + [0, epsilon]) - base) / epsilon
             residual = end_velocity - base
-            aa = np.sum(jx * jx, axis=1) + 0.1
-            bb = np.sum(jx * jy, axis=1)
-            cc = np.sum(jy * jy, axis=1) + 0.1
-            rx = np.sum(jx * residual, axis=1)
-            ry = np.sum(jy * residual, axis=1)
-            determinant = aa * cc - bb**2
-            step = np.column_stack(((cc * rx - bb * ry) / determinant,
-                                    (aa * ry - bb * rx) / determinant))
+            step = damped_velocity_step(jx, jy, residual)
             step *= np.minimum(1, 0.05 / np.maximum(np.linalg.norm(step, axis=1), 1e-9))[:, None]
             target = np.clip(target + step, self.low, self.high)
         terminal_speed = np.linalg.norm(velocity, axis=1)

@@ -367,6 +367,9 @@ class BatchAirHockeyEnv:
         # Isolated skill trials must not receive referee-generated replacement
         # pucks. None retains the normal game rules for every environment.
         self.referee_active_mask = None
+        # Optional training referee filter, evaluated against post-step state.
+        # It never selects paddle actions or changes observations.
+        self.stuck_relaunch_filter = None
         self.max_episode_steps = max_episode_steps  # None = use time-based truncation
         self.max_score = max_score
         self.opponent_policy = opponent_policy
@@ -638,6 +641,7 @@ class BatchAirHockeyEnv:
         if shot_types and obs_mode == "history":
             raise NotImplementedError("shot types are kinematic-obs only")
         self.shot_types = bool(shot_types)
+        self._shot_type_p_opp = None
         self.symmetric_referee = bool(symmetric_referee)
         self._shot_type_p = np.asarray(shot_type_probs, dtype=float)
         if self._shot_type_p.shape != (4,) or abs(self._shot_type_p.sum() - 1.0) > 1e-6:
@@ -1081,6 +1085,8 @@ class BatchAirHockeyEnv:
         limit = np.where(attended, self._stuck_attended_steps,
                          self._stuck_unattended_steps)
         stuck = self._puck_slow_count >= limit
+        if self.stuck_relaunch_filter is not None:
+            stuck &= self.stuck_relaunch_filter()
         if self.referee_active_mask is not None:
             stuck &= self.referee_active_mask
         stuck_penalty = np.zeros(self.n_envs)
@@ -1222,7 +1228,13 @@ class BatchAirHockeyEnv:
         n = int(mask.sum())
         if n == 0:
             return
-        draw = self._rng.choice(4, size=n, p=self._shot_type_p).astype(np.int8)
+        probabilities = self._shot_type_p if agent or self._shot_type_p_opp is None else self._shot_type_p_opp
+        if probabilities.ndim == 2:
+            # Optional per-game opponent styles for neural training. Existing
+            # shared distributions retain their exact RNG path.
+            draw = (self._rng.random(n)[:, None] >= np.cumsum(probabilities[mask], axis=1)).sum(axis=1).astype(np.int8)
+        else:
+            draw = self._rng.choice(4, size=n, p=probabilities).astype(np.int8)
         if agent:
             self._shot_type[mask] = draw
         else:

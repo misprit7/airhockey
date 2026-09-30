@@ -1,4 +1,5 @@
 #include "clearpath.h"
+#include "motor_hardware.h"
 #include <cmath>
 #include <cstdio>
 #include <string>
@@ -23,12 +24,14 @@ LoadValue ClearPath::readLoad(unsigned node, LoadField field) {
         case LoadField::TorqueAmps: parameter = CPM_P_DRV_TRQ_MEAS; break;
         case LoadField::Encoder: parameter = CPM_P_POSN_MEAS; break;
         case LoadField::Velocity: parameter = CPM_P_VEL_MEAS; break;
+        case LoadField::BusVolts: parameter = CPM_P_DRV_BUS_VOLTS; break;
         case LoadField::PeakAmps: parameter = CPM_P_DRV_I_MAX; break;
         case LoadField::RmsLimitAmps: parameter = CPM_P_DRV_RMS_LIM; break;
         case LoadField::RmsTimeSeconds: parameter = CPM_P_DRV_RMS_TC; break;
         case LoadField::SlowLimitAmps: parameter = CPM_P_DRV_RMS_SLOW_LIM; break;
         case LoadField::SlowTimeMinutes: parameter = CPM_P_DRV_RMS_SLOW_TC; break;
         case LoadField::TorqueLimitAmps: parameter = CPM_P_DRV_TRQ_LIM; break;
+        case LoadField::StepInputResolution: parameter = CPM_P_DRV_STEP_DENS; break;
         case LoadField::EncoderResolution:
           n.Info.PositioningResolution.Refresh(); out.value = n.Info.PositioningResolution.Value(); break;
         case LoadField::Serial:
@@ -121,6 +124,19 @@ static bool isRoutineEStop(const alertReg &a) {
   return a.bits[0] == ALERT_ESTOPPED && a.bits[1] == 0 && a.bits[2] == 0;
 }
 
+// Read-only diagnostics, useful even when the drives cannot become ready.
+static void reportBusVoltage(INode &node, unsigned index) {
+  try {
+    const double volts = node.Info.Ex.Parameter(CPM_P_DRV_BUS_VOLTS);
+    if (std::isfinite(volts))
+      printf("  motor %u bus voltage %.2f V\n", index, volts);
+    else
+      printf("  motor %u bus voltage unavailable (nonfinite reading)\n", index);
+  } catch (mnErr &e) {
+    printf("  motor %u bus voltage unreadable (0x%08x)\n", index, e.ErrorCode);
+  }
+}
+
 int ClearPath::clearFaults() {
   if (!connected_ || !port_) {
     printf("clearFaults: not connected to the SC-Hub.\n");
@@ -178,12 +194,42 @@ int ClearPath::clearFaults() {
     printf("Cleared REAL faults on %d motor(s) -- see above; they describe "
            "the PREVIOUS run.\n", found);
   } else {
-    printf("WARNING: %d motor(s) still in alert. An RMS overload will not "
-           "clear until the drive's thermal model cools -- wait rather than "
-           "retry.\n", stuck);
+    printf("WARNING: %d motor(s) still in alert; resolve the reported cause "
+           "before enabling. BusVoltageLow means the motor supply voltage "
+           "must recover; it is not an RMS cooldown indication.\n", stuck);
   }
   fflush(stdout);
   return stuck;
+}
+
+bool ClearPath::validateHardware() {
+  if (!connected_ || !port_ || node_count_ != 4) return false;
+  bool valid = true;
+  printf("Motor hardware profile: %s\n", MotorHardware::REVISION);
+  for (int i = 0; i < 4; ++i) {
+    try {
+      INode &node = port_->Nodes(i);
+      node.Info.Model.Refresh();
+      node.Info.PositioningResolution.Refresh();
+      const std::string model = node.Info.Model.Value();
+      const unsigned encoder = node.Info.PositioningResolution.Value();
+      const double steps = node.Info.Ex.Parameter(CPM_P_DRV_STEP_DENS);
+      const bool ok = MotorHardware::matches(model.c_str(), encoder, steps);
+      printf("  motor %d: %s, encoder %u counts/rev, step input %.1f pulses/rev%s\n",
+             i, model.c_str(), encoder, steps, ok ? "" : " -- MISMATCH");
+      valid &= ok;
+    } catch (mnErr &e) {
+      printf("  motor %d: hardware configuration unreadable (0x%08x)\n", i, e.ErrorCode);
+      valid = false;
+    }
+  }
+  if (!valid)
+    printf("ENABLE refused: all four drives must be %s with %u encoder counts/rev "
+           "and %u step-input pulses/rev. Verify replacement drive settings in ClearView.\n",
+           MotorHardware::MODEL, MotorHardware::ENCODER_COUNTS_PER_REV,
+           MotorHardware::STEP_INPUT_COUNTS_PER_REV);
+  fflush(stdout);
+  return valid;
 }
 
 bool ClearPath::enable() {
@@ -206,6 +252,9 @@ bool ClearPath::enable() {
   }
   if (enabled_) return true;
 
+  // Reject the entire configuration before energizing even the first motor.
+  if (!validateHardware()) return false;
+
   try {
     for (int i = 0; i < 4; i++) {
       INode &node = port_->Nodes(i);
@@ -224,6 +273,7 @@ bool ClearPath::enable() {
           // and an RMS overload will not clear until its thermal model has
           // cooled, so retrying straight away just re-trips it.
           printf("ENABLE refused: motor %d did not become ready within 5 s.\n", i);
+          reportBusVoltage(node, i);
           try {
             node.Status.Alerts.Refresh();
             alertReg a = node.Status.Alerts.Value();
@@ -284,6 +334,7 @@ void ClearPath::disconnect() {
 void ClearPath::reportTorqueLimits() {
   if (!connected_ || !port_) return;
   for (unsigned i = 0; i < port_->NodeCount(); i++) {
+    reportBusVoltage(port_->Nodes(i), i);
     try {
       INode &n = port_->Nodes(i);
       n.TrqUnit(INode::PCT_MAX);
@@ -377,8 +428,9 @@ bool ClearPath::pollHealth(double torque_warn_pct) {
   for (int i = 0; i < 4; i++)
     if (fabs(trq[i]) > fabs(worst)) worst = trq[i];
   if (fabs(worst) > torque_warn_pct) {
-    printf("!! high torque: [%.1f %.1f %.1f %.1f] %% — opposing signs here "
-           "mean cables are fighting\n", trq[0], trq[1], trq[2], trq[3]);
+    printf("!! high torque: [%.1f %.1f %.1f %.1f] %% — diagnostic only; "
+           "shaft torque signs depend on motor mounting, not cable conflict\n",
+           trq[0], trq[1], trq[2], trq[3]);
     reported = true;
   }
   return reported;

@@ -4,6 +4,7 @@ from __future__ import annotations
 
 import json
 import math
+import tempfile
 from dataclasses import asdict, dataclass
 from pathlib import Path
 
@@ -30,6 +31,9 @@ class FrameData:
     score_opponent: int
     reward: float = 0.0
     cumulative_reward: float = 0.0
+    shot_type_agent: int = 0
+    shot_type_opponent: int = 0
+    rally_event: str = ""
 
 
 class Recorder:
@@ -75,12 +79,27 @@ class Recorder:
         data = {"fields": fields, "columns": columns}
         if metadata:
             data["metadata"] = metadata
-        Path(path).write_text(json.dumps(
+        serialized = json.dumps(
             data,
             separators=(",", ":"),
             allow_nan=False,
             default=lambda x: round(_clean_float(float(x)), 4),
-        ))
+        )
+        path = Path(path)
+        # Background evaluations refresh WIP replays while the UI reads them.
+        # Readers must see either complete version, never a truncated JSON file.
+        with tempfile.NamedTemporaryFile(mode="w", dir=path.parent,
+                                         prefix=path.name + ".", suffix=".tmp", delete=False) as handle:
+            temporary = Path(handle.name)
+            try:
+                handle.write(serialized)
+            except BaseException:
+                temporary.unlink(missing_ok=True)
+                raise
+        try:
+            temporary.replace(path)
+        finally:
+            temporary.unlink(missing_ok=True)
 
     @staticmethod
     def load(path: str | Path) -> list[FrameData]:

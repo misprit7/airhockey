@@ -11,9 +11,9 @@
 #include <vector>
 
 enum class LoadField {
-    Rms, RmsSlow, TorqueAmps, Encoder, Velocity, Status, Alerts,
+    Rms, RmsSlow, TorqueAmps, Encoder, Velocity, Status, Alerts, BusVolts,
     PeakAmps, RmsLimitAmps, RmsTimeSeconds, SlowLimitAmps, SlowTimeMinutes,
-    EncoderResolution, Serial, Firmware, TorqueLimitAmps, Count
+    EncoderResolution, Serial, Firmware, TorqueLimitAmps, StepInputResolution, Count
 };
 
 struct LoadValue {

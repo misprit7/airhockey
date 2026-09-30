@@ -18,10 +18,11 @@
 
 #include "cdpr_geometry.h"
 #include "motion_profile.h"
+#include "motor_hardware.h"
 
 // Mirrors fw/include/cdpr_config.h. Not included directly: that header is
 // Teensy-facing and pulls in Arduino types.
-static const int COUNTS_PER_REV = 800;
+static const int COUNTS_PER_REV = MotorHardware::STEP_INPUT_COUNTS_PER_REV;
 static const float COUNTS_PER_MM = (float)COUNTS_PER_REV / SPOOL_CIRCUMFERENCE_MM;
 static const float MAX_VELOCITY_MM_S = 12000.0f;
 static const uint32_t TICK_RATE_HZ = 50000;

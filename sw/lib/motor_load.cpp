@@ -15,10 +15,10 @@ double loadWallTime() { return clockSeconds(CLOCK_REALTIME); }
 
 const char *loadFieldName(LoadField f) {
     static const char *names[] = {"rms_pct", "rms_slow_pct", "torque_amps",
-        "encoder_counts", "velocity_counts_s", "status", "alerts",
+        "encoder_counts", "velocity_counts_s", "status", "alerts", "bus_voltage_v",
         "peak_current_amps", "rms_limit_amps", "rms_time_constant_s",
         "rms_slow_limit_amps", "rms_slow_time_constant_min", "encoder_counts_rev",
-        "serial_number", "firmware_version", "torque_limit_amps"};
+        "serial_number", "firmware_version", "torque_limit_amps", "step_input_counts_rev"};
     return names[static_cast<unsigned>(f)];
 }
 std::string loadJsonString(const std::string &s) {

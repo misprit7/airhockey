@@ -92,6 +92,7 @@ class PuckPerception:
         self.glare = glare
         self.noise = noise
         self._rng = rng or np.random.default_rng()
+        self._report_history = None
 
         # Glare patch sits at table centre, where the ring is mounted.
         self.cx, self.cy = table_w / 2.0, table_h / 2.0
@@ -125,6 +126,20 @@ class PuckPerception:
         """
         self._rng = rng
 
+    def enable_report_estimator(self):
+        """Opt into the live encoder's bounce/gap-aware sample fit.
+
+        Legacy sensing remains the default so existing experiment comparisons
+        do not silently change. Enable before reset/training/evaluation.
+        """
+        from airhockey.report_sensing import ReportVelocityHistory
+        from airhockey.deploy import mm_velocity_to_sim
+        from airhockey.heuristics import BOUNCE_EPS_MM
+        eps = tuple(abs(v) for v in mm_velocity_to_sim(BOUNCE_EPS_MM, BOUNCE_EPS_MM,
+                                                      self.cx*2, self.cy))
+        self._report_history = ReportVelocityHistory(self.n, self.dt, epsilon=eps)
+        self._report_history.reset(self._last_x, self._last_y)
+
     def reset(self, x: np.ndarray, y: np.ndarray, idx=slice(None)) -> None:
         # x[idx] works for both the full and the partial case (slice(None)
         # just returns a view of x). The previous `idx != slice(None)` guard
@@ -139,6 +154,8 @@ class PuckPerception:
         self._last_vy[idx] = 0.0
         self._last_x[idx] = x[idx]
         self._last_y[idx] = y[idx]
+        if self._report_history is not None:
+            self._report_history.reset(x, y, idx)
 
     def visible(self, x: np.ndarray, y: np.ndarray) -> np.ndarray:
         if not self.glare:
@@ -162,6 +179,9 @@ class PuckPerception:
         if self.noise:
             mx += self._rng.normal(0.0, self.pos_noise, self.n)
             my += self._rng.normal(0.0, self.pos_noise, self.n)
+
+        if self._report_history is not None:
+            return self._report_history.update(mx, my, seen)
 
         # A puck seen again after a dropout restarts its history from the
         # new fix: the real fitter only uses samples inside its 30 ms

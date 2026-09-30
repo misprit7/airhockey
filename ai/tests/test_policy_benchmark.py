@@ -1,7 +1,7 @@
 import numpy as np
 
 from airhockey.arrival_env import ArrivalEnv
-from airhockey.policy_benchmark import LegacyTrials, fixtures
+from airhockey.policy_benchmark import LegacyTrials, fixtures, bank_defense_launches
 from airhockey.skill_benchmark import make_fixtures
 
 
@@ -51,6 +51,19 @@ def test_defense_fixtures_are_on_goal_without_a_rail_bounce():
     )
 
 
+def test_banked_defense_launches_really_score_without_a_defender():
+    from airhockey.physics import TableConfig
+    from airhockey.shot_flight import open_goal_outcomes
+
+    p = bank_defense_launches(35, 64)
+    assert (p[::2, 2] > 0).all() and (p[1::2, 2] < 0).all()
+    speed = np.linalg.norm(p[:, 2:], axis=1)
+    assert ((speed >= 8) & (speed <= 12)).all()
+    p[:, 1] = TableConfig().height - p[:, 1]
+    p[:, 3] *= -1
+    assert open_goal_outcomes(p).all()
+
+
 def test_defense_trial_does_not_get_a_second_serve_after_block():
     env = ArrivalEnv(1, randomize=False, realistic=False)
     env.reset(seed=3)
@@ -71,4 +84,4 @@ def test_selfplay_game_aim_request_is_symmetric():
     obs = env.reset(seed=31)
     rival = env.opponent_obs()
     np.testing.assert_array_equal(obs[:, 37], rival[:, 37])
-    np.testing.assert_allclose(obs[:, 37], .5)
+    np.testing.assert_allclose(obs[:, 37], 0.5)

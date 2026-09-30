@@ -2,6 +2,7 @@
 # Turn it on and it plays: the master, the camera and the policy, in one
 # command, from the REPO ROOT.
 #
+#   bash ai/bin/play.sh --policy neural:runs/_neural-player-requests-defense30/agent_step_515850240.pt
 #   bash ai/bin/play.sh --policy tdmpc2:2.3-control-gate-selfplay
 #   bash ai/bin/play.sh --policy tdmpc2:latest --gentle   # FIRST RUN OF ANY NEW CHECKPOINT
 #   bash ai/bin/play.sh --policy tdmpc2:latest --dry      # camera + policy, commands nothing
@@ -51,6 +52,17 @@ done
 # override (and are reported as deviations), --governor trims when the
 # paddle falls behind.
 
+# Fail incompatible neural checkpoints/options before starting the hardware master.
+# --check-policy is entirely offline, including when used through this launcher.
+for arg in "${ARGS[@]}"; do
+    if [ "$arg" = --check-policy ]; then
+        exec python3 ai/bin/run_policy.py --policy "$POLICY" "${ARGS[@]}"
+    fi
+done
+if [[ "$POLICY" == neural:* ]]; then
+    python3 ai/bin/run_policy.py --check-policy --policy "$POLICY" "${ARGS[@]}" || exit 1
+fi
+
 [ -x vision/build/blobtrack ] || make -C vision
 if [ "$LIVE" = 1 ]; then
     # Rebuild when sources change, even if an older binary already exists.
@@ -87,7 +99,11 @@ PY
     # The master writes logs/cdpr_master.log itself (overwritten per run);
     # cleanup() keeps a stamped copy next to the runner's session log.
     mkdir -p logs
-    sw/build/cdpr_master "${MASTER_ARGS[@]}" > /dev/null &
+    # Keep terminal Ctrl-C with the runner. It must brake and close first;
+    # cleanup then sends the master's FIRST signal to de-energize normally.
+    # Previously both received Ctrl-C, and cleanup's second SIGINT could force
+    # the master out halfway through disabling the drives.
+    setsid sw/build/cdpr_master "${MASTER_ARGS[@]}" > /dev/null &
     MASTER_PID=$!
     for _ in $(seq 1 100); do
         python3 - <<'PY' 2>/dev/null && break

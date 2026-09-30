@@ -130,6 +130,7 @@ CONTROLLER_STALE_S = 0.050
 # drove at the phantom, 113-400 mm of target change per tick at 32 m/s^2,
 # and tripped a drive's RMS overload.
 DEFAULT_PUCK_TIMEOUT_S = 0.5
+PUCK_HOME_TIMEOUT_S = 1.0
 SIM_MAX_UNSEEN_S = 0.5
 
 # The first-live-run preset. Slow enough that a wrong sign or a bad
@@ -215,6 +216,7 @@ class ReportBuilder:
         self.puck: deque[tuple[float, float, float]] = deque()
         self.mallet: tuple[float, float] | None = None
         self.controller_mallet: tuple[float, float] | None = None
+        self.controller_velocity: tuple[float, float] | None = None
         self.opponent: tuple[float, float] | None = None
         # Last time each was actually SEEN, not last time it was asked for.
         self.t_puck = float("-inf")
@@ -258,7 +260,7 @@ class ReportBuilder:
         self.n_mallet += 1
 
     def set_controller_mallet(self, t: float, x: float, y: float,
-                              age_s: float = 0.0) -> None:
+                              age_s: float = 0.0, velocity=None) -> None:
         """The CONTROLLER's view of the robot mallet -- POS, not the camera.
 
         Preferred over the camera when it is available, which is the
@@ -269,8 +271,9 @@ class ReportBuilder:
             paddle fresh and unlagged, and the puck and opponent through the
             camera. A bot tuned against that and then given a lagged, noisy
             own-position on the table is being asked a different question.
-          * no latency. The camera path is ~7.7 ms; this is the Teensy's own
-            integrated position, cached in the master.
+          * a timestamped motion state. This is the Teensy's integrated
+            position/velocity cached in the master, typically 6–12 ms old.
+            The neural adapter projects it forward through command history.
           * it never drops out. The camera loses the mallet to a hand, to
             glare, or to the puck sitting on top of it.
 
@@ -279,17 +282,17 @@ class ReportBuilder:
         feeding that in would tell the bot it had already arrived.
         """
         self.controller_mallet = (float(x), float(y))
+        self.controller_velocity = velocity
         self.t_controller = t - max(0.0, age_s)
 
     def mallet_disagreement(self, t: float,
                             stale_s: float = STALE_S) -> float | None:
         """How far apart the camera and the controller are, in mm.
 
-        The only cross-check the rig has on its own cable model: the
-        controller's position is derived from step counts through the cable
-        kinematics, and the camera's is measured. A steady disagreement is
-        the model being wrong, which is otherwise invisible until something
-        binds. None when either source is stale.
+        The controller position comes from step counts and cable kinematics;
+        the camera position is measured. This raw gap does not align sample
+        times, so motion latency can resemble following error. Use timestamped
+        replay for that distinction. None when either source is stale.
         """
         if (self.mallet is None or self.controller_mallet is None
                 or t - self.t_mallet > stale_s
@@ -325,9 +328,18 @@ class ReportBuilder:
         `t_s` is carried so that a bot's timers keep running while it is.
         """
         self._expire(t)
+        own = self._own_mallet(t, stale_s, mallet_fallback, lag_s)
+        controller_fresh = t - self.t_controller <= min(stale_s, CONTROLLER_STALE_S)
         return {
+            "controller_sample": (dict(position=self.controller_mallet,
+                                       velocity=self.controller_velocity,
+                                       age_s=max(0.0, t-self.t_controller))
+                                  if controller_fresh and self.controller_velocity is not None else None),
+            "controller_velocity": (self.controller_velocity if controller_fresh
+                                    and own == self.controller_mallet else None),
+            "own_fresh": controller_fresh or t - self.t_mallet <= stale_s,
             OBS_PUCK: list(self.puck),
-            OBS_MALLET: self._own_mallet(t, stale_s, mallet_fallback, lag_s),
+            OBS_MALLET: own,
             OBS_OPPONENT: (self.opponent
                            if t - self.t_opponent <= stale_s else None),
             OBS_TIME: t,
@@ -480,6 +492,34 @@ def puck_hold_target(report: ReportBuilder, t: float) -> tuple[float, float]:
     if report.mallet is not None and t - report.t_mallet <= STALE_S:
         return geom.clamp_to_workspace(*report.mallet)
     raise RuntimeError("cannot brake on puck loss: no fresh paddle position")
+
+
+class PuckIdleReturn:
+    """Brake first; after the puck-loss timeout, return gently using fresh POS."""
+
+    def __init__(self):
+        self.started = None
+        self.target = None
+        self.returning = False
+
+    def update(self, report: ReportBuilder, t: float):
+        if self.started is None:
+            self.started = t
+            self.target = puck_hold_target(report, t)
+        unseen = t - (report.t_puck if math.isfinite(report.t_puck) else self.started)
+        fresh = (report.controller_mallet is not None and
+                 0 <= t - report.t_controller <= CONTROLLER_STALE_S)
+        velocity = report.controller_velocity
+        stopped = (fresh and velocity is not None and
+                   all(math.isfinite(v) for v in velocity) and
+                   math.hypot(*velocity) <= 20.0)
+        if unseen >= PUCK_HOME_TIMEOUT_S and t - self.started >= 0.5 and stopped:
+            self.returning = True
+        if self.returning:
+            if not fresh:
+                raise RuntimeError("cannot return to center: controller position is stale")
+            return geom.HOME_X, geom.HOME_Y
+        return self.target
 
 
 class LagMonitor:
@@ -749,14 +789,14 @@ class CapCommitter:
                 or abs(accel - self.accel)
                 > max(self.ABS_ACCEL_TOL, self.REL_TOL * self.accel))
 
-    def maybe_commit(self, t: float, speed: float, accel: float) -> bool:
+    def maybe_commit(self, t: float, speed: float, accel: float, *, force=False) -> bool:
         """Push LIMITS if it is both due and worth it. Returns whether it did.
 
         The FIRST call always commits: until then the Teensy is holding
         whatever the last session left it, which is not something to inherit.
         """
         first = self.speed is None
-        if not first:
+        if not first and not force:
             if t - self._t_last < self.min_interval_s or not self._worth_it(
                     speed, accel):
                 self.n_suppressed += 1
@@ -943,6 +983,7 @@ def load_policy(spec: str, caps: Caps, plan_iters: int | None = None,
         builtin:<name>     one of BUILTIN_BOTS, above
         tdmpc2:<run>       a checkpoint (runs/<run>, or `latest`), via
                            airhockey.deploy
+        neural:<run/path>  explicit neural arrival checkpoint, via neural_deploy
         sac:<run>          NOT IMPLEMENTED -- see _load_sac
     """
     kind, _, name = spec.partition(":")
@@ -951,6 +992,22 @@ def load_policy(spec: str, caps: Caps, plan_iters: int | None = None,
         if plan_iters is None:
             plan_iters = PLAN_ITERATIONS
         return _load_tdmpc2(name, caps, plan_iters, device, shot_mode, cmd_hz, puck_timeout, ckpt)
+    if kind == "neural":
+        from airhockey.neural_deploy import NeuralPolicy
+        if plan_iters is not None:
+            raise ValueError("--plan applies only to tdmpc2; neural uses its actor directly")
+        if not math.isclose(cmd_hz, 50.0):
+            raise ValueError("neural arrival policies require --cmd-hz 50")
+        policy = NeuralPolicy(ckpt or name, caps.speed_max, caps.accel_max,
+                              shot_mode=shot_mode, device=device)
+        ms = policy.warm_up()
+        print(f"neural checkpoint: {policy.ckpt}")
+        print(f"single neural actor, {policy.net.obs_dim} inputs / 6 arrival outputs; "
+              f"50 Hz; decoder + guard: {ms:.2f} ms median")
+        print(f"session caps: {caps.speed_max / 1000:g} m/s, "
+              f"{caps.accel_max / 1000:g} m/s^2; shot request: {shot_mode}")
+        print("RMS: fresh drive telemetry with persistent model fallback for missing channels")
+        return policy
     if kind == "sac":
         return _load_sac(name, caps)
     if kind == "builtin":
@@ -960,7 +1017,7 @@ def load_policy(spec: str, caps: Caps, plan_iters: int | None = None,
         return BUILTIN_BOTS[name](caps)
     if kind != "heuristic":
         raise SystemExit(f"unknown policy kind {kind!r} "
-                         "(heuristic: / builtin: / tdmpc2: / sac:)")
+                         "(heuristic: / builtin: / tdmpc2: / neural: / sac:)")
 
     # Imported lazily so that --selftest, and therefore `pytest ai`, does not
     # depend on the heuristics module loading.
@@ -1089,6 +1146,7 @@ TICK_COLUMNS = [
     "cmd_x", "cmd_y", "cmd_speed", "cmd_accel", "flags",
     "limits_speed", "limits_accel",
     "track_ms", "io_ms", "policy_ms",
+    "neural_obs", "neural_action", "neural_load_fresh", "neural_state_source", "neural_state_age_ms",
 ]
 
 
@@ -1186,6 +1244,7 @@ def plan_detail(policy, report: ReportBuilder, t: float, caps: Caps,
                         "heuristics.Command")
     asked = Action(*(float(v) for v in raw))
     action, flags = clamp_action(asked, caps, prev)
+    flags.extend(getattr(policy, "last_flags", []))
     return action, flags, asked
 
 
@@ -1469,8 +1528,7 @@ def run(args) -> int:
     from puck_stream import BlobStream, PuckTracker  # noqa: PLC0415
     import track_mallet as tm                    # noqa: PLC0415
 
-    caps = Caps(speed_max=args.speed, accel_max=args.accel,
-                accel_min=max(Caps.accel_min, getattr(args, "accel_floor", None) or 0.0))
+    caps = session_caps(args)
     # getattr: the tests drive run() with a hand-built Namespace.
     log_dir = getattr(args, "log_dir", None)
     slog = SessionLog(Path(log_dir)) if log_dir else None
@@ -1567,10 +1625,13 @@ def run(args) -> int:
     next_cmd = 0.0
     prev: tuple[float, float] | None = None
     hold_target: tuple[float, float] | None = None
+    idle_return = PuckIdleReturn()
     action = None
     flags: list[str] = []
     n_clamped = 0
     last_print = 0.0
+    next_load = 0.0
+    load_warning = False
     warned_disagree = False
     t_wall = time.time()
     # Where the tick goes, so a loop that falls behind the camera says WHY:
@@ -1604,7 +1665,7 @@ def run(args) -> int:
                         report.add_opponent(t, got[0], got[1])
                 if slog is not None and slog.replay is not None:
                     slog.replay.frame(t, report)
-                    slog.replay.tracking_diagnostics(t, tracker, blobs)
+                    slog.replay.tracking_diagnostics(t, tracker, blobs, report)
             cost["track"] += time.perf_counter() - w0
             cost["frames"] += len(batch)
             t = batch[-1][1]
@@ -1621,6 +1682,10 @@ def run(args) -> int:
                 continue
             next_cmd = t + period
             cost["ticks"] += 1
+            # The controller sample is labelled with camera tick t below.
+            # Keep its host-clock anchor so command delivery includes all work
+            # after that query, including LOAD, planning, and LIMITS round trips.
+            state_sampled_at = time.monotonic()
 
             # The CONTROLLER's own position, preferred over the camera for
             # the report's `mallet`. Cheap enough to do every tick: the
@@ -1632,12 +1697,24 @@ def run(args) -> int:
                 w0 = time.perf_counter()
                 try:
                     px, py, _vx, _vy, sample_age = client.get_position_sample()
-                    report.set_controller_mallet(t, px, py, age_s=sample_age)
+                    state_sampled_at = time.monotonic()
+                    report.set_controller_mallet(t, px, py, age_s=sample_age, velocity=(_vx, _vy))
                     if slog is not None and slog.replay is not None:
                         slog.replay.controller(t, px, py, _vx, _vy, sample_age)
                 except Exception:      # noqa: BLE001
                     pass               # no status yet; the camera covers it
                 cost["io"] += time.perf_counter() - w0
+                if hasattr(policy, "update_motor_load") and time.monotonic() >= next_load:
+                    w0 = time.perf_counter()
+                    next_load = time.monotonic() + 0.1
+                    try:
+                        snapshot = client.get_motor_load()
+                        policy.update_motor_load(snapshot, time.monotonic())
+                    except (RuntimeError, ValueError, OSError) as e:
+                        if not load_warning:
+                            print(f"RMS telemetry unavailable; using persistent load model: {e}")
+                            load_warning = True
+                    cost["io"] += time.perf_counter() - w0
                 d = report.mallet_disagreement(t)
                 if d is not None and d > MALLET_DISAGREE_WARN_MM \
                         and not warned_disagree:
@@ -1645,8 +1722,9 @@ def run(args) -> int:
                     print(f"WARNING: camera and controller disagree about the "
                           f"mallet by {d:.0f} mm. The controller's position "
                           f"comes from step counts through the cable model, "
-                          f"the camera's is measured — a steady gap is the "
-                          f"model being wrong.")
+                          f"the camera's is measured. Different sample times "
+                          f"can contribute; compare the timestamped replay "
+                          f"before interpreting this as following error.")
 
             was_blind = watchdog.blind
             event = watchdog.update(t - report.t_puck)
@@ -1655,8 +1733,10 @@ def run(args) -> int:
                 if slog is not None and slog.replay is not None:
                     slog.replay.puck_watchdog(t, watchdog.blind, watchdog.reason)
 
+            restore_caps = was_blind and not watchdog.blind and idle_return.returning
             if was_blind and not watchdog.blind:
                 hold_target = None
+                idle_return = PuckIdleReturn()
                 reset = getattr(policy, "reset", None)
                 if callable(reset):
                     reset()
@@ -1669,28 +1749,42 @@ def run(args) -> int:
                 # fixed. The old target may be a full swing away. Re-reading
                 # position every tick would chase camera/controller noise.
                 hold_io = 0.0
-                if prev is not None:
-                    try:
-                        if hold_target is None:
-                            hold_target = puck_hold_target(report, t)
+                try:
+                    was_returning = idle_return.returning
+                    hold_target = idle_return.update(report, t)
+                    if idle_return.returning and not was_returning:
+                        print(("" if args.live else "[DRY RUN] ") +
+                              f"puck unseen for {PUCK_HOME_TIMEOUT_S:g}s — returning slowly to center")
+                    if prev is not None or idle_return.returning:
                         prev = hold_target
                         w0 = time.perf_counter()
                         sent_at = time.monotonic()
+                        if idle_return.returning:
+                            action = Action(*hold_target, min(500.0, caps.speed_max),
+                                            min(2000.0, caps.accel_max))
+                            # Lower caps only after the full-authority brake
+                            # has settled and fresh controller velocity is slow.
+                            committer.maybe_commit(t, action.speed_mm_s, action.accel_mm_s2,
+                                                   force=not was_returning)
                         if client is not None:
                             # Zero leaves both braking caps unchanged.
                             client.command_position(*hold_target, 0.0)
                         action = Action(*hold_target, committer.speed, action.accel_mm_s2)
+                        if hasattr(policy, "on_command"):
+                            policy.on_command(t, action,
+                                              delivery_delay=max(0.0, (sent_at+time.monotonic())/2-state_sampled_at))
                         hold_io = time.perf_counter() - w0
                         cost["io"] += hold_io
                         if slog is not None and slog.replay is not None:
                             slog.replay.command(*prev, committer.speed,
                                                 action.accel_mm_s2, sent_at)
-                    except Exception as e:      # noqa: BLE001
-                        print(f"command failed: {e}")
-                        break
+                except Exception as e:      # noqa: BLE001
+                    print(f"command failed: {e}")
+                    break
+                flags = ["puck_return_home" if idle_return.returning else "puck_hold"]
                 if slog is not None and action is not None:
                     slog.tick(_tick_row(t, report, lag, watchdog, policy, action,
-                                        action, ["puck_hold"], committer, cost,
+                                        action, flags, committer, cost,
                                         hold_io, 0.0, shedder.take_pending()))
                 if t - last_print > 0.5:
                     last_print = t
@@ -1719,7 +1813,8 @@ def run(args) -> int:
             prev = (action.x_mm, action.y_mm)
             w0 = time.perf_counter()
             sent_at = time.monotonic()
-            committed = committer.maybe_commit(t, action.speed_mm_s, action.accel_mm_s2)
+            committed = committer.maybe_commit(t, action.speed_mm_s, action.accel_mm_s2,
+                                               force=restore_caps)
             if committed and prior_target is not None and slog is not None and slog.replay is not None:
                 # LIMITS applies to the previous target before CMD arrives.
                 slog.replay.command(*prior_target, committer.speed, committer.accel, sent_at)
@@ -1739,6 +1834,10 @@ def run(args) -> int:
                 except Exception as e:      # noqa: BLE001
                     print(f"command failed: {e}")
                     break
+            if hasattr(policy, "on_command"):
+                policy.on_command(t, Action(action.x_mm, action.y_mm,
+                                          committer.speed, action.accel_mm_s2),
+                                  delivery_delay=max(0.0, (sent_at+time.monotonic())/2-state_sampled_at))
             tick_io = time.perf_counter() - w0
             cost["io"] += tick_io
 
@@ -1811,6 +1910,12 @@ def _tick_row(t, report: ReportBuilder, lag, watchdog, policy, asked: Action,
         "io_ms": 1000.0 * tick_io, "policy_ms": 1000.0 * tick_policy,
     }
     obs = None if watchdog.blind else getattr(policy, "last_obs", None)
+    if obs is not None and hasattr(policy, "loads"):
+        row["neural_obs"] = "|".join(f"{float(v):.8g}" for v in obs)
+        row["neural_action"] = "|".join(f"{float(v):.8g}" for v in policy.last_action)
+        row["neural_load_fresh"] = "|".join(str(int(v)) for v in policy.loads.fresh.ravel())
+        row["neural_state_source"] = getattr(policy, "state_source", "")
+        row["neural_state_age_ms"] = 1000 * getattr(policy, "state_age", 0.0)
     if obs is not None:
         for k, v in enumerate(obs[:17]):
             row[f"obs{k}"] = float(v)
@@ -1928,6 +2033,14 @@ def _shutdown(client, args, prev):
               "Ctrl-C cdpr_master.")
 
 
+def session_caps(args) -> Caps:
+    floor = Caps.accel_min
+    if args.policy.startswith("neural:"):
+        floor = min(floor, 0.05 * args.accel)
+    return Caps(speed_max=args.speed, accel_max=args.accel,
+                accel_min=max(floor, getattr(args, "accel_floor", None) or 0.0))
+
+
 def resolve_limits(args) -> tuple[float, float]:
     """Cap ceilings: explicit flag > --gentle > checkpoint > legacy default.
 
@@ -1945,6 +2058,11 @@ def resolve_limits(args) -> tuple[float, float]:
         args.resolved_checkpoint = str(resolve_checkpoint(name))
         default_speed, default_accel = (
             v * 1000.0 for v in trained_limits(Path(args.resolved_checkpoint).parent))
+    if kind == "neural":
+        from airhockey.neural_deploy import resolve_neural_checkpoint, neural_limits
+        args.resolved_checkpoint = str(resolve_neural_checkpoint(name))
+        default_speed, default_accel = (
+            v * 1000 for v in neural_limits(args.resolved_checkpoint))
     speed = args.speed
     if speed is None:
         speed = GENTLE_SPEED if args.gentle else default_speed
@@ -1953,6 +2071,15 @@ def resolve_limits(args) -> tuple[float, float]:
         accel = GENTLE_ACCEL if args.gentle else default_accel
     if not all(math.isfinite(v) and v > 0 for v in (speed, accel)):
         raise ValueError("speed and acceleration ceilings must be finite and positive")
+    if kind == "neural":
+        if speed > default_speed or accel > default_accel:
+            raise ValueError("neural session caps cannot exceed checkpoint training limits")
+        if not math.isclose(getattr(args, "ramp", 3.0), 3.0):
+            raise ValueError("neural arrival policies require the trained --ramp 3")
+        if getattr(args, "governor", False):
+            raise ValueError("neural arrival policies already choose per-tick acceleration; omit --governor")
+        if (getattr(args, "accel_floor", None) or 0.0) > 0.05 * accel:
+            raise ValueError("neural accel floor must not exceed 5% of the session cap")
     return speed, accel
 
 
@@ -1965,9 +2092,11 @@ def main() -> int:
     ap.add_argument("--selftest", action="store_true",
                     help="synthetic puck through the whole chain; no camera, "
                          "no robot")
+    ap.add_argument("--check-policy", action="store_true",
+                    help="load and warm up the selected policy offline, then exit; no camera or hardware")
     ap.add_argument("--policy", default="builtin:hold",
                     help="heuristic:<name> | builtin:<name> | tdmpc2:<run> "
-                         "| tdmpc2:latest. --list shows the names. The "
+                         "| tdmpc2:latest | neural:<run-or-checkpoint>. --list shows the names. The "
                          "default sits still on purpose.")
     ap.add_argument("--plan", type=int, default=None,
                     help="tdmpc2 only: MPPI iterations per decision. Default: "
@@ -1977,12 +2106,12 @@ def main() -> int:
                          "prior alone (~0.1 ms, CPU) -- a DEVIATION")
     ap.add_argument("--shot-type", default="mix",
                     choices=["none", "left", "right", "straight", "mix"],
-                    help="tdmpc2 only: the shot the policy is asked for "
-                         "(observation [18:21]). Default mix = a fresh draw "
+                    help="learned policies: the shot the policy is asked for "
+                         "(TD inputs 18:21; neural current request). Default mix = a fresh draw "
                          "each time the puck enters the robot's half, as in "
                          "training; a fixed request is a DEVIATION")
     ap.add_argument("--device", default=None,
-                    help="tdmpc2 only: torch device (default: cpu for the "
+                    help="torch device (neural defaults to cpu; tdmpc2: cpu for the "
                          "prior, cuda for planning when available)")
     ap.add_argument("--list", action="store_true",
                     help="print the available policies and exit")
@@ -2056,6 +2185,7 @@ def main() -> int:
         for n in list_heuristics():
             print(f"  heuristic:{n}")
         print("  tdmpc2:<run>       a checkpoint under runs/ (or tdmpc2:latest)")
+        print("  neural:<run-or-checkpoint>   single neural arrival actor (explicit selection)")
         print("  sac:<run>          not implemented — see _load_sac()")
         return 0
 
@@ -2064,6 +2194,11 @@ def main() -> int:
         return 0
 
     args.speed, args.accel = resolve_limits(args)
+    if args.check_policy:
+        load_policy(args.policy, session_caps(args),
+                    args.plan, args.device, args.shot_type, args.cmd_hz,
+                    args.puck_timeout, getattr(args, "resolved_checkpoint", None))
+        return 0
     if args.gentle:
         print(f"--gentle: caps held to {args.speed:.0f} mm/s, "
               f"{args.accel:.0f} mm/s^2")

@@ -198,6 +198,9 @@ class VisionService:
     def start(self) -> None:
         if self._thread and self._thread.is_alive():
             return
+        with self._lock:
+            self._pose = None
+            self._pose_t = 0.0
         self._stop.clear()
         self._error = None
         self._thread = threading.Thread(target=self._run, daemon=True)
@@ -219,9 +222,17 @@ class VisionService:
 
     # ── readers ──────────────────────────────────────────────────────
     def latest_pose(self):
-        """(x_mm, y_mm, theta_rad) or None. Whoever needs the paddle asks
-        here instead of opening the camera a second time."""
+        """Fresh live (x_mm, y_mm, theta_rad), or None.
+
+        This is used for hardware calibration: a cached pose from a stopped
+        camera or lost tracking must never be presented as a new measurement.
+        """
         with self._lock:
+            age = time.time() - self._pose_t
+            if (not self.running or self._stop.is_set() or self._pose is None
+                    or not 0 <= age <= 0.25
+                    or not all(math.isfinite(v) for v in self._pose)):
+                return None
             return self._pose
 
     def latest_pose_stamped(self):

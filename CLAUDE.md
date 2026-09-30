@@ -436,23 +436,25 @@ python ai/bin/eval_policy.py 3.11-shot-ramp-selfplay --iterations 6   # a checkp
 ```
 
 ## Hardware
-- **Motors**: Teknic ClearPath-SC, NEMA 23 integrated servos — **two different
-  models**, confirmed on hardware 2026-08-03 via `sw/build/check_limits`:
-  - nodes 0 and 2: `CPM-SCSK-2331P-ELNA` — 310 oz-in (2.19 N·m) peak,
-    **4000 rpm**, encoder 0.057° (~6400 counts/rev)
-  - nodes 1 and 3: `CPM-SCSK-2331S-RLNA` — 620 oz-in (4.38 N·m) peak,
-    **2580 rpm**, encoder 0.450° (800 counts/rev)
-
-  On a CDPR every cable moves together, so the system takes the WORST of each:
-  **2580 rpm and 2.19 N·m**. Any sizing calculation that assumes 4000 rpm is
-  55% optimistic. The encoder difference is real and per-node — the `ENC` path
-  reads `Info.PositioningResolution` per node for exactly this reason.
-
-  NOT verified: that the step/dir INPUT resolution is 800 counts/rev on all
-  four. `fw/include/cdpr_config.h` assumes it is. That is a ClearView setting
-  independent of encoder resolution, and if the two model types differ there,
-  the Teensy drives them at different scales — which would look like cables
-  fighting. Worth confirming before blaming the kinematics.
+- **Motors**: all four nodes now use `CPM-SCSK-2331S-RLNA`, following the
+  user-reported replacement of nodes 0/2 on 2026-09-29. These are the same
+  parts previously installed at 1/3: 620 oz-in (4.38 N·m) peak, 2580 rpm,
+  800 encoder counts/revolution. Previously 0/2 were 2331P-ELNA, 6400 CPR.
+- **Step input**: still 800 pulses/revolution, independently of encoder CPR.
+  `shared/motor_hardware.h` defines the installed profile; `ClearPath::enable`
+  reads every model, encoder resolution and step-input density and refuses
+  mismatches before energizing any motor. New drive configuration must match
+  the existing ClearView step/dir settings. Source changes do not program
+  ClearView nonvolatile settings or establish direction/mechanical calibration.
+- **Limits**: speed ceiling remains 12 m/s and firmware acceleration ceiling
+  120 m/s². Existing policy sessions retain their explicit caps (v3: 60 m/s²).
+  The old 2.19 N·m workspace force calculation is historical; no new force
+  envelope has been measured and no limits were increased for the replacement.
+- **Thermal model**: `ai/recipes/motor-load-20260929.json` is the new default,
+  using same-part drive limits/time constants from nodes 1/3. Position-specific
+  current coefficients remain provisional historical priors, not a post-swap
+  fit. Fresh drive RMS telemetry overrides the live fallback. The September 20
+  recipe and existing checkpoints/logs are preserved for historical analysis.
 - **Shaft**: Ø9.5 mm (3/8"), 3 mm keyway, key 3×3×10 mm not supplied
   (McMaster 96717A086). Teknic's manual explicitly recommends circumferential
   clamping over set screws.

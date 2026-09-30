@@ -15,7 +15,7 @@ all: test
 # against a stale copy of the geometry: change the workspace bounds, rerun,
 # and it cheerfully reports "All checks passed" for the workspace you no
 # longer have.
-HEADERS := ../include/motion_profile.h ../../shared/cdpr_geometry.h
+HEADERS := ../include/motion_profile.h ../../shared/cdpr_geometry.h ../../shared/motor_hardware.h
 
 $(BUILD)/test_motion_profile: test_motion_profile.cpp $(HEADERS) | $(BUILD)
 	$(CXX) $(CXXFLAGS) -o $@ $< -lm

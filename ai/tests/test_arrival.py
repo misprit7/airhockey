@@ -132,3 +132,18 @@ def test_trial_goal_is_counted_once_without_inventing_a_serve():
         assert eng.goal_scored[0] == 0 and eng.score_agent[0] == 1
         np.testing.assert_array_equal(eng.puck_x, position[0])
         np.testing.assert_array_equal(eng.puck_y, position[1])
+
+
+def test_large_collinear_arrival_jacobian_retains_damping():
+    from airhockey.arrival import damped_velocity_step
+
+    jx = np.array([[2000, 2000], [4000, 3999]], dtype=np.float32)
+    jy = np.array([[2000, 2000], [4001, 4000]], dtype=np.float32)
+    residual = np.array([[1, 1], [1, -1]], dtype=np.float32)
+    actual = damped_velocity_step(jx, jy, residual)
+    expected = []
+    for x, y, r in zip(jx, jy, residual):
+        matrix = np.vstack((np.column_stack((x, y)), np.eye(2) * np.sqrt(.1)))
+        expected.append(np.linalg.lstsq(matrix, np.r_[r, 0, 0], rcond=None)[0])
+    assert np.isfinite(actual).all()
+    np.testing.assert_allclose(actual, expected, rtol=2e-6, atol=1e-9)

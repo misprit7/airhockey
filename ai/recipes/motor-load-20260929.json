@@ -1,0 +1,105 @@
+{
+  "schema": 1,
+  "status": "provisional_motor_replacement_unmeasured",
+  "source": "logs/motor_load/1789924164533988-285173.jsonl",
+  "motion_features": [
+    "constant",
+    "grid_ax_squared_over_3600",
+    "grid_ay_squared_over_3600",
+    "grid_speed_squared_over_16"
+  ],
+  "coefficients_amps_squared": [
+    [
+      0.0,
+      0.0,
+      0.0,
+      61.981269927751
+    ],
+    [
+      1.4049715701363787,
+      24.669092785546272,
+      0.0,
+      0.0
+    ],
+    [
+      5.379056726531428,
+      94.73385783234109,
+      0.0,
+      15.072036878948841
+    ],
+    [
+      1.1469053670509646,
+      23.32441660959281,
+      0.0,
+      0.0
+    ]
+  ],
+  "fast_limit_amps": [
+    5.79999965031,
+    5.79999965031,
+    5.79999965031,
+    5.79999965031
+  ],
+  "slow_limit_amps": [
+    4.09999960832,
+    4.09999960832,
+    4.09999960832,
+    4.09999960832
+  ],
+  "fast_tau_s": [
+    25.34440466493626,
+    25.34440466493626,
+    25.34440466493626,
+    25.34440466493626
+  ],
+  "slow_tau_s": [
+    509.45259528593164,
+    509.45259528593164,
+    509.45259528593164,
+    509.45259528593164
+  ],
+  "edge_hold_amps": [
+    0.14,
+    1.54,
+    2.94,
+    1.72
+  ],
+  "accel_prior_amps_squared": [
+    4,
+    2,
+    4,
+    2
+  ],
+  "notes": "Drive limits/time constants on replaced nodes use same-part nodes 1/3 as a provisional prior. Fresh drive RMS telemetry remains authoritative in deployment. Motion-current coefficients and edge/acceleration priors are historical, unvalidated on the replacement motors; no overload guarantee. Confirm drive settings and refit with new recordings. Old recipe is preserved for historical replay.",
+  "hardware_revision": "four-2331S-RLNA-20260929",
+  "motor_models": [
+    "CPM-SCSK-2331S-RLNA",
+    "CPM-SCSK-2331S-RLNA",
+    "CPM-SCSK-2331S-RLNA",
+    "CPM-SCSK-2331S-RLNA"
+  ],
+  "encoder_counts_rev": [
+    800,
+    800,
+    800,
+    800
+  ],
+  "step_input_counts_rev": [
+    800,
+    800,
+    800,
+    800
+  ],
+  "parameter_provenance": {
+    "replacement_nodes": [
+      0,
+      2
+    ],
+    "drive_parameters_from_nodes": {
+      "0": 1,
+      "2": 3
+    },
+    "historical_model": "ai/recipes/motor-load-20260920.json",
+    "current_draw_model": "Old position-specific coefficients and conservative priors retained without a speculative torque-to-current rescaling; not a fit to replacement motors."
+  }
+}

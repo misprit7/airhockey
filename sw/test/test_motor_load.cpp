@@ -20,6 +20,10 @@ int main(int argc, char **argv) {
             v.valid = false; v.error = "read timeout";
         }
         if (field == LoadField::TorqueAmps) v.value = -2.5;
+        if (field == LoadField::BusVolts) {
+            v.value = phase == 0 ? 74.5 : 10.0;
+            if (node == 1) { v.valid = false; v.error = "voltage unavailable"; }
+        }
         if (field == LoadField::Encoder && node == 1) v.value = std::numeric_limits<double>::quiet_NaN();
         if (field == LoadField::Status) v.bits = {{phase == 0 ? 1u : 0u, 0, 0}};
         if (field == LoadField::Alerts) v.bits = {{0, 0, 0xffffffffu}};

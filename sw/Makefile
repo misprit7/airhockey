@@ -33,7 +33,7 @@ sfoundation: $(SF_SO)
 $(SF_SO):
 	$(MAKE) -C $(SF_LIB_DIR) -j$$(nproc)
 
-$(BUILD_DIR)/%.o: $(LIB_DIR)/%.cpp $(wildcard $(LIB_DIR)/*.h) $(SF_SO) | $(BUILD_DIR)
+$(BUILD_DIR)/%.o: $(LIB_DIR)/%.cpp $(wildcard $(LIB_DIR)/*.h) $(wildcard ../shared/*.h) $(SF_SO) | $(BUILD_DIR)
 	$(CXX) $(CXXFLAGS) -c -o $@ $<
 
 $(BUILD_DIR):

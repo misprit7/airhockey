@@ -50,7 +50,20 @@ class LegacyTrials(ArrivalEnv):
         return out
 
 
-def fixtures(seed, per_task, wide=False):
+def fixtures(seed, per_task, wide=False, defense_speed_range=(2, 8)):
+    from airhockey.physics import TableConfig
+
+    if (
+        len(defense_speed_range) != 2
+        or not np.isfinite(defense_speed_range).all()
+        or not 0
+        < defense_speed_range[0]
+        <= defense_speed_range[1]
+        <= TableConfig().max_puck_speed
+    ):
+        raise ValueError(
+            "defense speeds must be ordered and within the simulated puck-speed cap"
+        )
     f = make_fixtures(seed, per_task)
     rng = np.random.default_rng(seed + 1)
     n = per_task
@@ -86,7 +99,7 @@ def fixtures(seed, per_task, wide=False):
         aim = rng.uniform(0.5 - mouth, 0.5 + mouth, n)
     direction = np.column_stack((aim - p[:, 0], -p[:, 1]))
     direction /= np.linalg.norm(direction, axis=1, keepdims=True)
-    p[:, 2:] = direction * rng.uniform(2, 8, (n, 1))
+    p[:, 2:] = direction * rng.uniform(*defense_speed_range, (n, 1))
     paddle = np.column_stack((rng.uniform(0.4, 0.6, n), np.full(n, 0.25)))
     if wide:
         paddle[:, 0] = rng.uniform(0.47, 0.53, n)
@@ -99,6 +112,30 @@ def fixtures(seed, per_task, wide=False):
         np.r_[f.aim, np.full(n, 0.5)],
     )
     return result, np.repeat(np.arange(4), per_task)
+
+
+def bank_defense_launches(seed, n, *, speed_range=(8, 12), goal_half_width=.02):
+    """Alternating single-bank attacks, nominally aimed near goal center."""
+    from airhockey.physics import TableConfig
+
+    cfg = TableConfig()
+    if not 0 < goal_half_width < cfg.goal_width / 2 - cfg.puck_radius:
+        raise ValueError("bank goal half-width must lie inside the scoring mouth")
+    if len(speed_range) != 2 or not 0 < speed_range[0] <= speed_range[1] <= cfg.max_puck_speed:
+        raise ValueError("invalid bank launch speed range")
+    rng = np.random.default_rng(seed + 101)
+    puck = np.zeros((n, 4))
+    puck[:, 0] = rng.uniform(0.15, 0.85, n)
+    puck[:, 1] = rng.uniform(1.1, 1.8, n)
+    wall = np.where(np.arange(n) % 2, cfg.puck_radius, cfg.width - cfg.puck_radius)
+    goal = rng.uniform(0.5-goal_half_width, 0.5+goal_half_width, n)
+    dx = wall - puck[:, 0]
+    ratio = -cfg.wall_restitution / cfg.wall_tangential * dx / (goal - wall)
+    dy = -puck[:, 1] * ratio / (1 + ratio)
+    direction = np.column_stack((dx, dy))
+    direction /= np.linalg.norm(direction, axis=1, keepdims=True)
+    puck[:, 2:] = direction * rng.uniform(*speed_range, (n, 1))
+    return puck
 
 
 def evaluate_skills(
@@ -116,14 +153,24 @@ def evaluate_skills(
     guard=False,
     game_requests=False,
     random_paddle=False,
+    random_defense_paddle=False,
+    defense_speed_range=(2, 8),
+    defense_bank=False,
 ):
     import torch
 
+    guard = guard or getattr(agent, "requires_motion_guard", False)
     if guard and not legacy:
         raise ValueError(
             "this benchmark's command guard currently supports legacy actions only"
         )
-    f, task = fixtures(seed, per_task, wide)
+    f, task = fixtures(seed, per_task, wide, defense_speed_range)
+    if defense_bank:
+        if tuple(defense_speed_range) != (8, 12):
+            raise ValueError(
+                "the single-bank defense challenge uses 8–12 m/s launch speeds"
+            )
+        f.puck[task == 3] = bank_defense_launches(seed, per_task)
     if teacher_fixtures is not None:
         for key in ("puck", "paddle", "aim"):
             getattr(f, key)[: 3 * per_task] = teacher_fixtures[key]
@@ -140,6 +187,18 @@ def evaluate_skills(
             cfg.puck_radius + cfg.paddle_radius + 0.01,
         )
     n = len(task)
+    if random_defense_paddle:
+        from airhockey.dynamics import workspace_in_sim
+        from airhockey.physics import TableConfig
+
+        defense = task == 3
+        table = TableConfig()
+        f.paddle[defense] = random_paddle_starts(
+            np.random.default_rng(seed + 19),
+            f.puck[defense],
+            workspace_in_sim(),
+            table.puck_radius + table.paddle_radius + 0.01,
+        )
     extended_policy = legacy and agent.cfg.obs_shape["state"][0] == 42
     practice = legacy and (extended_policy or guard)
     env_cls = LegacyTrials if legacy else ArrivalEnv
@@ -157,6 +216,23 @@ def evaluate_skills(
     if practice:
         env.motion_guard = guard
     obs = env.reset(seed=seed, fixtures=f)
+    verified_bank_goals = None
+    if defense_bank:
+        from airhockey.shot_flight import PARAMETERS, open_goal_outcomes
+
+        ids = np.flatnonzero(task == 3)
+        launch = f.puck[ids].copy()
+        launch[:, 1] = env.cfg.height - launch[:, 1]
+        launch[:, 3] *= -1
+        parameters = {
+            name: getattr(env.engine, name)[ids].copy() for name in PARAMETERS
+        }
+        scores = open_goal_outcomes(launch, parameters, env.cfg)
+        verified_bank_goals = int(scores.sum())
+        if not scores.all():
+            raise ValueError(
+                "bank challenge contains a shot that misses without a defender"
+            )
     # A blocked/stalled puck belongs to this one attempt. Do not let the
     # game referee replace it with another serve during the defense window.
     game = (task == 3) | (game_requests & (task < 2))
@@ -270,6 +346,14 @@ def evaluate_skills(
         shooting_start="random_nonoverlapping_paddle"
         if random_paddle
         else "aligned_approach",
+        defense_start="random_workspace" if random_defense_paddle else "centered_home",
+        defense_speed_range=list(defense_speed_range),
+        defense_trajectory="single_bank_near_goal_center"
+        if defense_bank
+        else "direct_full_mouth"
+        if wide
+        else "direct_center",
+        verified_bank_goals=verified_bank_goals,
         planning=dict(
             iterations=agent.cfg.iterations,
             samples=agent.cfg.num_samples,
@@ -293,7 +377,10 @@ def evaluate_skills(
             mean_effort=float(effort[m].mean()),
             peak_actual_acceleration=float(acceleration[m].max()),
         )
-    for lo, hi in ((2, 4), (4, 6), (6, 8.01)):
+    bands = ((2, 4), (4, 6), (6, 8.01))
+    if defense_speed_range[1] > 8:
+        bands = ((2, 4), (4, 6), (6, 8), (8, 10), (10, 12.01))
+    for lo, hi in bands:
         m = (task == 3) & (incoming_speed >= lo) & (incoming_speed < hi)
         result["tasks"]["defense"][f"speed_{lo}_{hi:g}"] = dict(
             attempts=int(m.sum()),

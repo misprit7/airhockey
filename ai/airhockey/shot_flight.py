@@ -1,6 +1,6 @@
 """Offline shot-direction diagnosis, including calibrated rail rebounds.
 
-Uses privileged simulator launch states only for evaluation. It is neither a
+Uses privileged simulator launch states for rewards and evaluation. It is neither a
 policy input nor a prediction of whether an opponent will block the shot.
 """
 
@@ -45,11 +45,13 @@ def open_goal_outcomes(launch, parameters=None, config=None, seconds=3):
     return engine.score_agent > 0
 
 
-def first_goal_crossing(launch, parameters=None, config=None, seconds=3):
+def first_goal_crossing(launch, parameters=None, config=None, seconds=3, *, return_route=False):
     """Cheap forward-shot geometry with side-rail damping and friction.
 
     Returns goal-line x (inf if it stops/needs too many banks) and a conservative
     full-puck-width goal flag. No end-rail ricochets count as aimed shots.
+    With return_route, also returns side-rail count and first rail (-1 left,
+    +1 right, 0 none). A route only earns accuracy credit when the goal flag is true.
     """
     cfg = config or TableConfig()
     state = np.asarray(launch, dtype=float).copy()
@@ -69,10 +71,14 @@ def first_goal_crossing(launch, parameters=None, config=None, seconds=3):
     crossing = np.full(n, np.inf)
     valid = np.zeros(n, bool)
     elapsed = np.zeros(n)
+    banks = np.zeros(n, dtype=int)
+    first_rail = np.zeros(n, dtype=int)  # -1 left, +1 right, 0 none
     active = state[:, 3] > 0
     radius = cfg.puck_radius
     mouth = cfg.goal_width / 2 - radius
     for _ in range(5):
+        if not active.any():
+            break
         x, y, vx, vy = state.T
         to_goal = (cfg.height - y) / np.maximum(vy, 1e-12)
         wall_x = np.where(vx >= 0, cfg.width - radius, radius)
@@ -98,10 +104,14 @@ def first_goal_crossing(launch, parameters=None, config=None, seconds=3):
             abs(entrance_x[at_goal] - cfg.width / 2) < mouth
         )
         active = reachable & bank
+        first_rail = np.where(active & (banks == 0), np.where(vx < 0, -1, 1), first_rail)
+        banks += active
         state[:, 0] += vx * duration
         state[:, 1] += vy * duration
         state[active, 0] = wall_x[active]
         state[:, 2:] *= (next_speed / np.maximum(speed, 1e-12))[:, None]
         state[:, 2] *= np.where(active, -normal, 1)
         state[:, 3] *= np.where(active, tangent, 1)
+    if return_route:
+        return crossing, valid, banks, first_rail
     return crossing, valid

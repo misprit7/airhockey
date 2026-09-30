@@ -36,6 +36,9 @@ public:
   // Energize all four motors and wait for them to report ready.
   bool enable();
 
+  // Read-only model/encoder/step-input check, called before any enable writes.
+  bool validateHardware();
+
   // De-energize the windings. Safe to call when not connected.
   void disable();
 

@@ -1,6 +1,7 @@
 #pragma once
 
 #include "cdpr_geometry.h"
+#include "motor_hardware.h"
 
 // Teensy stepper-control configuration.
 //
@@ -29,11 +30,11 @@ inline int dirLevelExtend(int motor) { return 1 - dirLevelRetract(motor); }
 
 // ── Stepper ─────────────────────────────────────────────────────────
 //
-// Uniform across all four motors on this path (the host-side ClearPath
-// path in sw/ has mixed 800/6400 encoder resolutions instead — that
-// difference is precisely why the two configs stay separate).
+// All four motors are now CPM-SCSK-2331S-RLNA. Step input remains 800
+// pulses/rev; do not derive it from the independently reported encoder CPR.
+// The host verifies the drive's actual input setting before enabling.
 
-constexpr int COUNTS_PER_REV = 800;
+constexpr int COUNTS_PER_REV = MotorHardware::STEP_INPUT_COUNTS_PER_REV;
 
 // mm of cable ↔ stepper counts
 constexpr float MM_PER_COUNT = SPOOL_CIRCUMFERENCE_MM / COUNTS_PER_REV;
@@ -64,6 +65,7 @@ constexpr float MAX_VELOCITY_MM_S = 12000.0f;
 // Accel. The ceiling is 120000 so it never blocks a limit test; the
 // DEFAULT of 400 is what keeps the rig tame day to day.
 //
+// Historical pre-2026-09-29 sizing, NOT a solve for the replacement motors:
 // There is no single right number, because what the cables can deliver
 // varies 12x across the workspace. Solving for the largest net force the
 // four PULL-ONLY cables can make (an LP over tensions capped at 45.6 N,

@@ -81,10 +81,8 @@ static const Preset PRESETS[] = {
 static const int NUM_PRESETS = sizeof(PRESETS) / sizeof(PRESETS[0]);
 
 static int countsPerRev(INode &node) {
-    std::string model = node.Info.Model.Value();
-    if (model.find("-EL") != std::string::npos)
-        return 6400;
-    return 800;
+    node.Info.PositioningResolution.Refresh();
+    return static_cast<int>(node.Info.PositioningResolution.Value());
 }
 
 static void readCounts(SysManager *mgr, IPort &port, double out[4], int samples) {

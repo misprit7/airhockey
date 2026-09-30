@@ -5,6 +5,7 @@ from __future__ import annotations
 import asyncio
 import json
 import math
+import re
 import time
 from pathlib import Path
 
@@ -49,23 +50,50 @@ async def style_css():
     )
 
 
+@app.get("/training")
+async def training_page():
+    return HTMLResponse((WEB_DIR / "training.html").read_text())
+
+
+@app.get("/training.js")
+async def training_js():
+    return HTMLResponse((WEB_DIR / "training.js").read_text(), media_type="application/javascript")
+
+
+@app.get("/training.css")
+async def training_css():
+    return HTMLResponse((WEB_DIR / "training.css").read_text(), media_type="text/css")
+
+
+@app.get("/api/training")
+async def training_overview():
+    from airhockey.training_status import training_status
+    return await asyncio.to_thread(training_status, WEB_DIR.parents[2])
+
+
+def _recording_checkpoint(stem: str) -> tuple[str, int | None, str]:
+    """Read a checkpoint number while retaining optional diagnostic suffixes."""
+    match = re.fullmatch(r"(.+)_step_([0-9]+)((?:[-_].*)?)", stem)
+    if match is None:
+        return stem, None, ""
+    return match[1], int(match[2]), match[3]
+
+
 def _recording_label(stem: str) -> str:
     """Turn a filename stem into a readable label.
 
     e.g. 'ppo_v4_shaped_step_0100000' -> 'ppo_v4_shaped @ step 100k'
          'game_1773964952' -> 'game_1773964952'
     """
-    if "_step_" in stem:
-        parts = stem.rsplit("_step_", 1)
-        run_name = parts[0]
-        step_num = int(parts[1])
+    run_name, step_num, suffix = _recording_checkpoint(stem)
+    if step_num is not None:
         if step_num >= 1_000_000:
             step_label = f"{step_num / 1_000_000:.1f}M"
         elif step_num >= 1_000:
             step_label = f"{step_num // 1_000}k"
         else:
             step_label = str(step_num)
-        return f"{run_name} @ {step_label}"
+        return f"{run_name} @ {step_label}{suffix}"
     return stem
 
 
@@ -81,20 +109,16 @@ def _recording_entry(f: Path) -> dict:
     if cached and cached[0] == st.st_mtime:
         return cached[1]
     stem = f.stem
-    run, step, opponent = stem, None, None
-    if "_step_" in stem:
-        run, tail = stem.rsplit("_step_", 1)
-        try:
-            step = int(tail)
-        except ValueError:
-            pass
-    elif "_vs_" in stem:
+    run, step, suffix = _recording_checkpoint(stem)
+    opponent = None
+    if step is None and "_vs_" in stem:
         # Benchmark games ("<run>_vs_<opponent>") file under their run
         # rather than each becoming a one-item group of its own.
         run, opponent = stem.rsplit("_vs_", 1)
     entry = {
         "name": stem, "path": f.name, "label": _recording_label(stem),
         "run": run, "step": step,
+        "variant": suffix.lstrip("-_"),
         "mtime": st.st_mtime,
         "date": time.strftime("%Y-%m-%dT%H:%M:%S", time.localtime(st.st_mtime)),
         "size": st.st_size,
@@ -364,6 +388,7 @@ async def live_game(ws: WebSocket):
                         )
                         await ws.send_json({"type": "physics_mode", "instant": use_instant})
                     elif msg_type == "toggle_hardware":
+                        hardware_error = None
                         use_hardware = not use_hardware
                         if use_hardware:
                             try:
@@ -383,6 +408,10 @@ async def live_game(ws: WebSocket):
                                 live = VISION.latest_pose()
                                 if live is not None:
                                     mx, my, mth = live
+                                elif VISION.running:
+                                    raise RuntimeError(
+                                        "Camera has no fresh paddle pose; restore "
+                                        "paddle tracking before enabling hardware")
                                 else:
                                     mx, my, mth = _tm.measure()
                                 cal_pose = (mx, my, _math.degrees(mth))
@@ -414,6 +443,7 @@ async def live_game(ws: WebSocket):
                                       f"commanded until you click")
                             except Exception as e:
                                 print(f"Hardware connect failed: {e}")
+                                hardware_error = str(e)
                                 use_hardware = False
                                 hardware_dynamics = None
                         else:
@@ -433,7 +463,9 @@ async def live_game(ws: WebSocket):
                                 env.engine.state.paddle_agent.x,
                                 env.engine.state.paddle_agent.y,
                             )
-                        await ws.send_json({"type": "hardware_mode", "enabled": use_hardware})
+                        await ws.send_json({"type": "hardware_mode",
+                                            "enabled": use_hardware,
+                                            "error": hardware_error})
                     elif msg_type == "set_limits":
                         hd = hardware_dynamics
                         if not hd:

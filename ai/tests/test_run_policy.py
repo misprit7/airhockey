@@ -603,6 +603,54 @@ def test_puck_hold_uses_fresh_current_position_and_rejects_stale_fallback():
         rp.puck_hold_target(r, 3)
 
 
+def test_idle_return_waits_one_second_and_a_settled_brake():
+    r = rp.ReportBuilder()
+    r.add_puck(0, 1500, 450)
+    r.set_controller_mallet(.5, 1600, 400, velocity=(2000, 0))
+    idle = rp.PuckIdleReturn()
+    assert idle.update(r, .5) == (1600, 400)
+    r.set_controller_mallet(.99, 1610, 400, velocity=(0, 0))
+    assert idle.update(r, .99) == (1600, 400)
+    r.set_controller_mallet(1, 1610, 400, velocity=(200, 0))
+    assert idle.update(r, 1) == (1600, 400)  # cannot lower braking authority yet
+    r.set_controller_mallet(1.1, 1610, 400, velocity=(0, 0))
+    assert idle.update(r, 1.1) == (geom.HOME_X, geom.HOME_Y)
+    assert idle.returning
+    r.set_controller_mallet(1.2, 1615, 420, velocity=(100, 300))
+    assert idle.update(r, 1.2) == (geom.HOME_X, geom.HOME_Y)  # stays latched in transit
+    with pytest.raises(RuntimeError, match='stale'):
+        idle.update(r, 1.4)
+
+
+def test_idle_return_never_seen_puck_waits_from_startup():
+    r, idle = rp.ReportBuilder(), rp.PuckIdleReturn()
+    for t in (100., 100.99):
+        r.set_controller_mallet(t, 1600, 400, velocity=(0, 0))
+        assert idle.update(r, t) == (1600, 400)
+    r.set_controller_mallet(101., 1600, 400, velocity=(0, 0))
+    assert idle.update(r, 101.) == (geom.HOME_X, geom.HOME_Y)
+
+
+def test_idle_return_requires_current_controller_velocity():
+    r, idle = rp.ReportBuilder(), rp.PuckIdleReturn()
+    r.add_puck(0, 1500, 450)
+    r.add_mallet(.5, 1600, 400)
+    assert idle.update(r, .5) == (1600, 400)
+    r.add_mallet(3, 1600, 400)
+    r.set_controller_mallet(3, 1600, 400, age_s=.2, velocity=(0, 0))
+    assert idle.update(r, 3) == (1600, 400)
+    r.set_controller_mallet(3.1, 1600, 400, velocity=None)
+    assert idle.update(r, 3.1) == (1600, 400)
+    assert not idle.returning
+
+
+def test_resume_can_restore_caps_without_rate_limit_delay():
+    c = rp.CapCommitter()
+    c.maybe_commit(2, 500, 2000)
+    assert c.maybe_commit(2.01, 12000, 60000, force=True)
+    assert (c.speed, c.accel) == (12000, 60000)
+
+
 # ── --gentle preset ─────────────────────────────────────────────────────
 
 
@@ -1207,3 +1255,54 @@ def test_unknown_controller_age_prefers_camera():
     report.add_mallet(1, 1500, 400)
     report.set_controller_mallet(1, 1800, 700, age_s=math.inf)
     assert report.observation(1)[rp.OBS_MALLET] == (1500, 400)
+
+
+@pytest.mark.parametrize('unseen_at_startup', [False, True])
+def test_runner_returns_home_then_resumes_with_normal_caps(monkeypatch, tmp_path, unseen_at_startup):
+    """Actual loop with synthetic camera and fake controller; no real hardware."""
+    import csv
+    from airhockey import hardware
+
+    def path(t):
+        if (unseen_at_startup or t >= .3) and t < 1.7:
+            return None
+        return 1400, 500
+
+    _install_fake_camera(monkeypatch, duration_s=2.2, puck_path=path)
+    import track_mallet
+    monkeypatch.setattr(track_mallet, 'measure', lambda: (1600, 400))
+
+    class Client(_FakeClient):
+        def connect(self): pass
+        def set_ramp(self, ramp): pass
+        def command_position(self, x, y, v, a=None):
+            self.calls.append(('CMD', x, y, v, a))
+        def get_motor_load(self, **kwargs): raise RuntimeError('fake metadata')
+
+    client = Client()
+    monkeypatch.setattr(hardware, 'CDPRClient', lambda: client)
+    monkeypatch.setattr(rp, '_shutdown', lambda *a: None)
+
+    class Policy:
+        resets = 0
+        def __call__(self, obs): return 1800, 700, 8000, 24000
+        def reset(self): self.resets += 1
+
+    policy = Policy()
+    monkeypatch.setattr(rp, 'load_policy', lambda *a, **kw: policy)
+    assert rp.run(_loop_args(live=True, no_enable=True, log_dir=str(tmp_path))) == 0
+    with next(tmp_path.glob('*.ticks.csv')).open() as f:
+        rows = list(csv.DictReader(f))
+    home = [r for r in rows if 'puck_return_home' in r['flags']]
+    assert len(home) > 20
+    first_home = float(home[0]['t_cam'])
+    assert (1.0 if unseen_at_startup else 1.29) <= first_home < (1.04 if unseen_at_startup else 1.34)
+    for row in home:
+        assert (float(row['cmd_x']), float(row['cmd_y'])) == (geom.HOME_X, geom.HOME_Y)
+        assert (float(row['cmd_speed']), float(row['cmd_accel'])) == (500, 2000)
+    resumed = [r for r in rows if float(r['t_cam']) > 1.85 and not int(r['blind'])]
+    assert resumed and policy.resets == 1
+    assert all(float(r['cmd_speed']) == 8000 and float(r['cmd_accel']) == 24000 for r in resumed)
+    caps = [c for c in client.calls if c[0] == 'LIMITS']
+    assert caps == ([('LIMITS', 8000, 24000)] if not unseen_at_startup else []) + [
+        ('LIMITS', 500, 2000), ('LIMITS', 8000, 24000)]

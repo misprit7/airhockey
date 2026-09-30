@@ -5,9 +5,11 @@ const ctx = canvas.getContext("2d");
 let config = null;
 let frame = null;
 let ws = null;
+let hardwareRequest = null;
 // "control" = driving the machine by hand, no world simulated at all;
 // "sim" = the full game; "replay" = watching a recording.
-let mode = "control";
+const requestedReplay = new URLSearchParams(window.location.search).get("replay");
+let mode = requestedReplay ? "replay" : "control";
 let replayData = null;
 let replayIndex = 0;
 let replayPlaying = false;
@@ -348,6 +350,28 @@ function render() {
         if (hwPosition && showHwOverlay) {
             drawHwPaddle(hwPosition.x, hwPosition.y);
         }
+        if (mode === "replay") {
+            const requests = ["", "Left bank", "Right bank", "Straight"];
+            ctx.save();
+            ctx.font = `${Math.max(12, Math.min(18, canvas.width / 25))}px sans-serif`;
+            ctx.textAlign = "left";
+            if (requests[frame.shot_type_opponent]) {
+                ctx.fillStyle = COLORS.opponent;
+                ctx.fillText(`Red request: ${requests[frame.shot_type_opponent]}`, 12, 25);
+            }
+            if (requests[frame.shot_type_agent]) {
+                ctx.fillStyle = COLORS.agent;
+                ctx.fillText(`Blue request: ${requests[frame.shot_type_agent]}`, 12, canvas.height - 15);
+            }
+            if (frame.rally_event) {
+                ctx.fillStyle = "rgba(0, 0, 0, 0.85)";
+                ctx.fillRect(8, 37, canvas.width - 16, 29);
+                ctx.fillStyle = "#f2a93b";
+                ctx.textAlign = "center";
+                ctx.fillText(frame.rally_event, canvas.width / 2, 57, canvas.width - 28);
+            }
+            ctx.restore();
+        }
     }
 
     requestAnimationFrame(render);
@@ -418,6 +442,16 @@ function connect() {
             if (msg.speed) document.getElementById("sim-speed").value = msg.speed;
             if (msg.accel) document.getElementById("sim-accel").value = msg.accel;
         } else if (msg.type === "hardware_mode") {
+            const error = document.getElementById("hardware-error");
+            // Older running servers acknowledge failure without its reason.
+            // Keep that failure visible until the server is restarted too.
+            const reason = msg.error || (hardwareRequest === true && !msg.enabled
+                ? "The server rejected the enable request. This server version does not send the reason; check logs/ui_server.log. Restart the web server to receive detailed errors here."
+                : "");
+            error.textContent = reason ? "Hardware enable failed: " + reason : "";
+            error.classList.toggle("hidden", !reason);
+            hardwareRequest = null;
+            document.getElementById("btn-hardware").disabled = false;
             document.getElementById("btn-hardware").textContent =
                 msg.enabled ? "Hardware: ON" : "Hardware: Off";
             // State lives in a class, not an inline colour. Inline styles
@@ -436,6 +470,14 @@ function connect() {
     };
 
     ws.onclose = () => {
+        if (hardwareRequest !== null) {
+            const error = document.getElementById("hardware-error");
+            error.textContent = "Connection lost while changing hardware mode. Hardware state is unknown; check cdpr_master before retrying.";
+            error.classList.remove("hidden");
+            hardwareRequest = null;
+            document.getElementById("btn-hardware").disabled = false;
+            document.getElementById("btn-hardware").textContent = "Hardware: Unknown";
+        }
         document.getElementById("status").textContent = "Disconnected. Reconnecting...";
         setTimeout(connect, 2000);
     };
@@ -645,10 +687,23 @@ document.getElementById("btn-physics").addEventListener("click", () => {
 });
 
 document.getElementById("btn-hardware").addEventListener("click", () => {
+    const button = document.getElementById("btn-hardware");
+    const error = document.getElementById("hardware-error");
+    if (!ws || ws.readyState !== WebSocket.OPEN) {
+        error.textContent = "Hardware request not sent: the web server is disconnected.";
+        error.classList.remove("hidden");
+        return;
+    }
+    if (hardwareRequest !== null) return;
     // Driving the machine from replay mode is never what you meant: the
     // field is showing a recording, and every target you set is discarded.
     if (mode === "replay") setMode("control");
-    if (ws) ws.send(JSON.stringify({ type: "toggle_hardware" }));
+    hardwareRequest = !button.classList.contains("active");
+    button.disabled = true;
+    button.textContent = hardwareRequest ? "Hardware: Enabling…" : "Hardware: Disabling…";
+    error.textContent = hardwareRequest ? "Measuring paddle pose and enabling hardware…" : "Disabling hardware…";
+    error.classList.remove("hidden");
+    ws.send(JSON.stringify({ type: "toggle_hardware" }));
 });
 
 document.getElementById("chk-hw-overlay").addEventListener("change", (e) => {
@@ -660,6 +715,13 @@ let recordingsRefreshTimer = null;
 
 function setMode(next) {
     mode = next;
+    if (next !== "replay") {
+        const url = new URL(window.location.href);
+        if (url.searchParams.has("replay")) {
+            url.searchParams.delete("replay");
+            window.history.replaceState(null, "", url);
+        }
+    }
     document.querySelectorAll(".mode-btn").forEach(
         (b) => b.classList.toggle("active", b.dataset.mode === next));
 
@@ -712,7 +774,7 @@ document.querySelectorAll(".mode-btn").forEach((btn) => {
 });
 
 // Replay
-let activeRecordingPath = null;
+let activeRecordingPath = requestedReplay || null;
 
 // Replay menu: grouped by RUN, newest run first, newest step first inside a
 // run. Groups remember whether you opened them across the 5 s refresh, so the
@@ -742,6 +804,7 @@ function fmtDate(iso) {
 async function loadRecordingsList() {
     try {
         const resp = await fetch("/api/recordings");
+        if (!resp.ok) throw new Error(`Replay list request failed (${resp.status})`);
         const recordings = await resp.json();
         const list = document.getElementById("recording-list");
 
@@ -789,7 +852,8 @@ async function loadRecordingsList() {
                 const it = document.createElement("li");
                 it.className = "rec";
                 if (rec.path === activeRecordingPath) it.classList.add("active");
-                const step = rec.step !== null && rec.step !== undefined ? `@ ${fmtStep(rec.step)}` : rec.name;
+                const step = rec.step !== null && rec.step !== undefined
+                    ? `@ ${fmtStep(rec.step)}${rec.variant ? ` · ${rec.variant}` : ""}` : rec.name;
                 const score = rec.score ? `${rec.score[0]}\u2013${rec.score[1]}` : "";
                 const opp = rec.metadata && rec.metadata.opponent ? `vs ${rec.metadata.opponent}` : "";
                 const dur = rec.duration_s ? `${Math.round(rec.duration_s)}s` : "";
@@ -806,6 +870,12 @@ async function loadRecordingsList() {
         }
     } catch (e) {
         console.error("Failed to load recordings", e);
+        const list = document.getElementById("recording-list");
+        if (!list.children.length) {
+            const message = document.createElement("li");
+            message.textContent = "Could not load replays. Retrying…";
+            list.appendChild(message);
+        }
     }
 }
 
@@ -818,8 +888,11 @@ async function loadRecording(path, li) {
     // recording is there to be watched, so the sidebar gets out of the way.
     if (isPhone()) closeSidebar();
     try {
-        const resp = await fetch(`/api/recordings/${path}`);
+        const resp = await fetch(`/api/recordings/${encodeURIComponent(path)}`);
         const data = await resp.json();
+        if (!resp.ok || data.error || !Array.isArray(data.frames || data)) {
+            throw new Error(data.error || "Recording could not be loaded");
+        }
         // API returns {frames, metadata} or legacy flat array
         replayData = data.frames || data;
         const metadata = data.metadata || null;
@@ -830,7 +903,10 @@ async function loadRecording(path, li) {
 
         activeRecordingPath = path;
         document.querySelectorAll("#recording-list li.rec").forEach((l) => l.classList.remove("active"));
-        li.classList.add("active");
+        li?.classList.add("active");
+        const url = new URL(window.location.href);
+        url.searchParams.set("replay", path);
+        window.history.replaceState(null, "", url);
 
         const controls = document.getElementById("replay-controls");
         controls.classList.remove("hidden");
@@ -863,6 +939,7 @@ async function loadRecording(path, li) {
         showReplayFrame(0);
     } catch (e) {
         console.error("Failed to load recording", e);
+        document.getElementById("status").textContent = `Replay unavailable: ${e.message}`;
     }
 }
 
@@ -1028,8 +1105,12 @@ async function loadLatestRecording() {
         console.error("Failed to preload the latest recording", e);
     }
 }
-loadLatestRecording();
 setMode(mode);
+if (requestedReplay) {
+    loadRecording(requestedReplay, null);
+} else {
+    loadLatestRecording();
+}
 
 
 // ── motion limits ──────────────────────────────────────────────────
