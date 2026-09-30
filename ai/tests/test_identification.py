@@ -1,0 +1,162 @@
+import importlib.util
+import json
+from pathlib import Path
+import sys
+from types import SimpleNamespace
+
+import numpy as np
+import pytest
+
+from airhockey.identification import design,score,spatial_features,predict_pulse,analyze,summarize_load
+from airhockey.motor_patterns import LOW,HIGH,CENTER
+
+
+def test_sweep_is_bounded_ordered_and_exercises_both_directions():
+    trials=design('sweep',3,(2,5),repeats=2)
+    assert len([t for t in trials if t['kind']=='hold'])==9
+    for t in trials:
+        assert np.all(np.array([t['start'],t['end']])>=LOW+39)
+        assert np.all(np.array([t['start'],t['end']])<=HIGH-39)
+    pulses=[t for t in trials if t['kind']=='pulse']
+    assert [t['accel'] for t in pulses]==sorted(t['accel'] for t in pulses)
+    assert len(set(round(t['direction_deg']) for t in pulses))==8
+    with pytest.raises(ValueError):design('sweep',accelerations=(10,5))
+    with pytest.raises(ValueError):design('sweep',stroke=2000)
+    with pytest.raises(ValueError):design('sweep',speed=float('nan'))
+
+
+def test_stationary_workspace_samples_nearer_edges_than_pulses():
+    points=np.array([t['start'] for t in design('workspace',3)])
+    np.testing.assert_allclose(points.min(0),LOW+40)
+    np.testing.assert_allclose(points.max(0),HIGH-40)
+
+
+def synthetic_rows(offset=0,delay=.015):
+    rows=[]
+    for t in np.arange(0,1,.005):
+        def position(t):return CENTER+np.array([50*np.sin(np.pi*min(max(t,0),.5)/.5),0]) if t<.5 else CENTER
+        rows.append(dict(ctl_t=float(t),ctl=[*position(t),0,0],cam_t=float(t+delay),cam=[*(position(t)+[offset,0]),0]))
+    return rows
+
+
+def test_score_does_not_fit_away_spatial_error_or_accept_missing_camera():
+    trial=dict(end=CENTER.tolist(),accel=5)
+    assert score(synthetic_rows(),trial)['passed']
+    assert not score(synthetic_rows(30),trial)['passed']
+    assert not score(synthetic_rows()[:3],trial)['passed']
+    assert score(synthetic_rows(),trial)['accel_fit_window_s']>0
+
+
+def test_model_distinguishes_position_and_acceleration_sign():
+    a=spatial_features([*LOW,0,0,20000,0])
+    b=spatial_features([*HIGH,0,0,20000,0])
+    c=spatial_features([*LOW,0,0,-20000,0])
+    assert a.shape==(1,54)
+    assert not np.allclose(a,b)
+    assert not np.allclose(a,c)
+    assert np.all(a>=0)
+
+
+def test_load_summary_excludes_old_cache_and_preserves_motor_sign():
+    rows=[]
+    for t,stamp,current,rms in [(1,.9,-20,9),(2,2,-3,10),(3,2,-3,10),(4,4,-5,14)]:
+        fields={k:dict(valid=True,end=stamp,value=v) for k,v in
+                [('torque_amps',current),('rms_pct',rms)]}
+        rows.append(dict(t=t,load=dict(sample=dict(motors=[dict(node=0,**fields)]))))
+    report=summarize_load(rows)[0]
+    assert report['torque_amps']['samples']==2
+    assert report['torque_amps']['mean_abs']==4
+    assert report['torque_amps']['peak_abs']==5
+    assert report['rms_pct']['rise_percentage_points_per_s']==2
+
+
+def test_profile_prediction_uses_actual_ramp_and_speed():
+    trial=next(t for t in design('sweep',accelerations=(5,),repeats=1) if t['kind']=='pulse')
+    prediction=predict_pulse(trial)
+    assert 4<=prediction['predicted_peak_accel_m_s2']<=5.1
+    assert prediction['predicted_peak_speed_m_s']<=1.51
+
+
+def test_no_model_export_with_insufficient_data(tmp_path):
+    (tmp_path/'plan.json').write_text('{}')
+    (tmp_path/'samples.jsonl').write_text('{"partial":')
+    assert analyze(tmp_path)['status']=='insufficient_data'
+    assert not (tmp_path/'current-model-candidate.json').exists()
+
+
+def test_candidate_fit_and_rms_report_from_synthetic_recording(tmp_path):
+    (tmp_path/'plan.json').write_text('{"settings":{"tension":1.5}}')
+    rows=[]; heat=np.zeros((2,4));dt=.02
+    for i in range(300):
+        t=1+i*dt
+        ctl=[CENTER[0]+60*np.sin(t),CENTER[1]+60*np.cos(t),60*np.cos(t),-60*np.sin(t)]
+        motors=[]
+        for node in range(4):
+            current=1+node*.3+.1*np.sin(t)
+            fields={k:dict(valid=True,end=t,value=v) for k,v in {
+                'torque_amps':current,'rms_limit_amps':5.8,'rms_time_constant_s':3.,
+                'rms_slow_limit_amps':4.1,'rms_slow_time_constant_min':1.}.items()}
+            for j,(channel,limit,tau) in enumerate([('rms_pct',5.8,3),('rms_slow_pct',4.1,60)]):
+                decay=np.exp(-dt/tau);heat[j,node]=decay*heat[j,node]+(1-decay)*(current/limit)**2
+                fields[channel]=dict(valid=True,end=t,value=float(100*np.sqrt(heat[j,node])))
+            motors.append(dict(node=node,**fields))
+        rows.append(dict(ctl_t=t,ctl=ctl,trial=i//20,load=dict(sample=dict(motors=motors))))
+    (tmp_path/'samples.jsonl').write_text('\n'.join(json.dumps(r) for r in rows))
+    report=analyze(tmp_path)
+    assert report['status']=='candidate_not_validated'
+    assert len(report['per_motor'])==4
+    for m in report['per_motor']:
+        assert m['held_out_trials']==[0,5,10]
+        assert np.isfinite(m['rms_pct_mae_percentage_points'])
+        assert m['current_mae_amps']<.5
+    assert json.loads((tmp_path/'current-model-candidate.json').read_text())['schema']=='spatial-current-v1'
+
+
+def test_monitor_rejects_missing_slow_rms_voltage_and_fault():
+    sys.path.insert(0,str(Path(__file__).resolve().parents[1]/'bin'))
+    import characterize_robot as runner
+    args=SimpleNamespace(rms_stop=70,min_volts=60,current_stop=12)
+    def field(v):return dict(valid=True,end=10.,value=v)
+    motors=[dict(node=i,rms_pct=field(10),rms_slow_pct=field(10),torque_amps=field(1),
+                 bus_voltage_v=field(74),status=field([1,0]),alerts=field([0,0,0]),
+                 encoder_counts=field(0)) for i in range(4)]
+    snapshot=dict(logging_ok=True,sample=dict(context=dict(motors_enabled=True,fault=False),motors=motors))
+    assert runner.validate_load(snapshot,10.1,args)==10
+    for key,value in [('bus_voltage_v',40),('rms_slow_pct',75),('torque_amps',13),('status',[0,0])]:
+        old=motors[0][key]['value']; motors[0][key]['value']=value
+        with pytest.raises(RuntimeError):runner.validate_load(snapshot,10.1,args)
+        motors[0][key]['value']=old
+    motors[0]['rms_slow_pct']['valid']=False
+    with pytest.raises(RuntimeError):runner.validate_load(snapshot,10.1,args)
+
+
+def test_partial_enable_failure_still_disables_and_stops_owned_master(tmp_path,monkeypatch):
+    sys.path.insert(0,str(Path(__file__).resolve().parents[1]/'bin'))
+    import characterize_robot as runner
+    import airhockey.hardware
+    import airhockey.vision_service
+    events=[]
+    class Client:
+        def connect(self):events.append('connect')
+        def get_motor_load(self,**_):return {}
+        def enable(self,*_):events.append('enable');raise RuntimeError('partial enable')
+        def disable(self):events.append('disable')
+        def close(self):events.append('close')
+    class Vision:
+        error=None
+        def set_boost(self,*_):pass
+        def start(self):pass
+        def stop(self):events.append('camera_stop')
+        def latest_pose(self):return (*CENTER,2.356)
+        def status(self):return {'note':None}
+    monkeypatch.setattr(airhockey.hardware,'CDPRClient',Client)
+    monkeypatch.setattr(airhockey.vision_service,'VisionService',Vision)
+    monkeypatch.setattr(runner,'start_master',lambda *_: 'owned')
+    monkeypatch.setattr(runner,'stop_master',lambda p:events.append('master_stop'))
+    monkeypatch.setattr(runner,'wait_for_load',lambda *_:0)
+    monkeypatch.setattr(runner,'validate_load',lambda *_,**kw:0)
+    monkeypatch.setattr(runner,'check_load',lambda *_:0)
+    args=SimpleNamespace(tension=1.5,rms_stop=70)
+    assert not runner.live(args,{'trials':[]},tmp_path)
+    assert events==['connect','enable','disable','close','camera_stop','master_stop']
+    assert json.loads((tmp_path/'outcome.json').read_text())['status']=='aborted'
