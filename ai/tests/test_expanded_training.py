@@ -231,3 +231,24 @@ def test_energy_tradeoff_does_not_weaken_near_overload_cost():
     # Same current, same ordinary cold energy penalty; only thermal urgency rises.
     np.testing.assert_allclose(new[0],old[0])
     np.testing.assert_allclose(new[1]-new[0],3*(old[1]-old[0]))
+
+
+def test_holding_forecast_predicts_spatial_heat_without_sustaining_transient_acceleration():
+    model=MotorThermal(3,MODEL,randomize=False,soft_start=.8)
+    pos=np.array([[.5,.4],[.919,.08],[.919,.08]])
+    velocity=np.zeros((3,2));accel=np.zeros((3,2));accel[2,0]=100
+    model.advance(pos,velocity,accel,.02)
+    # Compare the same thermal state after accounting for any brief heat already generated.
+    model.h[:]=.8**2
+    forecast=model.holding_forecast(15)
+    np.testing.assert_allclose(forecast[1],forecast[2])
+    assert model.current_squared[2].sum()>model.current_squared[1].sum()
+    assert forecast[1].max()>forecast[0].max()
+    initial_h=model.h.copy();initial_current=model.current_squared.copy()
+    old=model.penalty(.02)
+    model.holding_forecast_weight=3
+    new=model.penalty(.02)
+    assert new[1]>old[1] and new[0]==old[0]
+    # Reward prediction must never change simulated motor states/current.
+    np.testing.assert_array_equal(model.h,initial_h)
+    np.testing.assert_array_equal(model.current_squared,initial_current)

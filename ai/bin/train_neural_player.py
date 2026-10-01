@@ -110,6 +110,9 @@ def main():
     p.add_argument("--load-weight", type=float, default=0.15)
     p.add_argument("--load-energy-weight", type=float, default=2.,
         help="Ordinary I-squared energy cost inside the load penalty; near-overload cost remains separate")
+    p.add_argument("--load-holding-weight", type=float, default=0.,
+        help="Predictive penalty for continued holding at the current position")
+    p.add_argument("--load-holding-horizon", type=float, default=15.)
     p.add_argument("--capture-weight", type=float, default=2)
     p.add_argument("--conversion-weight", type=float, default=4)
     p.add_argument("--capture-first", action="store_true")
@@ -352,6 +355,8 @@ def main():
         report_sensing=args.report_sensing,
         load_weight=args.load_weight,
         load_energy_weight=args.load_energy_weight,
+        load_holding_weight=args.load_holding_weight,
+        load_holding_horizon=args.load_holding_horizon,
         capture_weight=args.capture_weight,
         conversion_weight=args.conversion_weight,
         capture_first=args.capture_first,

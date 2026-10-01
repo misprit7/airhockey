@@ -38,6 +38,8 @@ class NeuralTrainingEnv(ArrivalEnv):
         game_fraction=None,
         load_weight=0.15,
         load_energy_weight=2.,
+        load_holding_weight=0.,
+        load_holding_horizon=15.,
         capture_weight=2.0,
         conversion_weight=4.0,
         capture_first=False,
@@ -253,8 +255,14 @@ class NeuralTrainingEnv(ArrivalEnv):
         self.load_weight = load_weight
         if not np.isfinite(load_energy_weight) or load_energy_weight < 0:
             raise ValueError("load energy weight must be finite and nonnegative")
+        if not np.isfinite([load_holding_weight,load_holding_horizon]).all() or load_holding_weight < 0 or load_holding_horizon <= 0:
+            raise ValueError("invalid holding-load reward settings")
         for model in self.loads:
+            if load_holding_weight and not model.spatial:
+                raise ValueError("holding-load reward requires a spatial current model")
             model.energy_weight = float(load_energy_weight)
+            model.holding_forecast_weight = float(load_holding_weight)
+            model.holding_forecast_seconds = float(load_holding_horizon)
         self.capture_weight = capture_weight
         self.conversion_weight = conversion_weight
         self.capture_first = capture_first

@@ -22,6 +22,8 @@ class MotorThermal:
             raise ValueError("soft load penalty must start below the load limit")
         self.soft_start = soft_start
         self.energy_weight = 2.0
+        self.holding_forecast_weight = 0.0
+        self.holding_forecast_seconds = 15.0
         self.config = dict(path) if isinstance(path,dict) else json.loads(Path(path).read_text())
         c = self.config
         self.spatial = c.get('schema') == 'spatial-current-v2'
@@ -61,6 +63,7 @@ class MotorThermal:
             self.h[:, 0] = rng.uniform(0, 0.65, (n, 4)) ** 2
             self.h[:, 1] = rng.uniform(0, 0.30, (n, 4)) ** 2
         self.current_squared = np.zeros((n, 4))
+        self.holding_current_squared = np.zeros((n, 4))
         self.observed = self.levels.copy()
         self.clock = 0.0
         self._decay = {}
@@ -91,6 +94,7 @@ class MotorThermal:
             extension=np.linalg.norm(grid-clipped,axis=1)/100*self.config['unmeasured_extension_amps_per_100mm']
             grid_a=np.column_stack((-a[:,1],a[:,0]))/60
             features=np.column_stack(((v*v).sum(axis=1)/4,np.maximum(grid_a,0)**2,np.maximum(-grid_a,0)**2))
+            self.holding_current_squared=(np.sqrt(holding)+extension[:,None])**2*self.gain
             self.current_squared=((np.sqrt(holding)+extension[:,None])**2+features@self.coeff.T)*self.gain
             self._integrate(dt)
             return
@@ -133,11 +137,26 @@ class MotorThermal:
             self.observed[:] = np.round(self.levels * 100) / 100
             self.clock %= 0.1
 
+    def holding_forecast(self, seconds):
+        """Load if this position is held; do not extrapolate a brief acceleration."""
+        if not self.spatial or not np.isfinite(seconds) or seconds <= 0:
+            raise ValueError('holding forecast requires a spatial model and positive horizon')
+        if seconds not in self._decay:
+            self._decay[seconds] = np.exp(-seconds / self.tau)
+        decay = self._decay[seconds]
+        future = decay*self.h + (1-decay)*self.holding_current_squared[:,None,:]/self.limits**2
+        return np.sqrt(np.maximum(future,0))
+
     def penalty(self, dt):
         level = self.levels.max(axis=(1, 2))
         near = np.maximum((level - self.soft_start) / (1 - self.soft_start), 0)
         energy = np.mean(self.current_squared / self.limits[0] ** 2, axis=1)
-        return dt * (self.energy_weight * energy + 40 * np.minimum(near, 3) ** 4 + 200 * (level >= 1))
+        holding_cost = 0
+        if self.holding_forecast_weight:
+            future = self.holding_forecast(self.holding_forecast_seconds).max(axis=(1,2))
+            risk = np.clip((future-self.soft_start)/(1-self.soft_start),0,3)
+            holding_cost = self.holding_forecast_weight*risk**2
+        return dt * (self.energy_weight * energy + 40 * np.minimum(near, 3) ** 4 + 200 * (level >= 1) + holding_cost)
 
     def features(self):
         # No reset/clipping at shutdown: being over budget remains observable.
