@@ -108,6 +108,8 @@ def main():
                    help="Full-game neural self-play; reward exactly +1 scored/-1 conceded, no shaping")
     p.add_argument("--minutes", type=float, default=90)
     p.add_argument("--load-weight", type=float, default=0.15)
+    p.add_argument("--load-energy-weight", type=float, default=2.,
+        help="Ordinary I-squared energy cost inside the load penalty; near-overload cost remains separate")
     p.add_argument("--capture-weight", type=float, default=2)
     p.add_argument("--conversion-weight", type=float, default=4)
     p.add_argument("--capture-first", action="store_true")
@@ -349,6 +351,7 @@ def main():
         realistic=not args.ideal_sensing,
         report_sensing=args.report_sensing,
         load_weight=args.load_weight,
+        load_energy_weight=args.load_energy_weight,
         capture_weight=args.capture_weight,
         conversion_weight=args.conversion_weight,
         capture_first=args.capture_first,

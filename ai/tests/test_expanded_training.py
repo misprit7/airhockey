@@ -217,3 +217,17 @@ def test_failure_builder_canonicalizes_red_and_excludes_invalid_starts(tmp_path)
     np.testing.assert_allclose(arrays['paddle'],[[.2,.08],[.8,.08]],atol=1e-6)
     np.testing.assert_allclose(arrays['previous_action'],action_coordinates(np.zeros((2,6)),OLD,NEW),atol=1e-6)
     np.testing.assert_allclose(arrays['initial_load'],.7)
+
+
+def test_energy_tradeoff_does_not_weaken_near_overload_cost():
+    ordinary=NeuralTrainingEnv(2,load_weight=16,load_energy_weight=2,**NEW)
+    separated=NeuralTrainingEnv(2,load_weight=48,load_energy_weight=2/3,**NEW)
+    for env in (ordinary,separated):
+        model=env.loads[0]
+        model.current_squared[:]=3
+        model.h[0]=.5**2;model.h[1]=.94**2
+    old=16*ordinary.loads[0].penalty(.02)
+    new=48*separated.loads[0].penalty(.02)
+    # Same current, same ordinary cold energy penalty; only thermal urgency rises.
+    np.testing.assert_allclose(new[0],old[0])
+    np.testing.assert_allclose(new[1]-new[0],3*(old[1]-old[0]))

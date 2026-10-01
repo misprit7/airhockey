@@ -37,6 +37,7 @@ class NeuralTrainingEnv(ArrivalEnv):
         goals_only=False,
         game_fraction=None,
         load_weight=0.15,
+        load_energy_weight=2.,
         capture_weight=2.0,
         conversion_weight=4.0,
         capture_first=False,
@@ -250,6 +251,10 @@ class NeuralTrainingEnv(ArrivalEnv):
             raise ValueError("game fraction must be in [0,1]")
         self.game_fraction_override = game_fraction
         self.load_weight = load_weight
+        if not np.isfinite(load_energy_weight) or load_energy_weight < 0:
+            raise ValueError("load energy weight must be finite and nonnegative")
+        for model in self.loads:
+            model.energy_weight = float(load_energy_weight)
         self.capture_weight = capture_weight
         self.conversion_weight = conversion_weight
         self.capture_first = capture_first

@@ -21,6 +21,7 @@ class MotorThermal:
         if not 0 <= soft_start < 1:
             raise ValueError("soft load penalty must start below the load limit")
         self.soft_start = soft_start
+        self.energy_weight = 2.0
         self.config = dict(path) if isinstance(path,dict) else json.loads(Path(path).read_text())
         c = self.config
         self.spatial = c.get('schema') == 'spatial-current-v2'
@@ -136,7 +137,7 @@ class MotorThermal:
         level = self.levels.max(axis=(1, 2))
         near = np.maximum((level - self.soft_start) / (1 - self.soft_start), 0)
         energy = np.mean(self.current_squared / self.limits[0] ** 2, axis=1)
-        return dt * (2 * energy + 40 * np.minimum(near, 3) ** 4 + 200 * (level >= 1))
+        return dt * (self.energy_weight * energy + 40 * np.minimum(near, 3) ** 4 + 200 * (level >= 1))
 
     def features(self):
         # No reset/clipping at shutdown: being over budget remains observable.
