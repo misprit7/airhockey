@@ -135,6 +135,8 @@ def training_status(root, *, process_map=None, now=None, limit=12):
             latest_replay=next((c['replay'] for c in checkpoints if c['replay']), None),
             initialization=metadata.get('initialization', metadata.get('initial')),
             limits=metadata.get('physical_limits'),
+            workspace=args.get('workspace'),
+            edge_dwell_band=args.get('edge_dwell_band'),
         ))
     runs.sort(key=lambda r: (r['training_active'] or r['evaluator_active'], r['updated_at']), reverse=True)
     packages = []

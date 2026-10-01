@@ -30,6 +30,8 @@ function runCard(run, index) {
       <p class="outcome">${esc(run.outcome)}</p>
       ${run.progress == null ? "" : `<progress max="1" value="${run.progress}" aria-label="Training progress"></progress>`}
       <div class="facts"><span>${esc(steps)}</span><span>Training time: ${duration(run.elapsed_s)}</span>
+      ${run.limits ? `<span>Training limits: ${esc(run.limits.speed_m_s)} m/s · ${esc(run.limits.acceleration_m_s2)} m/s²</span>` : ""}
+      ${run.workspace === "rail30" ? `<span>Rail clearance: 30 mm${run.edge_dwell_band ? ` · edge penalty band: ${Math.round(run.edge_dwell_band * 100)} cm` : ""}</span>` : ""}
       ${run.eta_s == null ? "" : `<span>Estimated remaining: ${duration(run.eta_s)}</span>`}
       <span>Evaluations: ${run.evaluated}/${run.checkpoint_count} complete${run.evaluator_active ? " · running" : ""}</span>
       ${run.save_every ? `<span>Checkpoint every ${number(run.save_every)} steps</span>` : ""}</div>

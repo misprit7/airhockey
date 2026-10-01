@@ -1,0 +1,21 @@
+{
+  "purpose": "Offline interpolation between the stronger shooter and cooler learned policy. A single neural network at inference; no tactical controller or ensemble.",
+  "candidates": [
+    {
+      "output": "runs/_neural-rail30-accel100-cool-average50-20261001-p",
+      "first": "runs/_neural-rail30-accel100-balanced-20261001-i/agent_step_104660992.pt",
+      "second": "runs/_neural-rail30-accel100-consolidation-20261001-h/agent_step_064094208.pt",
+      "second_weight": 0.5,
+      "first_sha256": "3b3988072bedfe03b6ccf402db09b85ed8d6d37f43a8d5973594f348d4cf1025",
+      "second_sha256": "bad41bc5c118bafd50de6a80a776a0cb2a8854c91dbbf94efdb63d5edd9a6865"
+    },
+    {
+      "output": "runs/_neural-rail30-accel100-cool-average75-20261001-p",
+      "first": "runs/_neural-rail30-accel100-balanced-20261001-i/agent_step_104660992.pt",
+      "second": "runs/_neural-rail30-accel100-consolidation-20261001-h/agent_step_064094208.pt",
+      "second_weight": 0.75,
+      "first_sha256": "3b3988072bedfe03b6ccf402db09b85ed8d6d37f43a8d5973594f348d4cf1025",
+      "second_sha256": "bad41bc5c118bafd50de6a80a776a0cb2a8854c91dbbf94efdb63d5edd9a6865"
+    }
+  ]
+}
