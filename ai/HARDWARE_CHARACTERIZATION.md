@@ -76,6 +76,10 @@ Motor readings carry acquisition times, validity, encoder resolution, drive
 limits/time constants and voltage. Samples include continuous camera poses
 and controller positions/velocities, rather than only the startup image.
 The preview has a slider/play button and requires no web server.
+Aborted runs also save `camera-diagnostic.png` and `camera-diagnostic.json`
+when a processed frame is available. The frame is captured in memory at the
+failure and written after shutdown; the error includes the detector's reason
+and pose age instead of a generic tracking failure.
 Each trial's results summarize sampled mean/peak absolute current, voltage,
 and initial/final/peak fast and slow RMS separately for each motor, including
 the RMS rise per second. Holding trials make these directly comparable by

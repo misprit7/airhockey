@@ -28,6 +28,7 @@ Usage:
 """
 
 import argparse
+import itertools
 import json
 import math
 import sys
@@ -131,14 +132,14 @@ def field_marker_pixels(K, dist, rvec, tvec, field):
     return px.reshape(-1, 2)
 
 
-def find_candidates(img, known_px):
+def find_candidates(img, known_px, *, threshold=None):
     """Bright blobs that are not glare, not a permanent marker, not an
     off-field edge reflection. Returns [(area, centroid), ...] brightest
     first."""
     mask = find_glare(img)
     work = img.copy()
     work[mask > 0] = 0
-    thr = max(64, int(work.max()) // 2)
+    thr = max(64, int(work.max()) // 2) if threshold is None else max(64, threshold)
     _, bw = cv2.threshold(work, thr, 255, cv2.THRESH_BINARY)
     n, lab, stats, cents = cv2.connectedComponentsWithStats(bw)
 
@@ -239,6 +240,42 @@ def locate(img, K, dist, rvec, tvec, field, cands=None):
     if cands is None:
         known = field_marker_pixels(K, dist, rvec, tvec, field)
         cands = find_candidates(img, known)
+    pose, note = _locate_candidates(cands, K, dist, rvec, tvec)
+    if pose is not None and note is None:
+        return pose, note
+
+    # A saturated unrelated reflector sets the normal threshold to 127.
+    # At the far end the centre marker can peak at only ~150, leaving five
+    # pixels above that threshold: real but below MIN_AREA. Recover using
+    # the existing absolute brightness floor, without shrinking MIN_AREA or
+    # guessing a missing marker from controller position / previous frames.
+    known = field_marker_pixels(K, dist, rvec, tvec, field)
+    dim = find_candidates(img, known, threshold=64)
+    if not 3 <= len(dim) <= 32:
+        return pose, note
+    dim = _drop_puck(dim, K, dist, rvec, tvec)
+    matches = []
+    for triple in itertools.combinations(dim, 3):
+        points = np.array([c[1] for c in triple])
+        if np.max(np.linalg.norm(points[:, None] - points[None, :], axis=2)) > CLUSTER_PX:
+            continue
+        candidate = solve_pose(triple, K, dist, rvec, tvec)
+        # Lower-threshold recovery needs the measured marker radius as well
+        # as the right angle. A puck, glare or arbitrary triangle won't do.
+        if (abs(candidate['disagree']) <= 5 and
+                max(abs(r - geom.ARM_MARKER_R_MM) for r in candidate['r']) <= 4 and
+                abs(candidate['r'][0] - candidate['r'][1]) <= 3):
+            matches.append(candidate)
+    if len(matches) == 1:
+        matches[0]['recovered_dim_marker'] = True
+        return matches[0], None
+    if len(matches) > 1:
+        return None, 'ambiguous paddle marker geometry at lower threshold'
+    return pose, note
+
+
+def _locate_candidates(cands, K, dist, rvec, tvec):
+    """Normal-threshold solve, also kept separate for offline diagnostics."""
     if not cands:
         return None, "no paddle markers found — is it in frame and lit?"
 
@@ -272,7 +309,7 @@ def locate(img, K, dist, rvec, tvec, field, cands=None):
     # has none. So take the candidate with the most close neighbours and
     # keep it with them.
     pts = np.array([c[1] for c in cands])
-    if len(cands) > 3:
+    if len(cands) >= 3:
         d = np.linalg.norm(pts[:, None, :] - pts[None, :, :], axis=2)
         near = d <= CLUSTER_PX
         seed = int(near.sum(axis=1).argmax())

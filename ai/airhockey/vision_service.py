@@ -17,6 +17,7 @@ runs on the raw frame.
 from __future__ import annotations
 
 import math
+import json
 import sys
 import threading
 import time
@@ -185,6 +186,9 @@ class VisionService:
         self._jpeg: bytes | None = None
         self._pose: tuple[float, float, float] | None = None
         self._pose_t = 0.0          # time.time() the frame arrived
+        self._raw = None
+        self._frame_t = 0.0
+        self._recovered_dim_marker = False
         self._boost = False         # unpaced, JPEG only every few frames
         self._puck: dict | None = None
         self._player: dict | None = None
@@ -201,6 +205,8 @@ class VisionService:
         with self._lock:
             self._pose = None
             self._pose_t = 0.0
+            self._raw = None
+            self._frame_t = 0.0
         self._stop.clear()
         self._error = None
         self._thread = threading.Thread(target=self._run, daemon=True)
@@ -246,6 +252,25 @@ class VisionService:
             if self._pose is None:
                 return None
             return (self._pose_t, *self._pose)
+
+    def diagnostic_snapshot(self):
+        """Capture immutable frame reference and metadata without disk I/O."""
+        with self._lock:
+            raw = self._raw
+            data = dict(frame_time=self._frame_t, pose_time=self._pose_t,
+                        pose=self._pose, note=self._note, error=self._error,
+                        recovered_dim_marker=self._recovered_dim_marker)
+        return raw, data
+
+    def save_diagnostic(self, directory, snapshot=None):
+        """Save a processed frame; never opens hardware."""
+        directory = Path(directory)
+        raw, data = self.diagnostic_snapshot() if snapshot is None else snapshot
+        data = dict(data)
+        data['saved_time'] = time.time()
+        (directory / 'camera-diagnostic.json').write_text(json.dumps(data, indent=2))
+        if raw is not None:
+            cv2.imwrite(str(directory / 'camera-diagnostic.png'), raw)
 
     def set_boost(self, on: bool) -> None:
         """Run the tracker as fast as the camera and CPU allow.
@@ -342,6 +367,9 @@ class VisionService:
                     if jpeg is not None:
                         self._jpeg = jpeg
                     self._note = note
+                    self._raw = img
+                    self._frame_t = now
+                    self._recovered_dim_marker = bool(pose and pose.get('recovered_dim_marker'))
                     self._puck = puck
                     self._player = player
                     self._fps = 0.85 * self._fps + 0.15 / max(dt, 1e-6)

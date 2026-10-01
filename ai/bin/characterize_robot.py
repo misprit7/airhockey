@@ -59,7 +59,8 @@ class Experiment:
             pose=self.vision._pose; stamp=self.vision._pose_t; note=self.vision._note
         cam_t=stamp+self.camera_offset
         if pose is None or note or not np.isfinite(pose).all() or not 0<=now-cam_t<=.08:
-            raise RuntimeError('camera lost unambiguous fresh paddle tracking')
+            reason=note or self.vision.error or ('no pose' if pose is None else 'invalid/stale pose')
+            raise RuntimeError(f'camera tracking failed: {reason}; pose age {(now-cam_t)*1000:.1f} ms')
         if np.any(np.array(pose[:2])<LOW-5) or np.any(np.array(pose[:2])>HIGH+5):
             raise RuntimeError('camera paddle outside current workspace')
         row=dict(t=now,trial=self.trial,ctl_t=now-ctl[4],ctl=list(ctl[:4]),
@@ -127,7 +128,7 @@ def live(args,plan,directory):
     handlers={}
     def interrupted(*_):raise KeyboardInterrupt
     for sig in (signal.SIGINT,signal.SIGTERM):handlers[sig]=signal.signal(sig,interrupted)
-    results=[]; outcome={'status':'aborted','reason':'startup incomplete'}
+    results=[]; diagnostic=None; outcome={'status':'aborted','reason':'startup incomplete'}
     try:
         with (directory/'master.log').open('w') as master_log,(directory/'samples.jsonl').open('w') as samples:
             proc=start_master(master_log,args.tension)
@@ -171,6 +172,8 @@ def live(args,plan,directory):
             outcome={'status':'complete','note':'No claim beyond tested trajectories; model fit requires separate validation.'}
     except (Exception,KeyboardInterrupt) as exc:
         outcome={'status':'aborted','reason':str(exc) or 'interrupted'}
+        try:diagnostic=vision.diagnostic_snapshot()
+        except Exception as diagnostic_error:outcome['camera_diagnostic_error']=str(diagnostic_error)
         print('Experiment stopped:',outcome['reason'],file=sys.stderr)
     finally:
         # Cleanup continues even if camera or logging failed. Do not auto-reenable.
@@ -180,6 +183,9 @@ def live(args,plan,directory):
             except Exception as exc:outcome['shutdown_error']=str(exc);outcome['status']='aborted'
         finally:
             vision.stop();stop_master(proc)
+            if diagnostic is not None:
+                try:vision.save_diagnostic(directory,diagnostic)
+                except Exception as exc:outcome['camera_diagnostic_error']=str(exc)
             for sig,h in handlers.items():signal.signal(sig,h)
             (directory/'outcome.json').write_text(json.dumps(outcome,indent=2))
     return outcome['status']=='complete'
