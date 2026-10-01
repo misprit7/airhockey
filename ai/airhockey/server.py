@@ -11,7 +11,7 @@ from pathlib import Path
 
 import numpy as np
 from fastapi.responses import StreamingResponse
-from fastapi import FastAPI, WebSocket, WebSocketDisconnect
+from fastapi import FastAPI, WebSocket, WebSocketDisconnect, HTTPException
 from fastapi.responses import HTMLResponse
 
 from airhockey.dynamics import (ACTION_DT, DelayedDynamics, HardwareDynamics,  # noqa: F401
@@ -67,6 +67,16 @@ async def training_page():
     return HTMLResponse((WEB_DIR / "training.html").read_text())
 
 
+@app.get("/training/reports/{day}")
+async def training_report(day: str):
+    if not re.fullmatch(r"[0-9]{8}", day):
+        raise HTTPException(status_code=404, detail="Training report not found")
+    path = WEB_DIR / f"training-report-{day}.html"
+    if not path.is_file():
+        raise HTTPException(status_code=404, detail="Training report not found")
+    return HTMLResponse(path.read_text())
+
+
 @app.get("/training.js")
 async def training_js():
     return HTMLResponse((WEB_DIR / "training.js").read_text(), media_type="application/javascript")
@@ -77,15 +87,27 @@ async def training_css():
     return HTMLResponse((WEB_DIR / "training.css").read_text(), media_type="text/css")
 
 
+_TRAINING_LOCK = asyncio.Lock()
+_TRAINING_CACHE = None
+_TRAINING_CACHE_AT = 0.0
+
+
 @app.get("/api/training")
 async def training_overview():
+    global _TRAINING_CACHE, _TRAINING_CACHE_AT
     from airhockey.training_status import training_status
-    return await asyncio.to_thread(training_status, WEB_DIR.parents[2])
+    # Coalesce simultaneous browser polls. Repeated full history scans otherwise
+    # compete for the GIL and can outlive the polling interval.
+    async with _TRAINING_LOCK:
+        if _TRAINING_CACHE is None or time.monotonic() - _TRAINING_CACHE_AT > 3:
+            _TRAINING_CACHE = await asyncio.to_thread(training_status, WEB_DIR.parents[2])
+            _TRAINING_CACHE_AT = time.monotonic()
+        return _TRAINING_CACHE
 
 
 def _recording_checkpoint(stem: str) -> tuple[str, int | None, str]:
     """Read a checkpoint number while retaining optional diagnostic suffixes."""
-    match = re.fullmatch(r"(.+)_step_([0-9]+)((?:[-_].*)?)", stem)
+    match = re.fullmatch(r"(.+)_(?:step|update)_([0-9]+)((?:[-_].*)?)", stem)
     if match is None:
         return stem, None, ""
     return match[1], int(match[2]), match[3]
@@ -105,7 +127,8 @@ def _recording_label(stem: str) -> str:
             step_label = f"{step_num // 1_000}k"
         else:
             step_label = str(step_num)
-        return f"{run_name} @ {step_label}{suffix}"
+        unit = "update " if stem.startswith(run_name + "_update_") else ""
+        return f"{run_name} @ {unit}{step_label}{suffix}"
     return stem
 
 

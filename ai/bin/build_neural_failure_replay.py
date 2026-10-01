@@ -8,10 +8,12 @@ from pathlib import Path
 import numpy as np
 from airhockey.neural_coordinates import action_coordinates, bounds
 from airhockey.neural_setup import checkpoint_environment
+from airhockey.physics import TableConfig
 
 
 def build(reports, environment, legacy=None):
     box=bounds(environment);low=box[[0,2]];high=box[[1,3]]
+    cfg=TableConfig();radius=cfg.puck_radius+cfg.paddle_radius
     rows=[];sources=[];seen=set()
     for path in reports:
         document=json.loads(path.read_text());match=document.get('selfplay',{})
@@ -24,15 +26,15 @@ def build(reports, environment, legacy=None):
         added=0
         for side,key in enumerate(('blue_paddle','red_paddle')):
             paddle=np.asarray(physical[key]).copy();local=puck.copy()
-            if side:local[:,1]=2-local[:,1];local[:,3]*=-1;paddle[:,1]=2-paddle[:,1]
+            if side:local[:,1]=cfg.height-local[:,1];local[:,3]*=-1;paddle[:,1]=cfg.height-paddle[:,1]
             for i in range(n):
                 p=local[i]
-                if not (.04069<=p[0]<=.95931 and .04069<=p[1]<1):continue
+                if not (cfg.puck_radius-1e-5<=p[0]<=cfg.width-cfg.puck_radius+1e-5 and cfg.puck_radius-1e-5<=p[1]<cfg.height/2):continue
                 if np.linalg.norm(p[2:])>.05:continue
                 # Do not turn a kinematic paddle/rail compression artifact
                 # into an initially interpenetrating training fixture.
-                if np.linalg.norm(p[:2]-paddle[i])<.0907-.002:continue
-                if np.linalg.norm(p[:2]-np.clip(p[:2],low+.001,high-.001))>.0907:continue
+                if np.linalg.norm(p[:2]-paddle[i])<radius-.002:continue
+                if np.linalg.norm(p[:2]-np.clip(p[:2],low+.001,high-.001))>radius:continue
                 heat=np.clip(observations[side*n+i,21:29],.05,.9)
                 signature=tuple(np.round(np.r_[p[:2],paddle[i],heat],3))
                 if signature in seen:continue

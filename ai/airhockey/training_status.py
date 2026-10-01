@@ -35,6 +35,7 @@ def training_status(root, *, process_map=None, now=None, limit=12):
     now = time.time() if now is None else now
     process_map = processes() if process_map is None else process_map
     recordings = root / 'ai/recordings'
+    diagnostic_recordings = sorted(recordings.glob('neural-edge*-*.json'))
     runs = []
     for status_path in (root / 'runs').glob('*/status.json'):
         run = status_path.parent
@@ -94,12 +95,10 @@ def training_status(root, *, process_map=None, now=None, limit=12):
             edge_report = read_json(reports / 'edges.json')
             edge = row.get('edges', edge_report)
             replay = recordings / f'{run.name}_{file.stem}.json'
-            diagnostics = sorted(recordings.glob(f'neural-edge*-{file.stem}-*.json'))
+            diagnostics = []
             # A matching step in a different run is not the same policy.
             if legacy:
-                diagnostics = [p for p in diagnostics if p.name.startswith(f'neural-edge{legacy[1][10:]}-')]
-            else:
-                diagnostics = []
+                diagnostics = [p for p in diagnostic_recordings if p.name.startswith(f'neural-edge{legacy[1][10:]}-') and f'-{file.stem}-' in p.name]
             evaluation = ('Complete' if row or {'edges','skills','selfplay'}.issubset(ready) else
                           'Evaluating' if evaluator_alive else 'Incomplete / no evaluator')
             screening = ('Not passed' if row.get('eligible') is False else
@@ -145,12 +144,14 @@ def training_status(root, *, process_map=None, now=None, limit=12):
         if not (meta.get('deployment_ready') or meta.get('simulation_candidate')):
             continue
         review = read_json(file.parent / 'review.json')
+        report_day = str(meta.get('report_day', ''))
+        report = f'/training/reports/{report_day}' if re.fullmatch(r'[0-9]{8}', report_day) and (root / 'ai/airhockey/web' / f'training-report-{report_day}.html').is_file() else None
         replay_name = meta.get('replay_file')
         replay = recordings / Path(replay_name).name if isinstance(replay_name, str) else None
         packages.append(dict(name=file.parent.name, note=review.get('summary', 'Packaged policy; see its qualification report for limitations.'),
                              simulation_candidate=bool(meta.get('simulation_candidate')),
                              deployment_ready=bool(meta.get('deployment_ready')),
-                             replay=_link(replay) if replay and replay.exists() else None,
+                             replay=_link(replay) if replay and replay.exists() else None, report=report,
                              checkpoint=meta.get('selected_checkpoint'), sha256=meta.get('selected_checkpoint_sha256'),
                              updated_at=file.stat().st_mtime))
     packages.sort(key=lambda p: p['updated_at'], reverse=True)
