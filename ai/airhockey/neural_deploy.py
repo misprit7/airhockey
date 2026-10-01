@@ -49,6 +49,12 @@ def neural_limits(checkpoint):
     algorithms = ('neural_ppo_v1', 'successful_neural_trajectory_imitation_v1')
     if meta.get('algorithm') not in algorithms or meta.get('action_mode') != 'arrival':
         raise ValueError('not a neural arrival training run')
+    # The live command clamp and this adapter still use the deployment
+    # workspace. Silently decoding an expanded actor in that box changes its
+    # physical targets; simulation metadata is not a hardware configuration.
+    if meta.get('workspace_bounds_mm') is not None or meta.get('args', {}).get('workspace', 'legacy') != 'legacy':
+        raise ValueError('expanded-workspace neural checkpoint is simulation-only; '
+                         'live runner workspace integration and physical qualification are pending')
     caps = meta['physical_limits']
     values = (caps['speed_m_s'], caps['acceleration_m_s2'])
     if any(isinstance(v, bool) or not isinstance(v, (int, float)) or

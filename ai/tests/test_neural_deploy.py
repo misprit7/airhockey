@@ -13,7 +13,7 @@ from airhockey.arrival_env import ArrivalEnv
 from airhockey.dynamics import sim_to_table_mm, table_mm_to_sim
 from airhockey.heuristics import Command
 from airhockey.motion_guard import predict
-from airhockey.neural_deploy import NeuralPolicy, LiveMotorLoad, resolve_neural_checkpoint
+from airhockey.neural_deploy import NeuralPolicy, LiveMotorLoad, resolve_neural_checkpoint, neural_limits
 from airhockey.neural_player import NeuralPlayer
 from airhockey.neural_training import NeuralTrainingEnv
 from test_run_policy import rp, _install_fake_camera, _loop_args, _FakeClient
@@ -34,6 +34,19 @@ def checkpoint(tmp_path):
 @pytest.fixture
 def policy(checkpoint):
     return NeuralPolicy(checkpoint, 12000, 60000, shot_mode='straight')
+
+
+@pytest.mark.parametrize('setting', [
+    {'workspace_bounds_mm': [1200, 1937.5, 61.4, 904.5]},
+    {'args': {'workspace': 'rail30'}},
+])
+def test_live_adapter_rejects_expanded_coordinates_before_loading_weights(checkpoint, setting):
+    meta_path = checkpoint.parent / 'run.json'
+    meta = json.loads(meta_path.read_text())
+    meta.update(setting)
+    meta_path.write_text(json.dumps(meta))
+    with pytest.raises(ValueError, match='live runner workspace integration'):
+        neural_limits(checkpoint)
 
 
 def report(t=1.0, own=(0.5, 0.3), puck=(0.55, 0.6)):
