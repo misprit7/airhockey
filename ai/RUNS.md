@@ -134,3 +134,20 @@ in slow fringe practice and a bounded puck-clearance potential (weight 40).
 The PPO likelihood includes the realized exploration offset; deterministic
 inference does not use it. Exploration now uses the run's actual workspace,
 including the back rail. Neither variant adds a tactical action controller.
+
+
+The initial D/E/F evaluations still stalled at corners and exceeded sustained
+modeled load limits. D and F were stopped after comparing saved checkpoints.
+F generated a corpus of successful noisy neural trajectories (60 completed
+requested fast-shot sequences and 500 safe partial retrievals across six
+collection seeds). No scripted feasibility-search actions enter this corpus.
+Whole physical cases, including all their shot requests, stay together in
+training or validation. Exact collection/fitting source is archived in
+`recipes/rail30-neural-recovery-20261001/`.
+
+The G fit's 6,000-update snapshot retrieved 19/128 development corner cases
+(parent: 10/128), but regressed incoming requested shots. H resumes PPO from
+that snapshot with the earlier successful shot examples plus successful
+neural retrieval prefixes. Its edge cost is 20/second/rail (2 points for a
+100 ms visit, versus a 600-point goal); load weight is 48 and shutdown cost
+12,000. These remain simulation-only experiments, not production selections.
