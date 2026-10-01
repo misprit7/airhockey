@@ -404,6 +404,9 @@ async def live_game(ws: WebSocket):
                         use_hardware = not use_hardware
                         if use_hardware:
                             try:
+                                tension_mm = float(msg.get('tension_mm', 1.5))
+                                if not math.isfinite(tension_mm) or not 0 <= tension_mm <= 3:
+                                    raise ValueError('Startup pretension must be between 0 and 3 mm')
                                 # Measure where the mallet ACTUALLY is before
                                 # energizing. Assuming it sits at the centre
                                 # of the robot half offsets every subsequent
@@ -434,6 +437,7 @@ async def live_game(ws: WebSocket):
                                     sim_width=cfg.width,
                                     sim_height=cfg.height,
                                     cal_pose_mm=cal_pose,
+                                    tension_mm=tension_mm,
                                 )
                                 # Target the paddle where it ALREADY IS, not
                                 # the middle of the workspace. Enabling used

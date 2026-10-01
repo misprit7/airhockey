@@ -286,7 +286,7 @@ static void backgroundHealth(const std::function<void()> &poll) {
 
 // Startup pretension in mm. 0 = leave the cables slack.
 // Override with --tension <mm>.
-static double g_tension_mm = 0.0;
+static std::atomic<double> g_tension_mm{0.0};
 
 // Both ordinary reads and command waits feed this same persistent framer.
 static SerialLines g_teensy_lines;
@@ -334,7 +334,8 @@ static int handleCommand(const char *line, ClearPath &robot, int client_fd, int 
         return sent == static_cast<ssize_t>(response.size()) ? 1 : 0;
     }
     if (g_motor_load && (strncmp(line, "CMD ", 4) == 0 || strncmp(line, "ENABLE", 6) == 0 ||
-        strncmp(line, "DISABLE", 7) == 0 || strncmp(line, "LIMITS", 6) == 0 || strncmp(line, "RAMP", 4) == 0))
+        strncmp(line, "DISABLE", 7) == 0 || strncmp(line, "LIMITS", 6) == 0 || strncmp(line, "RAMP", 4) == 0 ||
+        strncmp(line, "PRETENSION", 10) == 0))
         g_motor_load->command(line, loadMonotonic());
     char resp[1024];
     // speed MUST be initialized: "CMD x y" parses two fields (sscanf >= 2
@@ -344,7 +345,21 @@ static int handleCommand(const char *line, ClearPath &robot, int client_fd, int 
     // check below already treats as "don't send one".
     double x, y, speed = 0.0, accel = 0.0;
 
-    if (strncmp(line, "ENABLE", 6) == 0) {
+    if (strncmp(line, "PRETENSION", 10) == 0) {
+        // Configure only: never send TENSION or change energized cables here.
+        double mm = 0;
+        char extra;
+        if (sscanf(line, "PRETENSION %lf %c", &mm, &extra) != 1 ||
+            !std::isfinite(mm) || mm < 0 || mm > 3) {
+            snprintf(resp, sizeof(resp), "ERR PRETENSION requires 0..3 mm\n");
+        } else if (g_motors_enabled) {
+            snprintf(resp, sizeof(resp), "ERR disable hardware before changing startup pretension\n");
+        } else {
+            g_tension_mm = mm;
+            logf("  startup pretension -> %.2f mm (next ENABLE)\n", mm);
+            snprintf(resp, sizeof(resp), "OK PRETENSION %.2f\n", mm);
+        }
+    } else if (strncmp(line, "ENABLE", 6) == 0) {
         logf("  ENABLE\n");
         if (g_fault) {
             logf("  clearing fault on motor %d (%s)\n", g_fault_node.load(),
@@ -402,7 +417,8 @@ static int handleCommand(const char *line, ClearPath &robot, int client_fd, int 
         // ZERO for bring-up — the rig is force-closed, so pretension turns a
         // modelling error into cables fighting each other. Start loose and
         // raise it only once the cable model is trusted.
-        if (g_tension_mm > 0.0) {
+        const double tension_mm = g_tension_mm.load();
+        if (tension_mm > 0.0) {
             // Bracket the retraction with the drives' OWN encoders.
             //
             // Tensioning is the one moment every motor is commanded exactly
@@ -420,7 +436,7 @@ static int handleCommand(const char *line, ClearPath &robot, int client_fd, int 
             bool have0 = robot.readEncoders(p0, res0, trq0);
 
             char tcmd[64];
-            snprintf(tcmd, sizeof(tcmd), "TENSION %.2f\n", g_tension_mm);
+            snprintf(tcmd, sizeof(tcmd), "TENSION %.2f\n", tension_mm);
             sendTeensy(teensy_fd, tcmd);
             if (!waitTeensyOK(teensy_fd, 10000)) {
                 snprintf(resp, sizeof(resp), "ERR teensy TENSION failed\n");
@@ -430,7 +446,7 @@ static int handleCommand(const char *line, ClearPath &robot, int client_fd, int 
 
             if (have0 && robot.readEncoders(p1, res1, trq1)) {
                 logf("  pretension %.2f mm — per-motor encoder travel:\n",
-                     g_tension_mm);
+                     tension_mm);
                 for (int m = 0; m < 4; m++) {
                     if (!res1[m]) {
                         logf("    motor %d: resolution unknown\n", m);
@@ -443,7 +459,7 @@ static int handleCommand(const char *line, ClearPath &robot, int client_fd, int 
                     // to three non-zeros.
                     logf("    motor %d: %+7.2f mm  torque %5.1f -> %5.1f %%%s\n",
                          m, mm, trq0[m], trq1[m],
-                         fabs(mm) < 0.25 * g_tension_mm ? "   <-- DID NOT MOVE"
+                         fabs(mm) < 0.25 * tension_mm ? "   <-- DID NOT MOVE"
                                                         : "");
                 }
             }
@@ -676,7 +692,7 @@ int main(int argc, char *argv[]) {
         }
     }
 
-    logf("Startup pretension: %.2f mm%s\n", g_tension_mm,
+    logf("Startup pretension: %.2f mm%s\n", g_tension_mm.load(),
          g_tension_mm > 0.0 ? "" : "  (cables left slack)");
 
     mkdir("logs", 0755);
@@ -792,7 +808,7 @@ int main(int argc, char *argv[]) {
                 }
                 LoadValue stopped; stopped.error = "stopping";
                 stopped.start = stopped.end = loadMonotonic(); return stopped;
-            }, []() { return loadContext(g_tension_mm); }));
+            }, []() { return loadContext(g_tension_mm.load()); }));
         if (load_logger->open()) {
             g_motor_load = load_logger.get();
             logf("Motor-load log: %s (target %.1f Hz, enabled and disabled)\n", path, load_hz);

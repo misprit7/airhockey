@@ -85,6 +85,12 @@
                 </label>
             </div>
             <div id="hardware-error" class="hidden" role="alert"></div>
+            <div id="pretension-panel">
+                <label for="startup-tension">Startup pretension
+                    <span><input id="startup-tension" type="number" min="0" max="3" step="0.1" value="1.5" inputmode="decimal"> mm</span>
+                </label>
+                <p>Applied next time Hardware is enabled. Saved in this browser.</p>
+            </div>
             <section id="motor-load-panel" aria-label="Physical motor load">
                 <h3>Motor load <span id="motor-load-state">Waiting</span></h3>
                 <div id="motor-load-summary">Reading motor telemetry…</div>

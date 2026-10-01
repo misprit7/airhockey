@@ -97,7 +97,39 @@ static void test_slow_health_does_not_block_commands() {
     g_stop = 0;
 }
 
+static void test_startup_pretension_configuration_never_moves() {
+    int tcp[2], serial[2];
+    assert(socketpair(AF_UNIX, SOCK_STREAM, 0, tcp) == 0);
+    assert(socketpair(AF_UNIX, SOCK_STREAM, 0, serial) == 0);
+    assert(fcntl(serial[1], F_SETFL, O_NONBLOCK) == 0);
+    ClearPath disconnected_robot;
+    auto command = [&](const char *text, const char *prefix) {
+        assert(handleCommand(text, disconnected_robot, tcp[0], serial[0]) == 1);
+        char reply[256] = {};
+        assert(read(tcp[1], reply, sizeof(reply)-1) > 0);
+        assert(!strncmp(reply, prefix, strlen(prefix)));
+        char byte;
+        assert(read(serial[1], &byte, 1) == -1 && (errno == EAGAIN || errno == EWOULDBLOCK));
+    };
+    g_motors_enabled = false;
+    for (const char *text : {"PRETENSION 0", "PRETENSION 3", "PRETENSION 1.5"})
+        command(text, "OK PRETENSION");
+    assert(g_tension_mm.load() == 1.5);
+    for (const char *text : {"PRETENSION", "PRETENSION nan", "PRETENSION inf",
+             "PRETENSION -1", "PRETENSION 3.1", "PRETENSION 1 garbage"}) {
+        command(text, "ERR PRETENSION");
+        assert(g_tension_mm.load() == 1.5);
+    }
+    g_motors_enabled = true;
+    command("PRETENSION 2", "ERR disable hardware");
+    assert(g_tension_mm.load() == 1.5);
+    g_motors_enabled = false;
+    g_tension_mm = 0;
+    for (int fd : {tcp[0], tcp[1], serial[0], serial[1]}) close(fd);
+}
+
 int main() {
+    test_startup_pretension_configuration_never_moves();
     int fd[2]; assert(pipe(fd) == 0);
     assert(fcntl(fd[0], F_SETFL, O_NONBLOCK) == 0);
     const char packet[] = "OK CMD\r\nS 1700 400 10 20 1 2 3 4\r\n";

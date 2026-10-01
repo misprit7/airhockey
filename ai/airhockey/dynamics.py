@@ -411,6 +411,7 @@ class HardwareDynamics(MotorDynamics):
         host: str = "127.0.0.1",
         port: int = 8421,
         cal_pose_mm: tuple[float, float, float] | None = None,
+        tension_mm: float | None = None,
     ):
         import time as _time
 
@@ -432,7 +433,21 @@ class HardwareDynamics(MotorDynamics):
         self.client.connect()
         # Measured calibration point if the caller has one (track_mallet.py).
         # Measured (x, y, theta_deg) from track_mallet.py if available.
-        self.client.enable(*(cal_pose_mm or (None, None, None)))
+        attempted_enable = False
+        try:
+            if tension_mm is not None:
+                self.client.set_startup_tension(tension_mm)
+            attempted_enable = True
+            self.client.enable(*(cal_pose_mm or (None, None, None)))
+        except Exception:
+            # A rejected configuration must not proceed to enable; a partial
+            # enable must still release/disable before giving up ownership.
+            try:
+                if attempted_enable:
+                    self.client.disable()
+            finally:
+                self.client.close()
+            raise
         self._time = _time
         self._hw_rate = 10.0  # Hz — command rate to hardware
         self._last_hw_send = 0.0
@@ -675,4 +690,3 @@ class HardwareDynamics(MotorDynamics):
         x1, y1 = self._mm_to_sim(self.geom.WS_MAX_X, self.geom.WS_MAX_Y)
         return {"min_x": min(x0, x1), "max_x": max(x0, x1),
                 "min_y": min(y0, y1), "max_y": max(y0, y1)}
-

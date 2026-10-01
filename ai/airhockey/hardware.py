@@ -116,7 +116,8 @@ class CDPRClient:
         """Energize the motors and calibrate the Teensy.
 
         NOT passive: the master follows this with TENSION and START, so the
-        cables take up 2mm of slack and the control loop begins running.
+        cables take up the configured startup pretension and the control
+        loop begins running.
 
         Pass the MEASURED mallet position if you have it — otherwise the
         master assumes the mallet sits at the centre of the robot half, and
@@ -139,6 +140,16 @@ class CDPRClient:
         resp = self._send("DISABLE", timeout=self.ENABLE_TIMEOUT_S)
         if not resp.startswith("OK"):
             raise RuntimeError(f"CDPR disable failed: {resp}")
+
+    def set_startup_tension(self, mm: float) -> None:
+        """Configure next ENABLE while disabled; this command never moves cables."""
+        mm = float(mm)
+        if not math.isfinite(mm) or not 0 <= mm <= 3:
+            raise ValueError('Startup pretension must be between 0 and 3 mm')
+        resp = self._send(f'PRETENSION {mm:.2f}')
+        if not resp.startswith('OK PRETENSION '):
+            hint = ' Restart cdpr_master to load support for UI pretension.' if 'unknown' in resp.lower() else ''
+            raise RuntimeError(f'Could not set startup pretension: {resp}.{hint}')
 
     def command_position(self, x_mm: float, y_mm: float, speed_mm_s: float,
                          accel_mm_s2: float | None = None) -> None:

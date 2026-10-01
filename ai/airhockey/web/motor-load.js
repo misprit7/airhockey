@@ -21,6 +21,8 @@
         summary.textContent = live
             ? (context.fault ? `Drive fault · motor ${context.fault_node}` : context.motors_enabled ? 'Drives enabled' : 'Drives disabled')
             : data.message || 'No fresh readings. Start cdpr_master or a hardware run.';
+        if (live && Number.isFinite(context.startup_tension_mm))
+            summary.textContent += ` · pretension ${context.startup_tension_mm.toFixed(2)} mm`;
         summary.className = live && context.fault ? 'load-danger' : '';
         summary.title = data.source ? `Source: ${data.source}` : '';
         for (let node = 0; node < 4; node++) {

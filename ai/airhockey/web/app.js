@@ -686,6 +686,18 @@ document.getElementById("btn-physics").addEventListener("click", () => {
     if (ws) ws.send(JSON.stringify({ type: "toggle_physics" }));
 });
 
+const startupTension = document.getElementById("startup-tension");
+try {
+    const saved = localStorage.getItem("airhockey.startupTensionMm");
+    if (saved !== null && saved.trim() && Number.isFinite(Number(saved)) && Number(saved) >= 0 && Number(saved) <= 3)
+        startupTension.value = saved;
+} catch (_) { /* Storage may be unavailable in private browser sessions. */ }
+startupTension.addEventListener("change", () => {
+    if (startupTension.value.trim() && startupTension.checkValidity()) {
+        try { localStorage.setItem("airhockey.startupTensionMm", startupTension.value); } catch (_) {}
+    }
+});
+
 document.getElementById("btn-hardware").addEventListener("click", () => {
     const button = document.getElementById("btn-hardware");
     const error = document.getElementById("hardware-error");
@@ -695,15 +707,17 @@ document.getElementById("btn-hardware").addEventListener("click", () => {
         return;
     }
     if (hardwareRequest !== null) return;
+    const enabling = !button.classList.contains("active");
+    if (enabling && (!startupTension.value.trim() || !startupTension.reportValidity())) return;
     // Driving the machine from replay mode is never what you meant: the
     // field is showing a recording, and every target you set is discarded.
     if (mode === "replay") setMode("control");
-    hardwareRequest = !button.classList.contains("active");
+    hardwareRequest = enabling;
     button.disabled = true;
     button.textContent = hardwareRequest ? "Hardware: Enabling…" : "Hardware: Disabling…";
     error.textContent = hardwareRequest ? "Measuring paddle pose and enabling hardware…" : "Disabling hardware…";
     error.classList.remove("hidden");
-    ws.send(JSON.stringify({ type: "toggle_hardware" }));
+    ws.send(JSON.stringify({ type: "toggle_hardware", tension_mm: Number(startupTension.value) }));
 });
 
 document.getElementById("chk-hw-overlay").addEventListener("change", (e) => {

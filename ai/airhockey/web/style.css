@@ -778,7 +778,7 @@ canvas {
     font-size: 12px;
     color: var(--ink-2);
 }
-#limits-panel input {
+#limits-panel input, #startup-tension {
     width: 72px;
     background: var(--ice);
     border: 1.5px solid var(--line);
@@ -790,6 +790,19 @@ canvas {
     font-variant-numeric: tabular-nums;
     text-align: right;
 }
+#limits-panel input[type="number"], #players-panel input[type="number"], #startup-tension {
+    appearance: textfield;
+    -moz-appearance: textfield;
+}
+#limits-panel input::-webkit-inner-spin-button, #limits-panel input::-webkit-outer-spin-button,
+#players-panel input::-webkit-inner-spin-button, #players-panel input::-webkit-outer-spin-button,
+#startup-tension::-webkit-inner-spin-button, #startup-tension::-webkit-outer-spin-button {
+    -webkit-appearance: none;
+    margin: 0;
+}
+#pretension-panel label { display: flex; justify-content: space-between; align-items: center; gap: 8px; font-size: 12px; }
+#pretension-panel label span { white-space: nowrap; }
+#pretension-panel p { margin-top: 5px; color: var(--ink-3); font-size: 11px; line-height: 1.4; }
 #limits-panel button { padding: 6px 10px; font-size: 12px; }
 /* Two gauges rather than a sentence: which cap is saturated, and how close
    the other one is, are both continuous quantities — and the gap between
