@@ -23,6 +23,9 @@ class BatchPhysicsEngine:
         self.n_envs = n_envs
         self.config = config or TableConfig()
         self.domain_randomize = domain_randomize
+        # Opt-in and checkpointed by the expanded-workspace experiment. Paddle
+        # separation can otherwise leave a puck through a rail until next tick.
+        self.project_rail_contacts = False
 
         # Per-env physics parameters — shape [N]
         # Initialized to defaults; randomized on reset when domain_randomize=True
@@ -180,6 +183,8 @@ class BatchPhysicsEngine:
             self.paddle_opp_x, self.paddle_opp_y,
             self.paddle_opp_vx, self.paddle_opp_vy,
         )
+        if self.project_rail_contacts:
+            self._collide_walls()
         self._clamp_puck_speed()
         self._check_goals()
         self.time += dt

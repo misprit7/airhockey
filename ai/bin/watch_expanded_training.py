@@ -28,15 +28,21 @@ def main():
    defense=call('eval_neural_preparation.py',ckpt,report/'preparation.json',['--trials','384','--seed','20261012','--lateral-speed','.5','--speed-min','10','--speed-max','16'])
    record=ROOT/'ai/recordings'/f'{a.run.name}_{ckpt.stem}.json'
    match=call('eval_neural_player.py',ckpt,report/'selfplay.json',['--games-only','--games','4','--seconds','90','--record',str(record),'--seed','20261013'])
+   fringe=call('eval_neural_fringe.py',ckpt,report/'fringe.json',['--trials','256','--seed','20261015'])
+   endurance=call('eval_neural_player.py',ckpt,report/'endurance.json',['--games-only','--games','4','--seconds','600','--initial-load','.8','--thermal-gain','1.3','--seed','20261014'])
    shots={}
    for name,suite in skill['requested_skills'].items():
     shots[name]={kind:{k:suite[kind][k] for k in ('trials','controlled','control_to_requested_fast','first_requested_shots_at_least_6m_s')} for kind in ('stationary','receiving')}
    fast=sum(s[k]['first_requested_shots_at_least_6m_s'] for s in shots.values() for k in ('stationary','receiving'))/768
    saves=defense['saved']/defense['trials'];selfplay=match['selfplay']
    peak=float(np.max(selfplay['peak_load']));overload=float(np.sum(selfplay['overload_seconds']))
+   long_peak=float(np.max(endurance['selfplay']['peak_load']))
+   long_overload=float(np.sum(endurance['selfplay']['overload_seconds']))
    shot_totals={kind:sum(s[kind]['first_requested_shots_at_least_6m_s'] for s in shots.values()) for kind in ('stationary','receiving')}
    row=dict(checkpoint=str(ckpt),sha256=hashlib.sha256(ckpt.read_bytes()).hexdigest(),shots=shot_totals,shot_routes=shots,defense=dict(saved=defense['saved'],trials=defense['trials'],rate=saves,forward_at_release=defense['forward_at_release']),
-     short_peak=peak,overload_seconds=overload,eligible=bool(overload==0 and peak<1 and fast>.45 and saves>.65),
+     short_peak=peak,overload_seconds=overload,fringe=fringe['summary'],
+     endurance_peak=long_peak,endurance_overload_seconds=long_overload,
+     eligible=bool(overload==0 and peak<1 and long_overload==0 and long_peak<1 and fast>.45 and saves>.65),
      development_score=fast+saves,replay='/?replay='+record.name,screen='Development only; independent longer qualification still required.')
    rows.append(row);seen.add(str(ckpt));write(selection,dict(rows=rows))
    print(json.dumps(row),flush=True)

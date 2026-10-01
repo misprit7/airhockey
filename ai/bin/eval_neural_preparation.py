@@ -71,7 +71,8 @@ def evaluate(path, count=1024, seed=20263139, initial_load=None, lateral_speed=0
             at_launch[releasing] = pad[releasing]
             current = np.column_stack((env.engine.puck_x, env.engine.puck_y))
             release_puck[releasing] = current[releasing]
-            risk[releasing] = direct_goal_coverage_cost(current, pad, vel, env.decoder.bounds, env.cfg)[releasing]
+            risk[releasing] = direct_goal_coverage_cost(current, pad, vel, env.decoder.bounds, env.cfg,
+                acceleration=env.base._agent_dyn['nominal_accel'],shot_speed=speed_range[1])[releasing]
             if lateral_speed:
                 ids = np.flatnonzero(releasing)
                 direction = np.column_stack((env._windup_aim[ids]-current[ids, 0], -current[ids, 1]))

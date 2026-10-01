@@ -114,11 +114,11 @@ def fixtures(seed, per_task, wide=False, defense_speed_range=(2, 8)):
     return result, np.repeat(np.arange(4), per_task)
 
 
-def bank_defense_launches(seed, n, *, speed_range=(8, 12), goal_half_width=.02):
+def bank_defense_launches(seed, n, *, speed_range=(8, 12), goal_half_width=.02, config=None):
     """Alternating single-bank attacks, nominally aimed near goal center."""
     from airhockey.physics import TableConfig
 
-    cfg = TableConfig()
+    cfg = config or TableConfig()
     if not 0 < goal_half_width < cfg.goal_width / 2 - cfg.puck_radius:
         raise ValueError("bank goal half-width must lie inside the scoring mouth")
     if len(speed_range) != 2 or not 0 < speed_range[0] <= speed_range[1] <= cfg.max_puck_speed:

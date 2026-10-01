@@ -138,10 +138,6 @@ def skills(
     f, tasks = fixtures(
         seed, per_task, wide=True, defense_speed_range=defense_speed_range
     )
-    if bank_defense:
-        f.puck[tasks == 3] = bank_defense_launches(
-            seed, per_task, speed_range=defense_speed_range,
-            goal_half_width=.14 if wide_defense else .02)
     env = NeuralTrainingEnv(
         len(f.task),
         stage=2,
@@ -153,6 +149,11 @@ def skills(
         shot_request=shot_request,
         **getattr(net,'environment_options',{}),
     )
+    env.cfg.max_puck_speed=max(env.cfg.max_puck_speed,defense_speed_range[1])
+    if bank_defense:
+        f.puck[tasks == 3] = bank_defense_launches(
+            seed, per_task, speed_range=defense_speed_range,
+            goal_half_width=.14 if wide_defense else .02,config=env.cfg)
     if random_start:
         ids = f.task < 2
         f.paddle[ids] = random_paddle_starts(
@@ -520,10 +521,18 @@ def games(
     readiness_cost = np.zeros(2)
     reachable_stall_seconds = np.zeros(2)
     prolonged_possession_seconds = np.zeros(2)
+    edge_dwell_seconds=np.zeros((2,n))
+    corner_dwell_seconds=np.zeros((2,n))
     history = PhysicalHistory(max(net.history, opponent_net.history if opponent_net else 1))
     start = time.monotonic()
     traces = []
     for tick in range(round(seconds / 0.02)):
+        for side,prefix in enumerate(('paddle_agent','paddle_opp')):
+            x=getattr(env.engine,prefix+'_x');y=getattr(env.engine,prefix+'_y')
+            if side:y=env.cfg.height-y
+            margins=np.column_stack((x-env.decoder.low[0],env.decoder.high[0]-x,y-env.decoder.low[1]))
+            edge_dwell_seconds[side]+=.02*(margins.min(axis=1)<.06)
+            corner_dwell_seconds[side]+=.02*((margins<.06).sum(axis=1)>=2)
         views = np.concatenate((obs, env.opponent_obs()))
         views = history.append(views)
         if opponent_net is None:
@@ -693,6 +702,8 @@ def games(
             mean_direct_coverage_shortfall_m=(readiness_cost / np.maximum(readiness_samples, 1)).tolist(),
         ),
         reachable_stall_player_seconds=reachable_stall_seconds.tolist(),
+        edge_dwell_seconds=edge_dwell_seconds.tolist(),
+        corner_dwell_seconds=corner_dwell_seconds.tolist(),
         possession_over_7s_player_seconds=prolonged_possession_seconds.tolist(),
         final_physical_state=dict(
             puck=np.column_stack((env.engine.puck_x, env.engine.puck_y, env.engine.puck_vx, env.engine.puck_vy)).tolist(),
@@ -879,6 +890,8 @@ def main():
                     for name in (
                         "neural_player.py",
                         "neural_observation.py",
+                        "neural_setup.py",
+                        "neural_coordinates.py",
                         "report_sensing.py",
                         "deploy.py",
                         "heuristics.py",

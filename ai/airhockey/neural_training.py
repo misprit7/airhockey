@@ -27,6 +27,7 @@ class NeuralTrainingEnv(ArrivalEnv):
         thermal_path=DEFAULT_MODEL,
         edge_dwell_weight=0.,
         edge_dwell_band=.06,
+        project_rail_contacts=False,
         seed=0,
         realistic=True,
         report_sensing=False,
@@ -107,6 +108,7 @@ class NeuralTrainingEnv(ArrivalEnv):
         cold_practice_fraction=0.0,
         cold_game_start_fraction=0.0,
         edge_drill_fraction=0.0,
+        corner_drill_fraction=0.0,
         edge_recovery_weight=0.0,
         edge_approach_weight=0.0,
         slow_exit_penalty=0.0,
@@ -131,6 +133,7 @@ class NeuralTrainingEnv(ArrivalEnv):
         if not np.isfinite([edge_dwell_weight,edge_dwell_band]).all() or edge_dwell_weight<0 or edge_dwell_band<=0:
             raise ValueError('invalid edge dwell penalty')
         self.edge_dwell_weight,self.edge_dwell_band=edge_dwell_weight,edge_dwell_band
+        self.engine.project_rail_contacts = bool(project_rail_contacts)
         if report_sensing and self.base._perception is not None:
             self.base._perception.enable_report_estimator()
         if not 0 <= recovery_fraction <= 1:
@@ -154,6 +157,9 @@ class NeuralTrainingEnv(ArrivalEnv):
         if not np.isfinite([edge_recovery_weight, edge_approach_weight]).all() or min(edge_recovery_weight, edge_approach_weight) < 0:
             raise ValueError("edge reward weights must be finite and nonnegative")
         self.edge_drill_fraction = edge_drill_fraction
+        if not np.isfinite(corner_drill_fraction) or not 0<=corner_drill_fraction<=1:
+            raise ValueError('corner drill fraction must be in [0,1]')
+        self.corner_drill_fraction=corner_drill_fraction
         self.edge_recovery_weight = edge_recovery_weight
         self.edge_approach_weight = edge_approach_weight
         self.edge_drill = np.zeros(n_envs, bool)
@@ -767,6 +773,7 @@ class NeuralTrainingEnv(ArrivalEnv):
             velocity = np.column_stack((e.paddle_agent_vx, e.paddle_agent_vy))
             preparing = (e.puck_vy >= 0) | (speed < 2)
             risk = direct_goal_coverage_cost(puck, pad, velocity, self.decoder.bounds, self.cfg,
+                acceleration=self.base._agent_dyn['nominal_accel'],shot_speed=self.defense_max_speed,
                 lateral_uncertainty=self.readiness_lateral_uncertainty * preparing)
             # While the opponent has the puck, learn positions from which
             # several direct attacks can be covered. No fixed home target,
@@ -783,7 +790,7 @@ class NeuralTrainingEnv(ArrivalEnv):
             depth = np.maximum(self.decoder.low[0] + .04 - puck[:, 0],
                                puck[:, 0] - (self.decoder.high[0] - .04))
             blend = np.clip(depth / .04, 0, 1) * np.clip((2 - speed) / 1.5, 0, 1)
-            blend *= (puck[:, 1] < self.decoder.high[1]) & (puck[:, 1] > self.decoder.low[1])
+            blend *= (puck[:, 1] < self.decoder.high[1]) & (puck[:, 1] > self.cfg.puck_radius)
             contact = np.clip(puck, self.decoder.low + .002, self.decoder.high - .002)
             distance = np.linalg.norm(pad - contact, axis=1)
             potential = (1 - blend) * potential - blend * self.edge_approach_weight * distance
@@ -913,6 +920,7 @@ class NeuralTrainingEnv(ArrivalEnv):
                 banks = defense & (rng.random(n) < .5)
                 puck[banks] = bank_defense_launches(
                     int(rng.integers(2**31)), banks.sum(),
+                    config=self.cfg,
                     **(dict(speed_range=(self.defense_min_speed, max_incoming),
                             goal_half_width=mouth) if self.wide_defense else {})
                 )
@@ -1001,11 +1009,25 @@ class NeuralTrainingEnv(ArrivalEnv):
                 margin[thin] = rng.uniform(.0005, .01, int(thin.sum()))
                 puck[edge, 0] = np.where(left, self.decoder.low[0] + .002 - radius + margin,
                                          self.decoder.high[0] - .002 + radius - margin)
+                puck[edge,0]=np.clip(puck[edge,0],self.cfg.puck_radius+.001,self.cfg.width-self.cfg.puck_radius-.001)
                 puck[edge, 1] = rng.uniform(self.decoder.low[1] + .12, self.decoder.high[1] - .05, k)
                 puck[edge, 2:] = 0
                 paddle[edge] = rng.uniform(self.decoder.low + .005, self.decoder.high - .005, (k, 2))
                 replay_actions[edge] = np.nan
                 starting_requests[edge] = 0
+            if self.corner_drill_fraction:
+                # Reset-only practice for pucks behind/beside the paddle.
+                # Bouncing them out or leaving an expensive hold is learned.
+                corner=(kind==0)&(rng.random(n)<self.corner_drill_fraction)
+                k=int(corner.sum());left=rng.random(k)<.5
+                inset=rng.uniform(self.cfg.puck_radius+.002,self.decoder.low[0]+.015,k)
+                puck[corner,0]=np.where(left,inset,self.cfg.width-inset)
+                puck[corner,1]=rng.uniform(self.cfg.puck_radius+.002,self.decoder.low[1]+.02,k)
+                puck[corner,2:]=0
+                paddle[corner,0]=np.where(left,self.decoder.low[0]+.015,self.decoder.high[0]-.015)
+                paddle[corner,1]=puck[corner,1]+rng.uniform(.12,.22,k)
+                replay_actions[corner]=np.nan;starting_requests[corner]=0
+                edge|=corner
             fixtures = Fixtures(np.zeros(n, int), puck, paddle, np.full(n, 0.5))
         else:
             self.kind[ids] = fixtures.task

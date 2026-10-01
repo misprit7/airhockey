@@ -16,6 +16,7 @@ def checkpoint_environment(path,state=None):
     args=state.get('args',{}) if state is not None else meta.get('args',{})
     result=dict(accel=args.get('accel',meta.get('physical_limits',{}).get('acceleration_m_s2',60)),
                 defense_max_speed=args.get('defense_max_speed',12),
+                project_rail_contacts=args.get('project_rail_contacts',False),
                 workspace_bounds_mm=meta.get('workspace_bounds_mm',workspace_bounds(args.get('workspace','legacy'))))
     model=meta.get('thermal_model')
     if model:result['thermal_path']=model

@@ -85,7 +85,41 @@ def test_evaluation_uses_snapshot_not_mutable_model_path(tmp_path):
 
 def test_fast_shot_curriculum_does_not_silently_clip_to_twelve():
     env=NeuralTrainingEnv(64,stage=5,defense_min_speed=10,defense_max_speed=16,
-        defense_windup_fraction=1,practice_defense_fraction=1,game_fraction=0,**NEW)
+        defense_windup_fraction=1,practice_defense_fraction=1,game_fraction=0,wide_defense=True,**NEW)
     env.reset(seed=4)
     assert env.cfg.max_puck_speed==16
     assert np.linalg.norm(env._windup_velocity,axis=1).max()>12
+
+
+def test_corner_and_expanded_fringe_resets_are_physical_and_do_not_overlap():
+    for corner in (0,1):
+        env=NeuralTrainingEnv(128,stage=5,game_fraction=0,edge_drill_fraction=1,
+            corner_drill_fraction=corner,**NEW)
+        env.reset(seed=110)
+        e=env.engine;ids=env.edge_drill
+        assert ids.any()
+        assert np.all(e.puck_x[ids]>=env.cfg.puck_radius)
+        assert np.all(e.puck_x[ids]<=1-env.cfg.puck_radius)
+        assert np.all(e.puck_y[ids]>=env.cfg.puck_radius)
+        if corner:
+            gap=np.hypot(e.puck_x[ids]-e.paddle_agent_x[ids],e.puck_y[ids]-e.paddle_agent_y[ids])
+            assert gap.min()>env.cfg.puck_radius+env.cfg.paddle_radius
+            assert e.puck_y[ids].max()<env.decoder.low[1]+.021
+
+
+def test_contact_projection_keeps_corner_puck_inside_rails_and_goals_open():
+    env=NeuralTrainingEnv(3,project_rail_contacts=True,**NEW)
+    env.reset(seed=5)
+    e=env.engine;r=env.cfg.puck_radius
+    e.puck_x[:]=[r,1-r,.5];e.puck_y[:]=[r,2-r,.005]
+    e.puck_vx[:]=0;e.puck_vy[:]=[0,0,-5]
+    e.paddle_agent_x[:]=[.081,.5,.8];e.paddle_agent_y[:]=[.08,.5,.8]
+    e.paddle_opp_x[:]=[.5,.919,.8];e.paddle_opp_y[:]=[1.5,1.92,1.5]
+    e.paddle_agent_vx[:]=0;e.paddle_agent_vy[:]=0
+    e.paddle_opp_vx[:]=0;e.paddle_opp_vy[:]=0
+    for _ in range(20):
+        e.step(.0025)
+        assert np.all(e.puck_x[:2]>=r) and np.all(e.puck_x[:2]<=1-r)
+        assert np.all(e.puck_y[:2]>=r) and np.all(e.puck_y[:2]<=2-r)
+    assert e.score_opponent[2]==1
+    assert NeuralTrainingEnv(1).engine.project_rail_contacts is False

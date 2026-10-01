@@ -101,3 +101,28 @@ publishes requested-shot, delayed-release defense, and complete self-play
 results plus replay links on [the training dashboard](http://localhost:8420/training).
 Run metadata freezes the exact workspace, acceleration and thermal recipe
 for evaluation. Development screens are not hardware qualification.
+
+
+The `...-defense-20261001-b` continuation adds 8–16 m/s incoming shots,
+unknown release delays, lateral puck movement before release, and uncertainty
+in defensive coverage shaping. Launch speeds are checked against the actual
+physics cap, including bank-shot fixture generation. The network receives no
+hidden release time, aim, or requested shot of its opponent.
+
+Longer tests found corner stalls and a rail-penetration artifact: paddle
+separation could put the puck outside the table after wall resolution. The
+`...-corners-20261001-c` continuation added corner retrieval starts; it was
+stopped at 28,049,408 cumulative transitions and continued as
+`...-rails-20261001-d` with checkpointed `--project-rail-contacts`. This resolves
+rails again after paddle contact and preserves goal openings. It is still a
+rigid, kinematic paddle model, not a model of compression or paddle bounce.
+Historical runs retain their recorded behavior unless an explicit common
+environment is supplied to the evaluator.
+
+D uses a 6 reward/second/rail edge cost, load weight 24, and small existing
+edge-recovery shaping. These are rewards and reset distributions, not motion
+rules. Its evaluator adds 256 edge/corner retrieval cases and four continuous
+10-minute self-play games starting at 80% modeled load, with a 1.3 current-model
+gain. These expose heat accumulation and stalls that a 90-second replay can
+miss. Recipes record exact commands; final model selection requires separate
+held-out testing and is not inferred from the newest checkpoint.

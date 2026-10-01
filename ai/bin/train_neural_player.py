@@ -76,6 +76,7 @@ def main():
     p.add_argument('--thermal-model',type=Path,default=DEFAULT_MODEL)
     p.add_argument('--edge-dwell-weight',type=float,default=0,help='Maximum cost per second per nearby rail')
     p.add_argument('--edge-dwell-band',type=float,default=.06,help='Soft penalty band inside workspace boundary, meters')
+    p.add_argument('--project-rail-contacts',action='store_true',help='Resolve rail penetration introduced by paddle contact')
     p.add_argument("--seed", type=int, default=20261801)
     p.add_argument("--save-every", type=int, default=500_000)
     p.add_argument("--width", type=int, help="Hidden width; inherit on resume, otherwise 256")
@@ -177,6 +178,7 @@ def main():
     p.add_argument("--stationary-replay-fraction", type=float, default=0)
     p.add_argument("--edge-drill-fraction", type=float, default=0,
                    help="Fraction of stationary practice starting in reachable side fringes")
+    p.add_argument('--corner-drill-fraction',type=float,default=0)
     p.add_argument("--edge-recovery-weight", type=float, default=0,
                    help="Once-per-possession credit for returning a touched fringe puck to the interior")
     p.add_argument("--edge-approach-weight", type=float, default=0,
@@ -337,6 +339,7 @@ def main():
     options = dict(
         accel=args.accel,workspace_bounds_mm=run_bounds,thermal_path=args.thermal_model,
         edge_dwell_weight=args.edge_dwell_weight,edge_dwell_band=args.edge_dwell_band,
+        project_rail_contacts=args.project_rail_contacts,
         goals_only=args.goals_only,
         stage=args.stage,
         seed=args.seed,
@@ -413,6 +416,7 @@ def main():
         stationary_failure_penalty=args.stationary_failure_penalty,
         stationary_rest_fraction=args.stationary_rest_fraction,
         edge_drill_fraction=args.edge_drill_fraction,
+        corner_drill_fraction=args.corner_drill_fraction,
         edge_recovery_weight=args.edge_recovery_weight,
         edge_approach_weight=args.edge_approach_weight,
         stationary_replay=args.stationary_replay,
