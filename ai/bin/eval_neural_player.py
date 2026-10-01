@@ -135,8 +135,11 @@ def skills(
     recovery=False,
 ):
     torch.manual_seed(seed)
+    from airhockey.physics import TableConfig
+    fixture_config=TableConfig()
+    fixture_config.max_puck_speed=max(fixture_config.max_puck_speed,defense_speed_range[1])
     f, tasks = fixtures(
-        seed, per_task, wide=True, defense_speed_range=defense_speed_range
+        seed, per_task, wide=True, defense_speed_range=defense_speed_range, config=fixture_config
     )
     env = NeuralTrainingEnv(
         len(f.task),

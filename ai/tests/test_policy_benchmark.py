@@ -85,3 +85,17 @@ def test_selfplay_game_aim_request_is_symmetric():
     rival = env.opponent_obs()
     np.testing.assert_array_equal(obs[:, 37], rival[:, 37])
     np.testing.assert_allclose(obs[:, 37], 0.5)
+
+
+def test_direct_defense_fixture_speed_limit_is_explicit():
+    import pytest
+    from airhockey.policy_benchmark import fixtures
+    from airhockey.physics import TableConfig
+    with pytest.raises(ValueError):
+        fixtures(17,16,defense_speed_range=(10,16))
+    cfg=TableConfig();cfg.max_puck_speed=16
+    f,tasks=fixtures(17,64,defense_speed_range=(10,16),config=cfg)
+    speeds=np.linalg.norm(f.puck[tasks==3,2:],axis=1)
+    assert speeds.min()>=10 and speeds.max()<=16
+    assert (speeds>12).any()
+    assert TableConfig().max_puck_speed==12

@@ -50,16 +50,17 @@ class LegacyTrials(ArrivalEnv):
         return out
 
 
-def fixtures(seed, per_task, wide=False, defense_speed_range=(2, 8)):
+def fixtures(seed, per_task, wide=False, defense_speed_range=(2, 8), config=None):
     from airhockey.physics import TableConfig
 
+    cfg = config or TableConfig()
     if (
         len(defense_speed_range) != 2
         or not np.isfinite(defense_speed_range).all()
         or not 0
         < defense_speed_range[0]
         <= defense_speed_range[1]
-        <= TableConfig().max_puck_speed
+        <= cfg.max_puck_speed
     ):
         raise ValueError(
             "defense speeds must be ordered and within the simulated puck-speed cap"
@@ -77,7 +78,7 @@ def fixtures(seed, per_task, wide=False, defense_speed_range=(2, 8)):
         from airhockey.dynamics import workspace_in_sim
         from airhockey.physics import TableConfig
 
-        ws, cfg = workspace_in_sim(), TableConfig()
+        ws = workspace_in_sim()
         r = cfg.puck_radius + cfg.paddle_radius
         shoot = f.task < 2
         f.puck[shoot, 0] = rng.uniform(

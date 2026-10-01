@@ -1,0 +1,29 @@
+{
+  "purpose": "Offline parameter averaging between nearby learned networks; remains one neural policy, no tactical control or ensemble at inference.",
+  "candidates": [
+    {
+      "output": "runs/_neural-rail30-accel100-averaged25-20261001-l",
+      "first": "runs/_neural-rail30-accel100-balanced-20261001-i/agent_step_096534528.pt",
+      "second": "runs/_neural-rail30-accel100-hard-corners-20261001-j/agent_update_002000.pt",
+      "second_weight": 0.25,
+      "first_sha256": "ba2f6df591c74fdb47742a216b437677202fd731719bbcb231a7dc3ed04a5861",
+      "second_sha256": "c1e8d0ffef2f0910c26aefdb0a18bc15ebd562c478896af8dc9908e4a56efb27"
+    },
+    {
+      "output": "runs/_neural-rail30-accel100-averaged50-20261001-l",
+      "first": "runs/_neural-rail30-accel100-balanced-20261001-i/agent_step_096534528.pt",
+      "second": "runs/_neural-rail30-accel100-hard-corners-20261001-j/agent_update_002000.pt",
+      "second_weight": 0.5,
+      "first_sha256": "ba2f6df591c74fdb47742a216b437677202fd731719bbcb231a7dc3ed04a5861",
+      "second_sha256": "c1e8d0ffef2f0910c26aefdb0a18bc15ebd562c478896af8dc9908e4a56efb27"
+    },
+    {
+      "output": "runs/_neural-rail30-accel100-averaged75-20261001-l",
+      "first": "runs/_neural-rail30-accel100-balanced-20261001-i/agent_step_096534528.pt",
+      "second": "runs/_neural-rail30-accel100-hard-corners-20261001-j/agent_update_002000.pt",
+      "second_weight": 0.75,
+      "first_sha256": "ba2f6df591c74fdb47742a216b437677202fd731719bbcb231a7dc3ed04a5861",
+      "second_sha256": "c1e8d0ffef2f0910c26aefdb0a18bc15ebd562c478896af8dc9908e4a56efb27"
+    }
+  ]
+}
