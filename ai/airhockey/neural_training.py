@@ -1,5 +1,6 @@
 """Simulation-only curriculum and outcome rewards for a single neural policy."""
 
+import json
 import numpy as np
 
 from airhockey.arrival_env import ArrivalEnv
@@ -208,10 +209,23 @@ class NeuralTrainingEnv(ArrivalEnv):
         if stationary_replay is not None:
             with np.load(stationary_replay) as replay:
                 self.stationary_replay = {k: replay[k].copy() for k in ('puck', 'paddle', 'previous_action', 'request')}
+                source=json.loads(str(replay['environment_options'])) if 'environment_options' in replay else dict(accel=60,workspace_bounds_mm=None)
+                from airhockey.neural_coordinates import action_coordinates
+                self.stationary_replay['previous_action']=action_coordinates(
+                    self.stationary_replay['previous_action'],source,
+                    dict(accel=accel,workspace_bounds_mm=workspace_bounds_mm))
+                if 'initial_load' in replay:
+                    self.stationary_replay['initial_load']=replay['initial_load'].copy()
             count = len(self.stationary_replay['puck'])
             for key, width in (('puck',4),('paddle',2),('previous_action',6),('request',3)):
                 if self.stationary_replay[key].shape != (count,width) or not count or not np.isfinite(self.stationary_replay[key]).all():
                     raise ValueError("invalid stationary failure replay")
+            if 'initial_load' in self.stationary_replay:
+                levels=self.stationary_replay['initial_load']
+                if levels.shape!=(count,8):raise ValueError('invalid replay load shape')
+                unspecified=np.isnan(levels).all(axis=1)
+                valid=np.isfinite(levels).all(axis=1)&(levels>=0).all(axis=1)&(levels<shutdown_level).all(axis=1)
+                if not (unspecified|valid).all():raise ValueError('replay loads must be below shutdown, or entirely unspecified')
         elif stationary_replay_fraction:
             raise ValueError("stationary replay fraction needs a dataset")
         self.readiness_weight = readiness_weight
@@ -823,6 +837,8 @@ class NeuralTrainingEnv(ArrivalEnv):
         windup = np.zeros(n, bool)
         release_velocity = np.zeros((n, 2))
         replay_actions = np.full((n, 6), np.nan)
+        replay_loads = np.full((n, 8), np.nan)
+        replay_fringe = np.zeros(n, bool)
         edge = np.zeros(n, bool)
         self.game_fraction = 1.0 if self.games else (self.game_fraction_override if self.game_fraction_override is not None else (0 if self.stage < 3 else 0.5))
         if fixtures is None:
@@ -1009,6 +1025,15 @@ class NeuralTrainingEnv(ArrivalEnv):
                 puck[selected, :2] += rng.uniform(-.005, .005, (len(selected), 2))
                 paddle[selected] = np.clip(self.stationary_replay['paddle'][examples], self.decoder.low+.002, self.decoder.high-.002)
                 replay_actions[selected] = self.stationary_replay['previous_action'][examples]
+                if 'initial_load' in self.stationary_replay:
+                    replay_loads[selected]=self.stationary_replay['initial_load'][examples]
+                    exact=np.isfinite(replay_loads[selected]).all(axis=1)
+                    # Measured failure starts include tight rail clearances;
+                    # preserve them rather than jittering through a wall.
+                    puck[selected[exact]]=self.stationary_replay['puck'][examples[exact]]
+                    fringe=((puck[selected,:2]<self.decoder.low+.04)
+                            |(puck[selected,:2]>self.decoder.high-.04)).any(axis=1)
+                    replay_fringe[selected]=exact&fringe
                 starting_requests[selected] = 1 + self.stationary_replay['request'][examples].argmax(1)
             if self.edge_drill_fraction:
                 edge = (kind == 0) & (rng.random(n) < self.edge_drill_fraction)
@@ -1060,6 +1085,7 @@ class NeuralTrainingEnv(ArrivalEnv):
                 paddle[ids_side,1]=self.decoder.low[1]+.015
                 replay_actions[corner]=np.nan;starting_requests[corner]=0
                 edge|=corner
+            edge |= replay_fringe & np.isfinite(replay_actions[:,0])
             fixtures = Fixtures(np.zeros(n, int), puck, paddle, np.full(n, 0.5))
         else:
             self.kind[ids] = fixtures.task
@@ -1223,6 +1249,11 @@ class NeuralTrainingEnv(ArrivalEnv):
                 self.last_action[resting, 5] = 1
         replayed = np.isfinite(replay_actions[:, 0]) & (self.kind[ids] == 0)
         self.last_action[ids[replayed]] = replay_actions[replayed]
+        thermal_replay=replayed&np.isfinite(replay_loads).all(axis=1)
+        if thermal_replay.any():
+            levels=replay_loads[thermal_replay].reshape(-1,2,4)
+            self.loads[0].h[ids[thermal_replay]]=levels**2
+            self.loads[0].observed[ids[thermal_replay]]=levels
         # Reset already computed observation may contain pre-randomization loads.
         # Reuse raw measured state; no extra _make_obs_direct velocity update.
         raw = self.base._make_obs_direct()

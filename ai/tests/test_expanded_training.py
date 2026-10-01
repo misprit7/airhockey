@@ -166,3 +166,54 @@ def test_watcher_rescans_snapshots_written_during_final_evaluation(tmp_path):
     last=tmp_path/'agent_update_012000.pt';last.touch();seen.add(str(first))
     assert module.pending_checkpoints(tmp_path,seen)==[last]
     seen.add(str(last));assert not module.pending_checkpoints(tmp_path,seen)
+
+
+def test_stationary_failure_replay_converts_action_units_and_keeps_per_motor_heat(tmp_path):
+    action=np.array([[.3,-.4,0,0,0,.4]],dtype=np.float32)
+    levels=np.array([[.88,.4,.5,.3,.7,.3,.4,.2]],dtype=np.float32)
+    path=tmp_path/'failures.npz'
+    np.savez(path,puck=[[.2,.3,0,0]],paddle=[[.4,.3]],previous_action=action,
+        request=[[1,0,0]],initial_load=levels,environment_options=json.dumps(OLD))
+    env=NeuralTrainingEnv(64,stage=5,game_fraction=0,stationary_replay=path,
+        stationary_replay_fraction=1,shot_conditioned=True,**NEW)
+    obs=env.reset(seed=7);ids=env.kind==0
+    assert ids.any()
+    expected=action_coordinates(action,OLD,NEW)
+    np.testing.assert_allclose(env.last_action[ids],np.repeat(expected,ids.sum(),axis=0),atol=1e-6)
+    np.testing.assert_allclose(obs[ids,21:29],np.repeat(levels,ids.sum(),axis=0))
+    # A curriculum replacement must not inherit the replayed failure's heat.
+    env.corner_drill_fraction=1
+    env.reset(seed=7)
+    assert not np.allclose(env.loads[0].observed[env.kind==0].reshape(-1,8),levels)
+
+
+def test_fringe_failure_replay_preserves_tight_rail_state_and_long_horizon(tmp_path):
+    path=tmp_path/'rail.npz'
+    np.savez(path,puck=[[.0409,.0409,0,0]],paddle=[[.15,.08]],previous_action=np.zeros((1,6)),
+        request=[[1,0,0]],initial_load=np.full((1,8),.8),environment_options=json.dumps(NEW))
+    env=NeuralTrainingEnv(256,stage=5,game_fraction=0,stationary_replay=path,
+        stationary_replay_fraction=1,edge_drill_fraction=.1,shot_conditioned=True,**NEW)
+    env.reset(seed=7)
+    replayed=(env.kind==0)&np.isclose(env.engine.puck_x,.0409)
+    assert replayed.sum()>20
+    assert env.edge_drill[replayed].all()
+    np.testing.assert_allclose(env.engine.puck_y[replayed],.0409)
+
+
+def test_failure_builder_canonicalizes_red_and_excludes_invalid_starts(tmp_path):
+    import importlib.util
+    spec=importlib.util.spec_from_file_location('failure_replay',Path(__file__).resolve().parents[1]/'bin/build_neural_failure_replay.py')
+    module=importlib.util.module_from_spec(spec);spec.loader.exec_module(module)
+    obs=np.zeros((8,45));obs[:,21:29]=.7;obs[:,-3]=1
+    puck=[[.041,.041,0,0],[.959,1.959,0,0],[.041,.041,.5,0],[.041,.041,0,0]]
+    report=dict(simulation_environment=OLD,selfplay=dict(final_physical_state=dict(puck=puck,
+        blue_paddle=[[.2,.08],[.5,.4],[.2,.08],[.08,.08]],
+        red_paddle=[[.5,1.6],[.8,1.92],[.5,1.6],[.5,1.6]]),
+        final_policy_observation=obs.tolist(),final_arrival_action=np.zeros((8,6)).tolist()))
+    path=tmp_path/'endurance.json';path.write_text(json.dumps(report))
+    arrays,manifest=module.build([path],NEW)
+    assert manifest['new_unique_cases']==2
+    np.testing.assert_allclose(arrays['puck'][:,:2],[[.041,.041],[.959,.041]],atol=1e-6)
+    np.testing.assert_allclose(arrays['paddle'],[[.2,.08],[.8,.08]],atol=1e-6)
+    np.testing.assert_allclose(arrays['previous_action'],action_coordinates(np.zeros((2,6)),OLD,NEW),atol=1e-6)
+    np.testing.assert_allclose(arrays['initial_load'],.7)

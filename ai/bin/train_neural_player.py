@@ -474,6 +474,7 @@ def main():
         + ("; current possession request [left bank, right bank, straight]" if args.shot_conditioned else "; no shot request"),
         source_hashes={},
         skill_replay_sha256=hashlib.sha256(args.skill_replay.read_bytes()).hexdigest() if args.skill_replay else None,
+        stationary_replay_sha256=hashlib.sha256(args.stationary_replay.read_bytes()).hexdigest() if args.stationary_replay else None,
     )
     if args.evaluation_dir is not None:
         meta['evaluation_dir'] = str(args.evaluation_dir)
