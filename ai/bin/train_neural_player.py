@@ -9,6 +9,7 @@ import json
 import os
 from pathlib import Path
 import signal
+from airhockey.dynamics import workspace_in_sim
 import time
 
 import numpy as np
@@ -77,6 +78,7 @@ def main():
     p.add_argument('--edge-dwell-weight',type=float,default=0,help='Maximum cost per second per nearby rail')
     p.add_argument('--edge-dwell-band',type=float,default=.06,help='Soft penalty band inside workspace boundary, meters')
     p.add_argument('--project-rail-contacts',action='store_true',help='Resolve rail penetration introduced by paddle contact')
+    p.add_argument('--edge-clearance-weight',type=float,default=0,help='Bounded potential for recovering a puck from rail corners')
     p.add_argument("--seed", type=int, default=20261801)
     p.add_argument("--save-every", type=int, default=500_000)
     p.add_argument("--width", type=int, help="Hidden width; inherit on resume, otherwise 256")
@@ -340,6 +342,7 @@ def main():
         accel=args.accel,workspace_bounds_mm=run_bounds,thermal_path=args.thermal_model,
         edge_dwell_weight=args.edge_dwell_weight,edge_dwell_band=args.edge_dwell_band,
         project_rail_contacts=args.project_rail_contacts,
+        edge_clearance_weight=args.edge_clearance_weight,
         goals_only=args.goals_only,
         stage=args.stage,
         seed=args.seed,
@@ -540,7 +543,8 @@ def main():
     persistent_bias = (RecoveryExplorationBias(
         args.n_envs, args.edge_persistent_bias or args.recovery_persistent_bias, args.recovery_bias_block_steps,
         device=device, load_aware=args.recovery_exploration_load_aware,
-        mode="edge" if args.edge_persistent_bias else "recovery")
+        mode="edge" if args.edge_persistent_bias else "recovery",
+        workspace=workspace_in_sim(bounds_mm=run_bounds))
         if (args.recovery_persistent_bias or args.edge_persistent_bias) else None)
     exploration_biases = torch.empty_like(raw_actions) if persistent_bias else None
     contacted = np.zeros(args.n_envs, dtype=bool)

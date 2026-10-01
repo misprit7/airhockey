@@ -34,7 +34,7 @@ class RecoveryExplorationBias:
     A deterministic deployed actor never creates or uses this object.
     """
 
-    def __init__(self, n, strength, block_steps=8, device="cpu", load_aware=True, mode="recovery"):
+    def __init__(self, n, strength, block_steps=8, device="cpu", load_aware=True, mode="recovery", workspace=None):
         if not np.isfinite(strength) or strength <= 0:
             raise ValueError("persistent exploration strength must be positive and finite")
         if isinstance(block_steps, bool) or not isinstance(block_steps, int) or block_steps < 1:
@@ -48,7 +48,7 @@ class RecoveryExplorationBias:
         self.amplitude = self.values.new_tensor(amplitude) * strength
         if mode == "edge":
             from airhockey.dynamics import workspace_in_sim
-            self.workspace = workspace_in_sim()
+            self.workspace = workspace or workspace_in_sim()
         self.block_steps = block_steps
         self.load_aware = load_aware
 
@@ -67,12 +67,13 @@ class RecoveryExplorationBias:
         if self.mode == "edge":
             w = self.workspace
             fringe = ((observation[:, 0] < w['min_x'] + .04)
-                      | (observation[:, 0] > w['max_x'] - .04))
+                      | (observation[:, 0] > w['max_x'] - .04)
+                      | (observation[:, 1] < w['min_y'] + .04))
             # Random, coherent exploration in quiet side-fringe practice.
             # No prescribed direction, wall tap or staging sequence; full games
             # and deterministic inference do not use these offsets.
             eligible = ((context[:, 0] > .5) & fringe & (speed < .5)
-                        & (observation[:, 1] > w['min_y'])
+                        & (observation[:, 1] >= 0)
                         & (observation[:, 1] < w['max_y']))
         else:
             eligible = ((context[:, 1] > .5) & ~contacted.bool()

@@ -126,3 +126,11 @@ rules. Its evaluator adds 256 edge/corner retrieval cases and four continuous
 gain. These expose heat accumulation and stalls that a 90-second replay can
 miss. Recipes record exact commands; final model selection requires separate
 held-out testing and is not inferred from the newest checkpoint.
+
+
+E broadens tight-corner reset poses and uses a larger rollout batch with a
+higher actor learning rate. F additionally tests coherent random exploration
+in slow fringe practice and a bounded puck-clearance potential (weight 40).
+The PPO likelihood includes the realized exploration offset; deterministic
+inference does not use it. Exploration now uses the run's actual workspace,
+including the back rail. Neither variant adds a tactical action controller.

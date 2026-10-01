@@ -111,6 +111,7 @@ class NeuralTrainingEnv(ArrivalEnv):
         corner_drill_fraction=0.0,
         edge_recovery_weight=0.0,
         edge_approach_weight=0.0,
+        edge_clearance_weight=0.0,
         slow_exit_penalty=0.0,
         readiness_lateral_uncertainty=0.0,
         defense_windup_lateral_speed=0.0,
@@ -154,7 +155,7 @@ class NeuralTrainingEnv(ArrivalEnv):
         self._slow_loss_paid = np.zeros((2, n_envs), bool)
         if not np.isfinite(edge_drill_fraction) or not 0 <= edge_drill_fraction <= 1:
             raise ValueError("edge drill fraction must be within [0,1]")
-        if not np.isfinite([edge_recovery_weight, edge_approach_weight]).all() or min(edge_recovery_weight, edge_approach_weight) < 0:
+        if not np.isfinite([edge_recovery_weight, edge_approach_weight, edge_clearance_weight]).all() or min(edge_recovery_weight, edge_approach_weight, edge_clearance_weight) < 0:
             raise ValueError("edge reward weights must be finite and nonnegative")
         self.edge_drill_fraction = edge_drill_fraction
         if not np.isfinite(corner_drill_fraction) or not 0<=corner_drill_fraction<=1:
@@ -162,6 +163,7 @@ class NeuralTrainingEnv(ArrivalEnv):
         self.corner_drill_fraction=corner_drill_fraction
         self.edge_recovery_weight = edge_recovery_weight
         self.edge_approach_weight = edge_approach_weight
+        self.edge_clearance_weight = edge_clearance_weight
         self.edge_drill = np.zeros(n_envs, bool)
         self._edge_contact = np.zeros((2, n_envs), bool)
         self._edge_paid = np.zeros((2, n_envs), bool)
@@ -794,6 +796,19 @@ class NeuralTrainingEnv(ArrivalEnv):
             contact = np.clip(puck, self.decoder.low + .002, self.decoder.high - .002)
             distance = np.linalg.norm(pad - contact, axis=1)
             potential = (1 - blend) * potential - blend * self.edge_approach_weight * distance
+        if self.edge_clearance_weight:
+            # A bounded state potential supplies incremental credit for
+            # getting a fringe puck into playable space. Gamma*Phi'-Phi is
+            # applied below, so repeated visits cannot farm a recovery bonus.
+            # No preferred paddle position, route, or motion is prescribed.
+            margins=np.column_stack((puck[:,0]-self.cfg.puck_radius,
+                self.cfg.width-self.cfg.puck_radius-puck[:,0],
+                puck[:,1]-self.cfg.puck_radius))
+            clearance=np.array([self.decoder.low[0]+.04-self.cfg.puck_radius,
+                self.cfg.width-self.decoder.high[0]+.04-self.cfg.puck_radius,
+                self.decoder.low[1]+.04-self.cfg.puck_radius])
+            debt=np.square(np.clip(1-margins/clearance,0,1)).sum(axis=1)
+            potential-=self.edge_clearance_weight*debt*np.clip((1-puck[:,1])/.15,0,1)
         return potential
 
     def reset(self, *, seed=None, mask=None, fixtures=None, opponent=None):

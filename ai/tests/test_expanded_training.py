@@ -123,3 +123,33 @@ def test_contact_projection_keeps_corner_puck_inside_rails_and_goals_open():
         assert np.all(e.puck_y[:2]>=r) and np.all(e.puck_y[:2]<=2-r)
     assert e.score_opponent[2]==1
     assert NeuralTrainingEnv(1).engine.project_rail_contacts is False
+
+
+def test_clearance_potential_rewards_progress_without_prescribing_a_paddle_target():
+    env=NeuralTrainingEnv(3,setup_weight=0,edge_clearance_weight=40,**NEW)
+    e=env.engine
+    e.puck_x[:]=[.041,.08,.15];e.puck_y[:]=[.041,.08,.15]
+    e.paddle_agent_x[:]=.5;e.paddle_agent_y[:]=.4
+    e.puck_vx[:]=0;e.puck_vy[:]=0
+    potential=env.potential()
+    assert potential[0]<potential[1]<potential[2]==0
+    e.paddle_agent_x[:]=.3
+    np.testing.assert_allclose(env.potential(),potential)
+    # Discounted shaping around a cycle is independent of the intermediate
+    # movement, so going out and back does not create an extra recovery prize.
+    gamma=.999;a,b=potential[:2]
+    loop=(gamma*b-a)+gamma*(gamma*a-b)
+    hold=(gamma*a-a)+gamma*(gamma*a-a)
+    assert np.isclose(loop,hold)
+
+
+def test_edge_exploration_uses_expanded_bounds_and_reaches_back_corners():
+    from airhockey.neural_player import RecoveryExplorationBias
+    from airhockey.dynamics import workspace_in_sim
+    sampler=RecoveryExplorationBias(3,.3,mode='edge',load_aware=False,
+        workspace=workspace_in_sim(bounds_mm=NEW['workspace_bounds_mm']))
+    obs=torch.zeros(3,45);obs[:,:2]=torch.tensor([[.041,.041],[.5,.041],[.16,.4]])
+    context=torch.zeros(3,9);context[:,0]=1
+    samples=sampler.sample(obs,context,torch.zeros(3,dtype=torch.bool))
+    assert (samples[:2].abs().sum(-1)>0).all()
+    assert samples[2].count_nonzero()==0
