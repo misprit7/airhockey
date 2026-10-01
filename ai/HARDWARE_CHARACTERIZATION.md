@@ -126,23 +126,68 @@ limits, training defaults, drive settings, or thermal models are changed.
 
 ## Expanding the workspace
 
+The explicit `teensy41_probe` firmware profile permits paddle-center
+coordinates **x = 1200–1937.5 mm, y = 61.4–904.5 mm**. This leaves 30 mm
+between the paddle rim and each of the three surrounding rails. The front
+boundary, toward the human, stays at the historical wider-region value
+of x = 1200 mm; it is a separate cable-geometry boundary, not a rail.
+The normal firmware build and policy workspace remain unchanged.
+
+Generate a preview without accessing hardware:
+
 ```sh
-python ai/bin/characterize_robot.py --stage workspace --grid 5 --hold 15
-python ai/bin/characterize_robot.py --stage workspace --grid 5 --hold 15 --live
+python ai/bin/characterize_robot.py --stage expand --ramp-ms 10
 ```
 
-First map the existing region (sites 40 mm inside current limits). Choose
-candidate extensions by rail clearance, cable attachment geometry and
-measured holding/tracking cost. Probe outward in small strips at low speed,
-qualify both outward and return motion, then test acceleration locally.
-Record slack separately: low current can mean a cable has lost tension,
-not that the location is good. A few seconds without an RMS trip cannot
-qualify an indefinitely sustainable holding position.
+With motors disabled and existing hardware sessions stopped, upload the
+probe image, then start the physical survey:
 
-This implementation intentionally does not expand the firmware's hard
-workspace or activate the archived WIDE bounds. Outside-boundary tests need
-a separately reviewed, session-scoped firmware test envelope; changing only
-the Python targets would silently clip motion and invalidate the experiment.
-The final useful result should distinguish sustainable holding locations
-from locations usable only for brief reaches, rather than blindly replacing
-the current box with a larger rectangle.
+```sh
+pio run -d fw -e teensy41_probe -t upload
+python ai/bin/characterize_robot.py --stage expand --ramp-ms 10 --tension 1.5 --live
+```
+
+The runner verifies the actual firmware workspace before enabling. An old
+or ordinary firmware image is rejected rather than silently clipping the
+probe targets. Start with the paddle inside the existing policy region,
+preferably near its center, remove the puck, and free the camera. The
+runner still requires typed `RUN` and retains the electrical, tracking,
+camera-gap and loop-timing cutoffs.
+
+The initial plan has one center hold and 39 outward-and-return excursions
+along eight rays. Each successive tip advances at most 40 mm. Every excursion
+returns to a previously surveyed baseline location inside the old region.
+Defaults are 0.3 m/s and 1 m/s²: this tests initial reachability, not the
+high-speed dynamic envelope. There is no mandatory settle or hold at the
+outward tip; the runner reverses near it and verifies camera approach within
+8 mm. It does require settling back at the return point. The 30 mm clearance
+is a commanded geometric margin; actual tracking error reduces it.
+
+`workspace-results.json` records each tip as passed, failed, interrupted or
+untested, plus tracking/current/RMS measurements. The first fault or failed
+qualification stops the session, with no automatic re-enable. Brief reach
+success does not claim sustained holding capability.
+
+To compare finite holding cost, make a separate run with `--edge-hold 5`.
+To compare lower pretension, repeat with `--tension 0.75`, for example:
+
+```sh
+python ai/bin/characterize_robot.py --stage expand --ramp-ms 10 --tension 0.75 --live
+python ai/bin/characterize_robot.py --stage expand --ramp-ms 10 --tension 0.75 --edge-hold 5 --live
+```
+
+Pretension is fixed throughout each run and saved with its results. This
+setup does not yet adjust tension while moving: firmware tension commands
+are stopped-mode relative cable steps, not a live tension controller.
+Record slack separately, since low current can indicate loss of cable
+tension. A failed hold does not erase a successful brief reach, and a short
+successful hold does not prove indefinite thermal sustainability. Use these
+comparisons to select later tension scheduling and local acceleration tests.
+The offline current-model fit uses the recorded workspace for its spatial
+features, so expanded-region recordings retain the correct coordinate basis.
+
+Restore the ordinary firmware before returning to normal policy operation:
+
+```sh
+pio run -d fw -e teensy41 -t upload
+```

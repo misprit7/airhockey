@@ -148,7 +148,12 @@ static void processCommand(char *line) {
     return;
   }
 
-  if (strcasecmp(cmd, "SPEED") == 0) {
+  if (strcasecmp(cmd, "WORKSPACE") == 0) {
+    // Read-only identification: host probes must not silently hit old bounds.
+    Serial.printf("OK WORKSPACE %.3f %.3f %.3f %.3f\n",
+                  WS_MIN_X, WS_MAX_X, WS_MIN_Y, WS_MAX_Y);
+    return;
+  } else if (strcasecmp(cmd, "SPEED") == 0) {
     float v;
     if (sscanf(args, "%f", &v) != 1) {
       Serial.println("ERR SPEED requires mm/s");

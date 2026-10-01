@@ -173,6 +173,10 @@ def analyze(directory):
     from scipy.optimize import nnls
     directory=Path(directory)
     meta=json.loads((directory/'plan.json').read_text())
+    bounds=np.asarray(meta.get('bounds_mm',BOUNDS),dtype=float)
+    if bounds.shape!=(4,) or not np.isfinite(bounds).all() or not (bounds[0]<bounds[1] and bounds[2]<bounds[3]):
+        raise ValueError('invalid experiment workspace bounds')
+    low,high=bounds[[0,2]],bounds[[1,3]]
     rows=[]
     for line in (directory/'samples.jsonl').read_text().splitlines():
         try: rows.append(json.loads(line))
@@ -203,7 +207,7 @@ def analyze(directory):
         items=list(data.values())
         if len(items)<200:
             report['per_motor'].append(dict(node=node,samples=len(items),status='insufficient_data'));continue
-        x=spatial_features(np.array([v[0] for v in items])); y=np.array([v[1] for v in items]);groups=np.array([v[2] for v in items])
+        x=spatial_features(np.array([v[0] for v in items]),low,high); y=np.array([v[1] for v in items]);groups=np.array([v[2] for v in items])
         unique=np.unique(groups)
         if len(unique)<10: report['per_motor'].append(dict(node=node,status='insufficient_trial_groups'));continue
         test=np.isin(groups,unique[::5]); train=~test
@@ -236,7 +240,7 @@ def analyze(directory):
                 knots=np.r_[t0,times[(times>t0)&(times<t1)],t1]
                 for left,right in zip(knots,knots[1:]):
                     state=np.array([np.interp((left+right)/2,times,states[:,j]) for j in range(6)])
-                    i2=float((spatial_features(state)@c)[0]); decay=np.exp(-(right-left)/(tau['value']*factor))
+                    i2=float((spatial_features(state,low,high)@c)[0]); decay=np.exp(-(right-left)/(tau['value']*factor))
                     h=decay*h+(1-decay)*i2/limit['value']**2
                 errors.append(100*np.sqrt(max(h,0))-observed[t1])
             motor_report[channel+'_mae_percentage_points']=float(np.mean(np.abs(errors)))
@@ -245,7 +249,7 @@ def analyze(directory):
         coefficients.append(c.tolist())
     if len(coefficients)==4:
         report['status']='candidate_not_validated'
-        model=dict(schema='spatial-current-v1',status=report['status'],bounds_mm=BOUNDS.tolist(),
+        model=dict(schema='spatial-current-v1',status=report['status'],bounds_mm=bounds.tolist(),
             coefficients_amps_squared=coefficients,training_experiment=meta,
             note='No automatic deployment. RMS recurrence/limits must use recorded per-drive parameters.')
         (directory/'current-model-candidate.json').write_text(json.dumps(model,indent=2))
@@ -258,10 +262,11 @@ def preview(directory, plan):
     data=json.dumps(plan).replace('</','<\\/')
     html='''<!doctype html><meta charset="utf-8"><title>Hardware characterization</title>
 <style>body{font:16px system-ui;max-width:950px;margin:30px auto;background:#151922;color:#ddd}canvas{background:#242d38}button,input{margin:8px}pre{white-space:pre-wrap}</style>
-<h1>Hardware characterization — offline plan</h1><p>Selected moves stay inside current firmware bounds. This preview commands nothing.</p>
+<h1>Hardware characterization — offline plan</h1><p>Selected moves stay inside the planned firmware envelope. Dashed box: existing policy region. This preview commands nothing.</p>
 <canvas id="c" width="700" height="500"></canvas><br><button id="play">Play/pause</button><input id="slider" type="range" min="0" value="0"><pre id="info"></pre>
 <script>const plan=DATA,ts=plan.trials,b=plan.bounds_mm,c=document.getElementById('c'),ctx=c.getContext('2d'),s=document.getElementById('slider');s.max=ts.length-1;let playing=false;
 function p(v){return [30+(v[0]-b[0])/(b[1]-b[0])*640,470-(v[1]-b[2])/(b[3]-b[2])*440]}
-function draw(){ctx.clearRect(0,0,700,500);ctx.strokeStyle='#8090a0';ctx.strokeRect(30,30,640,440);for(const t of ts){let a=p(t.start),z=p(t.end);ctx.strokeStyle='#435265';ctx.beginPath();ctx.moveTo(...a);ctx.lineTo(...z);ctx.stroke()}let t=ts[+s.value],a=p(t.start),z=p(t.end);ctx.strokeStyle='#ffb95c';ctx.lineWidth=4;ctx.beginPath();ctx.moveTo(...a);ctx.lineTo(...z);ctx.stroke();ctx.lineWidth=1;ctx.fillStyle='#62c9ff';ctx.beginPath();ctx.arc(...z,7,0,7);ctx.fill();document.getElementById('info').textContent=JSON.stringify(t,null,2)}
+function path(t){let a=p(t.start);ctx.beginPath();ctx.moveTo(...a);if(t.tip)ctx.lineTo(...p(t.tip));ctx.lineTo(...p(t.end));ctx.stroke()}
+function draw(){ctx.clearRect(0,0,700,500);ctx.strokeStyle='#8090a0';ctx.strokeRect(30,30,640,440);if(plan.reference_bounds_mm){let r=plan.reference_bounds_mm,a=p([r[0],r[3]]),z=p([r[1],r[2]]);ctx.setLineDash([6,5]);ctx.strokeRect(...a,z[0]-a[0],z[1]-a[1]);ctx.setLineDash([])}for(const t of ts){ctx.strokeStyle='#435265';path(t)}let t=ts[+s.value],z=p(t.tip||t.end);ctx.strokeStyle='#ffb95c';ctx.lineWidth=4;path(t);ctx.lineWidth=1;ctx.fillStyle='#62c9ff';ctx.beginPath();ctx.arc(...z,7,0,7);ctx.fill();document.getElementById('info').textContent=JSON.stringify(t,null,2)}
 s.oninput=draw;document.getElementById('play').onclick=()=>playing=!playing;setInterval(()=>{if(playing){s.value=(+s.value+1)%ts.length;draw()}},500);draw();</script>'''.replace('DATA',data)
     (Path(directory)/'preview.html').write_text(html)

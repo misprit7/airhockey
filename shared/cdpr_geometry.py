@@ -119,6 +119,14 @@ WS_BOX_MIN_Y, WS_BOX_MAX_Y = 233.0, 733.0
 WS_MIN_X, WS_MAX_X = WS_SAFE_MIN_X, WS_SAFE_MAX_X
 WS_MIN_Y, WS_MAX_Y = WS_SAFE_MIN_Y, WS_SAFE_MAX_Y
 
+# Explicit probe envelope; deployment/training imports retain their existing
+# bounds. The firmware probe build selects these with a compile-time flag.
+WS_PROBE_RIM_CLEARANCE_MM = 30.0
+WS_PROBE_MIN_X = WS_WIDE_MIN_X
+WS_PROBE_MAX_X = RAIL_MAX_X - MALLET_RADIUS_MM - WS_PROBE_RIM_CLEARANCE_MM
+WS_PROBE_MIN_Y = RAIL_MIN_Y + MALLET_RADIUS_MM + WS_PROBE_RIM_CLEARANCE_MM
+WS_PROBE_MAX_Y = RAIL_MAX_Y - MALLET_RADIUS_MM - WS_PROBE_RIM_CLEARANCE_MM
+
 HOME_X = (WS_MIN_X + WS_MAX_X) / 2.0
 HOME_Y = (WS_MIN_Y + WS_MAX_Y) / 2.0
 

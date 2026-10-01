@@ -394,11 +394,12 @@ constexpr float WS_FC_MIN_Y = 142.9f;
 constexpr float WS_FC_MAX_Y = 823.0f;
 constexpr float MAX_HOLD_AMPLIFICATION = 7.8f;
 
-// Two candidate boxes. Switch by changing the four ACTIVE lines at the end;
-// nothing else needs touching, and HOME follows automatically.
+// Historical candidate boxes. The normal build uses WS_SAFE; an explicit
+// characterization build selects WS_PROBE below. HOME follows the selection.
 
-// WIDE — the wall-derived playing area. RETAINED ONLY AS A REFERENCE: it
-// is not safe to make active, for the reason above.
+// WIDE — historical wall-derived playing area, retained as a reference.
+// Its reachability and holding cost need measurement, not the retracted
+// static-force argument above.
 constexpr float WS_WIDE_MIN_X =
     (MOTOR_X[0] > MOTOR_X[3] ? MOTOR_X[0] : MOTOR_X[3]) + HULL_CLEARANCE_MM;
 constexpr float WS_WIDE_MAX_X = RAIL_MAX_X - WALL_MARGIN_MM - MALLET_RADIUS_MM;
@@ -433,7 +434,7 @@ constexpr float WS_BOX_MAX_X = 1758.0f;
 constexpr float WS_BOX_MIN_Y = 233.0f;
 constexpr float WS_BOX_MAX_Y = 733.0f;
 
-// ACTIVE. WIDE, and this time it stays.
+// Historical workspace investigation (not the active build selection).
 //
 // These bounds were reverted TWICE, on 2026-08-16 and again on 08-23, both
 // times because the rig went out of sync with slack and overcurrent. The
@@ -458,10 +459,27 @@ constexpr float WS_BOX_MAX_Y = 733.0f;
 // are optimistic in the corners. And it roughly triples the area over
 // which the paddle's orientation can wander from the 135 deg the model
 // assumes, so expect the model to be at its worst in the far corners.
+// Characterization envelope: 30 mm from paddle rim to the three robot-side
+// rails. The front boundary is a separate cable-geometry test boundary,
+// not a rail. Neither this box nor the historical SAFE box proves static
+// force closure; qualify brief reaches and sustained holds separately.
+constexpr float WS_PROBE_RIM_CLEARANCE_MM = 30.0f;
+constexpr float WS_PROBE_MIN_X = WS_WIDE_MIN_X;
+constexpr float WS_PROBE_MAX_X = RAIL_MAX_X - MALLET_RADIUS_MM - WS_PROBE_RIM_CLEARANCE_MM;
+constexpr float WS_PROBE_MIN_Y = RAIL_MIN_Y + MALLET_RADIUS_MM + WS_PROBE_RIM_CLEARANCE_MM;
+constexpr float WS_PROBE_MAX_Y = RAIL_MAX_Y - MALLET_RADIUS_MM - WS_PROBE_RIM_CLEARANCE_MM;
+
+#ifdef AIRHOCKEY_PROBE_WORKSPACE
+constexpr float WS_MIN_X = WS_PROBE_MIN_X;
+constexpr float WS_MAX_X = WS_PROBE_MAX_X;
+constexpr float WS_MIN_Y = WS_PROBE_MIN_Y;
+constexpr float WS_MAX_Y = WS_PROBE_MAX_Y;
+#else
 constexpr float WS_MIN_X = WS_SAFE_MIN_X;
 constexpr float WS_MAX_X = WS_SAFE_MAX_X;
 constexpr float WS_MIN_Y = WS_SAFE_MIN_Y;
 constexpr float WS_MAX_Y = WS_SAFE_MAX_Y;
+#endif
 
 // Default calibration/home position: centre of the workspace.
 //

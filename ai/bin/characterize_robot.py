@@ -41,13 +41,14 @@ def validate_load(snapshot, now, args, enabled=True):
 
 
 class Experiment:
-    def __init__(self,client,vision,args,output):
+    def __init__(self,client,vision,args,output,bounds=BOUNDS):
         self.client,self.vision,self.args,self.output=client,vision,args,output
         self.rows=[];self.last_load=0;self.snapshot=None;self.last_poll=None
         self.camera_offset=time.monotonic()-time.time()
         self.trial=-1
         self.last_good_camera=None
         self.camera_dropout=False
+        self.low=np.asarray(bounds)[[0,2]];self.high=np.asarray(bounds)[[1,3]]
 
     def poll(self):
         now=time.monotonic()
@@ -65,7 +66,7 @@ class Experiment:
         camera_valid=bool(finite_pose and not note and not self.vision.error and
                           np.isfinite(cam_t) and 0<=now-cam_t<=CAMERA_GAP_S)
         reason=note or self.vision.error or ('no pose' if pose is None else 'invalid/stale pose')
-        if camera_valid and (np.any(np.array(pose[:2])<LOW-5) or np.any(np.array(pose[:2])>HIGH+5)):
+        if camera_valid and (np.any(np.array(pose[:2])<self.low-5) or np.any(np.array(pose[:2])>self.high+5)):
             raise RuntimeError('camera paddle outside current workspace')
         row=dict(t=now,trial=self.trial,ctl_t=now-ctl[4],ctl=list(ctl[:4]),
                  cam_t=cam_t if np.isfinite(cam_t) else None,
@@ -149,6 +150,30 @@ class Experiment:
         self.observe(travel_time(float(np.linalg.norm(current-target)),200,400)+.5)
         self.settled(target)
 
+    def excursion(self,trial):
+        """Brief reach or explicit hold, then return; no static test implied."""
+        tip=np.asarray(trial['tip']);base=np.asarray(trial['start'])
+        distance=float(np.linalg.norm(tip-base))
+        duration=travel_time(distance,trial['speed']*1000,trial['accel']*1000)+1.
+        self.require_camera()
+        self.client.command_position(*tip,0)
+        deadline=time.monotonic()+duration
+        while True:
+            row=self.poll()
+            if np.linalg.norm(np.array(row['ctl'][:2])-tip)<=5:
+                break
+            if time.monotonic()>=deadline:raise RuntimeError('workspace probe did not reach outward target')
+            time.sleep(.005)
+        if trial['hold_s']:
+            self.settled(tip)
+            self.observe(trial['hold_s'])
+        # With hold=0 reverse promptly near the tip, without requiring it
+        # to hold still or settle. The firmware performs bounded braking.
+        self.require_camera()
+        self.client.command_position(*base,0)
+        self.observe(duration)
+        self.settled(base)
+
 
 def live(args,plan,directory):
     from airhockey.hardware import CDPRClient
@@ -157,11 +182,17 @@ def live(args,plan,directory):
     handlers={}
     def interrupted(*_):raise KeyboardInterrupt
     for sig in (signal.SIGINT,signal.SIGTERM):handlers[sig]=signal.signal(sig,interrupted)
-    results=[]; diagnostic=None; outcome={'status':'aborted','reason':'startup incomplete'}
+    results=[]; diagnostic=None; active_trial=None; outcome={'status':'aborted','reason':'startup incomplete'}
     try:
         with (directory/'master.log').open('w') as master_log,(directory/'samples.jsonl').open('w') as samples:
             proc=start_master(master_log,args.tension)
-            client.connect();wait_for_load(client,args.rms_stop)
+            client.connect()
+            if plan.get('expanded_workspace'):
+                actual=client.get_workspace()
+                if not np.allclose(actual,plan['bounds_mm'],atol=.1,rtol=0):
+                    raise RuntimeError(f'Firmware workspace {actual} differs from probe {plan["bounds_mm"]}; flash teensy41_probe first')
+                plan['verified_firmware_bounds_mm']=list(actual)
+            wait_for_load(client,args.rms_stop)
             snapshot=client.get_motor_load()
             # Routine E-stop has already been cleared by the newly owned master.
             validate_load(snapshot,time.monotonic(),args,enabled=False)
@@ -180,16 +211,29 @@ def live(args,plan,directory):
             (directory/'plan.json').write_text(json.dumps(plan,indent=2))
             attempted=True;client.enable(pose[0],pose[1],math.degrees(pose[2]))
             client.set_ramp(args.ramp_ms)
-            e=Experiment(client,vision,args,samples)
+            e=Experiment(client,vision,args,samples,bounds=plan.get('bounds_mm',BOUNDS))
             e.setup_limits(.2,.4);e.observe(.5);e.settled(pose[:2])
             for t in plan['trials']:
+                active_trial=t['id']
                 print(f"Trial {t['id']+1}/{len(plan['trials'])}: {t['kind']} site {t['site']} accel {t['accel']} m/s²",flush=True)
                 e.trial=-(t['id']+1);e.reposition(np.asarray(t['start']))
                 e.trial=t['id'];e.setup_limits(t['speed'],t['accel'])
                 e.observe(.2);e.require_camera();begin=len(e.rows)
-                if t['kind']=='pulse':client.command_position(*t['end'],0)
-                e.observe(t['duration']);e.settled(t['end'])
+                if t['kind']=='reach':
+                    e.excursion(t)
+                else:
+                    if t['kind']=='pulse':client.command_position(*t['end'],0)
+                    e.observe(t['duration']);e.settled(t['end'])
                 result=score(e.rows[begin:],t,args.camera_latency_ms/1000)
+                if t['kind']=='reach':
+                    valid=[r for r in e.rows[begin:] if r['camera_valid']]
+                    closest=min((float(np.linalg.norm(np.array(r['cam'][:2])-t['tip'])) for r in valid),default=None)
+                    result['closest_camera_to_tip_mm']=closest
+                    result['reach_type']='hold' if t['hold_s'] else 'brief_reach'
+                    result['hold_s']=t['hold_s']
+                    if closest is None or closest>8:
+                        result['passed']=False
+                        result['reason']='camera did not verify reaching within 8 mm of the probe point'
                 if t['kind']=='pulse' and min(t['prediction']['predicted_launch_accel_m_s2'],
                                              t['prediction']['predicted_braking_accel_m_s2'])<.8*t['accel']:
                     result['passed']=False
@@ -223,6 +267,15 @@ def live(args,plan,directory):
                          if all(t['id'] in passed_ids for t in pulses if t['accel']==cap)]
             outcome['completed_accel_caps_m_s2']=passed_caps
             outcome['quick_screen']=getattr(args,'quick',False)
+            if plan.get('expanded_workspace'):
+                completed={r['trial']['id']:r['metrics'] for r in results}
+                points=[dict(trial=t['id'],tip=t['tip'],hold_s=t['hold_s'],
+                    status=('passed' if completed[t['id']]['passed'] else 'failed') if t['id'] in completed
+                           else 'interrupted' if t['id']==active_trial else 'untested',
+                    metrics=completed.get(t['id'])) for t in plan['trials'] if t['kind']=='reach']
+                (directory/'workspace-results.json').write_text(json.dumps(dict(
+                    tension_mm=args.tension,bounds_mm=plan['bounds_mm'],points=points,
+                    note='Brief reach and finite hold results are separate; neither establishes indefinite holding capability.'),indent=2))
             if pulses:
                 print('Acceleration caps passing all planned directions:',passed_caps or 'none')
             (directory/'outcome.json').write_text(json.dumps(outcome,indent=2))
@@ -231,7 +284,11 @@ def live(args,plan,directory):
 
 def main():
     p=argparse.ArgumentParser(description=__doc__)
-    p.add_argument('--stage',choices=['baseline','workspace','sweep','endurance'])
+    p.add_argument('--stage',choices=['baseline','workspace','sweep','endurance','expand'])
+    p.add_argument('--edge-step',type=float,default=40,help='expanded survey outward increments, 10..50 mm')
+    p.add_argument('--edge-hold',type=float,default=0,help='seconds at probe tip; 0 means brief reach, up to 30 s')
+    p.add_argument('--edge-speed',type=float,default=.3,help='expanded survey speed in m/s, up to 0.5')
+    p.add_argument('--edge-accel',type=float,default=1,help='expanded survey acceleration in m/s², up to 2')
     p.add_argument('--quick',action='store_true',help='rough center acceleration screen: 40/60/80/100/120, one pass, short holds, no extra rest')
     p.add_argument('--grid',type=int,choices=[1,3,5],default=1)
     p.add_argument('--accels',help='m/s²; ascending ladder (overrides preset)')
@@ -265,7 +322,14 @@ def main():
     if not np.isfinite(vals).all() or not (0<=a.rest<=60 and .2<=a.ramp_ms<=50 and 0<=a.tension<=3 and
         40<=a.rms_stop<=85 and 1<=a.current_stop<=16 and 50<=a.min_volts<=75 and
         10<=a.error_stop<=60 and 0<=a.camera_latency_ms<=30):p.error('invalid monitor/setup settings')
-    try:trials=design(a.stage,a.grid,tuple(float(x) for x in a.accels.split(',')),a.speed,a.repeats,a.stroke,a.hold)
+    bounds=BOUNDS
+    try:
+        if a.stage=='expand':
+            from airhockey.workspace_probe import design_workspace_probe,PROBE_BOUNDS
+            trials=design_workspace_probe(a.edge_step,a.edge_speed,a.edge_accel,a.edge_hold)
+            bounds=PROBE_BOUNDS
+        else:
+            trials=design(a.stage,a.grid,tuple(float(x) for x in a.accels.split(',')),a.speed,a.repeats,a.stroke,a.hold)
     except ValueError as exc:p.error(str(exc))
     cache={}
     for t in trials:
@@ -275,7 +339,8 @@ def main():
             t['prediction']=cache[key]
     directory=a.output or ROOT/'logs/characterization'/datetime.now().strftime('%Y%m%d-%H%M%S-%f')
     directory.mkdir(parents=True,exist_ok=False)
-    plan=dict(schema=1,stage=a.stage,bounds_mm=BOUNDS.tolist(),trials=trials,
+    plan=dict(schema=1,stage=a.stage,bounds_mm=bounds.tolist(),trials=trials,
+              expanded_workspace=a.stage=='expand',reference_bounds_mm=BOUNDS.tolist(),
               settings={k:str(v) if isinstance(v,Path) else v for k,v in vars(a).items()},
               hardware_revision='four-2331S-RLNA-20260929')
     (directory/'plan.json').write_text(json.dumps(plan,indent=2));preview(directory,plan)

@@ -98,8 +98,11 @@ def test_no_model_export_with_insufficient_data(tmp_path):
     assert not (tmp_path/'current-model-candidate.json').exists()
 
 
-def test_candidate_fit_and_rms_report_from_synthetic_recording(tmp_path):
-    (tmp_path/'plan.json').write_text('{"settings":{"tension":1.5}}')
+@pytest.mark.parametrize('bounds',[None,[1200,1937.5,61.4,904.5]])
+def test_candidate_fit_and_rms_report_from_synthetic_recording(tmp_path,bounds):
+    meta={'settings':{'tension':1.5}}
+    if bounds is not None:meta['bounds_mm']=bounds
+    (tmp_path/'plan.json').write_text(json.dumps(meta))
     rows=[]; heat=np.zeros((2,4));dt=.02
     for i in range(300):
         t=1+i*dt
@@ -123,7 +126,9 @@ def test_candidate_fit_and_rms_report_from_synthetic_recording(tmp_path):
         assert m['held_out_trials']==[0,5,10]
         assert np.isfinite(m['rms_pct_mae_percentage_points'])
         assert m['current_mae_amps']<.5
-    assert json.loads((tmp_path/'current-model-candidate.json').read_text())['schema']=='spatial-current-v1'
+    model=json.loads((tmp_path/'current-model-candidate.json').read_text())
+    assert model['schema']=='spatial-current-v1'
+    if bounds is not None:assert model['bounds_mm']==bounds
 
 
 def test_monitor_rejects_missing_slow_rms_voltage_and_fault():

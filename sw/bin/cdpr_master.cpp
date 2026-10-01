@@ -302,7 +302,7 @@ static void receiveTeensyLine(const char *line) {
 }
 
 // Process the ENTIRE read, including status after OK, before returning.
-static bool waitTeensyOK(int teensy_fd, int timeout_ms = 5000) {
+static bool waitTeensyOK(int teensy_fd, int timeout_ms = 5000, std::string *response = nullptr) {
     const double deadline = loadMonotonic() + timeout_ms / 1000.0;
     while (loadMonotonic() < deadline) {
         char bytes[4096];
@@ -311,8 +311,10 @@ static bool waitTeensyOK(int teensy_fd, int timeout_ms = 5000) {
         if (n > 0) {
             g_teensy_lines.feed(bytes, static_cast<std::size_t>(n), [&](const char *line) {
                 receiveTeensyLine(line);
-                if (!reply && strncmp(line, "OK", 2) == 0) reply = 1;
-                else if (!reply && strncmp(line, "ERR", 3) == 0) reply = -1;
+                if (!reply && (strncmp(line, "OK", 2) == 0 || strncmp(line, "ERR", 3) == 0)) {
+                    reply = strncmp(line, "OK", 2) == 0 ? 1 : -1;
+                    if (response) *response = line;
+                }
             });
         }
         if (reply) return reply > 0;
@@ -345,7 +347,14 @@ static int handleCommand(const char *line, ClearPath &robot, int client_fd, int 
     // check below already treats as "don't send one".
     double x, y, speed = 0.0, accel = 0.0;
 
-    if (strncmp(line, "PRETENSION", 10) == 0) {
+    if (!strcmp(line, "WORKSPACE")) {
+        std::string reply;
+        sendTeensy(teensy_fd, "WORKSPACE\n");
+        if (waitTeensyOK(teensy_fd, 2000, &reply) && reply.find("OK WORKSPACE ") == 0)
+            snprintf(resp, sizeof(resp), "%s\n", reply.c_str());
+        else
+            snprintf(resp, sizeof(resp), "ERR firmware WORKSPACE unavailable; flash the current firmware image\n");
+    } else if (strncmp(line, "PRETENSION", 10) == 0) {
         // Configure only: never send TENSION or change energized cables here.
         double mm = 0;
         char extra;

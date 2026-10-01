@@ -151,6 +151,17 @@ class CDPRClient:
             hint = ' Restart cdpr_master to load support for UI pretension.' if 'unknown' in resp.lower() else ''
             raise RuntimeError(f'Could not set startup pretension: {resp}.{hint}')
 
+    def get_workspace(self) -> tuple[float, float, float, float]:
+        """Read compiled firmware bounds without enabling or commanding motion."""
+        resp = self._send('WORKSPACE')
+        parts = resp.split()
+        if len(parts) != 6 or parts[:2] != ['OK', 'WORKSPACE']:
+            raise RuntimeError(f'Workspace verification failed: {resp}. Update master and firmware.')
+        bounds = tuple(float(v) for v in parts[2:])
+        if not all(math.isfinite(v) for v in bounds) or bounds[0] >= bounds[1] or bounds[2] >= bounds[3]:
+            raise RuntimeError('Invalid firmware workspace bounds')
+        return bounds
+
     def command_position(self, x_mm: float, y_mm: float, speed_mm_s: float,
                          accel_mm_s2: float | None = None) -> None:
         """Send a non-blocking position command to the Teensy.

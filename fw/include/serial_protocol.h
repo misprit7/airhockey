@@ -30,6 +30,10 @@
 //   STATUS           Request an immediate status line (in addition to
 //                    the periodic ones).
 //
+//   WORKSPACE        Read-only compiled bounds. Responds with
+//                    OK WORKSPACE xmin xmax ymin ymax (paddle centre, mm).
+//                    teensy41_probe uses the 30 mm rim-to-rail test envelope.
+//
 // ── Teensy → Desktop (responses) ─────────────────────────────────────
 //
 //   OK cmd           Acknowledgment of a command.

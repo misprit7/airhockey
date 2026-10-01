@@ -128,8 +128,30 @@ static void test_startup_pretension_configuration_never_moves() {
     for (int fd : {tcp[0], tcp[1], serial[0], serial[1]}) close(fd);
 }
 
+static void test_workspace_query_forwards_actual_firmware_bounds() {
+    int tcp[2], serial[2];
+    assert(socketpair(AF_UNIX, SOCK_STREAM, 0, tcp) == 0);
+    assert(socketpair(AF_UNIX, SOCK_STREAM, 0, serial) == 0);
+    assert(fcntl(serial[0], F_SETFL, O_NONBLOCK) == 0);
+    std::thread firmware([&]() {
+        char cmd[64] = {};
+        assert(read(serial[1], cmd, sizeof(cmd)-1) > 0);
+        assert(!strcmp(cmd, "WORKSPACE\n"));
+        const char reply[] = "OK WORKSPACE 1200.000 1937.500 61.400 904.500\n";
+        assert(write(serial[1], reply, sizeof(reply)-1) == sizeof(reply)-1);
+    });
+    ClearPath disconnected_robot;
+    assert(handleCommand("WORKSPACE", disconnected_robot, tcp[0], serial[0]) == 1);
+    char response[256] = {};
+    assert(read(tcp[1], response, sizeof(response)-1) > 0);
+    assert(!strcmp(response, "OK WORKSPACE 1200.000 1937.500 61.400 904.500\n"));
+    firmware.join();
+    for (int fd : {tcp[0], tcp[1], serial[0], serial[1]}) close(fd);
+}
+
 int main() {
     test_startup_pretension_configuration_never_moves();
+    test_workspace_query_forwards_actual_firmware_bounds();
     int fd[2]; assert(pipe(fd) == 0);
     assert(fcntl(fd[0], F_SETFL, O_NONBLOCK) == 0);
     const char packet[] = "OK CMD\r\nS 1700 400 10 20 1 2 3 4\r\n";
