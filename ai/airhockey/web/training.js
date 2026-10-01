@@ -10,14 +10,14 @@ let fetching = false;
 
 function checkpointRow(c) {
     const progress = c.additional_steps == null ? c.name : `+${number(c.additional_steps)} steps`;
-    const edge = c.edge_trials ? `${c.edges.restored_interior ?? "—"}/${c.edge_trials}` : "—";
+    const edge = c.fringe ? `Corner ${c.fringe.corner.recovered}/${c.fringe.corner.trials}; side ${c.fringe.side.recovered}/${c.fringe.side.trials}` : c.edge_trials ? `${c.edges.restored_interior ?? "—"}/${c.edge_trials}` : "—";
     return `<tr><td title="${esc(c.name)}">${esc(progress)}<div class="sub">${esc(c.step.toLocaleString())} ${c.name.startsWith("agent_update_") ? "fitting updates" : "cumulative"}</div></td>
       <td>${esc(c.evaluation)}<div class="sub">${esc(c.screening)}</div></td>
       <td>${esc(edge)}</td><td>${esc(c.edges.controlled_after_restore ?? "—")}</td><td>${esc(c.edges.requested_fast_after_restore ?? "—")}</td>
       <td>${esc(c.shots.stationary ?? "—")} / ${esc(c.shots.receiving ?? "—")}</td>
       <td>${c.recovery ? `${esc(c.recovery.controlled)} / ${esc(c.recovery.controlled_fast)}` : "—"}</td>
       <td>${c.defense ? `${esc(c.defense.saved)}/${esc(c.defense.trials)}<div class="sub">${esc(c.defense.forward_at_release)} at front</div>` : "—"}</td>
-      <td>${c.peak_load == null ? "—" : `${(c.peak_load * 100).toFixed(1)}%`}</td>
+      <td>${c.peak_load == null ? "—" : `${(c.peak_load * 100).toFixed(1)}% short`}${c.endurance_peak == null ? "" : `<div class="sub">${(c.endurance_peak * 100).toFixed(1)}% sustained · ${number(c.endurance_overload_seconds)}s overloaded</div>`}</td>
       <td>${replayLink(c.replay, "Watch self-play")}${c.diagnostics.length ? `<details data-section="${esc(c.replay || c.name)}"><summary>${c.diagnostics.length} edge tests</summary><div class="diagnostics">${c.diagnostics.map(d => replayLink(d.url, d.label)).join("")}</div></details>` : ""}</td></tr>`;
 }
 
@@ -37,7 +37,7 @@ function runCard(run, index) {
       ${run.error ? `<p class="error">${esc(run.error)}</p>` : ""}
       <div class="actions">${replayLink(run.latest_replay, "Watch latest evaluated checkpoint")}</div>
       <details class="checkpoints" data-run="${esc(run.name)}" ${open ? "open" : ""}><summary>All ${run.checkpoint_count} checkpoints & evaluations</summary>
-      <p class="sub">Shots: stationary / incoming requested fast-shot counts. Slow drift: controlled / controlled then a requested fast shot. Moving release: saves against a laterally drifting puck before a hidden shot; “at front” means paddle depth above 0.60m. Load is from short self-play, not sustained qualification.</p>
+      <p class="sub">Shots: stationary / incoming requested fast-shot counts. Slow drift: controlled / controlled then a requested fast shot. Moving release: saves against a laterally drifting puck before a hidden shot; “at front” means paddle depth above 0.60m. Short load uses 90-second self-play. When shown, sustained load uses 10-minute games starting at 80% modeled load; overload time sums both players across games. These are simulation tests.</p>
       <div class="table-wrap"><table><thead><tr><th>Checkpoint</th><th>Evaluation / screen</th><th>Edges recovered</th><th>Then controlled</th><th>Then fast shot</th><th>Shots</th><th>Slow drift control / shot</th><th>Moving-release saves</th><th>Peak load</th><th>Replays</th></tr></thead>
       <tbody>${run.checkpoints.map(checkpointRow).join("") || '<tr><td colspan="10">Waiting for the first saved checkpoint.</td></tr>'}</tbody></table></div></details>
     </article>`;

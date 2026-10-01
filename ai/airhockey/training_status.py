@@ -90,7 +90,7 @@ def training_status(root, *, process_map=None, now=None, limit=12):
             number = int(file.stem.rsplit('_', 1)[1])
             row = reviewed.get(file.stem, {})
             reports = log_dir / file.stem
-            ready = [name for name in ('edges', 'skills', 'selfplay') if (reports / (name + '.json')).exists()]
+            ready = [name for name in ('edges', 'skills', 'selfplay', 'preparation', 'fringe', 'endurance') if (reports / (name + '.json')).exists()]
             edge_report = read_json(reports / 'edges.json')
             edge = row.get('edges', edge_report)
             replay = recordings / f'{run.name}_{file.stem}.json'
@@ -100,7 +100,7 @@ def training_status(root, *, process_map=None, now=None, limit=12):
                 diagnostics = [p for p in diagnostics if p.name.startswith(f'neural-edge{legacy[1][10:]}-')]
             else:
                 diagnostics = []
-            evaluation = ('Complete' if row or len(ready) == 3 else
+            evaluation = ('Complete' if row or {'edges','skills','selfplay'}.issubset(ready) else
                           'Evaluating' if evaluator_alive else 'Incomplete / no evaluator')
             screening = ('Not passed' if row.get('eligible') is False else
                          'Passed screen; further review required' if row.get('eligible') else 'Not recorded')
@@ -110,6 +110,9 @@ def training_status(root, *, process_map=None, now=None, limit=12):
                 edges={k: edge.get(k) for k in ('restored_interior', 'controlled_after_restore', 'requested_fast_after_restore')},
                 edge_trials=edge_report.get('request_trials'), shots=row.get('shots', {}), peak_load=row.get('short_peak'),
                 recovery=row.get('recovery'), defense=row.get('defense'),
+                fringe=row.get('fringe',read_json(reports/'fringe.json').get('summary')),
+                endurance_peak=row.get('endurance_peak'),
+                endurance_overload_seconds=row.get('endurance_overload_seconds'),
                 sha256=row.get('sha256'), replay=_link(replay) if replay.exists() else None,
                 diagnostics=[dict(label=p.stem.split(file.stem+'-',1)[-1], url=_link(p)) for p in diagnostics],
             ))
@@ -137,7 +140,7 @@ def training_status(root, *, process_map=None, now=None, limit=12):
     packages = []
     for file in (root / 'runs').glob('*/qualification.json'):
         meta = read_json(file.parent / 'run.json')
-        if not meta.get('deployment_ready'):
+        if not (meta.get('deployment_ready') or meta.get('simulation_candidate')):
             continue
         review = read_json(file.parent / 'review.json')
         packages.append(dict(name=file.parent.name, note=review.get('summary', 'Packaged policy; see its qualification report for limitations.'),

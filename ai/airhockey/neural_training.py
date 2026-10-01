@@ -1013,6 +1013,12 @@ class NeuralTrainingEnv(ArrivalEnv):
                 puck[edge, 1] = rng.uniform(self.decoder.low[1] + .12, self.decoder.high[1] - .05, k)
                 puck[edge, 2:] = 0
                 paddle[edge] = rng.uniform(self.decoder.low + .005, self.decoder.high - .005, (k, 2))
+                # The expanded workspace permits starts overlapping a rail
+                # puck; those would grant a contact without an actual approach.
+                overlap=np.linalg.norm(paddle[edge]-puck[edge,:2],axis=1)<radius+.005
+                selected=np.flatnonzero(edge)[overlap]
+                paddle[selected]=[(self.decoder.low[0]+self.decoder.high[0])/2,
+                                  (self.decoder.low[1]+self.decoder.high[1])/2]
                 replay_actions[edge] = np.nan
                 starting_requests[edge] = 0
             if self.corner_drill_fraction:
@@ -1023,9 +1029,20 @@ class NeuralTrainingEnv(ArrivalEnv):
                 inset=rng.uniform(self.cfg.puck_radius+.002,self.decoder.low[0]+.015,k)
                 puck[corner,0]=np.where(left,inset,self.cfg.width-inset)
                 puck[corner,1]=rng.uniform(self.cfg.puck_radius+.002,self.decoder.low[1]+.02,k)
+                tight=rng.random(k)<.35
+                inset=np.where(tight,self.cfg.puck_radius+.0002,inset)
+                puck[corner,0]=np.where(left,inset,self.cfg.width-inset)
+                puck[np.flatnonzero(corner)[tight],1]=self.cfg.puck_radius+.0002
                 puck[corner,2:]=0
                 paddle[corner,0]=np.where(left,self.decoder.low[0]+.015,self.decoder.high[0]-.015)
                 paddle[corner,1]=puck[corner,1]+rng.uniform(.12,.22,k)
+                # Practice approaching both along the side rail and along the
+                # back rail. These are reset poses, never prescribed actions.
+                side_start=rng.random(k)<.5
+                ids_side=np.flatnonzero(corner)[side_start]
+                distance=rng.uniform(.12,.22,len(ids_side))
+                paddle[ids_side,0]=puck[ids_side,0]+np.where(left[side_start],distance,-distance)
+                paddle[ids_side,1]=self.decoder.low[1]+.015
                 replay_actions[corner]=np.nan;starting_requests[corner]=0
                 edge|=corner
             fixtures = Fixtures(np.zeros(n, int), puck, paddle, np.full(n, 0.5))
