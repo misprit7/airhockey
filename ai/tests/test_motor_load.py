@@ -7,7 +7,7 @@ from types import SimpleNamespace
 import pytest
 
 from airhockey.hardware import CDPRClient
-from airhockey.motor_load import records, summarize
+from airhockey.motor_load import records, summarize, latest_snapshot
 from airhockey.replay_log import ReplayLog
 
 ROOT = Path(__file__).resolve().parents[2]
@@ -101,3 +101,37 @@ def test_old_master_motor_load_error_is_explicit(monkeypatch):
     monkeypatch.setattr(client, "_send", lambda _: "ERR unknown command")
     with pytest.raises(RuntimeError, match="unavailable"):
         client.get_motor_load()
+
+
+def test_ui_monitor_tracks_field_freshness_and_preserves_signed_current(tmp_path):
+    sample=dict(type='motor_load', unix=1000, monotonic=10, context={'motors_enabled':True},
+                motors=[dict(node=0,torque_amps=dict(valid=True,value=-2.5,end=9.95),
+                             rms_pct=dict(valid=True,value=81,end=9.2),
+                             rms_slow_pct=dict(valid=False,value=0,end=10))])
+    p=tmp_path/'1000.jsonl'
+    p.write_text(json.dumps(sample)+'\n'+ '{"partial":')
+    result=latest_snapshot(tmp_path,now=1000.1)
+    assert result['state']=='live'
+    m=result['motors'][0]
+    assert m['torque_amps']['value']==-2.5 and m['torque_amps']['fresh']
+    assert not m['rms_pct']['fresh'] and m['rms_pct']['value']==81
+    assert m['rms_slow_pct']['value'] is None
+    assert result['motors'][1]['torque_amps']['value'] is None
+    assert latest_snapshot(tmp_path,now=1002)['state']=='stale'
+    assert latest_snapshot(tmp_path,now=999)['state']=='stale'
+    p.write_text(json.dumps(sample)+'\n'+json.dumps({'type':'end'})+'\n')
+    assert latest_snapshot(tmp_path,now=1000.1)['state']=='stale'
+
+
+def test_ui_monitor_bounded_tail_and_new_session(tmp_path):
+    assert latest_snapshot(tmp_path)['state']=='unavailable'
+    sample=dict(type='motor_load',unix=1000,monotonic=10,motors=[])
+    p=tmp_path/'old.jsonl'
+    p.write_text('x'*300000+'\n'+json.dumps(sample)+'\n')
+    assert latest_snapshot(tmp_path,now=1000.1)['state']=='live'
+    newer=tmp_path/'new.jsonl'
+    newer.write_text('{"type":"meta"}\n')
+    import os
+    os.utime(newer,ns=(p.stat().st_mtime_ns+1000000,)*2)
+    result=latest_snapshot(tmp_path,now=1000.1)
+    assert result['state']=='unavailable' and result['source']=='new.jsonl'

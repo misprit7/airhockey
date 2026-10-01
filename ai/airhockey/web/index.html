@@ -85,6 +85,12 @@
                 </label>
             </div>
             <div id="hardware-error" class="hidden" role="alert"></div>
+            <section id="motor-load-panel" aria-label="Physical motor load">
+                <h3>Motor load <span id="motor-load-state">Waiting</span></h3>
+                <div id="motor-load-summary">Reading motor telemetry…</div>
+                <div id="motor-load-cards"></div>
+                <p class="motor-load-help">Physical robot · RMS is % of drive shutdown load. Current sign follows motor direction.</p>
+            </section>
             <div id="mode-select">
                 <button class="mode-btn active" data-mode="control">Control</button>
                 <button class="mode-btn" data-mode="sim">Simulation</button>
@@ -181,5 +187,6 @@
     </div>
     <div id="sidebar-overlay"></div>
     <script src="/app.js"></script>
+    <script src="/motor-load.js"></script>
 </body>
 </html>

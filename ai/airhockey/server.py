@@ -50,6 +50,18 @@ async def style_css():
     )
 
 
+@app.get('/motor-load.js')
+async def motor_load_js():
+    return HTMLResponse((WEB_DIR / 'motor-load.js').read_text(),
+                        media_type='application/javascript')
+
+
+@app.get('/api/motor-load')
+async def motor_load_status():
+    from airhockey.motor_load import latest_snapshot
+    return await asyncio.to_thread(latest_snapshot, WEB_DIR.parents[2] / 'logs/motor_load')
+
+
 @app.get("/training")
 async def training_page():
     return HTMLResponse((WEB_DIR / "training.html").read_text())

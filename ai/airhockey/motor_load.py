@@ -3,7 +3,69 @@ from __future__ import annotations
 
 import json
 import math
+import time
 from pathlib import Path
+
+
+def latest_snapshot(directory, *, now=None):
+    """Read-only UI feed, also while another process owns the control socket.
+
+    Bound the read to the final 256 KiB; never scan a growing recording from
+    its beginning. Wall time identifies old sessions across host reboots;
+    per-field acquisition offsets retain the logger's monotonic precision.
+    """
+    now = time.time() if now is None else now
+    try:
+        paths = list(Path(directory).glob('*.jsonl'))
+        if not paths:
+            return dict(state='unavailable', message='No motor telemetry recorded yet.', motors=[])
+        path = max(paths, key=lambda p: p.stat().st_mtime_ns)
+        with path.open('rb') as stream:
+            size = stream.seek(0, 2)
+            offset = max(0, size - 262144)
+            stream.seek(offset)
+            lines = stream.read(262144).split(b'\n')[:-1]
+            if offset:
+                lines = lines[1:]
+        sample = None
+        ended = False
+        for line in reversed(lines):
+            try:
+                record = json.loads(line)
+            except (ValueError, UnicodeDecodeError):
+                continue
+            if record.get('type') == 'end':
+                ended = True
+            if record.get('type') == 'motor_load':
+                sample = record
+                break
+        if sample is None:
+            return dict(state='unavailable', source=path.name,
+                        message='Waiting for motor telemetry.', motors=[])
+        age = now - sample['unix']
+        live = not ended and math.isfinite(age) and 0 <= age <= 1
+        output = dict(state='live' if live else 'stale', source=path.name,
+                      age_s=age if math.isfinite(age) else None,
+                      context=sample.get('context', {}), motors=[])
+        keys = ('torque_amps', 'rms_pct', 'rms_slow_pct', 'bus_voltage_v', 'status', 'alerts')
+        for node in range(4):
+            motor = next((m for m in sample.get('motors', []) if m.get('node') == node), {})
+            fields = {}
+            for key in keys:
+                field = motor.get(key, {})
+                value = field.get('value')
+                values = value if isinstance(value, list) else [value]
+                valid = field.get('valid') is True and bool(values) and all(
+                    isinstance(v, (int, float)) and math.isfinite(v) for v in values)
+                end = field.get('end')
+                field_age = age + sample['monotonic'] - end if isinstance(end, (int, float)) else math.inf
+                fields[key] = dict(value=value if valid else None, valid=valid,
+                                   age_s=field_age if math.isfinite(field_age) else None,
+                                   fresh=bool(live and valid and 0 <= field_age <= .5))
+            output['motors'].append(dict(node=node, **fields))
+        return output
+    except (OSError, KeyError, TypeError, ValueError) as exc:
+        return dict(state='unavailable', message=f'Motor telemetry unavailable: {exc}', motors=[])
 
 
 def records(path):

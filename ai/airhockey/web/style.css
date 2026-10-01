@@ -29,6 +29,24 @@
     --r:         2px;       /* scoreboards are not rounded */
 }
 
+#motor-load-panel { border-top: 1px solid var(--line); padding-top: 12px; }
+#motor-load-panel h3 { display: flex; justify-content: space-between; font-size: 13px; margin-bottom: 6px; }
+#motor-load-state { font-size: 11px; color: var(--ink-3); }
+#motor-load-state.live { color: var(--green); }
+#motor-load-summary, .motor-load-help { font-size: 11px; color: var(--ink-3); line-height: 1.4; }
+#motor-load-cards { display: grid; grid-template-columns: repeat(auto-fit, minmax(180px, 1fr)); gap: 8px; margin: 10px 0; }
+.motor-load-card { background: var(--surface); padding: 9px; min-width: 0; font-variant-numeric: tabular-nums; }
+.motor-load-heading, .motor-load-electric, .motor-load-rms { display: flex; justify-content: space-between; gap: 8px; white-space: nowrap; }
+.motor-load-heading { font-size: 12px; }
+.motor-load-heading small { font-size: 10px; color: var(--ink-3); }
+.motor-load-electric { align-items: baseline; margin: 8px 0; color: var(--blue); }
+.motor-load-electric strong { font-size: 20px; }
+.motor-load-electric span { font-size: 12px; color: var(--ink-2); }
+.motor-load-rms { font-size: 11px; line-height: 1.8; color: var(--ink-2); }
+.motor-load-rms span:last-child { width: 64px; text-align: right; padding-right: 4px; background: linear-gradient(var(--line-hi), var(--line-hi)) no-repeat; background-size: 0% 100%; }
+#motor-load-panel .load-warn { color: var(--amber); }
+#motor-load-panel .load-danger { color: #ff6980; }
+
 * {
     margin: 0;
     padding: 0;
