@@ -71,3 +71,33 @@ its holds at 3.4-4.1 m/s (`ai/bin/hold_eval.py`, horizon 8). Not yet run on the
 table. `3.9-drive-band-selfplay-500k` is the fallback; `2.3-control-gate-selfplay`
 is the one the user liked in the replays before the control work and the
 last one that was on the table (2026-09-07).
+
+## Expanded-workspace continuation (2026-10-01)
+
+`_neural-rail30-accel100-20261001-a` starts from the deployed
+`possession-20260926-v3` single neural actor. The experimental workspace is
+30 mm paddle-rim clearance at the three robot-side rails (grid x 1200–1937.5,
+y 61.4–904.5 mm), with acceleration capped at 100 m/s². This does not change
+firmware, hardware defaults, or the selected production policy.
+
+The previous curriculum, shot requests, and shaped rewards are retained.
+A soft edge cost reaches 3 reward/second per nearby rail and fades out over
+60 mm; goals remain worth 600. The new load recipe
+`recipes/motor-load-20261001.json` uses post-replacement recordings, spatial
+holding currents, measured per-drive limits, and fitted thermal memory.
+Identical motor parts do not imply identical configured RMS limits: the
+recordings show fast limits 4.1/5.8/4.1/5.8 A. The enlarged region remains
+unmeasured and has an explicit conservative current prior.
+
+`bin/migrate_neural_workspace.py` distills the old neural actor into the new
+arrival coordinate units before PPO; its targets are the old network's
+physical arrivals. It adds no tactical controller. Old training references
+and saved examples are translated consistently. The full actor can adapt
+after migration; the previously frozen prefix is no longer independent.
+The reproducible recipe is `recipes/rail30-accel100-20261001.json`.
+
+The trainer saves every 4M transitions. `bin/watch_expanded_training.py`
+publishes requested-shot, delayed-release defense, and complete self-play
+results plus replay links on [the training dashboard](http://localhost:8420/training).
+Run metadata freezes the exact workspace, acceleration and thermal recipe
+for evaluation. Development screens are not hardware qualification.

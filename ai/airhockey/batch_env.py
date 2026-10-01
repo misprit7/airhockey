@@ -283,6 +283,7 @@ class BatchAirHockeyEnv:
         # DelayedDynamics parameters
         dynamics_max_speed: float = MAX_SPEED_M_S,
         dynamics_max_accel: float = MAX_ACCEL_M_S2,
+        workspace_bounds_mm=None,
         dynamics_time_constant: float = 0.02,
         # Observe the puck through a model of the real tracker rather
         # than reading the engine: finite-difference velocity over noisy
@@ -434,7 +435,7 @@ class BatchAirHockeyEnv:
         # Unreachable commands are clamped to the nearest reachable point and
         # charged WS_PENALTY_PER_UNIT per sim-unit of overshoot in step().
         self.constrain_to_workspace = constrain_to_workspace
-        self._ws = (workspace_in_sim(cfg.width, cfg.height / 2)
+        self._ws = (workspace_in_sim(cfg.width, cfg.height / 2, bounds_mm=workspace_bounds_mm)
                     if constrain_to_workspace else None)
         self._action_low = np.array([cfg.paddle_radius, cfg.paddle_radius])
         self._action_high = np.array(

@@ -25,6 +25,8 @@ def load(path):
     net = NeuralPlayer(state["width"], history=state.get("history", 1), shot_conditioned=state.get("shot_conditioned", False))
     net.load_weights(state["model"])
     net.eval()
+    from airhockey.neural_setup import checkpoint_environment
+    net.environment_options=checkpoint_environment(path,state)
     return net, state
 
 
@@ -149,6 +151,7 @@ def skills(
         report_sensing=report_sensing,
         shot_conditioned=net.shot_conditioned or shot_request != "random",
         shot_request=shot_request,
+        **getattr(net,'environment_options',{}),
     )
     if random_start:
         ids = f.task < 2
@@ -421,9 +424,14 @@ def games(
     torch.manual_seed(seed)
     conditioned = net.shot_conditioned or (opponent_net is not None and opponent_net.shot_conditioned)
     env = NeuralTrainingEnv(n, stage=3, seed=seed, games=True,
+                            **getattr(net,'environment_options',{}),
                             report_sensing=report_sensing,
                             continuous_rallies=continuous_rallies,
                             shot_conditioned=conditioned or shot_request != "random", shot_request=shot_request)
+    if opponent_net is not None and hasattr(opponent_net,'environment_options'):
+        from airhockey.neural_coordinates import CoordinateReference
+        opponent_net=CoordinateReference(opponent_net,opponent_net.environment_options,
+                                          getattr(net,'environment_options',{}))
     if opponent_shot_request is not None:
         if not conditioned:
             raise ValueError("opponent shot requests require shot-conditioned neural policies")
@@ -744,6 +752,8 @@ def games(
                 step=step,
                 fps=50,
                 simulation_only=True,
+                simulation_environment=getattr(net,'environment_options',{}),
+                workspace_sim=env.base._ws,
                 policy_sampling="learned Gaussian" if stochastic else "mean",
                 physical_history_frames=net.history,
                 shot_conditioned=net.shot_conditioned,
@@ -752,7 +762,7 @@ def games(
                 continuous_rallies=continuous_rallies,
                 opponent_shot_request=opponent_shot_request,
                 shot_type_names=["none", "left bank", "right bank", "straight"],
-                accel_cap_m_s2=60,
+                accel_cap_m_s2=float(env.base._agent_dyn['max_accel'].max()),
                 thermal_gain=thermal_gain,
                 seconds=seconds,
             ),
@@ -779,6 +789,7 @@ def games(
 def main():
     p = argparse.ArgumentParser(description=__doc__)
     p.add_argument("checkpoint", type=Path)
+    p.add_argument('--environment-from',type=Path,help='Explicit common test configuration for a fair comparison')
     p.add_argument("--output", type=Path, required=True)
     p.add_argument("--record", type=Path)
     p.add_argument("--seconds", type=float, default=120)
@@ -825,12 +836,19 @@ def main():
         p.error("--swap-sides requires --opponent-checkpoint")
     torch.set_num_threads(2)
     net, state = load(args.checkpoint)
+    if args.environment_from:
+        from airhockey.neural_setup import checkpoint_environment
+        from airhockey.neural_coordinates import CoordinateReference
+        destination=checkpoint_environment(args.environment_from)
+        net=CoordinateReference(net,net.environment_options,destination)
+        net.environment_options=destination
     if args.report_sensing is None:
         args.report_sensing = checkpoint_report_sensing(args.checkpoint, state)
     if args.continuous_rallies is None:
         args.continuous_rallies = checkpoint_continuous_rallies(args.checkpoint, state)
     result = dict(
         metrics_version=5,
+        simulation_environment=net.environment_options,
         wide_defense=args.wide_defense,
         report_sensing=args.report_sensing,
         continuous_rallies=args.continuous_rallies,

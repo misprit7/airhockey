@@ -55,7 +55,9 @@ def training_status(root, *, process_map=None, now=None, limit=12):
                    and (root / a).parent == log_dir for a in argv)
             for pid, argv in process_map.items())
         evaluator_alive = any(
-            any(Path(a).name.startswith(('evaluate_', 'audit_')) and a.endswith('.py')
+            (any(Path(a).name=='watch_expanded_training.py' for a in argv)
+             and '--run' in argv and Path(argv[argv.index('--run')+1]).name==run.name)
+            or any(Path(a).name.startswith(('evaluate_', 'audit_')) and a.endswith('.py')
                 and (root / a).parent == log_dir for a in argv)
             for argv in process_map.values())
         modified = status_path.stat().st_mtime

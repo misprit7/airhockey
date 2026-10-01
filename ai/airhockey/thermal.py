@@ -21,13 +21,28 @@ class MotorThermal:
         if not 0 <= soft_start < 1:
             raise ValueError("soft load penalty must start below the load limit")
         self.soft_start = soft_start
-        self.config = json.loads(Path(path).read_text())
+        self.config = dict(path) if isinstance(path,dict) else json.loads(Path(path).read_text())
         c = self.config
-        self.coeff = np.asarray(c["coefficients_amps_squared"], dtype=float)
+        self.spatial = c.get('schema') == 'spatial-current-v2'
+        self.coeff = np.asarray(c["motion_coefficients_amps_squared" if self.spatial else "coefficients_amps_squared"], dtype=float)
+        if self.spatial:
+            self.centers=np.asarray(c['holding_centers_mm'],dtype=float)
+            self.holding=np.asarray(c['holding_amps_squared'],dtype=float)
+            if self.centers.shape!=(9,2) or self.holding.shape!=(9,4) or not np.isfinite(self.centers).all() or not np.isfinite(self.holding).all() or (self.holding<0).any():
+                raise ValueError('invalid measured holding map')
+            self.spatial_low=self.centers.min(0);self.spatial_high=self.centers.max(0)
+            self.spacing=(self.spatial_high-self.spatial_low)/2
+            if (self.spacing<=0).any():raise ValueError('invalid holding map spacing')
+            expected={(x,y) for x in np.linspace(self.spatial_low[0],self.spatial_high[0],3)
+                            for y in np.linspace(self.spatial_low[1],self.spatial_high[1],3)}
+            if {tuple(x) for x in self.centers}!=expected:
+                raise ValueError('holding map must cover the complete regular 3x3 grid')
+            prior=c['unmeasured_extension_amps_per_100mm']
+            if not np.isfinite(prior) or prior<0:raise ValueError('invalid unmeasured extension prior')
         self.limits = np.asarray([c["fast_limit_amps"], c["slow_limit_amps"]])
         self.tau = np.asarray([c["fast_tau_s"], c["slow_tau_s"]])
         if (
-            self.coeff.shape != (4, 4)
+            self.coeff.shape != (4, 5 if self.spatial else 4)
             or self.limits.shape != (2, 4)
             or self.tau.shape != (2, 4)
             or not np.isfinite(self.coeff).all()
@@ -66,6 +81,18 @@ class MotorThermal:
         )
         v = velocity * scale
         a = acceleration * scale
+        if self.spatial:
+            grid=np.column_stack((geom.RAIL_MAX_X-position[:,1]*(geom.RAIL_MAX_X-geom.CENTERLINE_X),
+                                  geom.RAIL_MIN_Y+position[:,0]*(geom.RAIL_MAX_Y-geom.RAIL_MIN_Y)))
+            clipped=np.clip(grid,self.spatial_low,self.spatial_high)
+            w=np.maximum(0,1-np.abs(clipped[:,None,:]-self.centers)/self.spacing).prod(axis=2)
+            holding=w@self.holding
+            extension=np.linalg.norm(grid-clipped,axis=1)/100*self.config['unmeasured_extension_amps_per_100mm']
+            grid_a=np.column_stack((-a[:,1],a[:,0]))/60
+            features=np.column_stack(((v*v).sum(axis=1)/4,np.maximum(grid_a,0)**2,np.maximum(-grid_a,0)**2))
+            self.current_squared=((np.sqrt(holding)+extension[:,None])**2+features@self.coeff.T)*self.gain
+            self._integrate(dt)
+            return
         f = np.column_stack(
             (
                 np.ones(len(v)),
@@ -89,6 +116,9 @@ class MotorThermal:
             * np.asarray(self.config["accel_prior_amps_squared"])
         )
         self.current_squared = (np.maximum(i2, hold) + prior) * self.gain
+        self._integrate(dt)
+
+    def _integrate(self,dt):
         if dt not in self._decay:
             self._decay[dt] = np.exp(-dt / self.tau)
         decay = self._decay[dt]

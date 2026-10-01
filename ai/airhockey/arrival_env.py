@@ -25,6 +25,7 @@ class ArrivalEnv:
         *,
         seed=0,
         accel=60.0,
+        workspace_bounds_mm=None,
         realistic=True,
         randomize=True,
         game_fraction=0.0,
@@ -50,6 +51,7 @@ class ArrivalEnv:
             domain_randomize=randomize,
             dynamics_max_accel=accel,
             agent_accel_range=(accel, accel),
+            workspace_bounds_mm=workspace_bounds_mm,
             **sensing_kwargs(realistic),
         )
         self.base.command_delay_s = (

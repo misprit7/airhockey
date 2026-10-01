@@ -9,6 +9,7 @@ from airhockey.motion_guard import guard_command
 from airhockey.shot_flight import PARAMETERS, first_goal_crossing
 from airhockey.rewards import shot_matches_type
 from airhockey.skill_benchmark import Fixtures
+from airhockey.thermal import DEFAULT_MODEL
 
 
 class NeuralTrainingEnv(ArrivalEnv):
@@ -21,6 +22,11 @@ class NeuralTrainingEnv(ArrivalEnv):
         n_envs=128,
         *,
         stage=0,
+        accel=60.,
+        workspace_bounds_mm=None,
+        thermal_path=DEFAULT_MODEL,
+        edge_dwell_weight=0.,
+        edge_dwell_band=.06,
         seed=0,
         realistic=True,
         report_sensing=False,
@@ -55,6 +61,7 @@ class NeuralTrainingEnv(ArrivalEnv):
         shutdown_level=1.0,
         practice_defense_fraction=0.25,
         defense_min_speed=2.0,
+        defense_max_speed=12.0,
         wide_defense=False,
         random_defense_start_fraction=0.0,
         defense_clear_reward=0.0,
@@ -117,7 +124,13 @@ class NeuralTrainingEnv(ArrivalEnv):
             realistic=realistic,
             randomize=randomize,
             load_soft_start=0.8,
+            accel=accel,
+            workspace_bounds_mm=workspace_bounds_mm,
+            thermal_path=thermal_path,
         )
+        if not np.isfinite([edge_dwell_weight,edge_dwell_band]).all() or edge_dwell_weight<0 or edge_dwell_band<=0:
+            raise ValueError('invalid edge dwell penalty')
+        self.edge_dwell_weight,self.edge_dwell_band=edge_dwell_weight,edge_dwell_band
         if report_sensing and self.base._perception is not None:
             self.base._perception.enable_report_estimator()
         if not 0 <= recovery_fraction <= 1:
@@ -258,7 +271,11 @@ class NeuralTrainingEnv(ArrivalEnv):
             raise ValueError("practice defense fraction must be in [0,1]")
         self.shutdown_level = shutdown_level
         self.practice_defense_fraction = practice_defense_fraction
-        if not 0 < defense_min_speed <= (12 if stage >= 4 else 4 + 2 * min(stage, 2)):
+        if not np.isfinite(defense_max_speed) or not 8<=defense_max_speed<=20:
+            raise ValueError('defense maximum must be in [8,20] m/s')
+        self.defense_max_speed=defense_max_speed
+        self.cfg.max_puck_speed=max(self.cfg.max_puck_speed,defense_max_speed)
+        if not 0 < defense_min_speed <= (defense_max_speed if stage >= 4 else 4 + 2 * min(stage, 2)):
             raise ValueError("defense minimum exceeds the stage's speed range")
         if not 0 <= random_defense_start_fraction <= 1:
             raise ValueError("random defense start fraction must be in [0,1]")
@@ -883,7 +900,7 @@ class NeuralTrainingEnv(ArrivalEnv):
             velocity = np.column_stack(
                 (rng.uniform(.5-aim_half, .5+aim_half, k) - puck[defense, 0], -puck[defense, 1])
             )
-            max_incoming = 12 if self.stage >= 4 else 4 + 2 * spread
+            max_incoming = self.defense_max_speed if self.stage >= 4 else 4 + 2 * spread
             velocity *= rng.uniform(self.defense_min_speed, max_incoming, k)[:, None] / np.maximum(
                 np.linalg.norm(velocity, axis=1, keepdims=True), 1e-8
             )
@@ -916,7 +933,7 @@ class NeuralTrainingEnv(ArrivalEnv):
                 puck[windup, 0] = rng.uniform(.15, .85, k)
                 puck[windup, 1] = rng.uniform(1.08, 1.25, k)
                 velocity = np.column_stack((rng.uniform(.5-mouth, .5+mouth, k) - puck[windup, 0], -puck[windup, 1]))
-                velocity *= rng.uniform(8, 12, k)[:, None] / np.linalg.norm(velocity, axis=1, keepdims=True)
+                velocity *= rng.uniform(8, self.defense_max_speed, k)[:, None] / np.linalg.norm(velocity, axis=1, keepdims=True)
                 release_velocity[windup] = velocity
                 puck[windup, 2:] = 0
                 if self.defense_windup_lateral_speed:
@@ -1297,6 +1314,11 @@ class NeuralTrainingEnv(ArrivalEnv):
         reward += 0.5 * info["penalty"]
         reward += (25 - self.turnover_weight) * (self.turnovers[0] - previous_turnovers)
         reward -= self.load_weight * self.load_cost
+        # Bounded per-second cost near the two side rails and back rail.
+        # A brief interception costs little; there is no edge exclusion or
+        # action override. Opponent-side dwell cannot earn positive reward.
+        edge_cost = self.edge_dwell_cost()
+        reward -= self.edge_dwell_weight * b.action_dt * edge_cost
         reward -= (game | self.defense_windup) * self.readiness_cost_weight * b.action_dt * self._readiness_running_cost
         # Small action-change cost, not a cap on learned rapid responses.
         reward -= 0.002 * ((action - previous_action) ** 2).sum(axis=1)
@@ -1406,6 +1428,7 @@ class NeuralTrainingEnv(ArrivalEnv):
             load_peak=self.peak_load[0].copy(),
             overload_seconds=self.overload_seconds[0].copy(),
             peak_accel=self.peak_accel.copy(),
+            edge_dwell_cost=edge_cost.copy(),
         )
         return (
             obs,
@@ -1414,3 +1437,9 @@ class NeuralTrainingEnv(ArrivalEnv):
             truncate,
             info,
         )
+
+    def edge_dwell_cost(self):
+        e=self.engine
+        margin=np.column_stack((e.paddle_agent_x-self.decoder.low[0],
+            self.decoder.high[0]-e.paddle_agent_x,e.paddle_agent_y-self.decoder.low[1]))
+        return np.square(np.clip(1-margin/self.edge_dwell_band,0,1)).sum(axis=1)

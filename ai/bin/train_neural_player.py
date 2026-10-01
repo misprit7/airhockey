@@ -71,6 +71,11 @@ def main():
     p.add_argument("--backtrack-kl", action="store_true",
                    help="Shorten each actor optimizer proposal if its post-step minibatch KL exceeds target-kl")
     p.add_argument("--stage", type=int, default=0)
+    p.add_argument('--accel',type=float,default=60)
+    p.add_argument('--workspace',choices=['legacy','rail30'],default='legacy')
+    p.add_argument('--thermal-model',type=Path,default=DEFAULT_MODEL)
+    p.add_argument('--edge-dwell-weight',type=float,default=0,help='Maximum cost per second per nearby rail')
+    p.add_argument('--edge-dwell-band',type=float,default=.06,help='Soft penalty band inside workspace boundary, meters')
     p.add_argument("--seed", type=int, default=20261801)
     p.add_argument("--save-every", type=int, default=500_000)
     p.add_argument("--width", type=int, help="Hidden width; inherit on resume, otherwise 256")
@@ -130,6 +135,7 @@ def main():
     p.add_argument("--shutdown-level", type=float, default=1)
     p.add_argument("--practice-defense-fraction", type=float, default=0.25)
     p.add_argument("--defense-min-speed", type=float, default=2)
+    p.add_argument('--defense-max-speed',type=float,default=12)
     p.add_argument("--wide-defense", action="store_true",
                    help="Practice direct and bank attacks across the scoring mouth and configured speeds")
     p.add_argument("--random-defense-start-fraction", type=float, default=0)
@@ -202,6 +208,13 @@ def main():
     p.add_argument("--skill-replay", type=Path, help="Previously successful neural observations/actions for training-only preservation")
     p.add_argument("--skill-replay-weight", type=float, default=0)
     args = p.parse_args()
+    if not np.isfinite(args.accel) or not 0<args.accel<=120:p.error('accel must be within (0,120] m/s²')
+    from airhockey.neural_setup import workspace_bounds
+    run_bounds=workspace_bounds(args.workspace)
+    args.thermal_model=args.thermal_model.resolve()
+    from airhockey.neural_setup import checkpoint_environment
+    from airhockey.neural_coordinates import CoordinateReference,action_coordinates,observation_coordinates
+    coordinate_options=dict(accel=args.accel,workspace_bounds_mm=run_bounds)
     if args.resume and args.initialize_from:
         p.error('choose --resume or --initialize-from')
     if args.goals_only:
@@ -287,10 +300,14 @@ def main():
             raise ValueError("skill reference must use the same observation layout")
         skill_reference.load_weights(reference_state['model'])
         skill_reference.requires_grad_(False)
+        skill_reference=CoordinateReference(skill_reference,checkpoint_environment(args.skill_reference,reference_state),coordinate_options)
     skill_replay = None
     if args.skill_replay is not None:
         with np.load(args.skill_replay) as replay:
             rx, ry = replay['observation'], replay['action']
+            replay_options=json.loads(str(replay['environment_options'])) if 'environment_options' in replay else dict(accel=60,workspace_bounds_mm=None)
+            rx=observation_coordinates(rx,replay_options,coordinate_options,args.history)
+            ry=action_coordinates(ry,replay_options,coordinate_options)
             if rx.ndim != 2 or rx.shape[1] != net.obs_dim or ry.shape != (len(rx), 6) or not len(rx) or not np.isfinite(rx).all() or not np.isfinite(ry).all():
                 raise ValueError("invalid neural skill replay")
             skill_replay = (torch.as_tensor(rx, dtype=torch.float32, device=device), torch.as_tensor(ry, dtype=torch.float32, device=device))
@@ -314,9 +331,12 @@ def main():
         reference_state = torch.load(path, map_location=device, weights_only=False)
         rival = NeuralPlayer(reference_state["width"], history=reference_state.get("history", 1), shot_conditioned=reference_state.get("shot_conditioned", False)).to(device).eval()
         rival.load_weights(reference_state["model"])
+        rival=CoordinateReference(rival,checkpoint_environment(path,reference_state),coordinate_options)
         references.append(rival)
     reference = references[0] if references else None
     options = dict(
+        accel=args.accel,workspace_bounds_mm=run_bounds,thermal_path=args.thermal_model,
+        edge_dwell_weight=args.edge_dwell_weight,edge_dwell_band=args.edge_dwell_band,
         goals_only=args.goals_only,
         stage=args.stage,
         seed=args.seed,
@@ -349,6 +369,7 @@ def main():
         shutdown_level=args.shutdown_level,
         practice_defense_fraction=args.practice_defense_fraction,
         defense_min_speed=args.defense_min_speed,
+        defense_max_speed=args.defense_max_speed,
         wide_defense=args.wide_defense,
         random_defense_start_fraction=args.random_defense_start_fraction,
         defense_clear_reward=args.defense_clear_reward,
@@ -435,7 +456,8 @@ def main():
         else "restored"
         if args.resume
         else "fresh",
-        physical_limits=dict(speed_m_s=12, acceleration_m_s2=60),
+        physical_limits=dict(speed_m_s=12, acceleration_m_s2=args.accel),
+        workspace_bounds_mm=run_bounds,
         args={k: str(v) if isinstance(v, Path) else v for k, v in vars(args).items()},
         training_opponents="pool of neural policy snapshots"
         if args.stage >= 3
@@ -448,7 +470,7 @@ def main():
     )
     if args.evaluation_dir is not None:
         meta['evaluation_dir'] = str(args.evaluation_dir)
-    meta["thermal_model"] = json.loads(DEFAULT_MODEL.read_text())
+    meta["thermal_model"] = json.loads(args.thermal_model.read_text())
     for path in [
         Path(__file__),
         ROOT / "ai/airhockey/neural_player.py",
@@ -473,7 +495,9 @@ def main():
         ROOT / "ai/airhockey/motion.py",
         ROOT / "ai/airhockey/physics.py",
         ROOT / "ai/airhockey/perception.py",
-        DEFAULT_MODEL,
+        args.thermal_model,
+        ROOT / 'ai/airhockey/neural_setup.py',
+        ROOT / 'ai/airhockey/neural_coordinates.py',
         ROOT / "shared/cdpr_geometry.py",
         ROOT / "fw/include/motion_profile.h",
         ROOT / "fw/host/motion_batch.cpp",

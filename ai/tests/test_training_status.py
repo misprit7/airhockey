@@ -31,6 +31,14 @@ def test_resumed_progress_counts_only_this_runs_transitions(tmp_path):
     assert run['latest_replay'] is None
 
 
+def test_expanded_training_watcher_is_attached_to_its_run(tmp_path):
+    run=fixture(tmp_path)
+    process={44:['python','ai/bin/watch_expanded_training.py','--run',str(run),'--output-dir','logs/evaluation']}
+    assert training_status(tmp_path,process_map=process)['runs'][0]['evaluator_active']
+    process[44][3]='runs/unrelated'
+    assert not training_status(tmp_path,process_map=process)['runs'][0]['evaluator_active']
+
+
 def test_old_running_flag_and_reused_pid_do_not_claim_live_training(tmp_path):
     run = fixture(tmp_path, running=True)
     os.utime(run / 'status.json', (10, 10))

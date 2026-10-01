@@ -185,7 +185,8 @@ def established_skill_preservation(net, reference, observation, mean=None, contr
     if not keep.any():
         return mean.sum() * 0
     with torch.no_grad():
-        target = reference.actor(reference.trunk(observation[keep])).tanh()
+        target = (reference.action_mean(observation[keep]) if hasattr(reference,'action_mean')
+                  else reference.actor(reference.trunk(observation[keep])).tanh())
     return (mean[keep].tanh() - target).square().mean()
 
 

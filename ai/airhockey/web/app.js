@@ -55,6 +55,7 @@ let hwPosition = null; // {x, y} in physics coords, or null if not active
 // mallet parked on a software limit is indistinguishable from one against
 // the wall.
 let hwWorkspace = null;
+let replayWorkspace = null;
 let showHwOverlay = true;
 
 // Trail buffer
@@ -346,7 +347,8 @@ function render() {
         // drives happen to be connected, so it is drawn whenever the server
         // has told us what it is. Not drawing it made the sim look like it
         // offered the whole half.
-        if (hwWorkspace) drawReachable(hwWorkspace);
+        const shownWorkspace = mode === "replay" ? (replayWorkspace || hwWorkspace) : hwWorkspace;
+        if (shownWorkspace) drawReachable(shownWorkspace);
         if (hwPosition && showHwOverlay) {
             drawHwPaddle(hwPosition.x, hwPosition.y);
         }
@@ -910,6 +912,7 @@ async function loadRecording(path, li) {
         // API returns {frames, metadata} or legacy flat array
         replayData = data.frames || data;
         const metadata = data.metadata || null;
+        replayWorkspace = metadata?.workspace_sim || null;
         stopReplay();
         replayFps = metadata?.fps > 0 ? metadata.fps : 60;
         replayIndex = 0;
@@ -1083,6 +1086,7 @@ async function loadLatestRecording() {
             const recData = await recResp.json();
             replayData = recData.frames || recData;
             const metadata = recData.metadata || null;
+            replayWorkspace = metadata?.workspace_sim || null;
             replayFps = metadata?.fps > 0 ? metadata.fps : 60;
             replayIndex = 0;
             const controls = document.getElementById("replay-controls");

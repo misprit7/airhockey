@@ -13,22 +13,29 @@ from airhockey.skill_benchmark import Fixtures
 from airhockey.shot_flight import PARAMETERS, open_goal_outcomes
 
 
-def evaluate(path, count=1024, seed=20263139, initial_load=None, lateral_speed=0):
+def evaluate(path, count=1024, seed=20263139, initial_load=None, lateral_speed=0, speed_range=(8,12),environment_from=None):
     torch.set_num_threads(2)
     torch.manual_seed(seed)
     state = torch.load(path, map_location='cpu', weights_only=False)
     net = NeuralPlayer(state['width'], history=state.get('history', 1), shot_conditioned=state.get('shot_conditioned', False))
     net.load_weights(state['model'])
     net.eval()
+    from airhockey.neural_setup import checkpoint_environment
+    options=checkpoint_environment(environment_from or path,None if environment_from else state)
+    if environment_from:
+        from airhockey.neural_coordinates import CoordinateReference
+        net=CoordinateReference(net,checkpoint_environment(path,state),options)
     env = NeuralTrainingEnv(count, stage=2, seed=seed, report_sensing=True,
+        **options,
         shot_conditioned=net.shot_conditioned, possession_followthrough=True,
         defense_clear_reward=100, defense_windup_lateral_speed=lateral_speed)
+    env.cfg.max_puck_speed=max(env.cfg.max_puck_speed,speed_range[1])
     rng = np.random.default_rng(seed + 31)
     puck = np.zeros((count, 4))
     puck[:, :2] = rng.uniform([.15, 1.08], [.85, 1.25], (count, 2))
     mouth = env.cfg.goal_width / 2 - env.cfg.puck_radius - .005
     velocity = np.column_stack((rng.uniform(.5-mouth, .5+mouth, count) - puck[:, 0], -puck[:, 1]))
-    velocity *= rng.uniform(8, 12, count)[:, None] / np.linalg.norm(velocity, axis=1, keepdims=True)
+    velocity *= rng.uniform(*speed_range, count)[:, None] / np.linalg.norm(velocity, axis=1, keepdims=True)
     paddle = rng.uniform(env.decoder.low+.005, env.decoder.high-.005, (count, 2))
     delay = rng.uniform(.3, 1.2, count)
     if lateral_speed:
@@ -88,7 +95,9 @@ def evaluate(path, count=1024, seed=20263139, initial_load=None, lateral_speed=0
     assert done.all()
     kept = [row for row in rows if row['valid']]
     return dict(checkpoint=str(path), step=state.get('step'), seed=seed,
-        scenario='delayed_direct_8_to_12m_s', report_sensing=True, initial_load=initial_load,
+        scenario='delayed_direct', report_sensing=True, initial_load=initial_load,
+        physics_puck_speed_cap=env.cfg.max_puck_speed,
+        incoming_speed_range=list(speed_range),simulation_environment=options,
         lateral_speed=lateral_speed,
         trials=len(kept), saved=sum(x['saved'] for x in kept), contacted=sum(x['contacted'] for x in kept),
         conceded=sum(x['conceded'] for x in kept),
@@ -106,12 +115,17 @@ if __name__ == '__main__':
     parser.add_argument('--seed', default=20263139, type=int)
     parser.add_argument('--initial-load', type=float)
     parser.add_argument('--lateral-speed', type=float, default=0)
+    parser.add_argument('--speed-min',type=float,default=8)
+    parser.add_argument('--speed-max',type=float,default=12)
+    parser.add_argument('--environment-from',type=Path)
     args = parser.parse_args()
     if args.trials < 1 or (args.initial_load is not None and not 0 <= args.initial_load <= 1):
         parser.error('positive trial count and initial load in [0,1] required')
     if not np.isfinite(args.lateral_speed) or args.lateral_speed < 0:
         parser.error('lateral speed must be finite and nonnegative')
-    result = evaluate(args.checkpoint, args.trials, args.seed, args.initial_load, args.lateral_speed)
+    if not 0<args.speed_min<=args.speed_max<=20:parser.error('invalid incoming speed range')
+    result = evaluate(args.checkpoint, args.trials, args.seed, args.initial_load, args.lateral_speed,
+        (args.speed_min,args.speed_max),args.environment_from)
     args.output.parent.mkdir(parents=True, exist_ok=True)
     temporary = args.output.with_suffix('.tmp')
     temporary.write_text(json.dumps(result, indent=2))

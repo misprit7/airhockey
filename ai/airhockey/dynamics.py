@@ -184,7 +184,7 @@ DR_CAP_RANGE = DR_ACCEL_RANGE
 
 
 def workspace_in_sim(sim_width: float = 1.0, sim_half_height: float = 1.0,
-                     flip: bool = False):
+                     flip: bool = False, bounds_mm=None):
     """The box the PADDLE can actually reach, in sim metres.
 
     Not the table half. Cables pull only, so the paddle is holdable only well
@@ -199,9 +199,12 @@ def workspace_in_sim(sim_width: float = 1.0, sim_half_height: float = 1.0,
     looks like a policy that is merely bad rather than one being cut off.
     """
     g = _geom
-    x0, y0 = table_mm_to_sim(g.WS_MIN_X, g.WS_MIN_Y, sim_width,
+    bounds = (g.WS_MIN_X, g.WS_MAX_X, g.WS_MIN_Y, g.WS_MAX_Y) if bounds_mm is None else bounds_mm
+    if len(bounds) != 4 or not np.isfinite(bounds).all() or not (bounds[0] < bounds[1] and bounds[2] < bounds[3]):
+        raise ValueError('invalid workspace bounds')
+    x0, y0 = table_mm_to_sim(bounds[0], bounds[2], sim_width,
                              sim_half_height, flip)
-    x1, y1 = table_mm_to_sim(g.WS_MAX_X, g.WS_MAX_Y, sim_width,
+    x1, y1 = table_mm_to_sim(bounds[1], bounds[3], sim_width,
                              sim_half_height, flip)
     return {"min_x": min(x0, x1), "max_x": max(x0, x1),
             "min_y": min(y0, y1), "max_y": max(y0, y1)}

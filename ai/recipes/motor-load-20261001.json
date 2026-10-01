@@ -1,0 +1,289 @@
+{
+  "schema": "spatial-current-v2",
+  "status": "provisional_measured_post_swap",
+  "hardware_revision": "four-2331S-RLNA-20260929",
+  "pretension_mm": 1.5,
+  "holding_centers_mm": [
+    [
+      1633.75,
+      482.95000000000005
+    ],
+    [
+      1390.0,
+      482.95000000000005
+    ],
+    [
+      1877.5,
+      482.95000000000005
+    ],
+    [
+      1633.75,
+      212.9
+    ],
+    [
+      1633.75,
+      753.0
+    ],
+    [
+      1390.0,
+      212.9
+    ],
+    [
+      1877.5,
+      212.9
+    ],
+    [
+      1390.0,
+      753.0
+    ],
+    [
+      1877.5,
+      753.0
+    ]
+  ],
+  "holding_amps_squared": [
+    [
+      3.0845722051513897,
+      2.557171882202747,
+      2.8462383560294655,
+      2.702088296027566
+    ],
+    [
+      4.641480383755973,
+      0.9867518845179815,
+      1.661340481506632,
+      3.9199507640947977
+    ],
+    [
+      2.5199831379851685,
+      6.6905553325003035,
+      9.161246449948056,
+      0.887858564358453
+    ],
+    [
+      1.0618006469548857,
+      2.745200464874936,
+      5.474520728972069,
+      6.725705842365749
+    ],
+    [
+      7.796701000887659,
+      4.447515573099458,
+      3.873515810877977,
+      0.28971910248276567
+    ],
+    [
+      3.0586235681419582,
+      2.545454794021055,
+      3.877289755057734,
+      11.164818739321598
+    ],
+    [
+      0.6294972151731247,
+      5.8777409866111485,
+      10.473083717949933,
+      4.6003596177191595
+    ],
+    [
+      8.825358288898485,
+      1.2635365889603016,
+      3.691941388314687,
+      0.8728826713730675
+    ],
+    [
+      5.575469667507744,
+      8.223914416746942,
+      7.636751536447998,
+      0.1846319502404445
+    ]
+  ],
+  "motion_coefficients_amps_squared": [
+    [
+      0.5362712050493322,
+      1.0,
+      1.1669551549197668,
+      1.3200445660512743,
+      1.0
+    ],
+    [
+      1.0663697668299195,
+      1.4311209933160116,
+      1.1259205929332274,
+      1.0,
+      1.0
+    ],
+    [
+      0.6765601576871741,
+      1.1677400868585104,
+      1.0,
+      1.0,
+      1.1371701158709513
+    ],
+    [
+      0.3680171294867902,
+      1.0,
+      1.0,
+      1.0571772432634474,
+      1.0381515504230285
+    ]
+  ],
+  "fast_limit_amps": [
+    4.09999960832,
+    5.79999965031,
+    4.09999960832,
+    5.79999965031
+  ],
+  "slow_limit_amps": [
+    4.00000041904,
+    4.09999960832,
+    4.00000041904,
+    4.09999960832
+  ],
+  "fast_tau_s": [
+    25.322306428856777,
+    25.460985873184818,
+    25.349989827102622,
+    25.148009868440262
+  ],
+  "slow_tau_s": [
+    1017.6742160023706,
+    499.6838561158703,
+    998.2302958185411,
+    509.5667969704506
+  ],
+  "unmeasured_extension_amps_per_100mm": 1.0,
+  "notes": "Measured post-swap holding map and sampled current fit. Per-drive settings differ despite matching motor parts. Effective thermal time constants fitted to measured RMS trajectories; register time constants are not used directly. Signed acceleration coefficients have a conservative 1 A\u00b2 floor at 60m/s\u00b2. Expanded region is unmeasured: nearest surveyed holding current plus explicit extension prior. No physical qualification or overload guarantee.",
+  "sources": [
+    "logs/characterization/20260930-213004-286987/samples.jsonl",
+    "logs/characterization/20260930-213839-639063/samples.jsonl",
+    "logs/characterization/20260930-214751-101690/samples.jsonl",
+    "logs/characterization/20260930-215401-139138/samples.jsonl",
+    "logs/characterization/20260930-215712-063332/samples.jsonl",
+    "logs/characterization/20260930-220211-568950/samples.jsonl",
+    "logs/characterization/20260930-220711-069679/samples.jsonl"
+  ],
+  "validation": [
+    {
+      "node": 0,
+      "samples": 2696,
+      "heldout_session": "20260930-220711-069679",
+      "current_mae_amps": 0.4248529426931452,
+      "underprediction_p95_amps": 0.30262872214108033,
+      "coefficients": [
+        0.5362712050493322,
+        1.0,
+        1.1669551549197668,
+        1.3200445660512743,
+        1.0
+      ]
+    },
+    {
+      "node": 1,
+      "samples": 2696,
+      "heldout_session": "20260930-220711-069679",
+      "current_mae_amps": 0.36950232579757936,
+      "underprediction_p95_amps": 0.42274734917508294,
+      "coefficients": [
+        1.0663697668299195,
+        1.4311209933160116,
+        1.1259205929332274,
+        1.0,
+        1.0
+      ]
+    },
+    {
+      "node": 2,
+      "samples": 2696,
+      "heldout_session": "20260930-220711-069679",
+      "current_mae_amps": 0.3819161832378768,
+      "underprediction_p95_amps": 0.4183526680208011,
+      "coefficients": [
+        0.6765601576871741,
+        1.1677400868585104,
+        1.0,
+        1.0,
+        1.1371701158709513
+      ]
+    },
+    {
+      "node": 3,
+      "samples": 2696,
+      "heldout_session": "20260930-220711-069679",
+      "current_mae_amps": 0.39000304893954213,
+      "underprediction_p95_amps": 0.3623858665722149,
+      "coefficients": [
+        0.3680171294867902,
+        1.0,
+        1.0,
+        1.0571772432634474,
+        1.0381515504230285
+      ]
+    }
+  ],
+  "thermal_validation": [
+    {
+      "node": 0,
+      "channel": 0,
+      "reported_tau_s": 2.98514091834,
+      "fitted_effective_tau_s": 25.322306428856777,
+      "heldout_mae_pct": 0.832801147225294,
+      "heldout_underprediction_max_pct": 2.3367196974443005
+    },
+    {
+      "node": 0,
+      "channel": 1,
+      "reported_tau_s": 120.0142104474,
+      "fitted_effective_tau_s": 1017.6742160023706,
+      "heldout_mae_pct": 0.4534433950067935,
+      "heldout_underprediction_max_pct": 0.9025794665690506
+    },
+    {
+      "node": 1,
+      "channel": 0,
+      "reported_tau_s": 2.98514091834,
+      "fitted_effective_tau_s": 25.460985873184818,
+      "heldout_mae_pct": 0.2849964442500637,
+      "heldout_underprediction_max_pct": 0.9034597566248748
+    },
+    {
+      "node": 1,
+      "channel": 1,
+      "reported_tau_s": 60.0048731958,
+      "fitted_effective_tau_s": 499.6838561158703,
+      "heldout_mae_pct": 0.3155713657397384,
+      "heldout_underprediction_max_pct": 0.30674607860106673
+    },
+    {
+      "node": 2,
+      "channel": 0,
+      "reported_tau_s": 2.98514091834,
+      "fitted_effective_tau_s": 25.349989827102622,
+      "heldout_mae_pct": 0.891990964359199,
+      "heldout_underprediction_max_pct": 1.9193645411624272
+    },
+    {
+      "node": 2,
+      "channel": 1,
+      "reported_tau_s": 120.0142104474,
+      "fitted_effective_tau_s": 998.2302958185411,
+      "heldout_mae_pct": 0.294594362022415,
+      "heldout_underprediction_max_pct": 0.7157894770188772
+    },
+    {
+      "node": 3,
+      "channel": 0,
+      "reported_tau_s": 2.98514091834,
+      "fitted_effective_tau_s": 25.148009868440262,
+      "heldout_mae_pct": 0.44830488279584696,
+      "heldout_underprediction_max_pct": 1.153806653036482
+    },
+    {
+      "node": 3,
+      "channel": 1,
+      "reported_tau_s": 60.0048731958,
+      "fitted_effective_tau_s": 509.5667969704506,
+      "heldout_mae_pct": 0.39164129176848567,
+      "heldout_underprediction_max_pct": 0.8693486930889227
+    }
+  ]
+}
