@@ -114,6 +114,12 @@ class Experiment:
 
     def reposition(self,target):
         # Call only from a verified rest. Repositioning is itself monitored.
+        if getattr(self.args,'quick',False):
+            self.poll()
+            current=np.array(self.rows[-1]['ctl'][:2])
+            if np.linalg.norm(current-target)<=1 and np.linalg.norm(self.rows[-1]['ctl'][2:])<=1:
+                self.settled(target)
+                return
         current=np.array(self.rows[-1]['ctl'][:2])
         self.setup_limits(.2,.4)
         self.client.command_position(*target,0)
@@ -187,20 +193,29 @@ def live(args,plan,directory):
                 try:vision.save_diagnostic(directory,diagnostic)
                 except Exception as exc:outcome['camera_diagnostic_error']=str(exc)
             for sig,h in handlers.items():signal.signal(sig,h)
+            passed_ids={r['trial']['id'] for r in results if r['metrics']['passed']}
+            pulses=[t for t in plan['trials'] if t['kind']=='pulse']
+            passed_caps=[cap for cap in sorted({t['accel'] for t in pulses})
+                         if all(t['id'] in passed_ids for t in pulses if t['accel']==cap)]
+            outcome['completed_accel_caps_m_s2']=passed_caps
+            outcome['quick_screen']=getattr(args,'quick',False)
+            if pulses:
+                print('Acceleration caps passing all planned directions:',passed_caps or 'none')
             (directory/'outcome.json').write_text(json.dumps(outcome,indent=2))
     return outcome['status']=='complete'
 
 
 def main():
     p=argparse.ArgumentParser(description=__doc__)
-    p.add_argument('--stage',choices=['baseline','workspace','sweep','endurance'],default='baseline')
+    p.add_argument('--stage',choices=['baseline','workspace','sweep','endurance'])
+    p.add_argument('--quick',action='store_true',help='rough center acceleration screen: 40/60/80/100/120, one pass, short holds, no extra rest')
     p.add_argument('--grid',type=int,choices=[1,3,5],default=1)
-    p.add_argument('--accels',default='2,5,10,20,30,40,60',help='m/s²; ascending ladder')
+    p.add_argument('--accels',help='m/s²; ascending ladder (overrides preset)')
     p.add_argument('--speed',type=float,default=1.5,help='m/s, at most 3')
     p.add_argument('--stroke',type=float,default=120,help='mm per pulse')
-    p.add_argument('--repeats',type=int,default=3)
-    p.add_argument('--hold',type=float,default=8,help='stationary recording seconds/site')
-    p.add_argument('--rest',type=float,default=2)
+    p.add_argument('--repeats',type=int)
+    p.add_argument('--hold',type=float,help='stationary recording seconds/site')
+    p.add_argument('--rest',type=float)
     p.add_argument('--ramp-ms',type=float,default=3)
     p.add_argument('--tension',type=float,default=1.5,help='fixed startup pretension in mm')
     p.add_argument('--rms-stop',type=float,default=70)
@@ -216,6 +231,12 @@ def main():
     if a.analyze:
         if a.live:p.error('--analyze cannot be combined with --live')
         print(json.dumps(analyze(a.analyze),indent=2));return
+    a.stage=a.stage or ('sweep' if a.quick else 'baseline')
+    if a.quick and a.stage!='sweep':p.error('--quick is an acceleration sweep preset')
+    if a.accels is None:a.accels='40,60,80,100,120' if a.quick else '2,5,10,20,30,40,60'
+    if a.repeats is None:a.repeats=1 if a.quick else 3
+    if a.hold is None:a.hold=2 if a.quick else 8
+    if a.rest is None:a.rest=0 if a.quick else 2
     vals=[a.rest,a.ramp_ms,a.tension,a.rms_stop,a.current_stop,a.min_volts,a.error_stop,a.camera_latency_ms]
     if not np.isfinite(vals).all() or not (0<=a.rest<=60 and .2<=a.ramp_ms<=50 and 0<=a.tension<=3 and
         40<=a.rms_stop<=85 and 1<=a.current_stop<=16 and 50<=a.min_volts<=75 and
@@ -235,6 +256,7 @@ def main():
               hardware_revision='four-2331S-RLNA-20260929')
     (directory/'plan.json').write_text(json.dumps(plan,indent=2));preview(directory,plan)
     print(f"{len(trials)} trials. Preview: {(directory/'preview.html').resolve().as_uri()}")
+    if a.quick:print('Quick screening: one pass per direction, no added rest. Estimates a local cap; does not qualify sustained duty.')
     if not a.live:return
     print('Remove the puck. Free the camera and stop existing master/policy/UI hardware sessions.\n'
           'This WILL enable and move the robot. Keep the hardware stop accessible. Type RUN to begin.')

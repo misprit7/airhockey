@@ -20,6 +20,23 @@ brake, disables, and shuts down its master. No automatic recovery/re-enable.
 
 ## Acceleration ladder
 
+For a rough cap near the previously used 60 m/s², use the quick screen:
+
+```sh
+python ai/bin/characterize_robot.py --quick
+python ai/bin/characterize_robot.py --quick --tension 1.5 --live
+```
+
+This tests 40/60/80/100/120 m/s² at the center, eight directions once per
+cap: 40 pulses instead of the full center sweep's 168. It uses a two-second
+initial hold, no added rest, and skips redundant reposition commands when
+already settled at the next start. Tracking, current, RMS, voltage and
+freshness checks remain unchanged. Speed stays at 1.5 m/s. This screens a
+local cap, not endurance or the whole workspace. Explicit `--accels`,
+`--repeats`, `--hold`, `--rest` and `--grid` override the quick defaults.
+The outcome lists caps that passed every planned direction; interrupted or
+partially completed caps are not counted as passes.
+
 After the slow survey passes, preview/test the center, then expand coverage:
 
 ```sh

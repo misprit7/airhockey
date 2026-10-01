@@ -192,3 +192,24 @@ def test_limit_verification_waits_for_cache_but_rejects_failure(monkeypatch,repo
             experiment.setup_limits(.2,.4)
     assert commands==[(200,400)]
     assert clock[0]<=1.03
+
+
+@pytest.mark.parametrize('overrides,expected_caps,repeats,rest',[
+    ([],[40,60,80,100,120],1,0),
+    (['--accels','50,70','--repeats','2','--rest','1'],[50,70],2,1),
+])
+def test_quick_screen_preserves_monitor_limits_and_honors_overrides(tmp_path,monkeypatch,overrides,expected_caps,repeats,rest):
+    sys.path.insert(0,str(Path(__file__).resolve().parents[1]/'bin'))
+    import characterize_robot as runner
+    monkeypatch.setattr(runner,'predict_pulse',lambda *_,**__: {})
+    monkeypatch.setattr(runner,'live',lambda *_:pytest.fail('offline preview opened hardware'))
+    output=tmp_path/'preview'
+    monkeypatch.setattr(sys,'argv',['characterize_robot','--quick','--output',str(output),*overrides])
+    runner.main()
+    plan=json.loads((output/'plan.json').read_text())
+    pulses=[t for t in plan['trials'] if t['kind']=='pulse']
+    assert sorted({t['accel'] for t in pulses})==expected_caps
+    assert len(pulses)==len(expected_caps)*8*repeats
+    assert plan['settings']['rest']==rest and plan['settings']['hold']==2
+    assert plan['settings']['speed']==1.5 and plan['settings']['rms_stop']==70
+    assert plan['settings']['current_stop']==12 and plan['settings']['tension']==1.5
