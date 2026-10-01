@@ -167,9 +167,10 @@ def live(args,plan,directory):
                 if t['kind']=='pulse':client.command_position(*t['end'],0)
                 e.observe(t['duration']);e.settled(t['end'])
                 result=score(e.rows[begin:],t,args.camera_latency_ms/1000)
-                if t['kind']=='pulse' and t['prediction']['predicted_peak_accel_m_s2']<.8*t['accel']:
+                if t['kind']=='pulse' and min(t['prediction']['predicted_launch_accel_m_s2'],
+                                             t['prediction']['predicted_braking_accel_m_s2'])<.8*t['accel']:
                     result['passed']=False
-                    result['reason']='trajectory did not exercise at least 80% of requested acceleration'
+                    result['reason']='launch or braking did not exercise at least 80% of requested acceleration'
                 results.append(dict(trial=t,metrics=result))
                 (directory/'results.json').write_text(json.dumps(results,indent=2))
                 print(json.dumps(result),flush=True)
@@ -257,6 +258,16 @@ def main():
     (directory/'plan.json').write_text(json.dumps(plan,indent=2));preview(directory,plan)
     print(f"{len(trials)} trials. Preview: {(directory/'preview.html').resolve().as_uri()}")
     if a.quick:print('Quick screening: one pass per direction, no added rest. Estimates a local cap; does not qualify sustained duty.')
+    insufficient=False
+    for cap in sorted({t['accel'] for t in trials if t['kind']=='pulse'}):
+        predictions=[t['prediction'] for t in trials if t['kind']=='pulse' and t['accel']==cap]
+        launch=min(t['predicted_launch_accel_m_s2'] for t in predictions)
+        brake=min(t['predicted_braking_accel_m_s2'] for t in predictions)
+        print(f'Cap {cap:g}: predicted launch {launch:.1f}, braking {brake:.1f} m/s²')
+        insufficient|=min(launch,brake)<.8*cap
+    if insufficient:
+        print('This profile does not exercise 80% of its cap in both launch and braking. Adjust speed/stroke/ramp before a live test.')
+        if a.live:p.error('under-exercised acceleration profile; no hardware accessed')
     if not a.live:return
     print('Remove the puck. Free the camera and stop existing master/policy/UI hardware sessions.\n'
           'This WILL enable and move the robot. Keep the hardware stop accessible. Type RUN to begin.')

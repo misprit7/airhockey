@@ -78,6 +78,18 @@ def test_profile_prediction_uses_actual_ramp_and_speed():
     assert prediction['predicted_peak_speed_m_s']<=1.51
 
 
+def test_long_ramp_does_not_confuse_braking_peak_with_launch():
+    trial=next(t for t in design('sweep',accelerations=(80,),repeats=1) if t['kind']=='pulse')
+    prediction=predict_pulse(trial,ramp_ms=10)
+    assert 60<prediction['predicted_launch_accel_m_s2']<64
+    assert 75<prediction['predicted_braking_accel_m_s2']<80
+    assert prediction['predicted_launch_ms_above_95pct']==0
+    trial['speed']=2.5
+    prediction=predict_pulse(trial,ramp_ms=10)
+    assert prediction['predicted_launch_accel_m_s2']>=79
+    assert prediction['predicted_launch_ms_above_95pct']>=5
+
+
 def test_no_model_export_with_insufficient_data(tmp_path):
     (tmp_path/'plan.json').write_text('{}')
     (tmp_path/'samples.jsonl').write_text('{"partial":')
@@ -201,7 +213,8 @@ def test_limit_verification_waits_for_cache_but_rejects_failure(monkeypatch,repo
 def test_quick_screen_preserves_monitor_limits_and_honors_overrides(tmp_path,monkeypatch,overrides,expected_caps,repeats,rest):
     sys.path.insert(0,str(Path(__file__).resolve().parents[1]/'bin'))
     import characterize_robot as runner
-    monkeypatch.setattr(runner,'predict_pulse',lambda *_,**__: {})
+    monkeypatch.setattr(runner,'predict_pulse',lambda t,*_,**__: {
+        'predicted_launch_accel_m_s2':t['accel'],'predicted_braking_accel_m_s2':t['accel']})
     monkeypatch.setattr(runner,'live',lambda *_:pytest.fail('offline preview opened hardware'))
     output=tmp_path/'preview'
     monkeypatch.setattr(sys,'argv',['characterize_robot','--quick','--output',str(output),*overrides])
@@ -213,3 +226,14 @@ def test_quick_screen_preserves_monitor_limits_and_honors_overrides(tmp_path,mon
     assert plan['settings']['rest']==rest and plan['settings']['hold']==2
     assert plan['settings']['speed']==1.5 and plan['settings']['rms_stop']==70
     assert plan['settings']['current_stop']==12 and plan['settings']['tension']==1.5
+
+
+def test_under_exercised_launch_refused_before_live_or_confirmation(tmp_path,monkeypatch):
+    sys.path.insert(0,str(Path(__file__).resolve().parents[1]/'bin'))
+    import characterize_robot as runner
+    monkeypatch.setattr(runner,'live',lambda *_:pytest.fail('must not access hardware'))
+    monkeypatch.setattr('builtins.input',lambda *_:pytest.fail('must reject before RUN prompt'))
+    monkeypatch.setattr(sys,'argv',['characterize_robot','--quick','--accels','80',
+        '--ramp-ms','10','--live','--output',str(tmp_path/'preview')])
+    with pytest.raises(SystemExit) as error:runner.main()
+    assert error.value.code==2

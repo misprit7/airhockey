@@ -15,12 +15,26 @@ def predict_pulse(trial, ramp_ms=3):
     from airhockey.motion import CartState, advance
     cart=CartState(1);cart.reset(*trial['start'])
     peak_a=peak_v=0.
+    direction=np.array(trial['end'])-trial['start']
+    direction=direction/np.linalg.norm(direction)
+    along_v=[];along_a=[]
     for _ in range(int(np.ceil(trial['duration']/.001))):
         advance(cart,[trial['end'][0]],[trial['end'][1]],trial['speed']*1000,
                 trial['accel']*1000,ramp_ms/1000,.0002,5,bounds=tuple(BOUNDS))
         peak_a=max(peak_a,float(np.hypot(cart.ax[0],cart.ay[0]))/1000)
         peak_v=max(peak_v,float(np.hypot(cart.vx[0],cart.vy[0]))/1000)
-    return dict(predicted_peak_accel_m_s2=peak_a,predicted_peak_speed_m_s=peak_v)
+        along_v.append(float(np.dot([cart.vx[0],cart.vy[0]],direction))/1000)
+        along_a.append(float(np.dot([cart.ax[0],cart.ay[0]],direction))/1000)
+    peak_index=int(np.argmax(along_v))
+    # Separate the initial launch from braking: a large braking peak must
+    # not qualify a launch that never exercised the requested acceleration.
+    launch=along_a[:peak_index+1]
+    stop_index=next((i for i in range(peak_index+1,len(along_v)) if along_v[i]<=0),len(along_v)-1)
+    braking=along_a[peak_index:stop_index+1]
+    return dict(predicted_peak_accel_m_s2=peak_a,predicted_peak_speed_m_s=peak_v,
+                predicted_launch_accel_m_s2=max(launch),
+                predicted_braking_accel_m_s2=max(0.,-min(braking)),
+                predicted_launch_ms_above_95pct=sum(a>=.95*trial['accel'] for a in launch))
 
 
 def design(stage='baseline', grid=1, accelerations=(2, 5, 10, 20, 30, 40, 60),

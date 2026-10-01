@@ -56,8 +56,12 @@ keeps endpoints at least 40 mm inside bounds. These margins do not guarantee
 recovery from arbitrary cable/motor faults. This is not a destructive stall test.
 
 The same firmware profile is run offline to report predicted acceleration
-actually exercised by each move. Low-speed, very short moves may not reach
-the cap. A trajectory exercising <80% of its cap cannot pass qualification.
+actually exercised by each move, separating launch from braking. Low-speed,
+very short moves or a longer ramp may not reach the cap: at a 1.5 m/s speed
+ceiling, an 80 m/s² cap and 10 ms ramp produce about 62 m/s² launch acceleration
+and 77 m/s² braking. A trajectory exercising <80% of its cap in either phase
+is refused before opening hardware. The preview reports both peaks; a
+braking peak alone does not qualify the launch.
 
 The session stops on the first tracking failure, lost/stale camera or motor
 telemetry, current >=12 A on any drive, fast/slow RMS >=70%, bus voltage
