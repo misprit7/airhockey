@@ -1,0 +1,3282 @@
+{
+  "date": "2026-10-01",
+  "selected_package": "rail30-100-20261001-v1",
+  "selection_reason": "Preserved most core shooting and defense gains while improving corner recovery and passing larger nominal endurance plus a fresh confirmation. Known hot-load failures remain; not a physical release.",
+  "development_warning": "These checkpoint screens share development seeds and are selection diagnostics, not independent qualification.",
+  "branches": [
+    {
+      "run": "_neural-rail30-accel100-20261001-a",
+      "algorithm": "neural_ppo_v1",
+      "initialization": "runs/_neural-expanded100-initial-20261001/agent.pt",
+      "additional_ppo_steps": 32047104,
+      "training_finished": true,
+      "review": "Completed initial 100 m/s\u00b2 / 30 mm adaptation. Short tests improved requested shots, but sustained tests exposed corner stalls and excessive modeled load. No production replacement selected.",
+      "selection_file": "logs/neural-player/expanded-100-20261001/development-selection.json",
+      "selection_sha256": "518b88e5a93038e5fa5c308d7d586adce5d24b04a3feddc439eb4d39a9e84547",
+      "snapshots": [
+        {
+          "checkpoint": "agent_step_004063232.pt",
+          "sha256": "c2481e6a6a5b72e721146b6ce1ecee1211afbc2e752dd3e98f48603c7d93a37a",
+          "requested_fast_shots": 424,
+          "shot_trials": 768,
+          "defense": {
+            "saved": 275,
+            "trials": 384,
+            "rate": 0.7161458333333334,
+            "forward_at_release": 267
+          },
+          "corner_recovery": null,
+          "hot_endurance_peak": null,
+          "hot_endurance_overload_seconds": null,
+          "development_screen_passed": false
+        },
+        {
+          "checkpoint": "agent_step_008126464.pt",
+          "sha256": "5bcedc59fc05b219a2cccfd8f0acf9c72745f2d6651ba7092532d78264421504",
+          "requested_fast_shots": 440,
+          "shot_trials": 768,
+          "defense": {
+            "saved": 259,
+            "trials": 384,
+            "rate": 0.6744791666666666,
+            "forward_at_release": 275
+          },
+          "corner_recovery": null,
+          "hot_endurance_peak": null,
+          "hot_endurance_overload_seconds": null,
+          "development_screen_passed": false
+        },
+        {
+          "checkpoint": "agent_step_012189696.pt",
+          "sha256": "c2fbbaab44b0951c45ed4b006612c44e8c5ed41c88b72ab89f71f396eabc69ed",
+          "requested_fast_shots": 449,
+          "shot_trials": 768,
+          "defense": {
+            "saved": 271,
+            "trials": 384,
+            "rate": 0.7057291666666666,
+            "forward_at_release": 252
+          },
+          "corner_recovery": null,
+          "hot_endurance_peak": null,
+          "hot_endurance_overload_seconds": null,
+          "development_screen_passed": false
+        },
+        {
+          "checkpoint": "agent_step_016252928.pt",
+          "sha256": "b3b381af03e792c09829e1c8c94932283551994888659aa99724f61e1b563550",
+          "requested_fast_shots": 429,
+          "shot_trials": 768,
+          "defense": {
+            "saved": 261,
+            "trials": 384,
+            "rate": 0.6796875,
+            "forward_at_release": 239
+          },
+          "corner_recovery": null,
+          "hot_endurance_peak": null,
+          "hot_endurance_overload_seconds": null,
+          "development_screen_passed": false
+        },
+        {
+          "checkpoint": "agent_step_020316160.pt",
+          "sha256": "11e5b9252615c6e9ba88243c4093404f0bcb1b64a5a02bdb5accbf5301ee0add",
+          "requested_fast_shots": 441,
+          "shot_trials": 768,
+          "defense": {
+            "saved": 258,
+            "trials": 384,
+            "rate": 0.671875,
+            "forward_at_release": 259
+          },
+          "corner_recovery": null,
+          "hot_endurance_peak": null,
+          "hot_endurance_overload_seconds": null,
+          "development_screen_passed": true
+        },
+        {
+          "checkpoint": "agent_step_024379392.pt",
+          "sha256": "02cb70f6883e13b08bb0feca92a0b6273f31ce456ee27ee92eee52fe616e204c",
+          "requested_fast_shots": 456,
+          "shot_trials": 768,
+          "defense": {
+            "saved": 265,
+            "trials": 384,
+            "rate": 0.6901041666666666,
+            "forward_at_release": 269
+          },
+          "corner_recovery": null,
+          "hot_endurance_peak": null,
+          "hot_endurance_overload_seconds": null,
+          "development_screen_passed": true
+        },
+        {
+          "checkpoint": "agent_step_028442624.pt",
+          "sha256": "b2fc1b681ecb937560102606f76ad6c1b61e37deb7b55d42e0ecb5f6b0c87072",
+          "requested_fast_shots": 464,
+          "shot_trials": 768,
+          "defense": {
+            "saved": 279,
+            "trials": 384,
+            "rate": 0.7265625,
+            "forward_at_release": 263
+          },
+          "corner_recovery": null,
+          "hot_endurance_peak": null,
+          "hot_endurance_overload_seconds": null,
+          "development_screen_passed": true
+        },
+        {
+          "checkpoint": "agent_step_032047104.pt",
+          "sha256": "c661cae071f971e3fca63226c2d36306dd2f2ae456bb27821ed2d14e6805e85e",
+          "requested_fast_shots": 459,
+          "shot_trials": 768,
+          "defense": {
+            "saved": 270,
+            "trials": 384,
+            "rate": 0.703125,
+            "forward_at_release": 257
+          },
+          "corner_recovery": null,
+          "hot_endurance_peak": null,
+          "hot_endurance_overload_seconds": null,
+          "development_screen_passed": false
+        }
+      ]
+    },
+    {
+      "run": "_neural-rail30-accel100-anticipation-20261001-s",
+      "algorithm": "neural_ppo_v1",
+      "initialization": "runs/_neural-rail30-accel100-balanced-20261001-i/agent_step_104660992.pt",
+      "additional_ppo_steps": 32112640,
+      "training_finished": true,
+      "review": "Completed 32M additional steps and all four checkpoint evaluations. Stronger pre-release coverage and 10\u201318 m/s practice did not establish a defense improvement (final 295/384 saves versus selected Q12 294/384 on development fixtures), reduced corner recovery to 12/128 versus 22/128, and every snapshot failed hot sustained load (peak 134.6%). Not selected.",
+      "selection_file": "logs/neural-player/expanded-100-anticipation-20261001/development-selection.json",
+      "selection_sha256": "9a0e5741286954a14600c3d5ff1a23a3325e718636663dd27234554590cb26f2",
+      "snapshots": [
+        {
+          "checkpoint": "agent_step_112787456.pt",
+          "sha256": "d4c3de2c0e8de19143fa4c47653c85866200640c71e721a03fd7fb8120041b2c",
+          "requested_fast_shots": 484,
+          "shot_trials": 768,
+          "defense": {
+            "saved": 298,
+            "trials": 384,
+            "rate": 0.7760416666666666,
+            "forward_at_release": 275
+          },
+          "corner_recovery": {
+            "trials": 128,
+            "touched": 78,
+            "recovered": 9,
+            "aimed": 22,
+            "overload_seconds": 0.0,
+            "peak_load": 0.9092448023274526
+          },
+          "hot_endurance_peak": 1.3458526819729808,
+          "hot_endurance_overload_seconds": 744.5999999999027,
+          "development_screen_passed": false
+        },
+        {
+          "checkpoint": "agent_step_120913920.pt",
+          "sha256": "5a548ef9c35ca45571036db4b46d9a3705a60d5371ea34faa19f3b8fe01fff43",
+          "requested_fast_shots": 461,
+          "shot_trials": 768,
+          "defense": {
+            "saved": 298,
+            "trials": 384,
+            "rate": 0.7760416666666666,
+            "forward_at_release": 268
+          },
+          "corner_recovery": {
+            "trials": 128,
+            "touched": 79,
+            "recovered": 14,
+            "aimed": 23,
+            "overload_seconds": 0.0,
+            "peak_load": 0.9031712623446564
+          },
+          "hot_endurance_peak": 1.3456281382827804,
+          "hot_endurance_overload_seconds": 810.7599999998425,
+          "development_screen_passed": false
+        },
+        {
+          "checkpoint": "agent_step_129040384.pt",
+          "sha256": "0148c54bd091e598ac66d2fa046819fd92e607cd8917a22cf59e0f1c42f2503e",
+          "requested_fast_shots": 474,
+          "shot_trials": 768,
+          "defense": {
+            "saved": 295,
+            "trials": 384,
+            "rate": 0.7682291666666666,
+            "forward_at_release": 279
+          },
+          "corner_recovery": {
+            "trials": 128,
+            "touched": 79,
+            "recovered": 11,
+            "aimed": 22,
+            "overload_seconds": 0.0,
+            "peak_load": 0.8952015548900207
+          },
+          "hot_endurance_peak": 1.3456881007989079,
+          "hot_endurance_overload_seconds": 1340.9199999996608,
+          "development_screen_passed": false
+        },
+        {
+          "checkpoint": "agent_step_136773632.pt",
+          "sha256": "a7156bdd99127294d932f58ca3edbf831ad599c5cf39ed02aea6efcae0d25de4",
+          "requested_fast_shots": 471,
+          "shot_trials": 768,
+          "defense": {
+            "saved": 295,
+            "trials": 384,
+            "rate": 0.7682291666666666,
+            "forward_at_release": 280
+          },
+          "corner_recovery": {
+            "trials": 128,
+            "touched": 76,
+            "recovered": 12,
+            "aimed": 18,
+            "overload_seconds": 0.0,
+            "peak_load": 0.8898343164202972
+          },
+          "hot_endurance_peak": 1.3458527542814775,
+          "hot_endurance_overload_seconds": 1376.6999999996178,
+          "development_screen_passed": false
+        }
+      ]
+    },
+    {
+      "run": "_neural-rail30-accel100-averaged25-20261001-l",
+      "algorithm": "neural_ppo_v1",
+      "initialization": "runs/_neural-rail30-accel100-defense-20261001-b/agent_step_080281600.pt",
+      "additional_ppo_steps": null,
+      "training_finished": true,
+      "review": null,
+      "selection_file": "logs/neural-player/expanded-100-balanced-20261001/development-selection.json",
+      "selection_sha256": "a74ac12309893a6435bc4f37dbab028e7b28fe7613172cc04309af40fef5feb1",
+      "snapshots": [
+        {
+          "checkpoint": "agent_step_088408064.pt",
+          "sha256": "c08827966c2e1d6d852fddae50c57cb239f54b9921fd718d05bd628e7f93e4f5",
+          "requested_fast_shots": 482,
+          "shot_trials": 768,
+          "defense": {
+            "saved": 292,
+            "trials": 384,
+            "rate": 0.7604166666666666,
+            "forward_at_release": 265
+          },
+          "corner_recovery": {
+            "trials": 128,
+            "touched": 83,
+            "recovered": 9,
+            "aimed": 19,
+            "overload_seconds": 0.0,
+            "peak_load": 0.9097662767405946
+          },
+          "hot_endurance_peak": 1.3458527458796432,
+          "hot_endurance_overload_seconds": 1500.5999999995051,
+          "development_screen_passed": false
+        },
+        {
+          "checkpoint": "agent_step_096534528.pt",
+          "sha256": "ba2f6df591c74fdb47742a216b437677202fd731719bbcb231a7dc3ed04a5861",
+          "requested_fast_shots": 493,
+          "shot_trials": 768,
+          "defense": {
+            "saved": 303,
+            "trials": 384,
+            "rate": 0.7890625,
+            "forward_at_release": 276
+          },
+          "corner_recovery": {
+            "trials": 128,
+            "touched": 83,
+            "recovered": 8,
+            "aimed": 18,
+            "overload_seconds": 0.0,
+            "peak_load": 0.9092683059926024
+          },
+          "hot_endurance_peak": 1.0483601878928772,
+          "hot_endurance_overload_seconds": 1288.8599999996977,
+          "development_screen_passed": false
+        },
+        {
+          "checkpoint": "agent_step_104660992.pt",
+          "sha256": "3b3988072bedfe03b6ccf402db09b85ed8d6d37f43a8d5973594f348d4cf1025",
+          "requested_fast_shots": 480,
+          "shot_trials": 768,
+          "defense": {
+            "saved": 301,
+            "trials": 384,
+            "rate": 0.7838541666666666,
+            "forward_at_release": 277
+          },
+          "corner_recovery": {
+            "trials": 128,
+            "touched": 77,
+            "recovered": 7,
+            "aimed": 14,
+            "overload_seconds": 0.0,
+            "peak_load": 0.9078927273363164
+          },
+          "hot_endurance_peak": 1.0392674022352448,
+          "hot_endurance_overload_seconds": 490.339999999844,
+          "development_screen_passed": false
+        },
+        {
+          "checkpoint": "agent_step_112787456.pt",
+          "sha256": "2093b9bacbccc780bc33b48d5f8fa3f8a69710529ed53ed64e2f52e559fd38cd",
+          "requested_fast_shots": 491,
+          "shot_trials": 768,
+          "defense": {
+            "saved": 300,
+            "trials": 384,
+            "rate": 0.78125,
+            "forward_at_release": 278
+          },
+          "corner_recovery": {
+            "trials": 128,
+            "touched": 79,
+            "recovered": 10,
+            "aimed": 18,
+            "overload_seconds": 0.0,
+            "peak_load": 0.9101549917707111
+          },
+          "hot_endurance_peak": 1.34585275384663,
+          "hot_endurance_overload_seconds": 1243.699999999712,
+          "development_screen_passed": false
+        },
+        {
+          "checkpoint": "agent_step_120913920.pt",
+          "sha256": "e4bb20e0e5cf37c81f12ce4d05f407ce7e5f96cfe580aed3ed8832c98e428168",
+          "requested_fast_shots": 482,
+          "shot_trials": 768,
+          "defense": {
+            "saved": 294,
+            "trials": 384,
+            "rate": 0.765625,
+            "forward_at_release": 296
+          },
+          "corner_recovery": {
+            "trials": 128,
+            "touched": 85,
+            "recovered": 12,
+            "aimed": 15,
+            "overload_seconds": 0.0,
+            "peak_load": 0.9102248295954203
+          },
+          "hot_endurance_peak": 1.3458527459730507,
+          "hot_endurance_overload_seconds": 716.7399999998123,
+          "development_screen_passed": false
+        },
+        {
+          "checkpoint": "agent_step_129040384.pt",
+          "sha256": "121275073345635bfb3f358287868171b369d9318c1a77f6799c82dab91980b5",
+          "requested_fast_shots": 486,
+          "shot_trials": 768,
+          "defense": {
+            "saved": 309,
+            "trials": 384,
+            "rate": 0.8046875,
+            "forward_at_release": 276
+          },
+          "corner_recovery": {
+            "trials": 128,
+            "touched": 83,
+            "recovered": 9,
+            "aimed": 15,
+            "overload_seconds": 0.0,
+            "peak_load": 0.9102234966361279
+          },
+          "hot_endurance_peak": 1.3458527391732544,
+          "hot_endurance_overload_seconds": 1215.3799999997418,
+          "development_screen_passed": false
+        },
+        {
+          "checkpoint": "agent_step_137166848.pt",
+          "sha256": "cede3d4417a0cce382f04d4688d957e6238c6b2ab29185c90c6b9e46dd052552",
+          "requested_fast_shots": 473,
+          "shot_trials": 768,
+          "defense": {
+            "saved": 298,
+            "trials": 384,
+            "rate": 0.7760416666666666,
+            "forward_at_release": 291
+          },
+          "corner_recovery": {
+            "trials": 128,
+            "touched": 84,
+            "recovered": 14,
+            "aimed": 17,
+            "overload_seconds": 0.0,
+            "peak_load": 0.9099874510049016
+          },
+          "hot_endurance_peak": 1.0371641670632108,
+          "hot_endurance_overload_seconds": 1071.899999999895,
+          "development_screen_passed": false
+        },
+        {
+          "checkpoint": "agent_step_144375808.pt",
+          "sha256": "2fcc216c71ac2146999dacbe54ca9e2cb1eead1eb559d7bbd40f943b1a275813",
+          "requested_fast_shots": 458,
+          "shot_trials": 768,
+          "defense": {
+            "saved": 298,
+            "trials": 384,
+            "rate": 0.7760416666666666,
+            "forward_at_release": 285
+          },
+          "corner_recovery": {
+            "trials": 128,
+            "touched": 74,
+            "recovered": 11,
+            "aimed": 19,
+            "overload_seconds": 0.0,
+            "peak_load": 0.9101468190521523
+          },
+          "hot_endurance_peak": 1.063547394950242,
+          "hot_endurance_overload_seconds": 2011.7399999995016,
+          "development_screen_passed": false
+        }
+      ]
+    },
+    {
+      "run": "_neural-rail30-accel100-averaged50-20261001-l",
+      "algorithm": "neural_ppo_v1",
+      "initialization": "runs/_neural-rail30-accel100-defense-20261001-b/agent_step_080281600.pt",
+      "additional_ppo_steps": null,
+      "training_finished": true,
+      "review": null,
+      "selection_file": "logs/neural-player/expanded-100-balanced-20261001/development-selection.json",
+      "selection_sha256": "a74ac12309893a6435bc4f37dbab028e7b28fe7613172cc04309af40fef5feb1",
+      "snapshots": [
+        {
+          "checkpoint": "agent_step_088408064.pt",
+          "sha256": "c08827966c2e1d6d852fddae50c57cb239f54b9921fd718d05bd628e7f93e4f5",
+          "requested_fast_shots": 482,
+          "shot_trials": 768,
+          "defense": {
+            "saved": 292,
+            "trials": 384,
+            "rate": 0.7604166666666666,
+            "forward_at_release": 265
+          },
+          "corner_recovery": {
+            "trials": 128,
+            "touched": 83,
+            "recovered": 9,
+            "aimed": 19,
+            "overload_seconds": 0.0,
+            "peak_load": 0.9097662767405946
+          },
+          "hot_endurance_peak": 1.3458527458796432,
+          "hot_endurance_overload_seconds": 1500.5999999995051,
+          "development_screen_passed": false
+        },
+        {
+          "checkpoint": "agent_step_096534528.pt",
+          "sha256": "ba2f6df591c74fdb47742a216b437677202fd731719bbcb231a7dc3ed04a5861",
+          "requested_fast_shots": 493,
+          "shot_trials": 768,
+          "defense": {
+            "saved": 303,
+            "trials": 384,
+            "rate": 0.7890625,
+            "forward_at_release": 276
+          },
+          "corner_recovery": {
+            "trials": 128,
+            "touched": 83,
+            "recovered": 8,
+            "aimed": 18,
+            "overload_seconds": 0.0,
+            "peak_load": 0.9092683059926024
+          },
+          "hot_endurance_peak": 1.0483601878928772,
+          "hot_endurance_overload_seconds": 1288.8599999996977,
+          "development_screen_passed": false
+        },
+        {
+          "checkpoint": "agent_step_104660992.pt",
+          "sha256": "3b3988072bedfe03b6ccf402db09b85ed8d6d37f43a8d5973594f348d4cf1025",
+          "requested_fast_shots": 480,
+          "shot_trials": 768,
+          "defense": {
+            "saved": 301,
+            "trials": 384,
+            "rate": 0.7838541666666666,
+            "forward_at_release": 277
+          },
+          "corner_recovery": {
+            "trials": 128,
+            "touched": 77,
+            "recovered": 7,
+            "aimed": 14,
+            "overload_seconds": 0.0,
+            "peak_load": 0.9078927273363164
+          },
+          "hot_endurance_peak": 1.0392674022352448,
+          "hot_endurance_overload_seconds": 490.339999999844,
+          "development_screen_passed": false
+        },
+        {
+          "checkpoint": "agent_step_112787456.pt",
+          "sha256": "2093b9bacbccc780bc33b48d5f8fa3f8a69710529ed53ed64e2f52e559fd38cd",
+          "requested_fast_shots": 491,
+          "shot_trials": 768,
+          "defense": {
+            "saved": 300,
+            "trials": 384,
+            "rate": 0.78125,
+            "forward_at_release": 278
+          },
+          "corner_recovery": {
+            "trials": 128,
+            "touched": 79,
+            "recovered": 10,
+            "aimed": 18,
+            "overload_seconds": 0.0,
+            "peak_load": 0.9101549917707111
+          },
+          "hot_endurance_peak": 1.34585275384663,
+          "hot_endurance_overload_seconds": 1243.699999999712,
+          "development_screen_passed": false
+        },
+        {
+          "checkpoint": "agent_step_120913920.pt",
+          "sha256": "e4bb20e0e5cf37c81f12ce4d05f407ce7e5f96cfe580aed3ed8832c98e428168",
+          "requested_fast_shots": 482,
+          "shot_trials": 768,
+          "defense": {
+            "saved": 294,
+            "trials": 384,
+            "rate": 0.765625,
+            "forward_at_release": 296
+          },
+          "corner_recovery": {
+            "trials": 128,
+            "touched": 85,
+            "recovered": 12,
+            "aimed": 15,
+            "overload_seconds": 0.0,
+            "peak_load": 0.9102248295954203
+          },
+          "hot_endurance_peak": 1.3458527459730507,
+          "hot_endurance_overload_seconds": 716.7399999998123,
+          "development_screen_passed": false
+        },
+        {
+          "checkpoint": "agent_step_129040384.pt",
+          "sha256": "121275073345635bfb3f358287868171b369d9318c1a77f6799c82dab91980b5",
+          "requested_fast_shots": 486,
+          "shot_trials": 768,
+          "defense": {
+            "saved": 309,
+            "trials": 384,
+            "rate": 0.8046875,
+            "forward_at_release": 276
+          },
+          "corner_recovery": {
+            "trials": 128,
+            "touched": 83,
+            "recovered": 9,
+            "aimed": 15,
+            "overload_seconds": 0.0,
+            "peak_load": 0.9102234966361279
+          },
+          "hot_endurance_peak": 1.3458527391732544,
+          "hot_endurance_overload_seconds": 1215.3799999997418,
+          "development_screen_passed": false
+        },
+        {
+          "checkpoint": "agent_step_137166848.pt",
+          "sha256": "cede3d4417a0cce382f04d4688d957e6238c6b2ab29185c90c6b9e46dd052552",
+          "requested_fast_shots": 473,
+          "shot_trials": 768,
+          "defense": {
+            "saved": 298,
+            "trials": 384,
+            "rate": 0.7760416666666666,
+            "forward_at_release": 291
+          },
+          "corner_recovery": {
+            "trials": 128,
+            "touched": 84,
+            "recovered": 14,
+            "aimed": 17,
+            "overload_seconds": 0.0,
+            "peak_load": 0.9099874510049016
+          },
+          "hot_endurance_peak": 1.0371641670632108,
+          "hot_endurance_overload_seconds": 1071.899999999895,
+          "development_screen_passed": false
+        },
+        {
+          "checkpoint": "agent_step_144375808.pt",
+          "sha256": "2fcc216c71ac2146999dacbe54ca9e2cb1eead1eb559d7bbd40f943b1a275813",
+          "requested_fast_shots": 458,
+          "shot_trials": 768,
+          "defense": {
+            "saved": 298,
+            "trials": 384,
+            "rate": 0.7760416666666666,
+            "forward_at_release": 285
+          },
+          "corner_recovery": {
+            "trials": 128,
+            "touched": 74,
+            "recovered": 11,
+            "aimed": 19,
+            "overload_seconds": 0.0,
+            "peak_load": 0.9101468190521523
+          },
+          "hot_endurance_peak": 1.063547394950242,
+          "hot_endurance_overload_seconds": 2011.7399999995016,
+          "development_screen_passed": false
+        }
+      ]
+    },
+    {
+      "run": "_neural-rail30-accel100-averaged75-20261001-l",
+      "algorithm": "neural_ppo_v1",
+      "initialization": "runs/_neural-rail30-accel100-defense-20261001-b/agent_step_080281600.pt",
+      "additional_ppo_steps": null,
+      "training_finished": true,
+      "review": null,
+      "selection_file": "logs/neural-player/expanded-100-balanced-20261001/development-selection.json",
+      "selection_sha256": "a74ac12309893a6435bc4f37dbab028e7b28fe7613172cc04309af40fef5feb1",
+      "snapshots": [
+        {
+          "checkpoint": "agent_step_088408064.pt",
+          "sha256": "c08827966c2e1d6d852fddae50c57cb239f54b9921fd718d05bd628e7f93e4f5",
+          "requested_fast_shots": 482,
+          "shot_trials": 768,
+          "defense": {
+            "saved": 292,
+            "trials": 384,
+            "rate": 0.7604166666666666,
+            "forward_at_release": 265
+          },
+          "corner_recovery": {
+            "trials": 128,
+            "touched": 83,
+            "recovered": 9,
+            "aimed": 19,
+            "overload_seconds": 0.0,
+            "peak_load": 0.9097662767405946
+          },
+          "hot_endurance_peak": 1.3458527458796432,
+          "hot_endurance_overload_seconds": 1500.5999999995051,
+          "development_screen_passed": false
+        },
+        {
+          "checkpoint": "agent_step_096534528.pt",
+          "sha256": "ba2f6df591c74fdb47742a216b437677202fd731719bbcb231a7dc3ed04a5861",
+          "requested_fast_shots": 493,
+          "shot_trials": 768,
+          "defense": {
+            "saved": 303,
+            "trials": 384,
+            "rate": 0.7890625,
+            "forward_at_release": 276
+          },
+          "corner_recovery": {
+            "trials": 128,
+            "touched": 83,
+            "recovered": 8,
+            "aimed": 18,
+            "overload_seconds": 0.0,
+            "peak_load": 0.9092683059926024
+          },
+          "hot_endurance_peak": 1.0483601878928772,
+          "hot_endurance_overload_seconds": 1288.8599999996977,
+          "development_screen_passed": false
+        },
+        {
+          "checkpoint": "agent_step_104660992.pt",
+          "sha256": "3b3988072bedfe03b6ccf402db09b85ed8d6d37f43a8d5973594f348d4cf1025",
+          "requested_fast_shots": 480,
+          "shot_trials": 768,
+          "defense": {
+            "saved": 301,
+            "trials": 384,
+            "rate": 0.7838541666666666,
+            "forward_at_release": 277
+          },
+          "corner_recovery": {
+            "trials": 128,
+            "touched": 77,
+            "recovered": 7,
+            "aimed": 14,
+            "overload_seconds": 0.0,
+            "peak_load": 0.9078927273363164
+          },
+          "hot_endurance_peak": 1.0392674022352448,
+          "hot_endurance_overload_seconds": 490.339999999844,
+          "development_screen_passed": false
+        },
+        {
+          "checkpoint": "agent_step_112787456.pt",
+          "sha256": "2093b9bacbccc780bc33b48d5f8fa3f8a69710529ed53ed64e2f52e559fd38cd",
+          "requested_fast_shots": 491,
+          "shot_trials": 768,
+          "defense": {
+            "saved": 300,
+            "trials": 384,
+            "rate": 0.78125,
+            "forward_at_release": 278
+          },
+          "corner_recovery": {
+            "trials": 128,
+            "touched": 79,
+            "recovered": 10,
+            "aimed": 18,
+            "overload_seconds": 0.0,
+            "peak_load": 0.9101549917707111
+          },
+          "hot_endurance_peak": 1.34585275384663,
+          "hot_endurance_overload_seconds": 1243.699999999712,
+          "development_screen_passed": false
+        },
+        {
+          "checkpoint": "agent_step_120913920.pt",
+          "sha256": "e4bb20e0e5cf37c81f12ce4d05f407ce7e5f96cfe580aed3ed8832c98e428168",
+          "requested_fast_shots": 482,
+          "shot_trials": 768,
+          "defense": {
+            "saved": 294,
+            "trials": 384,
+            "rate": 0.765625,
+            "forward_at_release": 296
+          },
+          "corner_recovery": {
+            "trials": 128,
+            "touched": 85,
+            "recovered": 12,
+            "aimed": 15,
+            "overload_seconds": 0.0,
+            "peak_load": 0.9102248295954203
+          },
+          "hot_endurance_peak": 1.3458527459730507,
+          "hot_endurance_overload_seconds": 716.7399999998123,
+          "development_screen_passed": false
+        },
+        {
+          "checkpoint": "agent_step_129040384.pt",
+          "sha256": "121275073345635bfb3f358287868171b369d9318c1a77f6799c82dab91980b5",
+          "requested_fast_shots": 486,
+          "shot_trials": 768,
+          "defense": {
+            "saved": 309,
+            "trials": 384,
+            "rate": 0.8046875,
+            "forward_at_release": 276
+          },
+          "corner_recovery": {
+            "trials": 128,
+            "touched": 83,
+            "recovered": 9,
+            "aimed": 15,
+            "overload_seconds": 0.0,
+            "peak_load": 0.9102234966361279
+          },
+          "hot_endurance_peak": 1.3458527391732544,
+          "hot_endurance_overload_seconds": 1215.3799999997418,
+          "development_screen_passed": false
+        },
+        {
+          "checkpoint": "agent_step_137166848.pt",
+          "sha256": "cede3d4417a0cce382f04d4688d957e6238c6b2ab29185c90c6b9e46dd052552",
+          "requested_fast_shots": 473,
+          "shot_trials": 768,
+          "defense": {
+            "saved": 298,
+            "trials": 384,
+            "rate": 0.7760416666666666,
+            "forward_at_release": 291
+          },
+          "corner_recovery": {
+            "trials": 128,
+            "touched": 84,
+            "recovered": 14,
+            "aimed": 17,
+            "overload_seconds": 0.0,
+            "peak_load": 0.9099874510049016
+          },
+          "hot_endurance_peak": 1.0371641670632108,
+          "hot_endurance_overload_seconds": 1071.899999999895,
+          "development_screen_passed": false
+        },
+        {
+          "checkpoint": "agent_step_144375808.pt",
+          "sha256": "2fcc216c71ac2146999dacbe54ca9e2cb1eead1eb559d7bbd40f943b1a275813",
+          "requested_fast_shots": 458,
+          "shot_trials": 768,
+          "defense": {
+            "saved": 298,
+            "trials": 384,
+            "rate": 0.7760416666666666,
+            "forward_at_release": 285
+          },
+          "corner_recovery": {
+            "trials": 128,
+            "touched": 74,
+            "recovered": 11,
+            "aimed": 19,
+            "overload_seconds": 0.0,
+            "peak_load": 0.9101468190521523
+          },
+          "hot_endurance_peak": 1.063547394950242,
+          "hot_endurance_overload_seconds": 2011.7399999995016,
+          "development_screen_passed": false
+        }
+      ]
+    },
+    {
+      "run": "_neural-rail30-accel100-balanced-20261001-i",
+      "algorithm": "neural_ppo_v1",
+      "initialization": "runs/_neural-rail30-accel100-defense-20261001-b/agent_step_080281600.pt",
+      "additional_ppo_steps": 64094208,
+      "training_finished": true,
+      "review": "Completed 64M additional steps. Checkpoint 104.7M improves requested fast shots (947/1536 vs 812/1536) and moving-release defense (775/1024 vs 748/1024) in matched expanded simulations. Larger nominal endurance failed in 2/16 games; hot endurance failed in 10/16. Simulation shortlist only; no physical promotion.",
+      "selection_file": "logs/neural-player/expanded-100-balanced-20261001/development-selection.json",
+      "selection_sha256": "a74ac12309893a6435bc4f37dbab028e7b28fe7613172cc04309af40fef5feb1",
+      "snapshots": [
+        {
+          "checkpoint": "agent_step_088408064.pt",
+          "sha256": "c08827966c2e1d6d852fddae50c57cb239f54b9921fd718d05bd628e7f93e4f5",
+          "requested_fast_shots": 482,
+          "shot_trials": 768,
+          "defense": {
+            "saved": 292,
+            "trials": 384,
+            "rate": 0.7604166666666666,
+            "forward_at_release": 265
+          },
+          "corner_recovery": {
+            "trials": 128,
+            "touched": 83,
+            "recovered": 9,
+            "aimed": 19,
+            "overload_seconds": 0.0,
+            "peak_load": 0.9097662767405946
+          },
+          "hot_endurance_peak": 1.3458527458796432,
+          "hot_endurance_overload_seconds": 1500.5999999995051,
+          "development_screen_passed": false
+        },
+        {
+          "checkpoint": "agent_step_096534528.pt",
+          "sha256": "ba2f6df591c74fdb47742a216b437677202fd731719bbcb231a7dc3ed04a5861",
+          "requested_fast_shots": 493,
+          "shot_trials": 768,
+          "defense": {
+            "saved": 303,
+            "trials": 384,
+            "rate": 0.7890625,
+            "forward_at_release": 276
+          },
+          "corner_recovery": {
+            "trials": 128,
+            "touched": 83,
+            "recovered": 8,
+            "aimed": 18,
+            "overload_seconds": 0.0,
+            "peak_load": 0.9092683059926024
+          },
+          "hot_endurance_peak": 1.0483601878928772,
+          "hot_endurance_overload_seconds": 1288.8599999996977,
+          "development_screen_passed": false
+        },
+        {
+          "checkpoint": "agent_step_104660992.pt",
+          "sha256": "3b3988072bedfe03b6ccf402db09b85ed8d6d37f43a8d5973594f348d4cf1025",
+          "requested_fast_shots": 480,
+          "shot_trials": 768,
+          "defense": {
+            "saved": 301,
+            "trials": 384,
+            "rate": 0.7838541666666666,
+            "forward_at_release": 277
+          },
+          "corner_recovery": {
+            "trials": 128,
+            "touched": 77,
+            "recovered": 7,
+            "aimed": 14,
+            "overload_seconds": 0.0,
+            "peak_load": 0.9078927273363164
+          },
+          "hot_endurance_peak": 1.0392674022352448,
+          "hot_endurance_overload_seconds": 490.339999999844,
+          "development_screen_passed": false
+        },
+        {
+          "checkpoint": "agent_step_112787456.pt",
+          "sha256": "2093b9bacbccc780bc33b48d5f8fa3f8a69710529ed53ed64e2f52e559fd38cd",
+          "requested_fast_shots": 491,
+          "shot_trials": 768,
+          "defense": {
+            "saved": 300,
+            "trials": 384,
+            "rate": 0.78125,
+            "forward_at_release": 278
+          },
+          "corner_recovery": {
+            "trials": 128,
+            "touched": 79,
+            "recovered": 10,
+            "aimed": 18,
+            "overload_seconds": 0.0,
+            "peak_load": 0.9101549917707111
+          },
+          "hot_endurance_peak": 1.34585275384663,
+          "hot_endurance_overload_seconds": 1243.699999999712,
+          "development_screen_passed": false
+        },
+        {
+          "checkpoint": "agent_step_120913920.pt",
+          "sha256": "e4bb20e0e5cf37c81f12ce4d05f407ce7e5f96cfe580aed3ed8832c98e428168",
+          "requested_fast_shots": 482,
+          "shot_trials": 768,
+          "defense": {
+            "saved": 294,
+            "trials": 384,
+            "rate": 0.765625,
+            "forward_at_release": 296
+          },
+          "corner_recovery": {
+            "trials": 128,
+            "touched": 85,
+            "recovered": 12,
+            "aimed": 15,
+            "overload_seconds": 0.0,
+            "peak_load": 0.9102248295954203
+          },
+          "hot_endurance_peak": 1.3458527459730507,
+          "hot_endurance_overload_seconds": 716.7399999998123,
+          "development_screen_passed": false
+        },
+        {
+          "checkpoint": "agent_step_129040384.pt",
+          "sha256": "121275073345635bfb3f358287868171b369d9318c1a77f6799c82dab91980b5",
+          "requested_fast_shots": 486,
+          "shot_trials": 768,
+          "defense": {
+            "saved": 309,
+            "trials": 384,
+            "rate": 0.8046875,
+            "forward_at_release": 276
+          },
+          "corner_recovery": {
+            "trials": 128,
+            "touched": 83,
+            "recovered": 9,
+            "aimed": 15,
+            "overload_seconds": 0.0,
+            "peak_load": 0.9102234966361279
+          },
+          "hot_endurance_peak": 1.3458527391732544,
+          "hot_endurance_overload_seconds": 1215.3799999997418,
+          "development_screen_passed": false
+        },
+        {
+          "checkpoint": "agent_step_137166848.pt",
+          "sha256": "cede3d4417a0cce382f04d4688d957e6238c6b2ab29185c90c6b9e46dd052552",
+          "requested_fast_shots": 473,
+          "shot_trials": 768,
+          "defense": {
+            "saved": 298,
+            "trials": 384,
+            "rate": 0.7760416666666666,
+            "forward_at_release": 291
+          },
+          "corner_recovery": {
+            "trials": 128,
+            "touched": 84,
+            "recovered": 14,
+            "aimed": 17,
+            "overload_seconds": 0.0,
+            "peak_load": 0.9099874510049016
+          },
+          "hot_endurance_peak": 1.0371641670632108,
+          "hot_endurance_overload_seconds": 1071.899999999895,
+          "development_screen_passed": false
+        },
+        {
+          "checkpoint": "agent_step_144375808.pt",
+          "sha256": "2fcc216c71ac2146999dacbe54ca9e2cb1eead1eb559d7bbd40f943b1a275813",
+          "requested_fast_shots": 458,
+          "shot_trials": 768,
+          "defense": {
+            "saved": 298,
+            "trials": 384,
+            "rate": 0.7760416666666666,
+            "forward_at_release": 285
+          },
+          "corner_recovery": {
+            "trials": 128,
+            "touched": 74,
+            "recovered": 11,
+            "aimed": 19,
+            "overload_seconds": 0.0,
+            "peak_load": 0.9101468190521523
+          },
+          "hot_endurance_peak": 1.063547394950242,
+          "hot_endurance_overload_seconds": 2011.7399999995016,
+          "development_screen_passed": false
+        }
+      ]
+    },
+    {
+      "run": "_neural-rail30-accel100-consolidation-20261001-h",
+      "algorithm": "neural_ppo_v1",
+      "initialization": "runs/_neural-rail30-accel100-imitation-20261001-g/agent_update_006000.pt",
+      "additional_ppo_steps": 64094208,
+      "training_finished": true,
+      "review": "Completed 64M additional steps. Final checkpoint passed the strict development endurance test. Shooting is near the old baseline; independent longer qualification is running, and a continuation targets the remaining shooting gap.",
+      "selection_file": "logs/neural-player/expanded-100-consolidation-20261001/development-selection.json",
+      "selection_sha256": "14e19981ccf7164f5aa0ae6811426dfa39bac94893f6d132551e10c5f01405d4",
+      "snapshots": [
+        {
+          "checkpoint": "agent_step_008126464.pt",
+          "sha256": "d7e2acc92eb590c8a8030c2af09f36d59a040a2e43e202eaa2945c70cf8f55fd",
+          "requested_fast_shots": 409,
+          "shot_trials": 768,
+          "defense": {
+            "saved": 291,
+            "trials": 384,
+            "rate": 0.7578125,
+            "forward_at_release": 229
+          },
+          "corner_recovery": {
+            "trials": 128,
+            "touched": 70,
+            "recovered": 12,
+            "aimed": 24,
+            "overload_seconds": 0.0,
+            "peak_load": 0.853643748287294
+          },
+          "hot_endurance_peak": 1.0298996524525583,
+          "hot_endurance_overload_seconds": 155.6200000000058,
+          "development_screen_passed": false
+        },
+        {
+          "checkpoint": "agent_step_016252928.pt",
+          "sha256": "a244181c42fb8178030264b81e2cea369f6ea4fdb307931436934693246f5967",
+          "requested_fast_shots": 390,
+          "shot_trials": 768,
+          "defense": {
+            "saved": 299,
+            "trials": 384,
+            "rate": 0.7786458333333334,
+            "forward_at_release": 218
+          },
+          "corner_recovery": {
+            "trials": 128,
+            "touched": 75,
+            "recovered": 11,
+            "aimed": 16,
+            "overload_seconds": 0.0,
+            "peak_load": 0.8487304010786575
+          },
+          "hot_endurance_peak": 1.0525878773902253,
+          "hot_endurance_overload_seconds": 975.4999999997897,
+          "development_screen_passed": false
+        },
+        {
+          "checkpoint": "agent_step_024379392.pt",
+          "sha256": "b0b2b57a982293f99fddf503f3af4bb47596834bb49b78bf943cdd679ef04de9",
+          "requested_fast_shots": 409,
+          "shot_trials": 768,
+          "defense": {
+            "saved": 299,
+            "trials": 384,
+            "rate": 0.7786458333333334,
+            "forward_at_release": 228
+          },
+          "corner_recovery": {
+            "trials": 128,
+            "touched": 74,
+            "recovered": 11,
+            "aimed": 22,
+            "overload_seconds": 0.0,
+            "peak_load": 0.8598614927871178
+          },
+          "hot_endurance_peak": 1.1571082737662064,
+          "hot_endurance_overload_seconds": 847.1999999998095,
+          "development_screen_passed": false
+        },
+        {
+          "checkpoint": "agent_step_032505856.pt",
+          "sha256": "e8f26705abbe14a4042d27791b486419ca6bce8a7fc4cf8007c8bc552ef4ee66",
+          "requested_fast_shots": 410,
+          "shot_trials": 768,
+          "defense": {
+            "saved": 299,
+            "trials": 384,
+            "rate": 0.7786458333333334,
+            "forward_at_release": 249
+          },
+          "corner_recovery": {
+            "trials": 128,
+            "touched": 79,
+            "recovered": 13,
+            "aimed": 25,
+            "overload_seconds": 0.0,
+            "peak_load": 0.8380015255388568
+          },
+          "hot_endurance_peak": 1.0573351497080181,
+          "hot_endurance_overload_seconds": 359.0800000000361,
+          "development_screen_passed": false
+        },
+        {
+          "checkpoint": "agent_step_040632320.pt",
+          "sha256": "5831f2115cffca98c97e8b7166e2aa0f0d9ecbac8c62f84838c6589735eca014",
+          "requested_fast_shots": 430,
+          "shot_trials": 768,
+          "defense": {
+            "saved": 289,
+            "trials": 384,
+            "rate": 0.7526041666666666,
+            "forward_at_release": 230
+          },
+          "corner_recovery": {
+            "trials": 128,
+            "touched": 77,
+            "recovered": 13,
+            "aimed": 25,
+            "overload_seconds": 0.0,
+            "peak_load": 0.8358030725151026
+          },
+          "hot_endurance_peak": 1.118378680051193,
+          "hot_endurance_overload_seconds": 1854.4999999996226,
+          "development_screen_passed": false
+        },
+        {
+          "checkpoint": "agent_step_048758784.pt",
+          "sha256": "9b5094ed3078f6297cc0f2fc995c499e3c5c1a224b8d41e0dd6a6587c166702f",
+          "requested_fast_shots": 412,
+          "shot_trials": 768,
+          "defense": {
+            "saved": 292,
+            "trials": 384,
+            "rate": 0.7604166666666666,
+            "forward_at_release": 250
+          },
+          "corner_recovery": {
+            "trials": 128,
+            "touched": 73,
+            "recovered": 14,
+            "aimed": 26,
+            "overload_seconds": 0.0,
+            "peak_load": 0.8273486141209705
+          },
+          "hot_endurance_peak": 1.0498862137387348,
+          "hot_endurance_overload_seconds": 1244.1799999995847,
+          "development_screen_passed": false
+        },
+        {
+          "checkpoint": "agent_step_056885248.pt",
+          "sha256": "5301924b1e5500e80bebf93028c1390502d3cda5a81393cee9c643fa696cc9b3",
+          "requested_fast_shots": 428,
+          "shot_trials": 768,
+          "defense": {
+            "saved": 289,
+            "trials": 384,
+            "rate": 0.7526041666666666,
+            "forward_at_release": 198
+          },
+          "corner_recovery": {
+            "trials": 128,
+            "touched": 68,
+            "recovered": 14,
+            "aimed": 29,
+            "overload_seconds": 0.0,
+            "peak_load": 0.8034497895538858
+          },
+          "hot_endurance_peak": 1.0577154505311583,
+          "hot_endurance_overload_seconds": 399.4199999999267,
+          "development_screen_passed": false
+        },
+        {
+          "checkpoint": "agent_step_064094208.pt",
+          "sha256": "bad41bc5c118bafd50de6a80a776a0cb2a8854c91dbbf94efdb63d5edd9a6865",
+          "requested_fast_shots": 420,
+          "shot_trials": 768,
+          "defense": {
+            "saved": 296,
+            "trials": 384,
+            "rate": 0.7708333333333334,
+            "forward_at_release": 179
+          },
+          "corner_recovery": {
+            "trials": 128,
+            "touched": 75,
+            "recovered": 10,
+            "aimed": 20,
+            "overload_seconds": 0.0,
+            "peak_load": 0.8133828847454514
+          },
+          "hot_endurance_peak": 0.9830927457902338,
+          "hot_endurance_overload_seconds": 0.0,
+          "development_screen_passed": true
+        }
+      ]
+    },
+    {
+      "run": "_neural-rail30-accel100-cool-average50-20261001-p",
+      "algorithm": "neural_ppo_v1",
+      "initialization": "runs/_neural-rail30-accel100-defense-20261001-b/agent_step_080281600.pt",
+      "additional_ppo_steps": null,
+      "training_finished": true,
+      "review": null,
+      "selection_file": "logs/neural-player/expanded-100-balanced-20261001/development-selection.json",
+      "selection_sha256": "a74ac12309893a6435bc4f37dbab028e7b28fe7613172cc04309af40fef5feb1",
+      "snapshots": [
+        {
+          "checkpoint": "agent_step_088408064.pt",
+          "sha256": "c08827966c2e1d6d852fddae50c57cb239f54b9921fd718d05bd628e7f93e4f5",
+          "requested_fast_shots": 482,
+          "shot_trials": 768,
+          "defense": {
+            "saved": 292,
+            "trials": 384,
+            "rate": 0.7604166666666666,
+            "forward_at_release": 265
+          },
+          "corner_recovery": {
+            "trials": 128,
+            "touched": 83,
+            "recovered": 9,
+            "aimed": 19,
+            "overload_seconds": 0.0,
+            "peak_load": 0.9097662767405946
+          },
+          "hot_endurance_peak": 1.3458527458796432,
+          "hot_endurance_overload_seconds": 1500.5999999995051,
+          "development_screen_passed": false
+        },
+        {
+          "checkpoint": "agent_step_096534528.pt",
+          "sha256": "ba2f6df591c74fdb47742a216b437677202fd731719bbcb231a7dc3ed04a5861",
+          "requested_fast_shots": 493,
+          "shot_trials": 768,
+          "defense": {
+            "saved": 303,
+            "trials": 384,
+            "rate": 0.7890625,
+            "forward_at_release": 276
+          },
+          "corner_recovery": {
+            "trials": 128,
+            "touched": 83,
+            "recovered": 8,
+            "aimed": 18,
+            "overload_seconds": 0.0,
+            "peak_load": 0.9092683059926024
+          },
+          "hot_endurance_peak": 1.0483601878928772,
+          "hot_endurance_overload_seconds": 1288.8599999996977,
+          "development_screen_passed": false
+        },
+        {
+          "checkpoint": "agent_step_104660992.pt",
+          "sha256": "3b3988072bedfe03b6ccf402db09b85ed8d6d37f43a8d5973594f348d4cf1025",
+          "requested_fast_shots": 480,
+          "shot_trials": 768,
+          "defense": {
+            "saved": 301,
+            "trials": 384,
+            "rate": 0.7838541666666666,
+            "forward_at_release": 277
+          },
+          "corner_recovery": {
+            "trials": 128,
+            "touched": 77,
+            "recovered": 7,
+            "aimed": 14,
+            "overload_seconds": 0.0,
+            "peak_load": 0.9078927273363164
+          },
+          "hot_endurance_peak": 1.0392674022352448,
+          "hot_endurance_overload_seconds": 490.339999999844,
+          "development_screen_passed": false
+        },
+        {
+          "checkpoint": "agent_step_112787456.pt",
+          "sha256": "2093b9bacbccc780bc33b48d5f8fa3f8a69710529ed53ed64e2f52e559fd38cd",
+          "requested_fast_shots": 491,
+          "shot_trials": 768,
+          "defense": {
+            "saved": 300,
+            "trials": 384,
+            "rate": 0.78125,
+            "forward_at_release": 278
+          },
+          "corner_recovery": {
+            "trials": 128,
+            "touched": 79,
+            "recovered": 10,
+            "aimed": 18,
+            "overload_seconds": 0.0,
+            "peak_load": 0.9101549917707111
+          },
+          "hot_endurance_peak": 1.34585275384663,
+          "hot_endurance_overload_seconds": 1243.699999999712,
+          "development_screen_passed": false
+        },
+        {
+          "checkpoint": "agent_step_120913920.pt",
+          "sha256": "e4bb20e0e5cf37c81f12ce4d05f407ce7e5f96cfe580aed3ed8832c98e428168",
+          "requested_fast_shots": 482,
+          "shot_trials": 768,
+          "defense": {
+            "saved": 294,
+            "trials": 384,
+            "rate": 0.765625,
+            "forward_at_release": 296
+          },
+          "corner_recovery": {
+            "trials": 128,
+            "touched": 85,
+            "recovered": 12,
+            "aimed": 15,
+            "overload_seconds": 0.0,
+            "peak_load": 0.9102248295954203
+          },
+          "hot_endurance_peak": 1.3458527459730507,
+          "hot_endurance_overload_seconds": 716.7399999998123,
+          "development_screen_passed": false
+        },
+        {
+          "checkpoint": "agent_step_129040384.pt",
+          "sha256": "121275073345635bfb3f358287868171b369d9318c1a77f6799c82dab91980b5",
+          "requested_fast_shots": 486,
+          "shot_trials": 768,
+          "defense": {
+            "saved": 309,
+            "trials": 384,
+            "rate": 0.8046875,
+            "forward_at_release": 276
+          },
+          "corner_recovery": {
+            "trials": 128,
+            "touched": 83,
+            "recovered": 9,
+            "aimed": 15,
+            "overload_seconds": 0.0,
+            "peak_load": 0.9102234966361279
+          },
+          "hot_endurance_peak": 1.3458527391732544,
+          "hot_endurance_overload_seconds": 1215.3799999997418,
+          "development_screen_passed": false
+        },
+        {
+          "checkpoint": "agent_step_137166848.pt",
+          "sha256": "cede3d4417a0cce382f04d4688d957e6238c6b2ab29185c90c6b9e46dd052552",
+          "requested_fast_shots": 473,
+          "shot_trials": 768,
+          "defense": {
+            "saved": 298,
+            "trials": 384,
+            "rate": 0.7760416666666666,
+            "forward_at_release": 291
+          },
+          "corner_recovery": {
+            "trials": 128,
+            "touched": 84,
+            "recovered": 14,
+            "aimed": 17,
+            "overload_seconds": 0.0,
+            "peak_load": 0.9099874510049016
+          },
+          "hot_endurance_peak": 1.0371641670632108,
+          "hot_endurance_overload_seconds": 1071.899999999895,
+          "development_screen_passed": false
+        },
+        {
+          "checkpoint": "agent_step_144375808.pt",
+          "sha256": "2fcc216c71ac2146999dacbe54ca9e2cb1eead1eb559d7bbd40f943b1a275813",
+          "requested_fast_shots": 458,
+          "shot_trials": 768,
+          "defense": {
+            "saved": 298,
+            "trials": 384,
+            "rate": 0.7760416666666666,
+            "forward_at_release": 285
+          },
+          "corner_recovery": {
+            "trials": 128,
+            "touched": 74,
+            "recovered": 11,
+            "aimed": 19,
+            "overload_seconds": 0.0,
+            "peak_load": 0.9101468190521523
+          },
+          "hot_endurance_peak": 1.063547394950242,
+          "hot_endurance_overload_seconds": 2011.7399999995016,
+          "development_screen_passed": false
+        }
+      ]
+    },
+    {
+      "run": "_neural-rail30-accel100-cool-average75-20261001-p",
+      "algorithm": "neural_ppo_v1",
+      "initialization": "runs/_neural-rail30-accel100-defense-20261001-b/agent_step_080281600.pt",
+      "additional_ppo_steps": null,
+      "training_finished": true,
+      "review": null,
+      "selection_file": "logs/neural-player/expanded-100-balanced-20261001/development-selection.json",
+      "selection_sha256": "a74ac12309893a6435bc4f37dbab028e7b28fe7613172cc04309af40fef5feb1",
+      "snapshots": [
+        {
+          "checkpoint": "agent_step_088408064.pt",
+          "sha256": "c08827966c2e1d6d852fddae50c57cb239f54b9921fd718d05bd628e7f93e4f5",
+          "requested_fast_shots": 482,
+          "shot_trials": 768,
+          "defense": {
+            "saved": 292,
+            "trials": 384,
+            "rate": 0.7604166666666666,
+            "forward_at_release": 265
+          },
+          "corner_recovery": {
+            "trials": 128,
+            "touched": 83,
+            "recovered": 9,
+            "aimed": 19,
+            "overload_seconds": 0.0,
+            "peak_load": 0.9097662767405946
+          },
+          "hot_endurance_peak": 1.3458527458796432,
+          "hot_endurance_overload_seconds": 1500.5999999995051,
+          "development_screen_passed": false
+        },
+        {
+          "checkpoint": "agent_step_096534528.pt",
+          "sha256": "ba2f6df591c74fdb47742a216b437677202fd731719bbcb231a7dc3ed04a5861",
+          "requested_fast_shots": 493,
+          "shot_trials": 768,
+          "defense": {
+            "saved": 303,
+            "trials": 384,
+            "rate": 0.7890625,
+            "forward_at_release": 276
+          },
+          "corner_recovery": {
+            "trials": 128,
+            "touched": 83,
+            "recovered": 8,
+            "aimed": 18,
+            "overload_seconds": 0.0,
+            "peak_load": 0.9092683059926024
+          },
+          "hot_endurance_peak": 1.0483601878928772,
+          "hot_endurance_overload_seconds": 1288.8599999996977,
+          "development_screen_passed": false
+        },
+        {
+          "checkpoint": "agent_step_104660992.pt",
+          "sha256": "3b3988072bedfe03b6ccf402db09b85ed8d6d37f43a8d5973594f348d4cf1025",
+          "requested_fast_shots": 480,
+          "shot_trials": 768,
+          "defense": {
+            "saved": 301,
+            "trials": 384,
+            "rate": 0.7838541666666666,
+            "forward_at_release": 277
+          },
+          "corner_recovery": {
+            "trials": 128,
+            "touched": 77,
+            "recovered": 7,
+            "aimed": 14,
+            "overload_seconds": 0.0,
+            "peak_load": 0.9078927273363164
+          },
+          "hot_endurance_peak": 1.0392674022352448,
+          "hot_endurance_overload_seconds": 490.339999999844,
+          "development_screen_passed": false
+        },
+        {
+          "checkpoint": "agent_step_112787456.pt",
+          "sha256": "2093b9bacbccc780bc33b48d5f8fa3f8a69710529ed53ed64e2f52e559fd38cd",
+          "requested_fast_shots": 491,
+          "shot_trials": 768,
+          "defense": {
+            "saved": 300,
+            "trials": 384,
+            "rate": 0.78125,
+            "forward_at_release": 278
+          },
+          "corner_recovery": {
+            "trials": 128,
+            "touched": 79,
+            "recovered": 10,
+            "aimed": 18,
+            "overload_seconds": 0.0,
+            "peak_load": 0.9101549917707111
+          },
+          "hot_endurance_peak": 1.34585275384663,
+          "hot_endurance_overload_seconds": 1243.699999999712,
+          "development_screen_passed": false
+        },
+        {
+          "checkpoint": "agent_step_120913920.pt",
+          "sha256": "e4bb20e0e5cf37c81f12ce4d05f407ce7e5f96cfe580aed3ed8832c98e428168",
+          "requested_fast_shots": 482,
+          "shot_trials": 768,
+          "defense": {
+            "saved": 294,
+            "trials": 384,
+            "rate": 0.765625,
+            "forward_at_release": 296
+          },
+          "corner_recovery": {
+            "trials": 128,
+            "touched": 85,
+            "recovered": 12,
+            "aimed": 15,
+            "overload_seconds": 0.0,
+            "peak_load": 0.9102248295954203
+          },
+          "hot_endurance_peak": 1.3458527459730507,
+          "hot_endurance_overload_seconds": 716.7399999998123,
+          "development_screen_passed": false
+        },
+        {
+          "checkpoint": "agent_step_129040384.pt",
+          "sha256": "121275073345635bfb3f358287868171b369d9318c1a77f6799c82dab91980b5",
+          "requested_fast_shots": 486,
+          "shot_trials": 768,
+          "defense": {
+            "saved": 309,
+            "trials": 384,
+            "rate": 0.8046875,
+            "forward_at_release": 276
+          },
+          "corner_recovery": {
+            "trials": 128,
+            "touched": 83,
+            "recovered": 9,
+            "aimed": 15,
+            "overload_seconds": 0.0,
+            "peak_load": 0.9102234966361279
+          },
+          "hot_endurance_peak": 1.3458527391732544,
+          "hot_endurance_overload_seconds": 1215.3799999997418,
+          "development_screen_passed": false
+        },
+        {
+          "checkpoint": "agent_step_137166848.pt",
+          "sha256": "cede3d4417a0cce382f04d4688d957e6238c6b2ab29185c90c6b9e46dd052552",
+          "requested_fast_shots": 473,
+          "shot_trials": 768,
+          "defense": {
+            "saved": 298,
+            "trials": 384,
+            "rate": 0.7760416666666666,
+            "forward_at_release": 291
+          },
+          "corner_recovery": {
+            "trials": 128,
+            "touched": 84,
+            "recovered": 14,
+            "aimed": 17,
+            "overload_seconds": 0.0,
+            "peak_load": 0.9099874510049016
+          },
+          "hot_endurance_peak": 1.0371641670632108,
+          "hot_endurance_overload_seconds": 1071.899999999895,
+          "development_screen_passed": false
+        },
+        {
+          "checkpoint": "agent_step_144375808.pt",
+          "sha256": "2fcc216c71ac2146999dacbe54ca9e2cb1eead1eb559d7bbd40f943b1a275813",
+          "requested_fast_shots": 458,
+          "shot_trials": 768,
+          "defense": {
+            "saved": 298,
+            "trials": 384,
+            "rate": 0.7760416666666666,
+            "forward_at_release": 285
+          },
+          "corner_recovery": {
+            "trials": 128,
+            "touched": 74,
+            "recovered": 11,
+            "aimed": 19,
+            "overload_seconds": 0.0,
+            "peak_load": 0.9101468190521523
+          },
+          "hot_endurance_peak": 1.063547394950242,
+          "hot_endurance_overload_seconds": 2011.7399999995016,
+          "development_screen_passed": false
+        }
+      ]
+    },
+    {
+      "run": "_neural-rail30-accel100-cool-continuation-20261001-n",
+      "algorithm": "neural_ppo_v1",
+      "initialization": "runs/_neural-rail30-accel100-consolidation-20261001-h/agent_step_064094208.pt",
+      "additional_ppo_steps": 32112640,
+      "training_finished": true,
+      "review": "Completed 32M additional steps from the cooler candidate. Shooting recovered late, but sustained load results did not improve reliably. Not selected.",
+      "selection_file": "logs/neural-player/expanded-100-cool-continuation-20261001/development-selection.json",
+      "selection_sha256": "d3c2ab902e80f21c9f3fd45dd3912c6ddbf710aea6c94a9f95d565f4f4f78057",
+      "snapshots": [
+        {
+          "checkpoint": "agent_step_072220672.pt",
+          "sha256": "13210999495b283624e8e80937c9f7394f8336d2c41075897099b46756a1013f",
+          "requested_fast_shots": 416,
+          "shot_trials": 768,
+          "defense": {
+            "saved": 299,
+            "trials": 384,
+            "rate": 0.7786458333333334,
+            "forward_at_release": 171
+          },
+          "corner_recovery": {
+            "trials": 128,
+            "touched": 81,
+            "recovered": 7,
+            "aimed": 27,
+            "overload_seconds": 0.0,
+            "peak_load": 0.8282779891512118
+          },
+          "hot_endurance_peak": 1.075751160596379,
+          "hot_endurance_overload_seconds": 448.03999999995347,
+          "development_screen_passed": false
+        },
+        {
+          "checkpoint": "agent_step_080347136.pt",
+          "sha256": "b7d403739fda3e38f99129c52529c370386a8ef9cc617710d1ea6e18e0c0163c",
+          "requested_fast_shots": 402,
+          "shot_trials": 768,
+          "defense": {
+            "saved": 294,
+            "trials": 384,
+            "rate": 0.765625,
+            "forward_at_release": 196
+          },
+          "corner_recovery": {
+            "trials": 128,
+            "touched": 73,
+            "recovered": 9,
+            "aimed": 24,
+            "overload_seconds": 0.0,
+            "peak_load": 0.8109786608858203
+          },
+          "hot_endurance_peak": 1.2736632087463993,
+          "hot_endurance_overload_seconds": 546.6399999998204,
+          "development_screen_passed": false
+        },
+        {
+          "checkpoint": "agent_step_088473600.pt",
+          "sha256": "3152890c3ea2b780faca89495b14ebe1f56ccf19490885ca6c4a0575721cd92c",
+          "requested_fast_shots": 426,
+          "shot_trials": 768,
+          "defense": {
+            "saved": 299,
+            "trials": 384,
+            "rate": 0.7786458333333334,
+            "forward_at_release": 183
+          },
+          "corner_recovery": {
+            "trials": 128,
+            "touched": 69,
+            "recovered": 9,
+            "aimed": 23,
+            "overload_seconds": 0.0,
+            "peak_load": 0.8202777676201664
+          },
+          "hot_endurance_peak": 1.0567442443250723,
+          "hot_endurance_overload_seconds": 517.5599999998193,
+          "development_screen_passed": false
+        },
+        {
+          "checkpoint": "agent_step_096206848.pt",
+          "sha256": "c39cde2748be256decada05050fbce196315594b9626cd1cae2b0cc1ba87b028",
+          "requested_fast_shots": 458,
+          "shot_trials": 768,
+          "defense": {
+            "saved": 296,
+            "trials": 384,
+            "rate": 0.7708333333333334,
+            "forward_at_release": 182
+          },
+          "corner_recovery": {
+            "trials": 128,
+            "touched": 74,
+            "recovered": 11,
+            "aimed": 19,
+            "overload_seconds": 0.0,
+            "peak_load": 0.8255809406908299
+          },
+          "hot_endurance_peak": 1.1689717523621306,
+          "hot_endurance_overload_seconds": 1280.799999999667,
+          "development_screen_passed": false
+        }
+      ]
+    },
+    {
+      "run": "_neural-rail30-accel100-corners-20261001-c",
+      "algorithm": "neural_ppo_v1",
+      "initialization": "runs/_neural-rail30-accel100-20261001-a/agent_step_020316160.pt",
+      "additional_ppo_steps": 7733248,
+      "training_finished": true,
+      "review": "Stopped after 7.7M additional transitions; continued as the rails-D run after correcting paddle/rail collision ordering.",
+      "selection_file": "logs/neural-player/expanded-100-corners-20261001/development-selection.json",
+      "selection_sha256": "5bd1f5533801bf04b33e444d5154b69a8311e3209a40b5c1bd015b952e8603cd",
+      "snapshots": [
+        {
+          "checkpoint": "agent_step_028049408.pt",
+          "sha256": "0d453fe6e86c5fce5eaa140e57b3fa54429251ca30f1d9c2517b1a1f7b3bd47e",
+          "requested_fast_shots": 457,
+          "shot_trials": 768,
+          "defense": {
+            "saved": 270,
+            "trials": 384,
+            "rate": 0.703125,
+            "forward_at_release": 271
+          },
+          "corner_recovery": null,
+          "hot_endurance_peak": null,
+          "hot_endurance_overload_seconds": null,
+          "development_screen_passed": false
+        }
+      ]
+    },
+    {
+      "run": "_neural-rail30-accel100-defense-20261001-b",
+      "algorithm": "neural_ppo_v1",
+      "initialization": "runs/_neural-rail30-accel100-20261001-a/agent_step_016252928.pt",
+      "additional_ppo_steps": 64028672,
+      "training_finished": true,
+      "review": "Fast-shot defense experiment: 8\u201316 m/s direct/bank attacks with unpredictable release timing and lateral setup movement. Comparing saved checkpoints; not selected for production.",
+      "selection_file": "logs/neural-player/expanded-100-defense-20261001/development-selection.json",
+      "selection_sha256": "190a1fb29cfadc27c6bc210fcb36327e167ed2e2c482539bcbec4cfb74391656",
+      "snapshots": [
+        {
+          "checkpoint": "agent_step_024313856.pt",
+          "sha256": "d48de1ad9e9c22e1cc6e0731d59413b2c447dffef198c69330480302dc5e1e63",
+          "requested_fast_shots": 441,
+          "shot_trials": 768,
+          "defense": {
+            "saved": 279,
+            "trials": 384,
+            "rate": 0.7265625,
+            "forward_at_release": 252
+          },
+          "corner_recovery": null,
+          "hot_endurance_peak": null,
+          "hot_endurance_overload_seconds": null,
+          "development_screen_passed": false
+        },
+        {
+          "checkpoint": "agent_step_032374784.pt",
+          "sha256": "73fee3a22307d3291323353461d2b2fd26c9730d743266bd8852d2eb4db0721f",
+          "requested_fast_shots": 442,
+          "shot_trials": 768,
+          "defense": {
+            "saved": 277,
+            "trials": 384,
+            "rate": 0.7213541666666666,
+            "forward_at_release": 242
+          },
+          "corner_recovery": null,
+          "hot_endurance_peak": null,
+          "hot_endurance_overload_seconds": null,
+          "development_screen_passed": false
+        },
+        {
+          "checkpoint": "agent_step_040435712.pt",
+          "sha256": "83875f8d2c5e67aedfb78bc6fa3a6c0210019a6f7a22e0a00fc2495b83f37f2f",
+          "requested_fast_shots": 474,
+          "shot_trials": 768,
+          "defense": {
+            "saved": 286,
+            "trials": 384,
+            "rate": 0.7447916666666666,
+            "forward_at_release": 217
+          },
+          "corner_recovery": null,
+          "hot_endurance_peak": null,
+          "hot_endurance_overload_seconds": null,
+          "development_screen_passed": false
+        },
+        {
+          "checkpoint": "agent_step_048496640.pt",
+          "sha256": "c286eb47ba11993d8f438fd2d7370145e6b987255f3a3e810a7845b802d5ccf9",
+          "requested_fast_shots": 473,
+          "shot_trials": 768,
+          "defense": {
+            "saved": 273,
+            "trials": 384,
+            "rate": 0.7109375,
+            "forward_at_release": 228
+          },
+          "corner_recovery": null,
+          "hot_endurance_peak": null,
+          "hot_endurance_overload_seconds": null,
+          "development_screen_passed": false
+        },
+        {
+          "checkpoint": "agent_step_056557568.pt",
+          "sha256": "a545ebb4e93d36c08efba54ae6fe0ff78acbe984aed3e31c2a7f1130107a9eb1",
+          "requested_fast_shots": 470,
+          "shot_trials": 768,
+          "defense": {
+            "saved": 279,
+            "trials": 384,
+            "rate": 0.7265625,
+            "forward_at_release": 229
+          },
+          "corner_recovery": null,
+          "hot_endurance_peak": null,
+          "hot_endurance_overload_seconds": null,
+          "development_screen_passed": true
+        },
+        {
+          "checkpoint": "agent_step_064618496.pt",
+          "sha256": "e23058b159f312d26169a5cd04a51678232a369a96856a64c7add2cde56309ba",
+          "requested_fast_shots": 476,
+          "shot_trials": 768,
+          "defense": {
+            "saved": 282,
+            "trials": 384,
+            "rate": 0.734375,
+            "forward_at_release": 259
+          },
+          "corner_recovery": null,
+          "hot_endurance_peak": null,
+          "hot_endurance_overload_seconds": null,
+          "development_screen_passed": false
+        },
+        {
+          "checkpoint": "agent_step_072679424.pt",
+          "sha256": "a44e8b7eee30f2326fb13863c1b01fee8f9b2db70da19bae64fc47c2737ca3e6",
+          "requested_fast_shots": 472,
+          "shot_trials": 768,
+          "defense": {
+            "saved": 293,
+            "trials": 384,
+            "rate": 0.7630208333333334,
+            "forward_at_release": 273
+          },
+          "corner_recovery": null,
+          "hot_endurance_peak": null,
+          "hot_endurance_overload_seconds": null,
+          "development_screen_passed": false
+        },
+        {
+          "checkpoint": "agent_step_080281600.pt",
+          "sha256": "e9fc61dff80deac2af7cf0778b69919b3594f4b8f2b572fe1c3f9a65c4bef932",
+          "requested_fast_shots": 461,
+          "shot_trials": 768,
+          "defense": {
+            "saved": 289,
+            "trials": 384,
+            "rate": 0.7526041666666666,
+            "forward_at_release": 269
+          },
+          "corner_recovery": null,
+          "hot_endurance_peak": null,
+          "hot_endurance_overload_seconds": null,
+          "development_screen_passed": true
+        }
+      ]
+    },
+    {
+      "run": "_neural-rail30-accel100-exploration-20261001-f",
+      "algorithm": "neural_ppo_v1",
+      "initialization": "runs/_neural-rail30-accel100-20261001-a/agent_step_028442624.pt",
+      "additional_ppo_steps": 31850496,
+      "training_finished": true,
+      "review": "Stopped after collecting successful neural recovery attempts. Extra exploration did not reliably improve deterministic corner play; its successful attempts feed the self-imitation experiment. No production selection.",
+      "selection_file": "logs/neural-player/expanded-100-exploration-20261001/development-selection.json",
+      "selection_sha256": "1a513f5a1ead377c02ea712420ea8302e0da19e9f201fd7cc62387c798f3a092",
+      "snapshots": [
+        {
+          "checkpoint": "agent_step_036569088.pt",
+          "sha256": "41235cfc5db7cd05924411ccb72a2a97b9c504c39271ce937f8bb533bac66976",
+          "requested_fast_shots": 414,
+          "shot_trials": 768,
+          "defense": {
+            "saved": 283,
+            "trials": 384,
+            "rate": 0.7369791666666666,
+            "forward_at_release": 263
+          },
+          "corner_recovery": {
+            "trials": 128,
+            "touched": 79,
+            "recovered": 9,
+            "aimed": 16,
+            "overload_seconds": 0.0,
+            "peak_load": 0.8943296416055518
+          },
+          "hot_endurance_peak": 1.1829673241636047,
+          "hot_endurance_overload_seconds": 1610.3599999994053,
+          "development_screen_passed": false
+        },
+        {
+          "checkpoint": "agent_step_044695552.pt",
+          "sha256": "f586594349af7c066ac4a30042d9f06f8410ea161588ecc77e1bf2207031de8f",
+          "requested_fast_shots": 396,
+          "shot_trials": 768,
+          "defense": {
+            "saved": 282,
+            "trials": 384,
+            "rate": 0.734375,
+            "forward_at_release": 257
+          },
+          "corner_recovery": {
+            "trials": 128,
+            "touched": 80,
+            "recovered": 6,
+            "aimed": 13,
+            "overload_seconds": 0.0,
+            "peak_load": 0.8532846120125323
+          },
+          "hot_endurance_peak": 1.0777913725807207,
+          "hot_endurance_overload_seconds": 1645.6399999996631,
+          "development_screen_passed": false
+        },
+        {
+          "checkpoint": "agent_step_052822016.pt",
+          "sha256": "4c8289d351e67c74f430b265662a027c101bf6188be5d49497ca8162e477f94a",
+          "requested_fast_shots": 461,
+          "shot_trials": 768,
+          "defense": {
+            "saved": 278,
+            "trials": 384,
+            "rate": 0.7239583333333334,
+            "forward_at_release": 243
+          },
+          "corner_recovery": {
+            "trials": 128,
+            "touched": 77,
+            "recovered": 4,
+            "aimed": 19,
+            "overload_seconds": 0.0,
+            "peak_load": 0.8493227380386782
+          },
+          "hot_endurance_peak": 1.2229620489120896,
+          "hot_endurance_overload_seconds": 1997.0999999993437,
+          "development_screen_passed": false
+        },
+        {
+          "checkpoint": "agent_step_060293120.pt",
+          "sha256": "0fdcbe588059e86b1d8576b0fa49426b631885f5d8bb827f6afdca7ddc4da075",
+          "requested_fast_shots": 461,
+          "shot_trials": 768,
+          "defense": {
+            "saved": 281,
+            "trials": 384,
+            "rate": 0.7317708333333334,
+            "forward_at_release": 210
+          },
+          "corner_recovery": {
+            "trials": 128,
+            "touched": 82,
+            "recovered": 9,
+            "aimed": 18,
+            "overload_seconds": 0.0,
+            "peak_load": 0.8507464355305341
+          },
+          "hot_endurance_peak": 1.2352117686933874,
+          "hot_endurance_overload_seconds": 226.10000000004186,
+          "development_screen_passed": false
+        }
+      ]
+    },
+    {
+      "run": "_neural-rail30-accel100-failure-replay-20261001-k",
+      "algorithm": "neural_ppo_v1",
+      "initialization": "runs/_neural-rail30-accel100-balanced-20261001-i/agent_step_096534528.pt",
+      "additional_ppo_steps": 35258368,
+      "training_finished": true,
+      "review": "Stopped after repeated evaluations showed weaker shooting and persistent sustained-load failures. Replacing the uniform energy-cost increase with a separate near-overload penalty experiment; snapshots retained.",
+      "selection_file": "logs/neural-player/expanded-100-failure-replay-20261001/development-selection.json",
+      "selection_sha256": "a27955f64a9f871605637c91d0b4f38f2c7b33b11146e751694baa74ec76a18e",
+      "snapshots": [
+        {
+          "checkpoint": "agent_step_104660992.pt",
+          "sha256": "acb924c805e98256ae4f978db02362b0d84d32de1baf0c3ae48355425466a462",
+          "requested_fast_shots": 467,
+          "shot_trials": 768,
+          "defense": {
+            "saved": 301,
+            "trials": 384,
+            "rate": 0.7838541666666666,
+            "forward_at_release": 265
+          },
+          "corner_recovery": {
+            "trials": 128,
+            "touched": 80,
+            "recovered": 7,
+            "aimed": 14,
+            "overload_seconds": 0.0,
+            "peak_load": 0.9085635667906267
+          },
+          "hot_endurance_peak": 1.3056432103891624,
+          "hot_endurance_overload_seconds": 1616.0199999996805,
+          "development_screen_passed": false
+        },
+        {
+          "checkpoint": "agent_step_112787456.pt",
+          "sha256": "b00cb9107bf3fbd53f5096fa0f21d7be14659b0d72f161d37aef4930faa67159",
+          "requested_fast_shots": 470,
+          "shot_trials": 768,
+          "defense": {
+            "saved": 294,
+            "trials": 384,
+            "rate": 0.765625,
+            "forward_at_release": 275
+          },
+          "corner_recovery": {
+            "trials": 128,
+            "touched": 78,
+            "recovered": 9,
+            "aimed": 13,
+            "overload_seconds": 0.0,
+            "peak_load": 0.9094030768441751
+          },
+          "hot_endurance_peak": 1.3458527527647388,
+          "hot_endurance_overload_seconds": 1322.1399999996675,
+          "development_screen_passed": false
+        },
+        {
+          "checkpoint": "agent_step_120913920.pt",
+          "sha256": "08eae1afd611574eb820c84ed19805c3e0ad6e65dfaf74a78c4afea6c7a13801",
+          "requested_fast_shots": 443,
+          "shot_trials": 768,
+          "defense": {
+            "saved": 301,
+            "trials": 384,
+            "rate": 0.7838541666666666,
+            "forward_at_release": 273
+          },
+          "corner_recovery": {
+            "trials": 128,
+            "touched": 79,
+            "recovered": 11,
+            "aimed": 19,
+            "overload_seconds": 0.0,
+            "peak_load": 0.8971695714078143
+          },
+          "hot_endurance_peak": 1.0615560024623107,
+          "hot_endurance_overload_seconds": 444.07999999988607,
+          "development_screen_passed": false
+        },
+        {
+          "checkpoint": "agent_step_129040384.pt",
+          "sha256": "3b3b8c010e09ac64fc82c293b714b70ba9da787ad899c5a8095acfe53e62029d",
+          "requested_fast_shots": 453,
+          "shot_trials": 768,
+          "defense": {
+            "saved": 306,
+            "trials": 384,
+            "rate": 0.796875,
+            "forward_at_release": 278
+          },
+          "corner_recovery": {
+            "trials": 128,
+            "touched": 83,
+            "recovered": 11,
+            "aimed": 23,
+            "overload_seconds": 0.0,
+            "peak_load": 0.9080865216662212
+          },
+          "hot_endurance_peak": 1.3458527460668832,
+          "hot_endurance_overload_seconds": 1468.1799999995346,
+          "development_screen_passed": false
+        },
+        {
+          "checkpoint": "agent_step_131792896.pt",
+          "sha256": "e9864026e7dec3336e502182edde300dea08fccdd37498e8b0e5ca76677d8809",
+          "requested_fast_shots": 457,
+          "shot_trials": 768,
+          "defense": {
+            "saved": 309,
+            "trials": 384,
+            "rate": 0.8046875,
+            "forward_at_release": 278
+          },
+          "corner_recovery": {
+            "trials": 128,
+            "touched": 78,
+            "recovered": 6,
+            "aimed": 16,
+            "overload_seconds": 0.0,
+            "peak_load": 0.9028748041407729
+          },
+          "hot_endurance_peak": 1.3458527455741611,
+          "hot_endurance_overload_seconds": 1437.6399999995624,
+          "development_screen_passed": false
+        }
+      ]
+    },
+    {
+      "run": "_neural-rail30-accel100-hard-corners-20261001-j",
+      "algorithm": "successful_neural_trajectory_imitation_v1",
+      "initialization": "/home/xander/dev/p-airhockey/airhockey/runs/_neural-rail30-accel100-defense-20261001-b/agent_step_080281600.pt",
+      "additional_ppo_steps": null,
+      "training_finished": true,
+      "review": "Completed fitting from successful neural-policy attempts. Corner recovery improved in the development fixtures, but sustained overloads remain. Comparing against balanced PPO continuation.",
+      "selection_file": "logs/neural-player/expanded-100-hard-corners-20261001/development-selection.json",
+      "selection_sha256": "6ca036c6d5201a1cbc70d66674a387e4aca7546290c09eb87ae21d0a973b5159",
+      "snapshots": [
+        {
+          "checkpoint": "agent_update_002000.pt",
+          "sha256": "c1e8d0ffef2f0910c26aefdb0a18bc15ebd562c478896af8dc9908e4a56efb27",
+          "requested_fast_shots": 458,
+          "shot_trials": 768,
+          "defense": {
+            "saved": 295,
+            "trials": 384,
+            "rate": 0.7682291666666666,
+            "forward_at_release": 264
+          },
+          "corner_recovery": {
+            "trials": 128,
+            "touched": 70,
+            "recovered": 17,
+            "aimed": 21,
+            "overload_seconds": 0.0,
+            "peak_load": 0.8767200497275366
+          },
+          "hot_endurance_peak": 1.0179602105241845,
+          "hot_endurance_overload_seconds": 317.32000000000136,
+          "development_screen_passed": false
+        },
+        {
+          "checkpoint": "agent_update_006000.pt",
+          "sha256": "901052a0b78434a0ff93d72b56124a959eb0675095130434673ac989d59c2e92",
+          "requested_fast_shots": 472,
+          "shot_trials": 768,
+          "defense": {
+            "saved": 284,
+            "trials": 384,
+            "rate": 0.7395833333333334,
+            "forward_at_release": 264
+          },
+          "corner_recovery": {
+            "trials": 128,
+            "touched": 73,
+            "recovered": 17,
+            "aimed": 28,
+            "overload_seconds": 0.0,
+            "peak_load": 0.8461037316608263
+          },
+          "hot_endurance_peak": 1.0652394790227657,
+          "hot_endurance_overload_seconds": 469.93999999986255,
+          "development_screen_passed": false
+        },
+        {
+          "checkpoint": "agent_update_012000.pt",
+          "sha256": "02a236694eb1cdcbdb38607638914d2b85f99da831c5c3d89daaeeb8c0ced68e",
+          "requested_fast_shots": 463,
+          "shot_trials": 768,
+          "defense": {
+            "saved": 296,
+            "trials": 384,
+            "rate": 0.7708333333333334,
+            "forward_at_release": 252
+          },
+          "corner_recovery": {
+            "trials": 128,
+            "touched": 71,
+            "recovered": 13,
+            "aimed": 29,
+            "overload_seconds": 0.0,
+            "peak_load": 0.8036198236587144
+          },
+          "hot_endurance_peak": 1.1268271037385373,
+          "hot_endurance_overload_seconds": 449.03999999988156,
+          "development_screen_passed": false
+        },
+        {
+          "checkpoint": "agent_update_016000.pt",
+          "sha256": "8a5a9fa434973b9e7564e26b4806ed21c69c000654f7f86001d76fbc829cc63c",
+          "requested_fast_shots": 476,
+          "shot_trials": 768,
+          "defense": {
+            "saved": 280,
+            "trials": 384,
+            "rate": 0.7291666666666666,
+            "forward_at_release": 258
+          },
+          "corner_recovery": {
+            "trials": 128,
+            "touched": 66,
+            "recovered": 11,
+            "aimed": 28,
+            "overload_seconds": 0.0,
+            "peak_load": 0.7935780336860219
+          },
+          "hot_endurance_peak": 1.136397339252569,
+          "hot_endurance_overload_seconds": 1376.7399999996178,
+          "development_screen_passed": false
+        }
+      ]
+    },
+    {
+      "run": "_neural-rail30-accel100-holding-forecast-20261001-r",
+      "algorithm": "neural_ppo_v1",
+      "initialization": "runs/_neural-rail30-accel100-balanced-20261001-i/agent_step_104660992.pt",
+      "additional_ppo_steps": 48103424,
+      "training_finished": true,
+      "review": "Completed 48M additional steps and all six checkpoint evaluations. Forecasting stationary holding load did not produce a reliable sustained-load improvement: every snapshot failed the hot development screen; final peak 134.2%. Branch not selected. Retained as a documented experiment, not a deployment default.",
+      "selection_file": "logs/neural-player/expanded-100-holding-forecast-20261001/development-selection.json",
+      "selection_sha256": "fee8cdf73f1f9b44cba6c2753f37644e2184327dedd58bd0e1e41d35ce25b685",
+      "snapshots": [
+        {
+          "checkpoint": "agent_step_112787456.pt",
+          "sha256": "95d2b2889c4acf5a472bdb5b215e7b00efa81166834b1836528d6887e1289db4",
+          "requested_fast_shots": 469,
+          "shot_trials": 768,
+          "defense": {
+            "saved": 297,
+            "trials": 384,
+            "rate": 0.7734375,
+            "forward_at_release": 282
+          },
+          "corner_recovery": {
+            "trials": 128,
+            "touched": 75,
+            "recovered": 11,
+            "aimed": 20,
+            "overload_seconds": 0.0,
+            "peak_load": 0.9090050332795664
+          },
+          "hot_endurance_peak": 1.022428827636296,
+          "hot_endurance_overload_seconds": 1551.1799999996315,
+          "development_screen_passed": false
+        },
+        {
+          "checkpoint": "agent_step_120913920.pt",
+          "sha256": "d05dfd21277f2608f643f0f849225f4e086d02b0b99ace31c0f210c2d0165958",
+          "requested_fast_shots": 466,
+          "shot_trials": 768,
+          "defense": {
+            "saved": 291,
+            "trials": 384,
+            "rate": 0.7578125,
+            "forward_at_release": 279
+          },
+          "corner_recovery": {
+            "trials": 128,
+            "touched": 82,
+            "recovered": 12,
+            "aimed": 18,
+            "overload_seconds": 0.0,
+            "peak_load": 0.9101949508560716
+          },
+          "hot_endurance_peak": 1.345852387013961,
+          "hot_endurance_overload_seconds": 1079.7199999998124,
+          "development_screen_passed": false
+        },
+        {
+          "checkpoint": "agent_step_129040384.pt",
+          "sha256": "e3079a7883714a881f3901984f4848dcc61900a0e72564283795fd0efc5def01",
+          "requested_fast_shots": 481,
+          "shot_trials": 768,
+          "defense": {
+            "saved": 291,
+            "trials": 384,
+            "rate": 0.7578125,
+            "forward_at_release": 249
+          },
+          "corner_recovery": {
+            "trials": 128,
+            "touched": 78,
+            "recovered": 9,
+            "aimed": 19,
+            "overload_seconds": 0.0,
+            "peak_load": 0.9088538361651711
+          },
+          "hot_endurance_peak": 1.0639471268139258,
+          "hot_endurance_overload_seconds": 1067.8599999996088,
+          "development_screen_passed": false
+        },
+        {
+          "checkpoint": "agent_step_137166848.pt",
+          "sha256": "9dab62e04fc35e762d9afb3665b162f59e59f6ceb28fb6b4a64984d972ed1e5d",
+          "requested_fast_shots": 466,
+          "shot_trials": 768,
+          "defense": {
+            "saved": 300,
+            "trials": 384,
+            "rate": 0.78125,
+            "forward_at_release": 296
+          },
+          "corner_recovery": {
+            "trials": 128,
+            "touched": 80,
+            "recovered": 10,
+            "aimed": 22,
+            "overload_seconds": 0.0,
+            "peak_load": 0.9090664209921819
+          },
+          "hot_endurance_peak": 1.0596159442316664,
+          "hot_endurance_overload_seconds": 1269.759999999715,
+          "development_screen_passed": false
+        },
+        {
+          "checkpoint": "agent_step_145293312.pt",
+          "sha256": "8fe11eda0484ce9f15ea51feac02603333abbbe79ee2a97435c480710e5ed290",
+          "requested_fast_shots": 467,
+          "shot_trials": 768,
+          "defense": {
+            "saved": 292,
+            "trials": 384,
+            "rate": 0.7604166666666666,
+            "forward_at_release": 295
+          },
+          "corner_recovery": {
+            "trials": 128,
+            "touched": 77,
+            "recovered": 11,
+            "aimed": 18,
+            "overload_seconds": 0.0,
+            "peak_load": 0.8999664278190068
+          },
+          "hot_endurance_peak": 1.0585574331053458,
+          "hot_endurance_overload_seconds": 1848.439999999479,
+          "development_screen_passed": false
+        },
+        {
+          "checkpoint": "agent_step_152764416.pt",
+          "sha256": "fb897faf926cfd8293cee0576d8810681004e0af00b3051892fc9f231a16cfd3",
+          "requested_fast_shots": 462,
+          "shot_trials": 768,
+          "defense": {
+            "saved": 304,
+            "trials": 384,
+            "rate": 0.7916666666666666,
+            "forward_at_release": 299
+          },
+          "corner_recovery": {
+            "trials": 128,
+            "touched": 81,
+            "recovered": 15,
+            "aimed": 17,
+            "overload_seconds": 0.0,
+            "peak_load": 0.8797822722794716
+          },
+          "hot_endurance_peak": 1.3416745464108222,
+          "hot_endurance_overload_seconds": 886.099999999774,
+          "development_screen_passed": false
+        }
+      ]
+    },
+    {
+      "run": "_neural-rail30-accel100-imitation-20261001-g",
+      "algorithm": "successful_neural_trajectory_imitation_v1",
+      "initialization": "/home/xander/dev/p-airhockey/airhockey/runs/_neural-rail30-accel100-rails-20261001-d/agent_step_044171264.pt",
+      "additional_ppo_steps": null,
+      "training_finished": true,
+      "review": "Self-imitation of successful neural corner/rail recoveries, with ordinary skills preserved. All six actions remain neural outputs. Independent evaluation pending.",
+      "selection_file": "logs/neural-player/expanded-100-self-imitation-20261001/development-selection.json",
+      "selection_sha256": "37150c9cb87aeea27dcaba1fa0bb94230a8b506e06156db9537de5665ceee30d",
+      "snapshots": [
+        {
+          "checkpoint": "agent_update_002000.pt",
+          "sha256": "8eff9cc8e3fd0264d95f346e2021d59ee9689577f350b72566bd766452a00274",
+          "requested_fast_shots": 415,
+          "shot_trials": 768,
+          "defense": {
+            "saved": 271,
+            "trials": 384,
+            "rate": 0.7057291666666666,
+            "forward_at_release": 223
+          },
+          "corner_recovery": {
+            "trials": 128,
+            "touched": 76,
+            "recovered": 13,
+            "aimed": 19,
+            "overload_seconds": 0.0,
+            "peak_load": 0.8726032070623555
+          },
+          "hot_endurance_peak": 1.0618499889549897,
+          "hot_endurance_overload_seconds": 1351.6399999996406,
+          "development_screen_passed": false
+        },
+        {
+          "checkpoint": "agent_update_006000.pt",
+          "sha256": "b836e20808ad0c19b58f259fdde8d9631345885aaae5a9a0c5ccd360e2149c14",
+          "requested_fast_shots": 425,
+          "shot_trials": 768,
+          "defense": {
+            "saved": 285,
+            "trials": 384,
+            "rate": 0.7421875,
+            "forward_at_release": 213
+          },
+          "corner_recovery": {
+            "trials": 128,
+            "touched": 69,
+            "recovered": 19,
+            "aimed": 26,
+            "overload_seconds": 0.0,
+            "peak_load": 0.8632576873910748
+          },
+          "hot_endurance_peak": 1.0575437344609822,
+          "hot_endurance_overload_seconds": 1396.2199999997229,
+          "development_screen_passed": false
+        },
+        {
+          "checkpoint": "agent_update_012000.pt",
+          "sha256": "656052c16211537c4db3840f1c2331f48afb9403e17b9217db69cfec018ec71f",
+          "requested_fast_shots": 417,
+          "shot_trials": 768,
+          "defense": {
+            "saved": 283,
+            "trials": 384,
+            "rate": 0.7369791666666666,
+            "forward_at_release": 228
+          },
+          "corner_recovery": {
+            "trials": 128,
+            "touched": 54,
+            "recovered": 11,
+            "aimed": 17,
+            "overload_seconds": 0.0,
+            "peak_load": 0.8486963057882843
+          },
+          "hot_endurance_peak": 1.1334517050287767,
+          "hot_endurance_overload_seconds": 943.5399999997218,
+          "development_screen_passed": false
+        }
+      ]
+    },
+    {
+      "run": "_neural-rail30-accel100-long-recovery-20261001-q",
+      "algorithm": "successful_neural_trajectory_imitation_v1",
+      "initialization": "/home/xander/dev/p-airhockey/airhockey/runs/_neural-rail30-accel100-balanced-20261001-i/agent_step_104660992.pt",
+      "additional_ppo_steps": null,
+      "training_finished": true,
+      "review": "Selected update 12000 as rail30-100-20261001-v1. Requested fast shots 918/1536 vs old 812/1536; moving-release saves 770/1024 vs 748/1024; corner recoveries 22/128 vs 11/128 on development fixtures. Nominal endurance: 16/16 passed, plus 8/8 fresh confirmation; hot stress failed 5/16. Simulation candidate only; physical workspace integration and qualification pending.",
+      "selection_file": "logs/neural-player/expanded-100-long-recovery-20261001/development-selection.json",
+      "selection_sha256": "457a54675fee67b64db520b0d2bd0e45272eaf99c90287dc1a48599780016f61",
+      "snapshots": [
+        {
+          "checkpoint": "agent_update_002000.pt",
+          "sha256": "52d16685da161b8345787359406212aacba36894bca68f5ad7747c28c3c114c1",
+          "requested_fast_shots": 467,
+          "shot_trials": 768,
+          "defense": {
+            "saved": 297,
+            "trials": 384,
+            "rate": 0.7734375,
+            "forward_at_release": 276
+          },
+          "corner_recovery": {
+            "trials": 128,
+            "touched": 77,
+            "recovered": 19,
+            "aimed": 28,
+            "overload_seconds": 0.0,
+            "peak_load": 0.8538927333174131
+          },
+          "hot_endurance_peak": 1.1032752267900607,
+          "hot_endurance_overload_seconds": 1557.9399999995119,
+          "development_screen_passed": false
+        },
+        {
+          "checkpoint": "agent_update_006000.pt",
+          "sha256": "2c3e3f01f4e6bd7c8e7e40ff2367c7faf7cff3a45f8d9281b8910fbbe67f7053",
+          "requested_fast_shots": 465,
+          "shot_trials": 768,
+          "defense": {
+            "saved": 297,
+            "trials": 384,
+            "rate": 0.7734375,
+            "forward_at_release": 278
+          },
+          "corner_recovery": {
+            "trials": 128,
+            "touched": 69,
+            "recovered": 19,
+            "aimed": 27,
+            "overload_seconds": 0.0,
+            "peak_load": 0.8275780977933407
+          },
+          "hot_endurance_peak": 1.063893876849473,
+          "hot_endurance_overload_seconds": 1179.1599999997266,
+          "development_screen_passed": false
+        },
+        {
+          "checkpoint": "agent_update_012000.pt",
+          "sha256": "39aa7a501edc127bc37fd2e500578366c2b0a735a45eb0b628acd07c5bddf629",
+          "requested_fast_shots": 466,
+          "shot_trials": 768,
+          "defense": {
+            "saved": 294,
+            "trials": 384,
+            "rate": 0.765625,
+            "forward_at_release": 279
+          },
+          "corner_recovery": {
+            "trials": 128,
+            "touched": 77,
+            "recovered": 22,
+            "aimed": 29,
+            "overload_seconds": 0.0,
+            "peak_load": 0.8121338962489779
+          },
+          "hot_endurance_peak": 1.0296137575479942,
+          "hot_endurance_overload_seconds": 1128.1800000000198,
+          "development_screen_passed": false
+        },
+        {
+          "checkpoint": "agent_update_016000.pt",
+          "sha256": "d321dca8958d39aafd49abb04b706308a91a5869c3ef788ce5ec5a1b23bf14d8",
+          "requested_fast_shots": 477,
+          "shot_trials": 768,
+          "defense": {
+            "saved": 289,
+            "trials": 384,
+            "rate": 0.7526041666666666,
+            "forward_at_release": 282
+          },
+          "corner_recovery": {
+            "trials": 128,
+            "touched": 72,
+            "recovered": 25,
+            "aimed": 35,
+            "overload_seconds": 0.0,
+            "peak_load": 0.795091783262682
+          },
+          "hot_endurance_peak": 1.0593290223490208,
+          "hot_endurance_overload_seconds": 557.0599999997834,
+          "development_screen_passed": false
+        }
+      ]
+    },
+    {
+      "run": "_neural-rail30-accel100-rails-20261001-d",
+      "algorithm": "neural_ppo_v1",
+      "initialization": "runs/_neural-rail30-accel100-corners-20261001-c/agent.pt",
+      "additional_ppo_steps": 39845888,
+      "training_finished": true,
+      "review": "Stopped after comparing saved checkpoints. Corner recovery plateaued and all completed sustained tests exceeded modeled load limits; retained as a shooting baseline and source for learned recovery fitting.",
+      "selection_file": "logs/neural-player/expanded-100-rails-20261001/development-selection.json",
+      "selection_sha256": "d5b2765b04bb88db392b4dda007f85b9ce1c45acc768d36f47c63a5ce02ed67e",
+      "snapshots": [
+        {
+          "checkpoint": "agent_step_036110336.pt",
+          "sha256": "36ebe0677545a566f627a5099a19ab3b1965162895e2c893b53ccb5777416a63",
+          "requested_fast_shots": 462,
+          "shot_trials": 768,
+          "defense": {
+            "saved": 274,
+            "trials": 384,
+            "rate": 0.7135416666666666,
+            "forward_at_release": 224
+          },
+          "corner_recovery": {
+            "trials": 128,
+            "touched": 83,
+            "recovered": 9,
+            "aimed": 11,
+            "overload_seconds": 0.0,
+            "peak_load": 0.8983614136175853
+          },
+          "hot_endurance_peak": 1.2602034502845134,
+          "hot_endurance_overload_seconds": 2582.399999999101,
+          "development_screen_passed": false
+        },
+        {
+          "checkpoint": "agent_step_044171264.pt",
+          "sha256": "3c40e80bce8327bc4d31268f888414d08ff782c1b087c70c91b9edacf07382fb",
+          "requested_fast_shots": 477,
+          "shot_trials": 768,
+          "defense": {
+            "saved": 272,
+            "trials": 384,
+            "rate": 0.7083333333333334,
+            "forward_at_release": 223
+          },
+          "corner_recovery": {
+            "trials": 128,
+            "touched": 78,
+            "recovered": 10,
+            "aimed": 13,
+            "overload_seconds": 0.0,
+            "peak_load": 0.875906748389017
+          },
+          "hot_endurance_peak": 1.0711547600166624,
+          "hot_endurance_overload_seconds": 2108.3199999995322,
+          "development_screen_passed": false
+        },
+        {
+          "checkpoint": "agent_step_052232192.pt",
+          "sha256": "4bb3f38f47537d73cd0be5cb153efbb4bcde095bdc9f9db42d8ba9adcc11e4ec",
+          "requested_fast_shots": 461,
+          "shot_trials": 768,
+          "defense": {
+            "saved": 278,
+            "trials": 384,
+            "rate": 0.7239583333333334,
+            "forward_at_release": 241
+          },
+          "corner_recovery": {
+            "trials": 128,
+            "touched": 78,
+            "recovered": 10,
+            "aimed": 18,
+            "overload_seconds": 0.0,
+            "peak_load": 0.8746107124233063
+          },
+          "hot_endurance_peak": 1.2747423717904718,
+          "hot_endurance_overload_seconds": 1321.1799999996683,
+          "development_screen_passed": false
+        },
+        {
+          "checkpoint": "agent_step_060293120.pt",
+          "sha256": "145b528fe2a7750e65311771b25ef408c7571afe7fb77af81941f0ce453a8408",
+          "requested_fast_shots": 458,
+          "shot_trials": 768,
+          "defense": {
+            "saved": 273,
+            "trials": 384,
+            "rate": 0.7109375,
+            "forward_at_release": 214
+          },
+          "corner_recovery": {
+            "trials": 128,
+            "touched": 76,
+            "recovered": 10,
+            "aimed": 16,
+            "overload_seconds": 0.0,
+            "peak_load": 0.8913458135019602
+          },
+          "hot_endurance_peak": 1.0568489461540458,
+          "hot_endurance_overload_seconds": 1326.039999999664,
+          "development_screen_passed": false
+        },
+        {
+          "checkpoint": "agent_step_067895296.pt",
+          "sha256": "10daee2077a5f5acd5c518808511fa6c834e24c2cc4097f978443ba9bb47a931",
+          "requested_fast_shots": 448,
+          "shot_trials": 768,
+          "defense": {
+            "saved": 289,
+            "trials": 384,
+            "rate": 0.7526041666666666,
+            "forward_at_release": 183
+          },
+          "corner_recovery": {
+            "trials": 128,
+            "touched": 78,
+            "recovered": 9,
+            "aimed": 19,
+            "overload_seconds": 0.0,
+            "peak_load": 0.8729726291173937
+          },
+          "hot_endurance_peak": 1.0257752802892623,
+          "hot_endurance_overload_seconds": 968.8999999996987,
+          "development_screen_passed": false
+        }
+      ]
+    },
+    {
+      "run": "_neural-rail30-accel100-recovery-20261001-e",
+      "algorithm": "neural_ppo_v1",
+      "initialization": "runs/_neural-rail30-accel100-20261001-a/agent_step_028442624.pt",
+      "additional_ppo_steps": 96075776,
+      "training_finished": true,
+      "review": "Completed 96M additional steps. Broader corner practice did not resolve sustained load failures; not selected.",
+      "selection_file": "logs/neural-player/expanded-100-recovery-20261001/development-selection.json",
+      "selection_sha256": "748c22b56f9d9b731244642242b6224bb71c8654d9f036c8cf2fa8ab641cedac",
+      "snapshots": [
+        {
+          "checkpoint": "agent_step_036569088.pt",
+          "sha256": "6ea9797eeb1a71dad1c165c4d7a3df2ae2499e8f159b8e5e10023f0b7b92d7cf",
+          "requested_fast_shots": 450,
+          "shot_trials": 768,
+          "defense": {
+            "saved": 278,
+            "trials": 384,
+            "rate": 0.7239583333333334,
+            "forward_at_release": 254
+          },
+          "corner_recovery": {
+            "trials": 128,
+            "touched": 79,
+            "recovered": 8,
+            "aimed": 13,
+            "overload_seconds": 0.0,
+            "peak_load": 0.8615500828093973
+          },
+          "hot_endurance_peak": 1.254045767866945,
+          "hot_endurance_overload_seconds": 1389.679999999896,
+          "development_screen_passed": false
+        },
+        {
+          "checkpoint": "agent_step_044695552.pt",
+          "sha256": "1b35cb39ca639c7080155a3dd9d441bfe610d36d6a1d64608f44f98fcd9c263d",
+          "requested_fast_shots": 446,
+          "shot_trials": 768,
+          "defense": {
+            "saved": 290,
+            "trials": 384,
+            "rate": 0.7552083333333334,
+            "forward_at_release": 245
+          },
+          "corner_recovery": {
+            "trials": 128,
+            "touched": 82,
+            "recovered": 6,
+            "aimed": 15,
+            "overload_seconds": 0.0,
+            "peak_load": 0.8809361519710015
+          },
+          "hot_endurance_peak": 1.0647730299550786,
+          "hot_endurance_overload_seconds": 1209.9999999997694,
+          "development_screen_passed": false
+        },
+        {
+          "checkpoint": "agent_step_052822016.pt",
+          "sha256": "623742ea62bd02d7e21647d8edfbf36885393da070877ffb58a2e56bb7a9269d",
+          "requested_fast_shots": 469,
+          "shot_trials": 768,
+          "defense": {
+            "saved": 281,
+            "trials": 384,
+            "rate": 0.7317708333333334,
+            "forward_at_release": 254
+          },
+          "corner_recovery": {
+            "trials": 128,
+            "touched": 79,
+            "recovered": 6,
+            "aimed": 16,
+            "overload_seconds": 0.0,
+            "peak_load": 0.8844028760755965
+          },
+          "hot_endurance_peak": 1.3458526134014106,
+          "hot_endurance_overload_seconds": 1976.979999999362,
+          "development_screen_passed": false
+        },
+        {
+          "checkpoint": "agent_step_060948480.pt",
+          "sha256": "4817b6fcf1e9fc01e54869102b3c3e5881c5bd0efd9b71838856b2791659329e",
+          "requested_fast_shots": 464,
+          "shot_trials": 768,
+          "defense": {
+            "saved": 278,
+            "trials": 384,
+            "rate": 0.7239583333333334,
+            "forward_at_release": 255
+          },
+          "corner_recovery": {
+            "trials": 128,
+            "touched": 84,
+            "recovered": 9,
+            "aimed": 20,
+            "overload_seconds": 0.0,
+            "peak_load": 0.8836008265045693
+          },
+          "hot_endurance_peak": 1.1053224712957739,
+          "hot_endurance_overload_seconds": 1703.4799999996144,
+          "development_screen_passed": false
+        },
+        {
+          "checkpoint": "agent_step_069074944.pt",
+          "sha256": "a909e73af001d59275ab9bbe8e5ba362de901b72b1e55379face44fd84a65989",
+          "requested_fast_shots": 462,
+          "shot_trials": 768,
+          "defense": {
+            "saved": 290,
+            "trials": 384,
+            "rate": 0.7552083333333334,
+            "forward_at_release": 278
+          },
+          "corner_recovery": {
+            "trials": 128,
+            "touched": 77,
+            "recovered": 8,
+            "aimed": 18,
+            "overload_seconds": 0.0,
+            "peak_load": 0.8512530296946957
+          },
+          "hot_endurance_peak": 1.072274827253872,
+          "hot_endurance_overload_seconds": 2404.2199999992636,
+          "development_screen_passed": false
+        },
+        {
+          "checkpoint": "agent_step_077201408.pt",
+          "sha256": "099863268f2f3741f21a846d0d65f14ec100ad26c951e9480b849ce1ee0fb0d7",
+          "requested_fast_shots": 469,
+          "shot_trials": 768,
+          "defense": {
+            "saved": 289,
+            "trials": 384,
+            "rate": 0.7526041666666666,
+            "forward_at_release": 276
+          },
+          "corner_recovery": {
+            "trials": 128,
+            "touched": 78,
+            "recovered": 6,
+            "aimed": 11,
+            "overload_seconds": 0.0,
+            "peak_load": 0.8709119764983587
+          },
+          "hot_endurance_peak": 1.0563298522686626,
+          "hot_endurance_overload_seconds": 1068.1199999996086,
+          "development_screen_passed": false
+        },
+        {
+          "checkpoint": "agent_step_085327872.pt",
+          "sha256": "ce400d78896ffa77ab20260ad2aaa547e0a68f38599bbbf72e4d1422f5bc0911",
+          "requested_fast_shots": 490,
+          "shot_trials": 768,
+          "defense": {
+            "saved": 287,
+            "trials": 384,
+            "rate": 0.7473958333333334,
+            "forward_at_release": 294
+          },
+          "corner_recovery": {
+            "trials": 128,
+            "touched": 78,
+            "recovered": 7,
+            "aimed": 17,
+            "overload_seconds": 0.0,
+            "peak_load": 0.837235359509578
+          },
+          "hot_endurance_peak": 1.0666518680351316,
+          "hot_endurance_overload_seconds": 1916.8799999994164,
+          "development_screen_passed": false
+        },
+        {
+          "checkpoint": "agent_step_093454336.pt",
+          "sha256": "bd752db45e16dc22c5111bf893053bce9870db6d038ab6f530652de33503206e",
+          "requested_fast_shots": 471,
+          "shot_trials": 768,
+          "defense": {
+            "saved": 292,
+            "trials": 384,
+            "rate": 0.7604166666666666,
+            "forward_at_release": 267
+          },
+          "corner_recovery": {
+            "trials": 128,
+            "touched": 78,
+            "recovered": 10,
+            "aimed": 20,
+            "overload_seconds": 0.0,
+            "peak_load": 0.8296267262466412
+          },
+          "hot_endurance_peak": 1.0593073768482997,
+          "hot_endurance_overload_seconds": 1389.8599999996059,
+          "development_screen_passed": false
+        },
+        {
+          "checkpoint": "agent_step_101580800.pt",
+          "sha256": "916c700483e7abbd34ce7b7c85be9a11be01be9904edd442ee2c9196cfd46e7e",
+          "requested_fast_shots": 474,
+          "shot_trials": 768,
+          "defense": {
+            "saved": 281,
+            "trials": 384,
+            "rate": 0.7317708333333334,
+            "forward_at_release": 282
+          },
+          "corner_recovery": {
+            "trials": 128,
+            "touched": 81,
+            "recovered": 9,
+            "aimed": 14,
+            "overload_seconds": 0.0,
+            "peak_load": 0.8641934403526443
+          },
+          "hot_endurance_peak": 1.057064111528593,
+          "hot_endurance_overload_seconds": 1244.7399999997378,
+          "development_screen_passed": false
+        },
+        {
+          "checkpoint": "agent_step_109707264.pt",
+          "sha256": "632b9a21d6a9733376ca9ec07354fb8172a5b645849e22fcc6d1eac9d60a3f07",
+          "requested_fast_shots": 471,
+          "shot_trials": 768,
+          "defense": {
+            "saved": 292,
+            "trials": 384,
+            "rate": 0.7604166666666666,
+            "forward_at_release": 277
+          },
+          "corner_recovery": {
+            "trials": 128,
+            "touched": 80,
+            "recovered": 8,
+            "aimed": 15,
+            "overload_seconds": 0.0,
+            "peak_load": 0.8420305768693558
+          },
+          "hot_endurance_peak": 1.1004843081611289,
+          "hot_endurance_overload_seconds": 1108.3399999997246,
+          "development_screen_passed": false
+        },
+        {
+          "checkpoint": "agent_step_117833728.pt",
+          "sha256": "8fe63aae42a93be06b266e129fad918a7e48adc366fa359b2215ca876ea2a7fb",
+          "requested_fast_shots": 464,
+          "shot_trials": 768,
+          "defense": {
+            "saved": 279,
+            "trials": 384,
+            "rate": 0.7265625,
+            "forward_at_release": 281
+          },
+          "corner_recovery": {
+            "trials": 128,
+            "touched": 78,
+            "recovered": 10,
+            "aimed": 19,
+            "overload_seconds": 0.0,
+            "peak_load": 0.8350172153796587
+          },
+          "hot_endurance_peak": 1.1874500444480927,
+          "hot_endurance_overload_seconds": 300.82000000001636,
+          "development_screen_passed": false
+        },
+        {
+          "checkpoint": "agent_step_124518400.pt",
+          "sha256": "c46c5a629423c6dd45ea9bb0f01b68df7a2ba1f7d2ddc5fad4905c2d0969a739",
+          "requested_fast_shots": 448,
+          "shot_trials": 768,
+          "defense": {
+            "saved": 279,
+            "trials": 384,
+            "rate": 0.7265625,
+            "forward_at_release": 272
+          },
+          "corner_recovery": {
+            "trials": 128,
+            "touched": 75,
+            "recovered": 7,
+            "aimed": 15,
+            "overload_seconds": 0.0,
+            "peak_load": 0.8323608578614766
+          },
+          "hot_endurance_peak": 1.1812233117935087,
+          "hot_endurance_overload_seconds": 1590.6199999995047,
+          "development_screen_passed": false
+        }
+      ]
+    },
+    {
+      "run": "_neural-rail30-accel100-thermal-urgency-20261001-o",
+      "algorithm": "neural_ppo_v1",
+      "initialization": "runs/_neural-rail30-accel100-hard-corners-20261001-j/agent_update_002000.pt",
+      "additional_ppo_steps": 64094208,
+      "training_finished": true,
+      "review": "Completed 64M steps separating ordinary movement cost from stronger thermal urgency. No snapshot passed the sustained hot-load screen; this branch was not selected.",
+      "selection_file": "logs/neural-player/expanded-100-thermal-urgency-20261001/development-selection.json",
+      "selection_sha256": "795f126d56069810f520b5bf65a86c97d42efcded1f8cf8afd09c4c215d619a0",
+      "snapshots": [
+        {
+          "checkpoint": "agent_step_008126464.pt",
+          "sha256": "85437b1cedad66e8c85ebfedc3821a0d07e9cd1202eb34f9cfc5d6e0aedc2f9c",
+          "requested_fast_shots": 453,
+          "shot_trials": 768,
+          "defense": {
+            "saved": 298,
+            "trials": 384,
+            "rate": 0.7760416666666666,
+            "forward_at_release": 280
+          },
+          "corner_recovery": {
+            "trials": 128,
+            "touched": 74,
+            "recovered": 16,
+            "aimed": 21,
+            "overload_seconds": 0.0,
+            "peak_load": 0.8503854909807305
+          },
+          "hot_endurance_peak": 1.2221604312164658,
+          "hot_endurance_overload_seconds": 405.49999999992116,
+          "development_screen_passed": false
+        },
+        {
+          "checkpoint": "agent_step_016252928.pt",
+          "sha256": "80c9666e8925742cb9fae1a01774a24b0a52a98834db2c774da2945970b1db99",
+          "requested_fast_shots": 421,
+          "shot_trials": 768,
+          "defense": {
+            "saved": 297,
+            "trials": 384,
+            "rate": 0.7734375,
+            "forward_at_release": 280
+          },
+          "corner_recovery": {
+            "trials": 128,
+            "touched": 72,
+            "recovered": 11,
+            "aimed": 20,
+            "overload_seconds": 0.0,
+            "peak_load": 0.8394042083848442
+          },
+          "hot_endurance_peak": 1.2099302986258091,
+          "hot_endurance_overload_seconds": 1209.6399999997698,
+          "development_screen_passed": false
+        },
+        {
+          "checkpoint": "agent_step_024379392.pt",
+          "sha256": "bfe003a06a81dd2d2d98e590460382da623c45b97c7134c65d8d426e45de5404",
+          "requested_fast_shots": 460,
+          "shot_trials": 768,
+          "defense": {
+            "saved": 302,
+            "trials": 384,
+            "rate": 0.7864583333333334,
+            "forward_at_release": 284
+          },
+          "corner_recovery": {
+            "trials": 128,
+            "touched": 74,
+            "recovered": 8,
+            "aimed": 20,
+            "overload_seconds": 0.0,
+            "peak_load": 0.8412146646958292
+          },
+          "hot_endurance_peak": 1.0456910449177466,
+          "hot_endurance_overload_seconds": 96.11999999999802,
+          "development_screen_passed": false
+        },
+        {
+          "checkpoint": "agent_step_032505856.pt",
+          "sha256": "79167bd3f242bbf40d0fe19a78c74082ae62e4cea7543c4185020e01b616509f",
+          "requested_fast_shots": 437,
+          "shot_trials": 768,
+          "defense": {
+            "saved": 307,
+            "trials": 384,
+            "rate": 0.7994791666666666,
+            "forward_at_release": 302
+          },
+          "corner_recovery": {
+            "trials": 128,
+            "touched": 77,
+            "recovered": 12,
+            "aimed": 22,
+            "overload_seconds": 0.0,
+            "peak_load": 0.8534948668322306
+          },
+          "hot_endurance_peak": 1.258424396320612,
+          "hot_endurance_overload_seconds": 1005.079999999946,
+          "development_screen_passed": false
+        },
+        {
+          "checkpoint": "agent_step_040632320.pt",
+          "sha256": "6d1f65aa0226dd0a6fd9337173b9da5e65895937acaca6384704822511a36a12",
+          "requested_fast_shots": 449,
+          "shot_trials": 768,
+          "defense": {
+            "saved": 297,
+            "trials": 384,
+            "rate": 0.7734375,
+            "forward_at_release": 298
+          },
+          "corner_recovery": {
+            "trials": 128,
+            "touched": 78,
+            "recovered": 11,
+            "aimed": 19,
+            "overload_seconds": 0.0,
+            "peak_load": 0.8412697555989305
+          },
+          "hot_endurance_peak": 1.2096602411046726,
+          "hot_endurance_overload_seconds": 1625.0599999996818,
+          "development_screen_passed": false
+        },
+        {
+          "checkpoint": "agent_step_048758784.pt",
+          "sha256": "e5bf5246a7a469cdca132f53e40d02a307772e5a23ac0eb84a8f4f5b72cc97cc",
+          "requested_fast_shots": 458,
+          "shot_trials": 768,
+          "defense": {
+            "saved": 302,
+            "trials": 384,
+            "rate": 0.7864583333333334,
+            "forward_at_release": 300
+          },
+          "corner_recovery": {
+            "trials": 128,
+            "touched": 70,
+            "recovered": 8,
+            "aimed": 18,
+            "overload_seconds": 0.0,
+            "peak_load": 0.860632397202028
+          },
+          "hot_endurance_peak": 1.04957717338956,
+          "hot_endurance_overload_seconds": 1380.2799999996146,
+          "development_screen_passed": false
+        },
+        {
+          "checkpoint": "agent_step_056885248.pt",
+          "sha256": "c5b84451544e5155779254ef281d642a27a8d78adc48e4887b2661ca929a9bae",
+          "requested_fast_shots": 454,
+          "shot_trials": 768,
+          "defense": {
+            "saved": 297,
+            "trials": 384,
+            "rate": 0.7734375,
+            "forward_at_release": 303
+          },
+          "corner_recovery": {
+            "trials": 128,
+            "touched": 74,
+            "recovered": 8,
+            "aimed": 20,
+            "overload_seconds": 0.0,
+            "peak_load": 0.8592420176064997
+          },
+          "hot_endurance_peak": 1.2881865142816493,
+          "hot_endurance_overload_seconds": 1003.6400000001388,
+          "development_screen_passed": false
+        },
+        {
+          "checkpoint": "agent_step_064094208.pt",
+          "sha256": "211049459aa410fcf58ef78f4895c0c89aaf8cbd3700c588d864e3a504adbf39",
+          "requested_fast_shots": 427,
+          "shot_trials": 768,
+          "defense": {
+            "saved": 303,
+            "trials": 384,
+            "rate": 0.7890625,
+            "forward_at_release": 305
+          },
+          "corner_recovery": {
+            "trials": 128,
+            "touched": 70,
+            "recovered": 7,
+            "aimed": 16,
+            "overload_seconds": 0.0,
+            "peak_load": 0.8760665578319471
+          },
+          "hot_endurance_peak": 1.042782019526293,
+          "hot_endurance_overload_seconds": 459.2199999998723,
+          "development_screen_passed": false
+        }
+      ]
+    },
+    {
+      "run": "_neural-rail30-accel100-wide-edge-20261001-m",
+      "algorithm": "neural_ppo_v1",
+      "initialization": "runs/_neural-rail30-accel100-balanced-20261001-i/agent_step_096534528.pt",
+      "additional_ppo_steps": 32112640,
+      "training_finished": true,
+      "review": "Completed 32M additional steps with a wider gentle edge penalty. Strong shooting retained, but sustained overloads remain. Not selected.",
+      "selection_file": "logs/neural-player/expanded-100-wide-edge-20261001/development-selection.json",
+      "selection_sha256": "e274f9c1c8b5de95d8d941c6be160ec17b2683be08e830cc3f39b7ddbacb7ff6",
+      "snapshots": [
+        {
+          "checkpoint": "agent_step_104660992.pt",
+          "sha256": "7730b2a3adc57094de069daed700fa6530c37ef6a0c12d831a194dba94fc0d92",
+          "requested_fast_shots": 461,
+          "shot_trials": 768,
+          "defense": {
+            "saved": 303,
+            "trials": 384,
+            "rate": 0.7890625,
+            "forward_at_release": 273
+          },
+          "corner_recovery": {
+            "trials": 128,
+            "touched": 79,
+            "recovered": 6,
+            "aimed": 17,
+            "overload_seconds": 0.0,
+            "peak_load": 0.9094439317400146
+          },
+          "hot_endurance_peak": 1.0324554289007188,
+          "hot_endurance_overload_seconds": 1128.9799999998431,
+          "development_screen_passed": false
+        },
+        {
+          "checkpoint": "agent_step_112787456.pt",
+          "sha256": "93299fe9d18f304977a8dafabda240635c08b179824eb62c8356459a13135935",
+          "requested_fast_shots": 480,
+          "shot_trials": 768,
+          "defense": {
+            "saved": 297,
+            "trials": 384,
+            "rate": 0.7734375,
+            "forward_at_release": 273
+          },
+          "corner_recovery": {
+            "trials": 128,
+            "touched": 80,
+            "recovered": 7,
+            "aimed": 22,
+            "overload_seconds": 0.0,
+            "peak_load": 0.9100923696156332
+          },
+          "hot_endurance_peak": 1.0128515741806323,
+          "hot_endurance_overload_seconds": 567.1800000000212,
+          "development_screen_passed": false
+        },
+        {
+          "checkpoint": "agent_step_120913920.pt",
+          "sha256": "2e7cc7235219434cd9dadf92d1f69ac8c50767ad0ceedcb5f3f8df512a55f48e",
+          "requested_fast_shots": 473,
+          "shot_trials": 768,
+          "defense": {
+            "saved": 303,
+            "trials": 384,
+            "rate": 0.7890625,
+            "forward_at_release": 280
+          },
+          "corner_recovery": {
+            "trials": 128,
+            "touched": 83,
+            "recovered": 11,
+            "aimed": 14,
+            "overload_seconds": 0.0,
+            "peak_load": 0.9096648045460487
+          },
+          "hot_endurance_peak": 1.3458526936530146,
+          "hot_endurance_overload_seconds": 699.4399999999438,
+          "development_screen_passed": false
+        },
+        {
+          "checkpoint": "agent_step_128647168.pt",
+          "sha256": "1af51f227e8d27c71725a28c559a53c0a1a534ae86f5c5cbc4643ad92ed0ec80",
+          "requested_fast_shots": 490,
+          "shot_trials": 768,
+          "defense": {
+            "saved": 294,
+            "trials": 384,
+            "rate": 0.765625,
+            "forward_at_release": 283
+          },
+          "corner_recovery": {
+            "trials": 128,
+            "touched": 74,
+            "recovered": 7,
+            "aimed": 17,
+            "overload_seconds": 0.0,
+            "peak_load": 0.9096155062212994
+          },
+          "hot_endurance_peak": 1.3458526464985057,
+          "hot_endurance_overload_seconds": 1681.4799999996305,
+          "development_screen_passed": false
+        }
+      ]
+    }
+  ],
+  "total_additional_ppo_transitions": 643563520
+}

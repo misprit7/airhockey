@@ -169,7 +169,7 @@
     "The balanced PPO branch produced the strongest shooting results, but failed some long nominal and hot-load matches.",
     "Longer coherent neural exploration and successful-trajectory imitation improved corner recovery without adding a tactical controller.",
     "Stronger edge penalties, thermal urgency, forecast holding-load penalties and policy averaging were tested separately; their development and independent failures remain in the logs.",
-    "The final fast-release defense continuation put more weight on pre-release goal coverage and practiced 10\u201318 m/s shots. Its evaluated snapshots did not establish a better overall candidate."
+    "The final fast-release defense continuation practiced 10\u201318 m/s shots with stronger pre-release coverage rewards. Its final development save count was 295/384 versus 294/384 for the selected candidate, corner recovery fell to 12/128 versus 22/128, and all four snapshots failed the hot-load screen; it was not selected."
   ],
   "provenance": {
     "evidence": {
@@ -250,6 +250,9 @@
     "replay_sha256": "ef960b3a728784daeaf3527b006c1a3e43efdae276a973df7b69724350a7db50",
     "replay_seed": 20261101,
     "replay_seconds": 180,
-    "replay_description": "Full unedited first match of a four-match fixed-seed self-play audit; both sides use the selected checkpoint."
+    "replay_description": "Full unedited first match of a four-match fixed-seed self-play audit; both sides use the selected checkpoint.",
+    "experiment_comparison": "ai/recipes/rail30-100-20261001-experiments.json",
+    "experiment_comparison_sha256": "8ead120a7cf5ab3b5ca4ad91210c0026398c1befb81ce39a5e83240bfc4d2779",
+    "total_additional_ppo_transitions": 643563520
   }
 }
