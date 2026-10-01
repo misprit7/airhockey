@@ -153,3 +153,16 @@ def test_edge_exploration_uses_expanded_bounds_and_reaches_back_corners():
     samples=sampler.sample(obs,context,torch.zeros(3,dtype=torch.bool))
     assert (samples[:2].abs().sum(-1)>0).all()
     assert samples[2].count_nonzero()==0
+
+
+def test_watcher_rescans_snapshots_written_during_final_evaluation(tmp_path):
+    import importlib.util
+    path=Path(__file__).resolve().parents[1]/'bin/watch_expanded_training.py'
+    spec=importlib.util.spec_from_file_location('expanded_watcher',path)
+    module=importlib.util.module_from_spec(spec);spec.loader.exec_module(module)
+    first=tmp_path/'agent_update_002000.pt';first.touch()
+    seen=set();assert module.pending_checkpoints(tmp_path,seen)==[first]
+    # The fitter finishes while the first evaluation is still running.
+    last=tmp_path/'agent_update_012000.pt';last.touch();seen.add(str(first))
+    assert module.pending_checkpoints(tmp_path,seen)==[last]
+    seen.add(str(last));assert not module.pending_checkpoints(tmp_path,seen)

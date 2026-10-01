@@ -8,6 +8,9 @@ ROOT=Path(__file__).resolve().parents[2]
 def write(path,data):
  tmp=path.with_suffix('.tmp');tmp.write_text(json.dumps(data,indent=2));tmp.replace(path)
 
+def pending_checkpoints(run,seen):
+ return sorted((p for pattern in ('agent_step_*.pt','agent_update_*.pt') for p in run.glob(pattern) if str(p) not in seen),key=lambda p:int(p.stem.rsplit('_',1)[1]))
+
 def main():
  p=argparse.ArgumentParser();p.add_argument('--run',required=True,type=Path);p.add_argument('--output-dir',required=True,type=Path)
  a=p.parse_args();a.output_dir.mkdir(parents=True,exist_ok=True)
@@ -21,7 +24,7 @@ def main():
     cwd=ROOT,stdout=log,stderr=subprocess.STDOUT,check=True,env=dict(os.environ,PYTHONPATH=str(ROOT/'ai'),OPENBLAS_NUM_THREADS='1',OMP_NUM_THREADS='2'))
   return json.loads(out.read_text())
  while True:
-  pending=sorted((p for p in a.run.glob('agent_step_*.pt') if str(p) not in seen),key=lambda p:int(p.stem.rsplit('_',1)[1]))
+  pending=pending_checkpoints(a.run,seen)
   for ckpt in pending:
    report=a.output_dir/ckpt.stem;report.mkdir(exist_ok=True)
    skill=call('eval_neural_player.py',ckpt,report/'skills.json',['--skills-only','--per-task','128','--request-suite','--receiving-min','3','--receiving-max','8','--seed','20261011'])
@@ -47,7 +50,9 @@ def main():
    rows.append(row);seen.add(str(ckpt));write(selection,dict(rows=rows))
    print(json.dumps(row),flush=True)
   status=a.run/'status.json'
-  if status.exists() and not json.loads(status.read_text()).get('running',True):break
+  # Training may have written its final snapshots while this batch evaluated.
+  # Drain them before exiting, including rapid imitation-fit snapshots.
+  if status.exists() and not json.loads(status.read_text()).get('running',True) and not pending_checkpoints(a.run,seen):break
   time.sleep(10)
 
 if __name__=='__main__':main()
