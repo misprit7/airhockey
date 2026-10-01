@@ -143,7 +143,12 @@ def training_status(root, *, process_map=None, now=None, limit=12):
         if not (meta.get('deployment_ready') or meta.get('simulation_candidate')):
             continue
         review = read_json(file.parent / 'review.json')
+        replay_name = meta.get('replay_file')
+        replay = recordings / Path(replay_name).name if isinstance(replay_name, str) else None
         packages.append(dict(name=file.parent.name, note=review.get('summary', 'Packaged policy; see its qualification report for limitations.'),
+                             simulation_candidate=bool(meta.get('simulation_candidate')),
+                             deployment_ready=bool(meta.get('deployment_ready')),
+                             replay=_link(replay) if replay and replay.exists() else None,
                              checkpoint=meta.get('selected_checkpoint'), sha256=meta.get('selected_checkpoint_sha256'),
                              updated_at=file.stat().st_mtime))
     packages.sort(key=lambda p: p['updated_at'], reverse=True)

@@ -102,3 +102,14 @@ def test_explicit_progress_and_early_stop(tmp_path):
     assert result['completed_steps'] == 50
     assert result['state'] == 'Stopped before step target'
     assert result['eta_s'] is None
+
+
+def test_simulation_package_links_its_selected_replay(tmp_path):
+    run=tmp_path/'runs/expanded-candidate'
+    write(run/'qualification.json',{'physical_qualification':False})
+    write(run/'run.json',{'simulation_candidate':True,'deployment_ready':False,
+        'replay_file':'selected.json','selected_checkpoint':'source.pt'})
+    write(tmp_path/'ai/recordings/selected.json',{})
+    package=training_status(tmp_path,process_map={})['packages'][0]
+    assert package['simulation_candidate'] and not package['deployment_ready']
+    assert package['replay']=='/?replay=selected.json'
