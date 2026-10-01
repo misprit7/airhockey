@@ -110,7 +110,8 @@ def summarize_load(rows):
 def score(rows, trial, latency=.015):
     """Use fixed camera latency, never fit away motor lag independently per move."""
     ctl={r['ctl_t']:r for r in rows if 'ctl_t' in r}
-    cams={r['cam_t']:r for r in rows if 'cam_t' in r}
+    cams={r['cam_t']:r for r in rows if 'cam_t' in r and r.get('camera_valid',True)}
+    rejected={r.get('cam_t') for r in rows if not r.get('camera_valid',True)}
     if len(ctl)<5 or len(cams)<8:
         return dict(passed=False, reason='insufficient independent motion/camera samples')
     ct=np.array(sorted(ctl)); cp=np.array([ctl[t]['ctl'][:2] for t in ct])
@@ -136,12 +137,14 @@ def score(rows, trial, latency=.015):
         tracking_p95_mm=float(np.percentile(gap,95)), tracking_max_mm=float(gap.max()),
         unshifted_tracking_p95_mm=float(np.percentile(np.linalg.norm(p-raw,axis=1),95)),
         end_error_mm=residual,camera_samples=len(t),max_camera_gap_s=camera_gap,
+        camera_rejected_frames=len(rejected),tracking_had_gaps=bool(rejected),
         fixed_camera_latency_s=latency,
         smoothed_measured_accel_peak_m_s2=max(acc,default=None),
         accel_fit_window_s=float(np.median(windows)) if windows else None,
         requested_accel_m_s2=trial['accel'],
         motor_load=summarize_load(rows),
-        note='Passing qualifies this trajectory/cap only; short acceleration peaks may be unresolved.')
+        note=('Passing describes observed tracking only; rejected camera frames are excluded. '
+              'Short acceleration peaks and motion during camera gaps may be unresolved.'))
 
 
 def spatial_features(state, low=LOW, high=HIGH):

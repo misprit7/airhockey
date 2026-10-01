@@ -18,6 +18,7 @@ from airhockey.motor_patterns import LOW,HIGH,BOUNDS,check_load
 from airhockey.follow_test import travel_time
 from motor_demo import start_master,stop_master,shutdown,wait_for_load
 
+CAMERA_GAP_S = .05
 
 def validate_load(snapshot, now, args, enabled=True):
     peak=check_load(snapshot,now,args.rms_stop)
@@ -45,6 +46,8 @@ class Experiment:
         self.rows=[];self.last_load=0;self.snapshot=None;self.last_poll=None
         self.camera_offset=time.monotonic()-time.time()
         self.trial=-1
+        self.last_good_camera=None
+        self.camera_dropout=False
 
     def poll(self):
         now=time.monotonic()
@@ -58,15 +61,28 @@ class Experiment:
         with self.vision._lock:
             pose=self.vision._pose; stamp=self.vision._pose_t; note=self.vision._note
         cam_t=stamp+self.camera_offset
-        if pose is None or note or not np.isfinite(pose).all() or not 0<=now-cam_t<=.08:
-            reason=note or self.vision.error or ('no pose' if pose is None else 'invalid/stale pose')
-            raise RuntimeError(f'camera tracking failed: {reason}; pose age {(now-cam_t)*1000:.1f} ms')
-        if np.any(np.array(pose[:2])<LOW-5) or np.any(np.array(pose[:2])>HIGH+5):
+        finite_pose=pose is not None and np.isfinite(pose).all()
+        camera_valid=bool(finite_pose and not note and not self.vision.error and
+                          np.isfinite(cam_t) and 0<=now-cam_t<=CAMERA_GAP_S)
+        reason=note or self.vision.error or ('no pose' if pose is None else 'invalid/stale pose')
+        if camera_valid and (np.any(np.array(pose[:2])<LOW-5) or np.any(np.array(pose[:2])>HIGH+5)):
             raise RuntimeError('camera paddle outside current workspace')
         row=dict(t=now,trial=self.trial,ctl_t=now-ctl[4],ctl=list(ctl[:4]),
-                 cam_t=cam_t,cam=list(pose),load=self.snapshot)
+                 cam_t=cam_t if np.isfinite(cam_t) else None,
+                 cam=list(pose) if finite_pose else None,camera_valid=camera_valid,
+                 camera_note=None if camera_valid else reason,load=self.snapshot)
         self.rows.append(row)
         self.output.write(json.dumps(row,allow_nan=False)+'\n');self.output.flush()
+        if not camera_valid:
+            self.camera_dropout=True
+            if self.last_good_camera is None or now-self.last_good_camera>CAMERA_GAP_S:
+                raise RuntimeError(f'camera tracking failed beyond 50 ms grace: {reason}; '
+                                   f'pose age {(now-cam_t)*1000:.1f} ms')
+            return row  # never use rejected poses as tracking measurements
+        if self.camera_dropout and cam_t-self.last_good_camera>CAMERA_GAP_S:
+            raise RuntimeError('camera tracking recovered after a gap longer than 50 ms')
+        self.last_good_camera=cam_t
+        self.camera_dropout=False
         # Stop on gross disagreement, allowing a bounded camera pipeline lag.
         target_t=cam_t-self.args.camera_latency_ms/1000
         history=self.rows[-100:]
@@ -103,12 +119,18 @@ class Experiment:
         while time.monotonic()<end:
             tick=time.monotonic();self.poll();time.sleep(max(0,.005-(time.monotonic()-tick)))
 
+    def require_camera(self):
+        # Brief dropout grace can finish a move, but cannot start a new one.
+        while not self.poll()['camera_valid']:
+            time.sleep(.005)
+
     def settled(self,target):
         self.observe(.35)
+        self.require_camera()
         r=self.rows[-1]
         if np.linalg.norm(np.array(r['ctl'][2:]))>10 or np.linalg.norm(np.array(r['ctl'][:2])-target)>2:
             raise RuntimeError('controller did not settle at target')
-        recent={r['cam_t']:r for r in self.rows if r['t']>=self.rows[-1]['t']-.2}
+        recent={r['cam_t']:r for r in self.rows if r['t']>=self.rows[-1]['t']-.2 and r['camera_valid']}
         if len(recent)<3 or max(np.linalg.norm(np.array(r['cam'][:2])-target) for r in recent.values())>8:
             raise RuntimeError('paddle did not physically settle within 8 mm of target')
 
@@ -122,6 +144,7 @@ class Experiment:
                 return
         current=np.array(self.rows[-1]['ctl'][:2])
         self.setup_limits(.2,.4)
+        self.require_camera()
         self.client.command_position(*target,0)
         self.observe(travel_time(float(np.linalg.norm(current-target)),200,400)+.5)
         self.settled(target)
@@ -163,7 +186,7 @@ def live(args,plan,directory):
                 print(f"Trial {t['id']+1}/{len(plan['trials'])}: {t['kind']} site {t['site']} accel {t['accel']} m/s²",flush=True)
                 e.trial=-(t['id']+1);e.reposition(np.asarray(t['start']))
                 e.trial=t['id'];e.setup_limits(t['speed'],t['accel'])
-                e.observe(.2);begin=len(e.rows)
+                e.observe(.2);e.require_camera();begin=len(e.rows)
                 if t['kind']=='pulse':client.command_position(*t['end'],0)
                 e.observe(t['duration']);e.settled(t['end'])
                 result=score(e.rows[begin:],t,args.camera_latency_ms/1000)

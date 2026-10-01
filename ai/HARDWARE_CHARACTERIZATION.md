@@ -63,8 +63,13 @@ and 77 m/s² braking. A trajectory exercising <80% of its cap in either phase
 is refused before opening hardware. The preview reports both peaks; a
 braking peak alone does not qualify the launch.
 
-The session stops on the first tracking failure, lost/stale camera or motor
-telemetry, current >=12 A on any drive, fast/slow RMS >=70%, bus voltage
+The session tolerates rejected/missing camera frames for up to 50 ms from
+the last accepted frame timestamp (including camera latency). Rejected
+frames are logged with their reason and excluded from tracking and
+acceleration measurements; the results report their count and flag gaps.
+A new move requires a fresh accepted pose. Longer camera gaps, tracking
+failures, lost/stale motor telemetry, current >=12 A on any drive,
+fast/slow RMS >=70%, bus voltage
 <60 V, gross camera/controller disagreement >40 mm, or monitor stall >150 ms.
 Limits are explicit CLI arguments with bounded ranges. Startup requires RMS
 <40%. These are host-side checks, not replacements for drive protections;

@@ -3,6 +3,7 @@ import json
 from pathlib import Path
 import sys
 import io
+import threading
 from types import SimpleNamespace
 
 import numpy as np
@@ -237,3 +238,59 @@ def test_under_exercised_launch_refused_before_live_or_confirmation(tmp_path,mon
         '--ramp-ms','10','--live','--output',str(tmp_path/'preview')])
     with pytest.raises(SystemExit) as error:runner.main()
     assert error.value.code==2
+
+
+def test_camera_grace_discards_bad_frames_and_keeps_electrical_checks(monkeypatch):
+    sys.path.insert(0,str(Path(__file__).resolve().parents[1]/'bin'))
+    import characterize_robot as runner
+    clock=[10.];checks=[]
+    monkeypatch.setattr(runner.time,'monotonic',lambda:clock[0])
+    monkeypatch.setattr(runner.time,'time',lambda:clock[0])
+    monkeypatch.setattr(runner,'validate_load',lambda *_:checks.append(clock[0]))
+    vision=SimpleNamespace(_lock=threading.Lock(),_pose=(*CENTER,2.35),_pose_t=9.99,_note=None,error=None)
+    client=SimpleNamespace(get_motor_load=lambda:{},get_position_sample=lambda:(*CENTER,0,0,0))
+    experiment=runner.Experiment(client,vision,SimpleNamespace(camera_latency_ms=15,error_stop=40),io.StringIO())
+    assert experiment.poll()['camera_valid']
+    for now in (10.005,10.02):
+        clock[0]=now;vision._pose_t=now-.005;vision._note='arms disagree'
+        assert not experiment.poll()['camera_valid']
+        assert experiment.last_good_camera==9.99
+    clock[0]=10.035;vision._pose_t=10.025;vision._note=None
+    assert experiment.poll()['camera_valid']
+    assert len(checks)==4
+    # Repeated newly timestamped bad poses cannot extend the grace window.
+    clock[0]=10.08;vision._pose_t=10.075;vision._note='arms disagree'
+    with pytest.raises(RuntimeError,match='50 ms grace'):experiment.poll()
+    assert len(checks)==5
+    def fault(*_):raise RuntimeError('RMS reached cutoff')
+    monkeypatch.setattr(runner,'validate_load',fault)
+    with pytest.raises(RuntimeError,match='RMS reached'):experiment.poll()
+
+
+def test_startup_needs_valid_camera_and_recovery_cannot_hide_long_gap(monkeypatch):
+    sys.path.insert(0,str(Path(__file__).resolve().parents[1]/'bin'))
+    import characterize_robot as runner
+    clock=[10.]
+    monkeypatch.setattr(runner.time,'monotonic',lambda:clock[0])
+    monkeypatch.setattr(runner.time,'time',lambda:clock[0])
+    monkeypatch.setattr(runner,'validate_load',lambda *_:None)
+    vision=SimpleNamespace(_lock=threading.Lock(),_pose=(*CENTER,2.35),_pose_t=9.99,_note='missing marker',error=None)
+    client=SimpleNamespace(get_motor_load=lambda:{},get_position_sample=lambda:(*CENTER,0,0,0))
+    def make():return runner.Experiment(client,vision,SimpleNamespace(camera_latency_ms=15,error_stop=40),io.StringIO())
+    with pytest.raises(RuntimeError):make().poll()
+    vision._note=None;e=make();e.poll()
+    clock[0]=10.03;vision._pose_t=10.02;vision._note='bad';e.poll()
+    clock[0]=10.07;vision._pose_t=10.06;vision._note=None
+    with pytest.raises(RuntimeError,match='recovered after a gap'):e.poll()
+
+
+def test_score_excludes_rejected_measurements_and_reports_gaps():
+    rows=synthetic_rows()
+    for r in rows[50:54]:
+        r['camera_valid']=False;r['cam']=[0,0,0]
+    metrics=score(rows,dict(end=CENTER.tolist(),accel=80))
+    assert metrics['passed'] and metrics['tracking_had_gaps']
+    assert metrics['camera_rejected_frames']==4
+    assert metrics['tracking_max_mm']<1
+    for r in rows[50:65]:r['camera_valid']=False
+    assert not score(rows,dict(end=CENTER.tolist(),accel=80))['passed']
