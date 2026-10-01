@@ -1,0 +1,255 @@
+{
+  "date": "October 1, 2026",
+  "summary": "Retrained from the previous best single neural policy for the wider workspace and higher acceleration. The selected candidate retains learned shot selection, improves requested fast-shot success in the expanded simulation, and improves difficult corner recovery. Its remaining thermal and possession weaknesses are shown below.",
+  "policy": {
+    "name": "rail30-100-20261001-v1",
+    "replay_url": "http://localhost:8420/?replay=rail30-100-20261001-v1_selfplay.json",
+    "source_checkpoint": "runs/_neural-rail30-accel100-long-recovery-20261001-q/agent_update_012000.pt",
+    "sha256": "39aa7a501edc127bc37fd2e500578366c2b0a735a45eb0b628acd07c5bddf629"
+  },
+  "setup": {
+    "acceleration_m_s2": 100,
+    "speed_m_s": 12,
+    "workspace_bounds_mm": [
+      1200.0,
+      1937.5,
+      61.4,
+      904.5
+    ],
+    "edge_dwell_weight": 20.0,
+    "edge_dwell_band_m": 0.06
+  },
+  "changes": [
+    "Expanded the simulated paddle-center workspace to give 30 mm rim clearance at the side and back rails. The forward boundary is 1200 mm in the physical grid frame.",
+    "Raised the simulated acceleration cap from 60 to 100 m/s\u00b2; retained the 12 m/s speed ceiling.",
+    "Added a mild position-based dwell cost near the rails. Edge visits are allowed; lingering accumulates a cost.",
+    "Refitted per-motor current and thermal dynamics from the post-replacement logs, retaining each drive\u2019s measured RMS settings.",
+    "Practiced unpredictable fast releases and trained on successful neural corner-recovery attempts. Every runtime action still comes from one neural network."
+  ],
+  "training_method": "The actor started from possession-20260926-v3, with a training-only coordinate conversion for the larger action workspace. PPO continued on self-play, possession and defense exercises. The final corner-recovery pass imitated successful noisy rollouts from that learned actor while preserving its ordinary skills; no scripted recovery controller or scripted action labels were used.",
+  "comparison_method": "Previous policy and candidate were tested on matched seeded fixtures in the same expanded simulation and updated motor model, including simulated sensing delay. The old policy\u2019s actions were converted to preserve their original physical targets and acceleration requests, except for the new decoder\u2019s 5 m/s\u00b2 minimum effort floor. Core shooting and defense use larger held-out cohorts; the corner rows are development diagnostics. These are simulated results, not measurements against a human.",
+  "comparison_rows": [
+    [
+      "Requested fast shots: stationary",
+      "321/768 (41.8%)",
+      "394/768 (51.3%)"
+    ],
+    [
+      "Requested fast shots: receiving at 3\u20138 m/s",
+      "491/768 (63.9%)",
+      "524/768 (68.2%)"
+    ],
+    [
+      "All requested fast shots",
+      "812/1536 (52.9%)",
+      "918/1536 (59.8%)"
+    ],
+    [
+      "Straight request (stationary + receiving)",
+      "287/512 (56.1%)",
+      "361/512 (70.5%)"
+    ],
+    [
+      "Left-bank request (stationary + receiving)",
+      "236/512 (46.1%)",
+      "277/512 (54.1%)"
+    ],
+    [
+      "Right-bank request (stationary + receiving)",
+      "289/512 (56.4%)",
+      "280/512 (54.7%)"
+    ],
+    [
+      "Moving-release direct saves, 10\u201316 m/s",
+      "748/1024 (73.0%)",
+      "770/1024 (75.2%)"
+    ],
+    [
+      "Fastest direct subset, 14\u201316 m/s",
+      "245/342 (71.6%)",
+      "244/342 (71.3%)"
+    ],
+    [
+      "Corner slow-interior recoveries (development set)",
+      "11/128 (8.6%)",
+      "22/128 (17.2%)"
+    ],
+    [
+      "Side-rail slow-interior recoveries (development set)",
+      "19/128 (14.8%)",
+      "17/128 (13.3%)"
+    ],
+    [
+      "Slow outgoing puck: controlled",
+      "44/768 (5.7%)",
+      "47/768 (6.1%)"
+    ],
+    [
+      "Slow outgoing puck: control then requested fast shot",
+      "22/768 (2.9%)",
+      "20/768 (2.6%)"
+    ]
+  ],
+  "reward_rows": [
+    [
+      "Self-play goal / conceded goal",
+      "+600 / \u2212600",
+      "Win rallies"
+    ],
+    [
+      "Requested route / wrong route",
+      "100 / \u221220",
+      "Retain straight, left-bank and right-bank conditioning"
+    ],
+    [
+      "Shot power / off-target penalty",
+      "60 / 40",
+      "Reward harder accurate shots"
+    ],
+    [
+      "Capture / conversion",
+      "30 / 25",
+      "Control the puck and turn possession into a shot"
+    ],
+    [
+      "Defensive readiness potential / running cost",
+      "100 / 450",
+      "Reduce uncovered goal width before a fast release"
+    ],
+    [
+      "Edge dwell",
+      "20 per second per rail",
+      "Quadratic cost inside the outer 6 cm of the allowed center workspace; no extra exclusion zone"
+    ],
+    [
+      "Motor load / shutdown",
+      "32 / \u221212000",
+      "Penalize motor energy, hot load state and modeled shutdown"
+    ]
+  ],
+  "endurance_rows": [
+    [
+      "4 \u00d7 10 minutes; initial load 50%, gain 1.0",
+      "0/4 matches crossed threshold; peak 99.9%",
+      "0/4 matches crossed threshold; peak 93.3%"
+    ],
+    [
+      "4 \u00d7 10 minutes; initial load 80%, gain 1.3",
+      "Not repeated in this cohort",
+      "0/4 matches crossed threshold; peak 94.7%"
+    ],
+    [
+      "16 \u00d7 15 minutes; initial load 50%, gain 1.0",
+      "3/16 matches crossed threshold; peak 107.3%",
+      "0/16 matches crossed threshold; peak 94.3%"
+    ],
+    [
+      "16 \u00d7 15 minutes; initial load 80%, gain 1.3",
+      "Not repeated in this cohort",
+      "5/16 matches crossed threshold; peak 107.5%"
+    ],
+    [
+      "Fresh confirmation: 8 \u00d7 10 minutes; initial load 50%, gain 1.0",
+      "Not repeated in this cohort",
+      "0/8 matches crossed threshold; peak 92.0%"
+    ]
+  ],
+  "load_conclusion": "The selected candidate passed the 16-match nominal cohort with a 94.3% peak and a fresh eight-match confirmation with a 92.0% peak. It failed 5 of 16 hot-start stress matches, peaking at 107.5%. It is a simulation candidate, not an RMS-safe physical release. The outer load map is extrapolated and still needs measurements.",
+  "limitations": [
+    "Hot-start sustained load failures remain: 5/16 matches crossed the modeled threshold. The independent nominal cohort passed, but that does not establish universal safety.",
+    "The expanded physical travel area has not been probed in this session. No robot, camera or motors were activated.",
+    "The live runner still uses the previous workspace. This package is simulation-only and is rejected by the legacy physical adapter until workspace integration and physical qualification are completed.",
+    "Fast human shots can be impossible to reach after release; anticipatory positioning matters. These tests do not establish superhuman defense.",
+    "Difficult corner recovery remains inconsistent, and long rallies can still stall. Slow outgoing possession is reported separately so regressions are visible.",
+    "Rail contact projection fixes a simulation overlap artifact, but real paddle tilt, bounce, cable slack and corner holding currents still need measurements.",
+    "The 14\u201316 m/s subset did not improve over the previous policy (244 vs 245 saves in 342 trials). The aggregate defense gain comes from slower shots in the 10\u201316 m/s range."
+  ],
+  "selection_method": "Checkpoint selection considered requested fast shots, moving-release saves, corner recovery, long-match thermal behavior and motion-cap audits. The latest training checkpoint was not automatically preferred. A fresh eight-match nominal cohort was evaluated after shortlisting; no further fitting used those fixtures.",
+  "experiment_findings": [
+    "The balanced PPO branch produced the strongest shooting results, but failed some long nominal and hot-load matches.",
+    "Longer coherent neural exploration and successful-trajectory imitation improved corner recovery without adding a tactical controller.",
+    "Stronger edge penalties, thermal urgency, forecast holding-load penalties and policy averaging were tested separately; their development and independent failures remain in the logs.",
+    "The final fast-release defense continuation put more weight on pre-release goal coverage and practiced 10\u201318 m/s shots. Its evaluated snapshots did not establish a better overall candidate."
+  ],
+  "provenance": {
+    "evidence": {
+      "logs/neural-player/expanded-100-long-recovery-qualification-20261001/new-skills.json": "5e77a15cc40e2e96357b55b9f09b0e3bea7f95cc3b7fbb919ec40db6afd5c668",
+      "logs/neural-player/expanded-100-balanced-qualification-20261001/old-skills.json": "c7e79af10ed049b328b1707e8dc2e5920e008c8565e87b0949bed7216778d8c2",
+      "logs/neural-player/expanded-100-long-recovery-qualification-20261001/new-defense.json": "6bb34a0714721f2b6c2cdbd3dc5baa83d1846415e4a1bb6be083671f2bdbc98a",
+      "logs/neural-player/expanded-100-balanced-qualification-20261001/old-defense.json": "bcb2870a1e816346d747166d8bcef4a1a1086fd067a00618d21bf57f11aaf360",
+      "logs/neural-player/expanded-100-long-recovery-20261001/agent_update_012000/fringe.json": "18f27d828f69f272bcbc58d20ad67031b7f2662ae0e6b50d15b262adaaee14df",
+      "logs/neural-player/expanded-100-balanced-qualification-20261001/old-fringe.json": "e0ec3bd7f36759b132a4cc90569589a9d0ab11f9974438b1cb195177ca99039d",
+      "logs/neural-player/expanded-100-outgoing-check-20261001/old.json": "d047d5f81ec3931df14d7b00a4a04b041c9c3f26519f1babe7080eb654707c22",
+      "logs/neural-player/expanded-100-outgoing-check-20261001/new.json": "fc6723eb5efb6e0db3cfb7395ad107dbeec809ff513881b3c2089ba730db436e",
+      "logs/neural-player/expanded-100-balanced-qualification-20261001/old-endurance.json": "79a508f1a98e9c414fae8f7a97edc9d2f9d56230927d8907d2a9619bf6a29498",
+      "logs/neural-player/expanded-100-long-recovery-qualification-20261001/new-endurance.json": "05808efb4bd849429ce6ee5ef5ca50698b7d1d70eeb66acd51dfc5806af02d5f",
+      "logs/neural-player/expanded-100-long-recovery-qualification-20261001/new-hot-endurance.json": "3144109ee474dc399d6af0c2adbd81b2d1e6c1c41f315072b74a3ba03f669a68",
+      "logs/neural-player/expanded-100-final-endurance-20261001/old-nominal.json": "97aac0c4744c441425d42d9d95a9fb3e467f0e89073d01c25aaa1ea1207e969b",
+      "logs/neural-player/expanded-100-recovery-final-endurance-20261001/nominal.json": "fec5704af882809dbd6e604d23fcaa3684df82f7e8f5453da403eb3c4c62019f",
+      "logs/neural-player/expanded-100-recovery-final-endurance-20261001/hot.json": "81b5bb3e2d97e05fc57d5a7d0b24a47a9e97a9769e313519d877f12e91870e53",
+      "runs/_neural-rail30-accel100-long-recovery-20261001-q/run.json": "d4145fcc6867d0c19bfa4571ecae72732d1f086196cad0606fb9c4fcf684b7f1",
+      "logs/neural-player/expanded-100-long-recovery-qualification-20261001/replay-audit.json": "79c55bc32e0a25fa18ac6602303c4a25c0b19189b52042449400df6897c46508",
+      "logs/neural-player/expanded-100-recovery-final-endurance-20261001/fresh-nominal.json": "141be0062fef16512e782541f19c1e280fe470c5a3d2bfde6d6b5e7e9b5b7ad4"
+    },
+    "selected_checkpoint_sha256": "39aa7a501edc127bc37fd2e500578366c2b0a735a45eb0b628acd07c5bddf629",
+    "previous_checkpoint": "runs/possession-20260926-v3/agent.pt",
+    "previous_checkpoint_sha256": "a3cd692c80c4ca42f6f200475aa5ccf967793df27853d9770c56be265886c2dc",
+    "motion_audit": {
+      "peak_accel": [
+        [
+          100.00061798095703,
+          100.00025939941406,
+          100.0005874633789,
+          100.0005111694336
+        ],
+        [
+          100.00100708007812,
+          100.00056457519531,
+          100.00057220458984,
+          100.00029754638672
+        ]
+      ],
+      "minimum_margin": [
+        [
+          0.0010072097647935152,
+          0.001016136142425239,
+          0.0009583282517269254,
+          0.0010250854538753629
+        ],
+        [
+          0.001000122050754726,
+          0.0016077880281955004,
+          0.0010423583444207907,
+          0.0009519042796455324
+        ]
+      ],
+      "intervals_over_cap": [
+        [
+          0,
+          0,
+          0,
+          0
+        ],
+        [
+          0,
+          0,
+          0,
+          0
+        ]
+      ],
+      "reproduction_error": [
+        0.0,
+        0.0,
+        0.0,
+        0.0,
+        0.0,
+        0.0
+      ]
+    },
+    "physical_hardware_activated": false,
+    "replay_sha256": "ef960b3a728784daeaf3527b006c1a3e43efdae276a973df7b69724350a7db50",
+    "replay_seed": 20261101,
+    "replay_seconds": 180,
+    "replay_description": "Full unedited first match of a four-match fixed-seed self-play audit; both sides use the selected checkpoint."
+  }
+}
