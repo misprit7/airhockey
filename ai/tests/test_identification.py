@@ -2,6 +2,7 @@ import importlib.util
 import json
 from pathlib import Path
 import sys
+import io
 from types import SimpleNamespace
 
 import numpy as np
@@ -160,3 +161,34 @@ def test_partial_enable_failure_still_disables_and_stops_owned_master(tmp_path,m
     assert not runner.live(args,{'trials':[]},tmp_path)
     assert events==['connect','enable','disable','close','camera_stop','master_stop']
     assert json.loads((tmp_path/'outcome.json').read_text())['status']=='aborted'
+
+
+@pytest.mark.parametrize('reported', ['delayed', 'wrong', 'missing', 'nan', 'fault'])
+def test_limit_verification_waits_for_cache_but_rejects_failure(monkeypatch,reported):
+    sys.path.insert(0,str(Path(__file__).resolve().parents[1]/'bin'))
+    import characterize_robot as runner
+    clock=[0.];commands=[];reads=[]
+    monkeypatch.setattr(runner.time,'monotonic',lambda:clock[0])
+    monkeypatch.setattr(runner.time,'sleep',lambda dt:clock.__setitem__(0,clock[0]+dt))
+    monkeypatch.setattr(runner,'wait_for_load',lambda *_,**__:None)
+    def validate(*_):
+        if reported=='fault':raise RuntimeError('motor fault reported')
+    monkeypatch.setattr(runner,'validate_load',validate)
+    class Client:
+        def set_limits(self,*args):commands.append(args)
+        def get_motor_load(self):return {}
+        def get_status(self):
+            reads.append(clock[0])
+            if reported=='missing':return {}
+            return dict(speed_limit=200,accel_limit=(float('nan') if reported=='nan' else
+                        400 if reported=='delayed' and clock[0]>=.04 else 1000))
+        def command_position(self,*_):pytest.fail('limit verification must not command motion')
+    experiment=runner.Experiment(Client(),None,SimpleNamespace(rms_stop=70),io.StringIO())
+    if reported=='delayed':
+        experiment.setup_limits(.2,.4)
+        assert len(reads)>=3
+    else:
+        with pytest.raises(RuntimeError,match='motor fault' if reported=='fault' else 'verification timed out'):
+            experiment.setup_limits(.2,.4)
+    assert commands==[(200,400)]
+    assert clock[0]<=1.03

@@ -78,10 +78,23 @@ class Experiment:
 
     def setup_limits(self,speed,accel):
         self.client.set_limits(speed*1000,accel*1000)
-        status=self.client.get_status()
-        if abs(status.get('speed_limit',-1)-speed*1000)>1 or abs(status.get('accel_limit',-1)-accel*1000)>1:
-            raise RuntimeError('firmware did not apply requested test limits')
+        # LIMITS acknowledges serial commands; STATUS is a separate 50 Hz
+        # cache and may still describe the preceding configuration. Only
+        # wait at this stationary setup boundary, never during a test move.
         wait_for_load(self.client,self.args.rms_stop,not_before=time.monotonic())
+        deadline=time.monotonic()+1.
+        while True:
+            validate_load(self.client.get_motor_load(),time.monotonic(),self.args)
+            status=self.client.get_status()
+            actual=(status.get('speed_limit'),status.get('accel_limit'))
+            if all(isinstance(v,(int,float)) and math.isfinite(v) for v in actual):
+                if abs(actual[0]-speed*1000)<=1 and abs(actual[1]-accel*1000)<=1:
+                    break
+            if time.monotonic()>=deadline:
+                raise RuntimeError(
+                    f'firmware limit verification timed out: requested {speed*1000:g} mm/s, '
+                    f'{accel*1000:g} mm/s²; reported {actual[0]!r}, {actual[1]!r}')
+            time.sleep(.02)
         self.last_poll=None;self.snapshot=None
 
     def observe(self,duration):
