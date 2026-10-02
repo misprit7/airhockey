@@ -20,12 +20,16 @@ def test_client_validates_and_requires_explicit_configuration_ack(monkeypatch):
         client.set_startup_tension(1.5)
 
 
-@pytest.mark.parametrize('failure',[None,'configuration','enable'])
+@pytest.mark.parametrize('failure',[None,'workspace','configuration','enable'])
 def test_configuration_precedes_enable_and_failure_closes_client(monkeypatch,failure):
     events=[]
     class FakeClient:
         def __init__(self,*_):pass
         def connect(self):events.append('connect')
+        def get_workspace(self):
+            events.append('workspace')
+            if failure=='workspace':raise RuntimeError('workspace unavailable')
+            return (1200.,1937.5,61.4,904.5)
         def set_startup_tension(self,mm):
             events.append(('pretension',mm))
             if failure=='configuration':raise RuntimeError('configuration rejected')
@@ -39,8 +43,9 @@ def test_configuration_precedes_enable_and_failure_closes_client(monkeypatch,fai
     if failure:
         with pytest.raises(RuntimeError):construct()
     else:construct()
-    expected=['connect',('pretension',1.5)]
-    if failure!='configuration':expected.append(('enable',(1500,450,135)))
+    expected=['connect','workspace']
+    if failure!='workspace':expected.append(('pretension',1.5))
+    if failure not in ('workspace','configuration'):expected.append(('enable',(1500,450,135)))
     if failure=='enable':expected.append('disable')
     if failure:expected.append('close')
     assert events==expected

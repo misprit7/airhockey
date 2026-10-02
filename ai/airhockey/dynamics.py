@@ -438,6 +438,9 @@ class HardwareDynamics(MotorDynamics):
         # Measured (x, y, theta_deg) from track_mallet.py if available.
         attempted_enable = False
         try:
+            # Read the actual firmware envelope before enabling. Host defaults
+            # may describe a different firmware build (e.g. the probe region).
+            self.workspace_bounds_mm = self.client.get_workspace()
             if tension_mm is not None:
                 self.client.set_startup_tension(tension_mm)
             attempted_enable = True
@@ -623,6 +626,8 @@ class HardwareDynamics(MotorDynamics):
         # drive measurement below, so the two columns are comparable.
         step_mm = [round(counts_to_cable_mm(c), 2) for c in self._hw_counts]
         return {
+            "workspace_mm": dict(zip(
+                ("min_x", "max_x", "min_y", "max_y"), self.workspace_bounds_mm)),
             "x_mm": round(self._hw_x_mm, 1),
             "y_mm": round(self._hw_y_mm, 1),
             "cmd_x_mm": round(self._cmd_x_mm, 1),
@@ -674,9 +679,10 @@ class HardwareDynamics(MotorDynamics):
         axis and the workspace is inside the table, so clamping the result
         subsumes it.
         """
-        return self.geom.clamp_to_workspace(
-            *sim_to_table_mm(sx, sy, self.sim_width, self.sim_half_height,
-                             self.SIM_X_FLIP))
+        x, y = sim_to_table_mm(sx, sy, self.sim_width, self.sim_half_height,
+                              self.SIM_X_FLIP)
+        min_x, max_x, min_y, max_y = self.workspace_bounds_mm
+        return min(max(x, min_x), max_x), min(max(y, min_y), max_y)
 
     def _mm_to_sim(self, mm_x: float, mm_y: float):
         return table_mm_to_sim(mm_x, mm_y, self.sim_width,
@@ -689,7 +695,5 @@ class HardwareDynamics(MotorDynamics):
         should not own a second copy of this mapping, which is how the two
         coordinate systems got out of step in the first place.
         """
-        x0, y0 = self._mm_to_sim(self.geom.WS_MIN_X, self.geom.WS_MIN_Y)
-        x1, y1 = self._mm_to_sim(self.geom.WS_MAX_X, self.geom.WS_MAX_Y)
-        return {"min_x": min(x0, x1), "max_x": max(x0, x1),
-                "min_y": min(y0, y1), "max_y": max(y0, y1)}
+        return workspace_in_sim(self.sim_width, self.sim_half_height,
+                                self.SIM_X_FLIP, self.workspace_bounds_mm)

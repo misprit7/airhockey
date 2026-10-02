@@ -405,9 +405,9 @@ function connect() {
             resize();
         } else if (msg.type === "frame" && mode !== "replay") {
             frame = msg;
+            if (msg.hw_ws) hwWorkspace = msg.hw_ws;
             if (msg.hw_x !== undefined && msg.hw_y !== undefined) {
                 hwPosition = { x: msg.hw_x, y: msg.hw_y };
-                if (msg.hw_ws) hwWorkspace = msg.hw_ws;
             } else {
                 hwPosition = null;
             }
@@ -1750,8 +1750,9 @@ const cursorLine = (mm, suffix) => (mm === null
         rect(0, 0, g.grid.x, g.grid.y, C.grid);
         line(g.centerline_x, g.rails.min_y, g.centerline_x, g.rails.max_y,
              C.stripe, 1.5);
-        rect(g.workspace.min_x, g.workspace.min_y,
-             g.workspace.max_x, g.workspace.max_y, C.ws, null, [5, 4]);
+        const workspace = frame?.hw?.workspace_mm || g.workspace;
+        rect(workspace.min_x, workspace.min_y,
+             workspace.max_x, workspace.max_y, C.ws, null, [5, 4]);
 
         c.save();
         c.font = '10px ui-monospace, Menlo, monospace';

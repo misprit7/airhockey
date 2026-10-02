@@ -379,6 +379,7 @@ async def live_game(ws: WebSocket):
         still_puck=False,
     )
     obs, info = env.reset()
+    simulation_workspace = dict(env._ws)
 
     cfg = env.table_config
     await ws.send_json({
@@ -474,6 +475,7 @@ async def live_game(ws: WebSocket):
                                 # energized?" a question you can answer.
                                 sx, sy = hardware_dynamics._mm_to_sim(mx, my)
                                 env.agent_dynamics = hardware_dynamics
+                                env._ws = hardware_dynamics.workspace_in_sim()
                                 env.agent_dynamics.reset(sx, sy)
                                 target_x = sx
                                 target_y = sy
@@ -497,6 +499,7 @@ async def live_game(ws: WebSocket):
                                 except Exception:
                                     pass
                                 hardware_dynamics = None
+                            env._ws = dict(simulation_workspace)
                             env.agent_dynamics = ProfileDynamics()
                             env.agent_dynamics.reset(
                                 env.engine.state.paddle_agent.x,
@@ -697,8 +700,9 @@ async def live_game(ws: WebSocket):
                     frame_msg["hw_y_mm"] = round(hy, 1)
                     frame_msg["hw"] = hardware_dynamics.hw_state()
                     frame_msg["hw_ws"] = hardware_dynamics.workspace_in_sim()
-                frame_msg["hw_ws"] = env._ws     # draw the limit always, not
-                frame_msg.update(_camera_objects())   # only in hardware mode
+                # env._ws follows the connected firmware while hardware is on.
+                frame_msg["hw_ws"] = env._ws
+                frame_msg.update(_camera_objects())
                 await ws.send_json(frame_msg)
                 await asyncio.sleep(1 / 60)
                 continue
@@ -771,6 +775,7 @@ async def live_game(ws: WebSocket):
                 "score_agent": state.score_agent,
                 "score_opponent": state.score_opponent,
                 "time": round(state.time, 2),
+                "hw_ws": env._ws,
                 # Which half the MOUSE drives, for the client's clamp.
                 "side": ("human" if players["opponent"]["kind"] == "human"
                          else "robot"),
