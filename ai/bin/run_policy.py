@@ -1593,6 +1593,15 @@ def run(args) -> int:
                 # Older masters do not implement LOADMETA. A broken connection
                 # is intentionally not swallowed; enabling must not follow it.
                 print(f"[log] motor-load metadata unavailable: {e}")
+        if hasattr(policy, 'workspace_bounds_mm'):
+            from airhockey.neural_deploy import verify_firmware_workspace
+            try:
+                actual_bounds = client.get_workspace()
+                verify_firmware_workspace(policy.workspace_bounds_mm, actual_bounds)
+                print(f"Firmware workspace verified: {actual_bounds} mm")
+            except Exception:
+                client.close()
+                raise
         if not args.no_enable:
             print("ENABLING the drives (they will hold position, not move)...")
             try:

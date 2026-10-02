@@ -469,17 +469,11 @@ constexpr float WS_PROBE_MAX_X = RAIL_MAX_X - MALLET_RADIUS_MM - WS_PROBE_RIM_CL
 constexpr float WS_PROBE_MIN_Y = RAIL_MIN_Y + MALLET_RADIUS_MM + WS_PROBE_RIM_CLEARANCE_MM;
 constexpr float WS_PROBE_MAX_Y = RAIL_MAX_Y - MALLET_RADIUS_MM - WS_PROBE_RIM_CLEARANCE_MM;
 
-#ifdef AIRHOCKEY_PROBE_WORKSPACE
+// Active for all builds after manual workspace testing on 2026-10-02.
 constexpr float WS_MIN_X = WS_PROBE_MIN_X;
 constexpr float WS_MAX_X = WS_PROBE_MAX_X;
 constexpr float WS_MIN_Y = WS_PROBE_MIN_Y;
 constexpr float WS_MAX_Y = WS_PROBE_MAX_Y;
-#else
-constexpr float WS_MIN_X = WS_SAFE_MIN_X;
-constexpr float WS_MAX_X = WS_SAFE_MAX_X;
-constexpr float WS_MIN_Y = WS_SAFE_MIN_Y;
-constexpr float WS_MAX_Y = WS_SAFE_MAX_Y;
-#endif
 
 // Default calibration/home position: centre of the workspace.
 //
@@ -489,7 +483,7 @@ constexpr float WS_MAX_Y = WS_SAFE_MAX_Y;
 // edit silently relocates the calibration origin. That is a sharp edge
 // (it was my first theory for the 08-23 fault, and wrong), not a bug
 // today: pass a measured pose and it never applies.
-constexpr float HOME_X = (WS_MIN_X + WS_MAX_X) / 2.0f;  // 1578.75
+constexpr float HOME_X = (WS_MIN_X + WS_MAX_X) / 2.0f;  // 1568.75
 constexpr float HOME_Y = (WS_MIN_Y + WS_MAX_Y) / 2.0f;  // 482.95
 
 // Bearing from each anchor toward HOME. This is the zero reference for the

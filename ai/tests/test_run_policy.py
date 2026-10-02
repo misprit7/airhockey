@@ -776,6 +776,9 @@ class _FakeClient:
     def get_position_sample(self):
         return (*self.get_position(), 0.0)
 
+    def get_workspace(self):
+        return (1200., 1937.5, 61.4, 904.5)
+
     def set_limits(self, s, a):
         self.calls.append(("LIMITS", s, a))
 

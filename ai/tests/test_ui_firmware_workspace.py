@@ -14,7 +14,7 @@ from airhockey.workspace_probe import PROBE_BOUNDS
 def hardware(monkeypatch, request):
     from airhockey.dynamics import _geom
     bounds = tuple(PROBE_BOUNDS) if request.param == 'expanded' else (
-        _geom.WS_MIN_X, _geom.WS_MAX_X, _geom.WS_MIN_Y, _geom.WS_MAX_Y)
+        _geom.WS_LEGACY_MIN_X, _geom.WS_LEGACY_MAX_X, _geom.WS_LEGACY_MIN_Y, _geom.WS_LEGACY_MAX_Y)
     events = []
     class Client:
         def __init__(self, *args): pass

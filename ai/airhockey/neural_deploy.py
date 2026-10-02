@@ -49,18 +49,33 @@ def neural_limits(checkpoint):
     algorithms = ('neural_ppo_v1', 'successful_neural_trajectory_imitation_v1')
     if meta.get('algorithm') not in algorithms or meta.get('action_mode') != 'arrival':
         raise ValueError('not a neural arrival training run')
-    # The live command clamp and this adapter still use the deployment
-    # workspace. Silently decoding an expanded actor in that box changes its
-    # physical targets; simulation metadata is not a hardware configuration.
-    if meta.get('workspace_bounds_mm') is not None or meta.get('args', {}).get('workspace', 'legacy') != 'legacy':
-        raise ValueError('expanded-workspace neural checkpoint is simulation-only; '
-                         'live runner workspace integration and physical qualification are pending')
+    # Validate the checkpoint's own coordinate envelope before loading weights.
+    neural_workspace(checkpoint)
     caps = meta['physical_limits']
     values = (caps['speed_m_s'], caps['acceleration_m_s2'])
     if any(isinstance(v, bool) or not isinstance(v, (int, float)) or
            not math.isfinite(v) or v <= 0 for v in values):
         raise ValueError('invalid neural training limits')
     return tuple(float(v) for v in values)
+
+
+def neural_workspace(checkpoint):
+    from airhockey.neural_setup import checkpoint_environment
+    from airhockey.dynamics import _geom as geom
+    bounds = np.asarray(checkpoint_environment(checkpoint)['workspace_bounds_mm'], dtype=float)
+    workspace_in_sim(bounds_mm=bounds)  # finite, ordered, four elements
+    active = (geom.WS_MIN_X, geom.WS_MAX_X, geom.WS_MIN_Y, geom.WS_MAX_Y)
+    if bounds[0] < active[0] or bounds[1] > active[1] or bounds[2] < active[2] or bounds[3] > active[3]:
+        raise ValueError('checkpoint workspace exceeds the deployment workspace')
+    return tuple(bounds)
+
+
+def verify_firmware_workspace(required, actual):
+    """Require the firmware to support the policy's targets before enabling."""
+    workspace_in_sim(bounds_mm=actual)
+    if any(actual[i] > required[i] + .01 for i in (0, 2)) or any(
+            actual[i] < required[i] - .01 for i in (1, 3)):
+        raise ValueError('firmware workspace is smaller than the policy workspace; flash current firmware')
 
 
 class LiveMotorLoad:
@@ -70,8 +85,9 @@ class LiveMotorLoad:
     Unknown startup heat is initialized to 0.8, not silently assumed cold.
     Neither a goal nor policy.reset clears motor heat.
     """
-    def __init__(self):
-        self.model = MotorThermal(1, randomize=False)
+    def __init__(self, thermal_path=None):
+        self.model = MotorThermal(1, randomize=False, **(
+            {'path': thermal_path} if thermal_path is not None else {}))
         self.model.gain[:] = 1.3
         self.model.h[:] = 0.8**2
         self.model.observed[:] = 0.8
@@ -126,7 +142,9 @@ class NeuralPolicy:
         self.speed = speed_mm_s / 1000
         self.accel = accel_mm_s2 / 1000
         self.encoder = ReportEncoder(shot_mode='straight', speed_m_s=self.speed, accel_m_s2=self.accel)
-        ws = workspace_in_sim(self.encoder.width, self.encoder.half_h)
+        self.workspace_bounds_mm = neural_workspace(self.ckpt)
+        ws = workspace_in_sim(self.encoder.width, self.encoder.half_h,
+                              bounds_mm=self.workspace_bounds_mm)
         self.decoder = ArrivalDecoder([ws[k] for k in ('min_x', 'max_x', 'min_y', 'max_y')])
         self.cart = CartState(1)
         self.delay = 0.015
@@ -139,7 +157,8 @@ class NeuralPolicy:
         self.command_history = []
         self.state_source = 'camera'
         self.state_age = 0.0
-        self.loads = LiveMotorLoad()
+        from airhockey.neural_setup import checkpoint_environment
+        self.loads = LiveMotorLoad(checkpoint_environment(self.ckpt).get('thermal_path'))
         self.shot_mode = shot_mode
         self.rng = np.random.default_rng()
         self.last_action = np.zeros(6, np.float32)

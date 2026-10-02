@@ -113,19 +113,20 @@ WS_SAFE_MAX_Y = min(WS_WIDE_MAX_Y, WS_FC_MAX_Y) - WS_Y_TRIM_MM
 WS_BOX_MIN_X, WS_BOX_MAX_X = 1258.0, 1758.0
 WS_BOX_MIN_Y, WS_BOX_MAX_Y = 233.0, 733.0
 
-# ACTIVE — SAFE. WIDE went live 2026-08-23 and immediately tripped
-# RMSOverloadShutdown just HOLDING the mallet near an edge: parts of it are
-# outside force closure. See the header for the mechanism.
-WS_MIN_X, WS_MAX_X = WS_SAFE_MIN_X, WS_SAFE_MAX_X
-WS_MIN_Y, WS_MAX_Y = WS_SAFE_MIN_Y, WS_SAFE_MAX_Y
+# Historical envelope retained for decoding existing trained checkpoints.
+WS_LEGACY_MIN_X, WS_LEGACY_MAX_X = WS_SAFE_MIN_X, WS_SAFE_MAX_X
+WS_LEGACY_MIN_Y, WS_LEGACY_MAX_Y = WS_SAFE_MIN_Y, WS_SAFE_MAX_Y
 
-# Explicit probe envelope; deployment/training imports retain their existing
-# bounds. The firmware probe build selects these with a compile-time flag.
+# 30 mm paddle-rim clearance; promoted after manual testing on 2026-10-02.
 WS_PROBE_RIM_CLEARANCE_MM = 30.0
 WS_PROBE_MIN_X = WS_WIDE_MIN_X
 WS_PROBE_MAX_X = RAIL_MAX_X - MALLET_RADIUS_MM - WS_PROBE_RIM_CLEARANCE_MM
 WS_PROBE_MIN_Y = RAIL_MIN_Y + MALLET_RADIUS_MM + WS_PROBE_RIM_CLEARANCE_MM
 WS_PROBE_MAX_Y = RAIL_MAX_Y - MALLET_RADIUS_MM - WS_PROBE_RIM_CLEARANCE_MM
+
+# Active envelope shared by UI, host command clamps, and normal firmware.
+WS_MIN_X, WS_MAX_X = WS_PROBE_MIN_X, WS_PROBE_MAX_X
+WS_MIN_Y, WS_MAX_Y = WS_PROBE_MIN_Y, WS_PROBE_MAX_Y
 
 HOME_X = (WS_MIN_X + WS_MAX_X) / 2.0
 HOME_Y = (WS_MIN_Y + WS_MAX_Y) / 2.0

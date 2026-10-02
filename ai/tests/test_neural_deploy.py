@@ -27,7 +27,7 @@ def checkpoint(tmp_path):
     torch.save(dict(model=net.state_dict(), width=16, history=1, shot_conditioned=True), path)
     (tmp_path / 'run.json').write_text(json.dumps(dict(
         algorithm='neural_ppo_v1', action_mode='arrival', deployment_ready=False,
-        simulation_only=True, physical_limits=dict(speed_m_s=12, acceleration_m_s2=60))))
+        simulation_only=True, args={'workspace':'rail30'}, physical_limits=dict(speed_m_s=12, acceleration_m_s2=60))))
     return path
 
 
@@ -40,13 +40,14 @@ def policy(checkpoint):
     {'workspace_bounds_mm': [1200, 1937.5, 61.4, 904.5]},
     {'args': {'workspace': 'rail30'}},
 ])
-def test_live_adapter_rejects_expanded_coordinates_before_loading_weights(checkpoint, setting):
+def test_live_adapter_uses_expanded_checkpoint_coordinates(checkpoint, setting):
     meta_path = checkpoint.parent / 'run.json'
     meta = json.loads(meta_path.read_text())
     meta.update(setting)
     meta_path.write_text(json.dumps(meta))
-    with pytest.raises(ValueError, match='live runner workspace integration'):
-        neural_limits(checkpoint)
+    assert neural_limits(checkpoint) == (12., 60.)
+    policy = NeuralPolicy(checkpoint, 12000, 60000)
+    np.testing.assert_allclose(policy.workspace_bounds_mm, [1200,1937.5,61.4,904.5])
 
 
 def report(t=1.0, own=(0.5, 0.3), puck=(0.55, 0.6)):
@@ -379,3 +380,31 @@ def test_command_observer_uses_measured_delivery_instead_of_training_delay(polic
     np.testing.assert_allclose(policy.target,[[.65,.4]])
     assert policy.command_cap[0]==30
     assert policy.command_history[-1][0]==pytest.approx(1.003)
+
+
+def test_legacy_checkpoint_keeps_original_coordinates(checkpoint):
+    meta_path = checkpoint.parent / 'run.json'
+    meta = json.loads(meta_path.read_text())
+    meta.pop('args')
+    meta_path.write_text(json.dumps(meta))
+    policy = NeuralPolicy(checkpoint, 12000, 60000)
+    np.testing.assert_allclose(policy.workspace_bounds_mm, [1350,1917.5,172.9,793])
+
+
+def test_firmware_must_cover_checkpoint_before_enabling():
+    from airhockey.neural_deploy import verify_firmware_workspace
+    required = (1200,1937.5,61.4,904.5)
+    verify_firmware_workspace(required, required)
+    with pytest.raises(ValueError, match='smaller than the policy'):
+        verify_firmware_workspace(required, (1350,1917.5,172.9,793))
+
+
+def test_checkpoint_thermal_model_is_used(checkpoint):
+    meta_path = checkpoint.parent / 'run.json'
+    meta = json.loads(meta_path.read_text())
+    model_path = Path(__file__).parents[1] / 'recipes/motor-load-20261001.json'
+    meta['thermal_model'] = json.loads(model_path.read_text())
+    meta_path.write_text(json.dumps(meta))
+    policy = NeuralPolicy(checkpoint, 12000, 60000)
+    assert policy.loads.model.spatial
+    np.testing.assert_allclose(policy.loads.model.limits[0], meta['thermal_model']['fast_limit_amps'])

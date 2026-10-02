@@ -5,7 +5,8 @@ from airhockey.dynamics import _geom as geom
 
 
 def workspace_bounds(profile):
-    if profile=='legacy':return None
+    if profile=='legacy':
+        return [geom.WS_LEGACY_MIN_X,geom.WS_LEGACY_MAX_X,geom.WS_LEGACY_MIN_Y,geom.WS_LEGACY_MAX_Y]
     if profile!='rail30':raise ValueError('unknown workspace profile')
     return [geom.WS_PROBE_MIN_X,geom.WS_PROBE_MAX_X,geom.WS_PROBE_MIN_Y,geom.WS_PROBE_MAX_Y]
 
@@ -17,7 +18,7 @@ def checkpoint_environment(path,state=None):
     result=dict(accel=args.get('accel',meta.get('physical_limits',{}).get('acceleration_m_s2',60)),
                 defense_max_speed=args.get('defense_max_speed',12),
                 project_rail_contacts=args.get('project_rail_contacts',False),
-                workspace_bounds_mm=meta.get('workspace_bounds_mm',workspace_bounds(args.get('workspace','legacy'))))
+                workspace_bounds_mm=meta.get('workspace_bounds_mm') or workspace_bounds(args.get('workspace','legacy')))
     model=meta.get('thermal_model')
     if model:result['thermal_path']=model
     elif args.get('thermal_model'):result['thermal_path']=args['thermal_model']

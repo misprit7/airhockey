@@ -1,6 +1,11 @@
 """Incremental excursions beyond the existing region; offline planning only."""
 import numpy as np
-from airhockey.motor_patterns import BOUNDS, LOW, HIGH, CENTER
+# Expansion experiments retain their historical inner baseline so old plans
+# remain comparable after the wider region becomes the deployment default.
+from airhockey.neural_setup import workspace_bounds
+BOUNDS = np.array(workspace_bounds('legacy'))
+LOW, HIGH = BOUNDS[[0, 2]], BOUNDS[[1, 3]]
+CENTER = (LOW + HIGH) / 2
 from cdpr_geometry import WS_PROBE_MIN_X, WS_PROBE_MAX_X, WS_PROBE_MIN_Y, WS_PROBE_MAX_Y
 
 PROBE_BOUNDS = np.array([WS_PROBE_MIN_X, WS_PROBE_MAX_X, WS_PROBE_MIN_Y, WS_PROBE_MAX_Y])

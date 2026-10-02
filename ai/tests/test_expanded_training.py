@@ -9,7 +9,7 @@ from airhockey.neural_coordinates import action_coordinates,observation_coordina
 from airhockey.arrival import ArrivalDecoder
 
 MODEL=Path(__file__).resolve().parents[1]/'recipes/motor-load-20261001.json'
-OLD=dict(accel=60,workspace_bounds_mm=None)
+OLD=dict(accel=60,workspace_bounds_mm=workspace_bounds('legacy'))
 NEW=dict(accel=100,workspace_bounds_mm=workspace_bounds('rail30'))
 
 
@@ -21,7 +21,9 @@ def test_experiment_limits_do_not_mutate_default_and_apply_to_both_sides():
     assert np.all(env.base._opp_dyn['max_accel']==100)
     assert np.all(ordinary.base._agent_dyn['max_accel']==60)
     np.testing.assert_allclose(env.decoder.bounds,bounds(NEW))
-    assert ordinary.decoder.low[0]>env.decoder.low[0]
+    np.testing.assert_allclose(ordinary.decoder.bounds, env.decoder.bounds)
+    legacy=NeuralTrainingEnv(2, **OLD)
+    assert legacy.decoder.low[0]>env.decoder.low[0]
     for _ in range(30):
         action=np.tile([1,-1,1,-1,-1,1],(8,1))
         obs,*_=env.step(action)

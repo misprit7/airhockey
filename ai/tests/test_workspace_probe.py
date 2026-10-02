@@ -10,18 +10,19 @@ import numpy as np
 import pytest
 
 from airhockey.workspace_probe import design_workspace_probe,PROBE_BOUNDS
-from airhockey.motor_patterns import LOW,HIGH,BOUNDS
+from airhockey.workspace_probe import LOW,HIGH,BOUNDS
 from airhockey.hardware import CDPRClient
 import cdpr_geometry as geom
 
 ROOT=Path(__file__).resolve().parents[2]
 
 
-def test_envelope_has_30mm_rim_clearance_and_leaves_policy_region_unchanged():
+def test_envelope_is_default_with_30mm_clearance_and_preserves_probe_baseline():
     assert PROBE_BOUNDS[1]+geom.MALLET_RADIUS_MM==pytest.approx(geom.RAIL_MAX_X-30)
     assert PROBE_BOUNDS[2]-geom.MALLET_RADIUS_MM==pytest.approx(geom.RAIL_MIN_Y+30)
     assert PROBE_BOUNDS[3]+geom.MALLET_RADIUS_MM==pytest.approx(geom.RAIL_MAX_Y-30)
     np.testing.assert_allclose(BOUNDS,[1350,1917.5,172.9,793])
+    np.testing.assert_allclose([geom.WS_MIN_X,geom.WS_MAX_X,geom.WS_MIN_Y,geom.WS_MAX_Y],PROBE_BOUNDS)
 
 
 @pytest.mark.parametrize('probe',[False,True])
@@ -31,7 +32,7 @@ def test_compiled_firmware_bounds_match_selected_python_envelope(tmp_path,probe)
     subprocess.run(['g++','-std=c++11','-Ishared',*(['-DAIRHOCKEY_PROBE_WORKSPACE'] if probe else []),
                     str(source),'-o',str(binary)],cwd=ROOT,check=True)
     actual=np.fromstring(subprocess.check_output([str(binary)],text=True),sep=' ')
-    np.testing.assert_allclose(actual,PROBE_BOUNDS if probe else BOUNDS,atol=.001,rtol=0)
+    np.testing.assert_allclose(actual,PROBE_BOUNDS,atol=.001,rtol=0)
 
 
 def test_excursions_progress_outward_and_return_inside_tested_region():
