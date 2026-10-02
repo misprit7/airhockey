@@ -60,7 +60,7 @@ body {
     overflow: hidden;
     height: 100vh;
     height: 100dvh;
-    touch-action: none;
+    touch-action: auto;
     -webkit-user-select: none;
     user-select: none;
 }
@@ -82,6 +82,10 @@ body {
        replay menu and the reward readout, and at 260 the limit rows had
        their unit labels running into the scale buttons. */
     width: 520px;
+    min-height: 0;
+    overflow-y: auto;
+    overflow-x: hidden;
+    overscroll-behavior-y: contain;
     padding: 26px 24px;
     background: var(--board);
     border-right: 1px solid var(--line);
@@ -510,6 +514,7 @@ button:active {
 }
 
 canvas {
+    touch-action: none;
     border-radius: 3px;
     cursor: crosshair;
 }

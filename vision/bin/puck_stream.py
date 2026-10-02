@@ -285,9 +285,8 @@ class PuckTracker:
         if got is None and reach is not None and find_puck(world, prev) is not None:
             self.rejected_jumps += 1
         if got is None:
-            # One visible corner is not a fix: the centre is 21.85 mm away in
-            # an unknown direction, and reporting that as a position is worse
-            # than coasting because it still looks like a measurement.
+            # An incomplete square is not an identification: it can be the
+            # robot paddle. Coast without reporting fresh marker evidence.
             return self._coast(t)
 
         c, theta, members, _rms = got
@@ -358,10 +357,9 @@ def _selftest() -> int:
     projecting corners to pixels, undistorting, back-projecting at the marker
     height, and getting velocity and spin back out.
 
-    The case worth watching is the dropout one. A centroid of three corners
-    would put the centre 7.3 mm out in a direction that changes as the puck
-    rotates, so the position error would jump every time a corner came and
-    went. It has to stay flat across the three rows.
+    Brief corner dropouts must coast without adding measurements, then
+    reacquire when all four corners return. Partial squares alone must never
+    acquire a puck (they can be the robot paddle).
     """
     tr = PuckTracker()
     r = geom.PUCK_MARKER_R_MM
@@ -381,9 +379,13 @@ def _selftest() -> int:
         px = px.reshape(-1, 2) + rng.normal(0, 0.15, (len(obj), 2))
         return np.hstack([px, np.full((len(px), 1), 30.0)])
 
+    for drop in [(0,), (0, 2)]:
+        assert tr.update(0.0, blobs_at(p0, 0.0, drop)) is None
+        assert tr.n_markers == 0
+
     cases = [("all four corners", lambda k: ()),
-             ("one corner dropped", lambda k: (k % 4,)),
-             ("two opposite dropped", lambda k: (k % 2, k % 2 + 2))]
+             ("brief single dropout", lambda k: (k % 4,) if k % 3 == 2 else ()),
+             ("brief double dropout", lambda k: (0, 2) if k % 3 == 2 else ())]
     for label, drops in cases:
         tr._hist.clear()
         tr._spin.clear()
@@ -391,7 +393,13 @@ def _selftest() -> int:
         for k in range(60):
             t = k * dt
             p = p0 + v * t
-            out = tr.update(t, blobs_at(p, omega * t, drops(k)))
+            drop = drops(k)
+            out = tr.update(t, blobs_at(p, omega * t, drop))
+            if drop:
+                assert tr.n_markers == 0 and tr.frame_puck_members is None
+            else:
+                # Known-field-marker rejection can also hide a corner.
+                assert tr.n_markers in (0, 4)
             if out is None or k < 8:        # let the slope fits fill
                 continue
             pe.append(math.hypot(out[0] - p[0], out[1] - p[1]))
@@ -405,8 +413,7 @@ def _selftest() -> int:
         assert max(ve) < 60.0, f"{label}: {max(ve):.1f} mm/s"
         assert abs(spin - 720.0) < 30.0, f"{label}: {spin:.1f} deg/s"
 
-    print("selftest PASSED — dropouts cost nothing, which is the whole point "
-          "of solving the square rather than averaging it")
+    print("selftest PASSED — four-marker identification, brief dropout coasting")
     return 0
 
 

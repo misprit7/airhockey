@@ -91,12 +91,9 @@ def _detect_loose(cands, K, dist, rvec, tvec, paddle_xy):
 
     Returns (puck, player) from the SAME candidate list the paddle came from.
 
-    The puck is the group of blobs that SOLVES its four-corner marker square;
-    the player's mallet is a blob with nothing near it, which no marker on the
-    robot paddle can be, since those sit within 53 mm of each other. See
-    vision/bin/puck_markers.py for why the square is solved rather than
-    averaged — the short version is that averaging three corners invents
-    7.3 mm of displacement pointing at the corner that dropped out.
+    Puck identification requires all four square corners in this frame;
+    a partial square can resemble the robot paddle's three-marker pattern.
+    The player's mallet is an isolated blob, unlike clustered robot markers.
     """
     from camera import backproject_pixels
     from puck_markers import LINK_MM, find_puck

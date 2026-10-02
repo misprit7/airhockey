@@ -2,23 +2,14 @@
 """Solving the puck's four-corner marker square. Pure geometry, no camera.
 
 The puck carries FOUR retroreflectors in a square, 21.85 mm from its centre;
-a hand-held mallet carries ONE dot. That way round because a player's hand
-wraps the mallet and hides whatever is stuck to it, while nothing ever touches
-the puck. Three things fall out of the change, and the third is why this file
-is more than a rename:
+a hand-held mallet carries ONE dot. Identification requires all four puck
+corners in the current frame. The robot paddle's three markers can resemble
+an incomplete puck after projection onto the puck's marker plane, so even a
+previous puck position must not enable two- or three-point identification.
 
-  * a dropout no longer loses the puck -- any three corners still fix it,
-  * the centre is the centre, not wherever one sticker happened to be placed,
-  * four corners give ORIENTATION, so spin is measured rather than inferred.
-
-WHY A SOLVER AND NOT A CENTROID
-    Averaging three of the four corners puts the "centre" 21.85/3 = 7.3 mm
-    toward the missing one. At 200 Hz a 7.3 mm step between frames reads as
-    1460 mm/s of velocity that never happened, and it appears exactly when a
-    corner drops out -- i.e. correlated with glare and with speed, which is
-    the worst possible shape for a friction fit. Three corners have an EXACT
-    answer instead: the widest pair is the diagonal, and a diagonal's
-    midpoint is the centre.
+The geometric solve_square helper also supports incomplete squares for
+already-associated points, but find_puck deliberately does not use that
+capability. Four corners give both the centre and orientation modulo 90 deg.
 
 Lives apart from puck_stream because both the blob-stream tracker and the
 image-based track_mallet need it, and because it is worth being able to test
@@ -44,19 +35,13 @@ MARK_R = geom.PUCK_MARKER_R_MM            # 21.85 — corner to centre
 MARK_SIDE = geom.PUCK_MARKER_SIDE_MM      # 30.90 — adjacent corners
 MARK_DIAG = geom.PUCK_MARKER_DIAG_MM      # 43.70 — opposite corners
 
-# How far a measured corner spacing may sit from the model. Centroid noise is
-# ~0.35 mm and 300 us of exposure smears all four corners the same way, so the
-# budget here is back-projection error, not the blobs. Held at 5 mm rather
-# than something looser because this is also the test that keeps the ROBOT
-# mallet out: its markers are a centre plus two at 26.5 mm radius, i.e.
-# spacings 26.5 / 26.5 / 53.0, and 53.0 is outside 43.7 +/- 5. Loosen this and
-# the mallet starts passing as a puck.
+# RMS spacing tolerance for a square fit, including back-projection error.
+# This is not enough to disambiguate three paddle markers from a partial puck:
+# the paddle arms are adjacent (90 deg), and its marker heights differ.
+# Requiring four corners in find_puck provides that distinction.
 SQUARE_TOL_MM = 5.0
 
-# Single-linkage radius for grouping blobs into objects. It has to reach the
-# DIAGONAL so a puck showing only its two opposite corners stays one group,
-# and it stays well short of the ~69 mm from a puck corner to the mallet's
-# centre dot at the moment of contact — the closest the two ever get.
+# Single-linkage radius for grouping blobs into objects.
 LINK_MM = MARK_DIAG + SQUARE_TOL_MM
 
 # More blobs than this in one group is glare, not a puck. Also bounds the
@@ -97,8 +82,9 @@ def groups(world, link_mm=LINK_MM):
 def solve_square(pts, prev=None):
     """Centre of the marker square from 2-4 of its corners, or None.
 
-    NEVER the mean of the corners unless all four are there — see the module
-    docstring for the 7.3 mm that costs.
+    Only average all four corners: averaging three shifts the centre by
+    MARK_R / 3 (7.3 mm). This helper assumes the points are already associated;
+    use find_puck for identification among unknown blobs.
     """
     pts = np.asarray(pts, float)
     n = len(pts)
@@ -151,18 +137,22 @@ def square_angle(pts, centre):
 
 
 def find_puck(world, prev=None, max_distance=None):
-    """Locate the puck's marker square. (centre, theta, member_idx, rms)."""
+    """Identify a complete four-marker puck. (centre, theta, member_idx, rms).
+
+    Never identify partial squares, including during tracking with prev.
+    Missing corners must yield no measurement rather than steal paddle dots.
+    """
     world = np.asarray(world, float)
-    if len(world) < 2:
+    if len(world) < 4:
         return None
     best = None
     for g in groups(world):
-        if len(g) < 2 or len(g) > MAX_GROUP:
+        if len(g) < 4 or len(g) > MAX_GROUP:
             continue
         # A stray blob inside the group (a glare speck, a rail glint) would
         # break an all-members fit, so once there are more than four try
         # every 4-subset and let the best one speak.
-        subsets = [g] if len(g) <= 4 else [np.array(c)
+        subsets = [g] if len(g) == 4 else [np.array(c)
                                            for c in combinations(g, 4)]
         for s in subsets:
             fit = solve_square(world[s], prev)
@@ -172,9 +162,7 @@ def find_puck(world, prev=None, max_distance=None):
             if (prev is not None and max_distance is not None
                     and np.linalg.norm(c - prev) > max_distance):
                 continue
-            # More corners first, then a tighter fit. A real four-corner
-            # square beats a two-corner coincidence even when the pair
-            # happens to measure closer to the model.
+            # All candidates have four corners; prefer the tighter fit.
             key = (-len(s), rms)
             if best is None or key < best[0]:
                 best = (key, c, s, rms)
@@ -227,10 +215,9 @@ def _selftest() -> int:
     # 5. One corner is not a fix.
     assert solve_square(corners(*truth, th, keep=(0,))) is None
 
-    # 6. The ROBOT mallet — a centre marker plus two at 26.5 mm radius —
-    #    must not read as a puck. It fails on the 53 mm diagonal.
+    # 6. Robot paddle: centre plus two adjacent arms at 26.5 mm radius.
     r = geom.ARM_MARKER_R_MM
-    mallet = np.array([[900.0, 700.0], [900.0 - r, 700.0], [900.0 + r, 700.0]])
+    mallet = np.array([[900.0, 700.0], [900.0 - r, 700.0], [900.0, 700.0 + r]])
     assert solve_square(mallet) is None, "robot mallet passed as a puck"
     assert find_puck(mallet) is None
 
