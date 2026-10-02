@@ -175,6 +175,8 @@ def main():
     p.add_argument("--readiness-weight", type=float, default=0, help="Training-only potential for coverage of direct goal threats")
     p.add_argument("--readiness-cost-weight", type=float, default=0, help="Per-second cost of exposed defense while the opponent can prepare a shot")
     p.add_argument("--readiness-lateral-uncertainty", type=float, default=0, help="Opponent release-position uncertainty in meters for preparation rewards")
+    p.add_argument("--defense-windup-bank-fraction", type=float, default=0,
+                   help="Fraction of hidden delayed defensive releases aimed via a randomly chosen side rail")
     p.add_argument("--defense-windup-lateral-speed", type=float, default=0, help="Maximum lateral puck drift before a hidden delayed practice shot")
     p.add_argument("--slow-exit-penalty", type=float, default=0, help="Penalty for slow loss of reachable possession without a useful shot, even after capture")
     p.add_argument("--possession-delay-weight", type=float, default=0, help="Per-second cost for prolonged own-half possession, without teleporting the puck")
@@ -421,6 +423,7 @@ def main():
         readiness_cost_weight=args.readiness_cost_weight,
         readiness_lateral_uncertainty=args.readiness_lateral_uncertainty,
         defense_windup_lateral_speed=args.defense_windup_lateral_speed,
+        defense_windup_bank_fraction=args.defense_windup_bank_fraction,
         slow_exit_penalty=args.slow_exit_penalty,
         possession_delay_weight=args.possession_delay_weight,
         game_episode_seconds=args.game_episode_seconds,

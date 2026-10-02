@@ -379,8 +379,11 @@ def test_training_shutdown_is_a_failure_and_evaluation_keeps_heat():
 
 def test_slow_puck_outside_contact_workspace_is_not_controlled():
     from airhockey.skill_benchmark import Fixtures
+    from airhockey.neural_setup import workspace_bounds
 
-    env = NeuralTrainingEnv(1, randomize=False, realistic=False)
+    # This regression fixture was recorded with the smaller legacy workspace.
+    env = NeuralTrainingEnv(1, randomize=False, realistic=False,
+                            workspace_bounds_mm=workspace_bounds('legacy'))
     env.reset(
         fixtures=Fixtures(
             np.array([0]),

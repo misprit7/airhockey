@@ -56,3 +56,22 @@ def direct_goal_coverage_cost(puck, paddle, velocity, bounds, config,
     possible = (x >= xmin - config.puck_radius - config.paddle_radius) & (x <= xmax + config.puck_radius + config.paddle_radius)
     shortfall = np.where(possible, shortfall, 1.)
     return np.clip(shortfall.min(axis=2).max(axis=1), 0, .5)
+
+
+def goal_shot_velocity(puck, goal_x, speed, bank_side, config,
+                       wall_restitution=None, wall_tangential=None):
+    """Training-only release aimed at y=0, direct or off one side rail.
+
+    bank_side is -1 for the left rail, +1 for right, and 0 for direct.
+    Normal/tangential rail losses change the launch angle; this is not the
+    elastic mirror construction. No route is exposed to the defending actor.
+    """
+    puck = np.asarray(puck, float)
+    side = np.asarray(bank_side)
+    normal = config.wall_restitution if wall_restitution is None else wall_restitution
+    tangent = config.wall_tangential if wall_tangential is None else wall_tangential
+    wall = np.where(side < 0, config.puck_radius, config.width-config.puck_radius)
+    dx = np.where(side == 0, goal_x-puck[:, 0],
+                  wall-puck[:, 0] + np.asarray(tangent)/normal*(wall-goal_x))
+    direction = np.column_stack((dx, -puck[:, 1]))
+    return direction * (np.asarray(speed)/np.maximum(np.linalg.norm(direction, axis=1), 1e-9))[:, None]

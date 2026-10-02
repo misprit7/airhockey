@@ -3,11 +3,13 @@ import pytest
 
 from airhockey.neural_training import NeuralTrainingEnv
 from airhockey.skill_benchmark import Fixtures
+from airhockey.neural_setup import workspace_bounds
 
 
 def test_edge_curriculum_samples_both_contact_fringe_sides_without_changing_inputs():
     env = NeuralTrainingEnv(256, stage=5, game_fraction=0, realistic=False,
-                            randomize=False, edge_drill_fraction=1, shot_conditioned=True)
+                            randomize=False, edge_drill_fraction=1, shot_conditioned=True,
+                            workspace_bounds_mm=workspace_bounds('legacy'))
     obs = env.reset(seed=5631)
     ids = env.edge_drill
     assert ids.any() and obs.shape == (256, 45)
@@ -48,7 +50,8 @@ def test_edge_recovery_requires_contact_interior_and_safe_speed_and_pays_once():
 
 def test_wall_bounce_from_reported_replay_state_recovers_without_reset_or_fake_capture():
     env = NeuralTrainingEnv(1, stage=5, game_fraction=0, realistic=True, randomize=False,
-                            continuous_rallies=True, edge_recovery_weight=80)
+                            continuous_rallies=True, edge_recovery_weight=80,
+                            workspace_bounds_mm=workspace_bounds('legacy'))
     env.reset(fixtures=Fixtures(np.array([0]), np.array([[.1032, .4306, 0, 0]]),
                                np.array([[.1932, .2113]]), np.array([.5])))
     touched_wall = False
@@ -77,7 +80,7 @@ def test_wall_bounce_from_reported_replay_state_recovers_without_reset_or_fake_c
 
 def test_edge_approach_rewards_feasible_contact_alignment_without_affecting_center():
     env = NeuralTrainingEnv(3, realistic=False, randomize=False, setup_weight=0,
-                            edge_approach_weight=60)
+                            edge_approach_weight=60, workspace_bounds_mm=workspace_bounds('legacy'))
     env.engine.puck_x[:] = [.1032, .1032, .5]
     env.engine.puck_y[:] = .4306
     env.engine.puck_vx[:] = env.engine.puck_vy[:] = 0

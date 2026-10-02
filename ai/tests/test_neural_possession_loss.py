@@ -30,7 +30,8 @@ def test_known_fast_incoming_shot_does_not_use_release_uncertainty():
 
 def test_slow_loss_counts_after_capture_but_not_useful_shot_goal_or_no_opportunity():
     env = NeuralTrainingEnv(5, realistic=False, randomize=False)
-    env.engine.puck_x[:] = .5; env.engine.puck_y[:] = .8
+    edge = env.decoder.high[1]+env.cfg.puck_radius+env.cfg.paddle_radius+.001
+    env.engine.puck_x[:] = .5; env.engine.puck_y[:] = edge
     env.engine.puck_vx[:] = 0; env.engine.puck_vy[:] = .3
     env.entry_active[0] = True; env.entry_reachable_time[0] = .2
     env.entry_flags[0, 0, 1] = True  # Brief capture must not excuse later loss.
@@ -40,7 +41,7 @@ def test_slow_loss_counts_after_capture_but_not_useful_shot_goal_or_no_opportuni
     exclude = np.array([False, False, True, False, False])
     np.testing.assert_array_equal(env._slow_possession_loss(0, exclude), [True, False, False, False, False])
     assert not env._slow_possession_loss(0, exclude).any()
-    env.engine.puck_y[:] = 1.2; env.engine.puck_vy[:] = -.3
+    env.engine.puck_y[:] = env.cfg.height-edge; env.engine.puck_vy[:] = -.3
     env.entry_active[1] = True; env.entry_reachable_time[1] = .2
     assert env._slow_possession_loss(1, np.zeros(5, bool)).all()
     env.reset(mask=np.array([True, False, False, False, False]))
@@ -85,3 +86,44 @@ def test_moving_windup_reaims_from_real_puck_position_and_keeps_speed():
 @pytest.mark.parametrize('kwargs',[{'slow_exit_penalty':-1},{'readiness_lateral_uncertainty':np.nan},{'defense_windup_lateral_speed':-1}])
 def test_invalid_new_settings(kwargs):
     with pytest.raises(ValueError):NeuralTrainingEnv(1,**kwargs)
+
+
+def test_hidden_bank_windups_cover_both_rails_and_reaim_after_drift():
+    env=NeuralTrainingEnv(128, stage=5, game_fraction=0, fixed_practice_roles=True,
+        practice_defense_fraction=1, defense_windup_fraction=1,
+        defense_windup_bank_fraction=.5, defense_windup_lateral_speed=.8,
+        realistic=False, randomize=False)
+    env.reset(seed=572)
+    sides=env._windup_bank_side.copy()
+    assert set(sides)=={-1,0,1}
+    speed=np.linalg.norm(env._windup_velocity,axis=1)
+    env.engine.puck_x[:]+=0.03
+    start=np.column_stack((env.engine.puck_x,env.engine.puck_y))
+    env._windup_release[:]=0
+    env.step(np.zeros((128,6)))
+    v=env._windup_velocity
+    np.testing.assert_allclose(np.linalg.norm(v,axis=1),speed)
+    for side in (-1,0,1):
+        q=sides==side;xy=start[q];velocity=v[q]
+        if side:
+            wall=env.cfg.puck_radius if side<0 else env.cfg.width-env.cfg.puck_radius
+            time=(wall-xy[:,0])/velocity[:,0]
+            assert (time>0).all()
+            xy=xy+velocity*time[:,None]
+            velocity=velocity.copy()
+            velocity[:,0]*=-env.engine.wall_restitution[q]
+            velocity[:,1]*=env.engine.wall_tangential[q]
+        crossing=xy[:,0]-xy[:,1]*velocity[:,0]/velocity[:,1]
+        np.testing.assert_allclose(crossing,env._windup_aim[q],atol=1e-7)
+    # Partial resets clear old hidden routes even if the next drill isn't a bank.
+    env.defense_windup_bank_fraction=0
+    mask=np.arange(128)%2 == 0
+    env.reset(mask=mask)
+    assert not env._windup_bank_side[mask].any()
+    np.testing.assert_array_equal(env._windup_bank_side[~mask], sides[~mask])
+
+
+@pytest.mark.parametrize('fraction',[-.1,1.1,float('nan')])
+def test_invalid_bank_windup_fraction(fraction):
+    with pytest.raises(ValueError,match='windup bank fraction'):
+        NeuralTrainingEnv(1,defense_windup_bank_fraction=fraction)

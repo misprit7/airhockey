@@ -119,6 +119,7 @@ class NeuralTrainingEnv(ArrivalEnv):
         slow_exit_penalty=0.0,
         readiness_lateral_uncertainty=0.0,
         defense_windup_lateral_speed=0.0,
+        defense_windup_bank_fraction=0.0,
     ):
         if goals_only and (terminate_overload or receive_drill or productive_receive_drill or possession_followthrough):
             raise ValueError('goals-only training requires full games without auxiliary drill/overload terminations')
@@ -322,6 +323,10 @@ class NeuralTrainingEnv(ArrivalEnv):
         if not 0 <= defense_windup_fraction <= 1:
             raise ValueError("defense windup fraction must be in [0,1]")
         self.defense_windup_fraction = defense_windup_fraction
+        if not np.isfinite(defense_windup_bank_fraction) or not 0 <= defense_windup_bank_fraction <= 1:
+            raise ValueError("windup bank fraction must be within [0,1]")
+        self.defense_windup_bank_fraction = defense_windup_bank_fraction
+        self._windup_bank_side = np.zeros(n_envs, dtype=int)
         self.defense_windup = np.zeros(n_envs, bool)
         self._windup_release = np.full(n_envs, np.inf)
         self._windup_velocity = np.zeros((n_envs, 2))
@@ -1130,6 +1135,7 @@ class NeuralTrainingEnv(ArrivalEnv):
         self.edge_recovery_count[:, ids] = 0
         self._windup_release[ids] = np.inf
         self._windup_aim[ids] = .5
+        self._windup_bank_side[ids] = 0
         windup_ids = ids[self.defense_windup[ids]]
         if len(windup_ids):
             self._windup_release[windup_ids] = rng.uniform(.3, 1.2, len(windup_ids))
@@ -1137,6 +1143,16 @@ class NeuralTrainingEnv(ArrivalEnv):
             v = self._windup_velocity[windup_ids]
             self._windup_aim[windup_ids] = (self.engine.puck_x[windup_ids]
                 - self.engine.puck_y[windup_ids] * v[:, 0] / v[:, 1])
+            if self.defense_windup_bank_fraction:
+                bank_ids = windup_ids[rng.random(len(windup_ids)) < self.defense_windup_bank_fraction]
+                self._windup_bank_side[bank_ids] = rng.choice([-1, 1], len(bank_ids))
+                from airhockey.neural_possession import goal_shot_velocity
+                e = self.engine
+                self._windup_velocity[bank_ids] = goal_shot_velocity(
+                    np.column_stack((e.puck_x[bank_ids], e.puck_y[bank_ids])),
+                    self._windup_aim[bank_ids], np.linalg.norm(self._windup_velocity[bank_ids], axis=1),
+                    self._windup_bank_side[bank_ids], self.cfg,
+                    e.wall_restitution[bank_ids], e.wall_tangential[bank_ids])
             self.base._opp_policy_id[windup_ids] = _OPP_POLICY_MAP["idle"]
         if self.random_practice_opponent:
             practice_ids = ids[(ids >= round(self.n_envs * self.game_fraction)) & ~self.defense_windup[ids]]
@@ -1286,15 +1302,17 @@ class NeuralTrainingEnv(ArrivalEnv):
         b, e = self.base, self.engine
         launch = self.elapsed >= self._windup_release
         if launch.any():
-            if self.defense_windup_lateral_speed:
+            if self.defense_windup_lateral_speed or self.defense_windup_bank_fraction:
                 # Retain the sampled hidden goal target and shot speed, but
                 # launch from where the puck actually drifted to. No teleport.
                 ids = np.flatnonzero(launch)
                 v = self._windup_velocity[ids]
                 aim = self._windup_aim[ids]
-                direction = np.column_stack((aim-e.puck_x[ids], -e.puck_y[ids]))
-                self._windup_velocity[ids] = direction * (
-                    np.linalg.norm(v, axis=1) / np.maximum(np.linalg.norm(direction, axis=1), 1e-9))[:, None]
+                from airhockey.neural_possession import goal_shot_velocity
+                self._windup_velocity[ids] = goal_shot_velocity(
+                    np.column_stack((e.puck_x[ids], e.puck_y[ids])), aim,
+                    np.linalg.norm(v, axis=1), self._windup_bank_side[ids], self.cfg,
+                    e.wall_restitution[ids], e.wall_tangential[ids])
             e.puck_vx[launch], e.puck_vy[launch] = self._windup_velocity[launch].T
             self._windup_release[launch] = np.inf
         low = 2 * (target - b._action_low) / (b._action_high - b._action_low) - 1
