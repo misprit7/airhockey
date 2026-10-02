@@ -19,7 +19,8 @@ HOW THE MALLET IS SEPARATED FROM THE PUCK
                  grip and covers anything stuck to the sides, so the puck
                  carries the cluster and the mallet carries the lone dot.
       markers=3  The ROBOT mallet, a centre marker plus two at 26.5 mm
-                 radius. Unchanged, and still what log_hardware.py wants.
+                 radius on adjacent arms. Solve their measured 65/33 mm
+                 heights to recover the centre, rather than a centroid.
 
     Neither rule depends on brightness, which matters because every marker on
     this table is the same tape and a rule based on intensity would fail the
@@ -36,6 +37,7 @@ HEIGHT MATTERS MORE THAN IT LOOKS
 from __future__ import annotations
 
 import sys
+import itertools
 from pathlib import Path
 
 import numpy as np
@@ -43,7 +45,7 @@ import numpy as np
 sys.path.insert(0, str(Path(__file__).resolve().parent))
 sys.path.insert(0, str(Path(__file__).resolve().parents[2] / "shared"))
 import cdpr_geometry as geom  # noqa: E402
-from puck_markers import LINK_MM, find_puck  # noqa: E402
+from puck_markers import LINK_MM, find_puck, groups  # noqa: E402
 from puck_stream import PuckTracker  # noqa: E402
 
 try:
@@ -52,13 +54,12 @@ except Exception:                       # noqa: BLE001
     ARM_Z_MM = 33.0
 
 # Robot mallet only: its markers sit ARM_MARKER_R apart, so the cluster spans
-# roughly 2 * 26.5. Generous enough to survive one marker being marginal.
+# roughly 2 * 26.5, with room for perspective and extra stray detections.
 CLUSTER_MM = 90.0
-MIN_CLUSTER = 2          # 2 of 3 markers is enough for a centroid
 
 
 class MalletTracker:
-    """Mallet centroid in table mm, from the same blobs the puck comes from.
+    """Mallet centre in table mm, from the same blobs the puck comes from.
 
     Shares PuckTracker's rejection of glare, fixed markers and off-table
     blobs, because those are properties of the SCENE and duplicating them
@@ -69,11 +70,9 @@ class MalletTracker:
                  marker_z_mm: float | None = None, markers: int = 3):
         """`markers` is 1 for a hand-held mallet, 3 for the robot's.
 
-        `marker_z_mm` is the HEIGHT of the marker(s) above the playing
-        surface; the default follows `markers` -- 33 mm for the robot's arm
-        markers, 67 mm for a dot on top of a mallet. Getting it wrong is a
-        parallax error proportional to radial distance from the camera nadir,
-        so measure your own mallet rather than trusting either default.
+        `marker_z_mm` sets the hand-held marker height, or the plane used
+        to group robot candidates. The robot pose itself always uses the
+        separately measured centre and arm heights from track_mallet.
         """
         if markers not in (1, 3):
             raise ValueError(f"markers must be 1 or 3, got {markers}")
@@ -107,7 +106,7 @@ class MalletTracker:
         # different plane, and the difference is the whole point of this file.
         world = self.t._to_table(kept[free][:, :2], self.z)
         found = (self._lone(world, kept[free][:, 2]) if self.markers == 1
-                 else self._cluster(world))
+                 else self._robot_pose(kept[free], world))
         if found is None:
             return None
         c, n = found
@@ -144,22 +143,28 @@ class MalletTracker:
             i = int(alone[0])
         return world[i], 1
 
-    def _cluster(self, world):
-        """The robot mallet: seed on the blob with the most neighbours.
+    def _robot_pose(self, blobs, world):
+        """Use the centre and adjacent arms at their distinct measured heights.
 
-        Using the median of all candidates instead breaks as soon as anything
-        else is on the table, because the median sits between the two objects
-        and belongs to neither.
+        Averaging these three markers at the arm plane creates a repeatable
+        6–9 mm offset. Two markers do not identify that geometry unambiguously.
+        Reuse the same pose fit used to calibrate the robot before ENABLE.
         """
-        if len(world) < MIN_CLUSTER:
+        from track_mallet import solve_pose
+        matches = []
+        for cluster in groups(world, link_mm=CLUSTER_MM):
+            if not 3 <= len(cluster) <= 8:
+                continue
+            for ids in itertools.combinations(cluster, 3):
+                candidates = [(float(blobs[i, 2]), blobs[i, :2]) for i in ids]
+                pose = solve_pose(candidates, self.t.K, self.t.dist,
+                                  self.t.rvec, self.t.tvec)
+                if (abs(pose['disagree']) <= 5 and
+                        max(abs(r-geom.ARM_MARKER_R_MM) for r in pose['r']) <= 4):
+                    matches.append(pose)
+        if len(matches) != 1:
             return None
-        d = np.linalg.norm(world[:, None, :] - world[None, :, :], axis=2)
-        near = (d < CLUSTER_MM).sum(axis=1)
-        seed = int(np.argmax(near))
-        if near[seed] < MIN_CLUSTER:
-            return None
-        members = world[d[seed] < CLUSTER_MM]
-        return members.mean(axis=0), len(members)
+        return matches[0]['centre'], 3
 
 
 def _selftest() -> int:
@@ -201,17 +206,10 @@ def _selftest() -> int:
     # 2. Puck alone must NOT be reported as a mallet.
     assert make(1, geom.MALLET_Z_MM).update(blobs(puck)) is None
 
-    # 3. Robot mallet: the cluster, with the puck present and excluded.
-    ar = geom.ARM_MARKER_R_MM
-    robot = np.array([[900.0, 700.0], [900.0 - ar, 700.0],
-                      [900.0 + ar, 700.0]])
-    m = make(3, ARM_Z_MM)
-    got = m.update(blobs(np.vstack([puck, robot])))
-    assert got is not None and got[2] == 3, got
-    assert abs(got[0] - 900.0) < 1e-6 and abs(got[1] - 700.0) < 1e-6, got
-    assert calls["z"] == ARM_Z_MM, calls["z"]
+    # The actual mixed-height three-marker solve has camera projection tests
+    # in ai/tests/test_mallet_pose.py; this selftest covers lone-dot association.
 
-    print("selftest PASSED — lone dot and 3-cluster both found with the "
+    print("selftest PASSED — lone dot found with the "
           "puck's four corners on the table")
     return 0
 

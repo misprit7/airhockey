@@ -30,12 +30,12 @@ def corners(x, y, n=4):
     return np.column_stack([x + MARK_R * np.cos(a), y + MARK_R * np.sin(a), np.ones(n)])
 
 
-def test_unreachable_better_square_cannot_replace_reachable_partial_puck(tracker):
+def test_unreachable_square_and_partial_puck_cannot_create_fresh_measurement(tracker):
     tracker.update(0, corners(800, 450))
     blobs = np.concatenate([corners(1500, 450), corners(810, 450, n=3)])
     fix = tracker.update(.005, blobs)
-    assert fix[:2] == pytest.approx((810, 450))
-    assert tracker.n_markers == 3
+    assert fix[:2] == pytest.approx((800, 450))  # coast from last full square
+    assert tracker.n_markers == 0
 
 
 def test_teleport_rejected_without_poisoning_history(tracker):
@@ -64,8 +64,12 @@ def test_robot_uses_the_same_puck_assignment(tracker, monkeypatch):
     blobs = np.concatenate([corners(800, 450), [[1500, 500, 1], [1526, 500, 1], [1500, 526, 1]]])
     tracker.update(0, blobs)
     monkeypatch.setattr(mallet_stream, "find_puck", lambda *a: pytest.fail("independent association"))
+    def pose(remaining, world):
+        np.testing.assert_array_equal(remaining, blobs[4:])
+        return np.array([1500., 500.]), 3
+    monkeypatch.setattr(own, '_robot_pose', pose)
     fix = own.update(blobs)
-    assert fix[:2] == pytest.approx((1500 + 26 / 3, 500 + 26 / 3))
+    assert fix[:2] == pytest.approx((1500., 500.))
 
 
 def test_new_rail_model_matches_heldout_oblique_contact():
@@ -83,10 +87,11 @@ def test_new_rail_model_matches_heldout_oblique_contact():
     assert abs(2.9147575325 * .66 - measured) > .7
 
 
-def test_robot_teleport_is_rejected_even_inside_workspace(tracker):
+def test_robot_teleport_is_rejected_even_inside_workspace(tracker, monkeypatch):
     from mallet_stream import MalletTracker
 
     own = MalletTracker(tracker, markers=3)
+    monkeypatch.setattr(own, '_robot_pose', lambda blobs, world: (world[0], 3))
     for t, x, expected in [(0, 1500, True), (.005, 1800, False), (.010, 1510, True)]:
         blobs = np.concatenate([corners(800, 450), [[x, 500, 1], [x+26, 500, 1], [x, 526, 1]]])
         tracker.update(t, blobs)

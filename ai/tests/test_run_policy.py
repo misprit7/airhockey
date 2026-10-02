@@ -891,9 +891,10 @@ def _install_fake_camera(monkeypatch, blank_from_s=None, duration_s=2.0, puck_pa
         def __iter__(self):
             for k in range(int(duration_s * 200)):
                 t = k * 0.005
-                mallet = [(1600.0, 400.0), (1600.0 - ar, 400.0),
-                          (1600.0 + ar, 400.0)]
-                groups = [project(mallet, 33.0)]
+                arms = [(1600.0 + ar * math.cos(a), 400.0 + ar * math.sin(a))
+                        for a in (3 * math.pi / 4, 5 * math.pi / 4)]
+                groups = [project([(1600.0, 400.0)], 65.0),
+                          project(arms, 33.0)]
                 puck_xy = (puck_path(t) if puck_path is not None else
                            (1400.0 - 300.0 * t, 500.0 + 200.0 * t))
                 if (blank_from_s is None or t < blank_from_s) and puck_xy is not None:

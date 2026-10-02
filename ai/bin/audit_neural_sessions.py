@@ -40,6 +40,17 @@ def json_ready(value):
 
 def audit(stamp, out):
     base = Path('logs/run_policy') / stamp
+    with base.with_suffix('.replay.jsonl').open() as f:
+        metadata = json.loads(next(f))
+    accel_limit = metadata.get('accel_mm_s2') or 60000.0
+    speed_limit = metadata.get('speed_mm_s') or 12000.0
+    bounds = metadata.get('workspace_bounds_mm')
+    if bounds is None:
+        from airhockey.neural_setup import checkpoint_environment, workspace_bounds
+        checkpoint = metadata.get('checkpoint')
+        bounds = (checkpoint_environment(checkpoint)['workspace_bounds_mm']
+                  if checkpoint and Path(checkpoint).is_file() else workspace_bounds('legacy'))
+    xmin, xmax, ymin, ymax = bounds
     with base.with_suffix('.ticks.csv').open() as f:
         rows = list(csv.DictReader(f))
     if not rows:
@@ -56,10 +67,12 @@ def audit(stamp, out):
                   active_source=dict(Counter(r['mallet_src'] for r,a in zip(rows,active) if a)))
     for key in ('lag_ms','ctl_age_ms','puck_age_ms','policy_ms','io_ms','cmd_accel','cmd_speed'):
         result[key] = stats(col(key)[active])
-    result['caps_violations'] = dict(accel_above_60=int((col('cmd_accel')>60000.1).sum()),
-                                    speed_above_12=int((col('cmd_speed')>12000.1).sum()),
-                                    workspace=int(((col('cmd_x')<geom.WS_MIN_X-.1)|(col('cmd_x')>geom.WS_MAX_X+.1)|
-                                                   (col('cmd_y')<geom.WS_MIN_Y-.1)|(col('cmd_y')>geom.WS_MAX_Y+.1)).sum()))
+    result['caps_violations'] = dict(accel_above_session_cap=int((col('cmd_accel')>accel_limit+.1).sum()),
+                                    speed_above_session_cap=int((col('cmd_speed')>speed_limit+.1).sum()),
+                                    workspace=int(((col('cmd_x')<xmin-.1)|(col('cmd_x')>xmax+.1)|
+                                                   (col('cmd_y')<ymin-.1)|(col('cmd_y')>ymax+.1)).sum()))
+    result['session_caps'] = dict(accel_mm_s2=accel_limit, speed_mm_s=speed_limit, workspace_bounds_mm=bounds)
+    result['active_accel_cap_fractions'] = {str(f):float(np.mean(col('cmd_accel')[active]>=f*accel_limit)) for f in (.5,.75,.9,.95,.99)}
     result['active_above_40_accel_fraction'] = float(np.mean(col('cmd_accel')[active]>40000))
     result['active_puck_age_over_50ms_fraction'] = float(np.mean(col('puck_age_ms')[active]>50))
     neural_rows = [r for r in rows if r.get('neural_obs')]
@@ -104,7 +117,8 @@ def audit(stamp, out):
     result['camera_controller_stationary_mm']=stats(err[valid&(speed<20)])
     result['camera_controller_stationary_bias_mm']=np.median((cam[:,1:]-pred)[valid&(speed<20)],axis=0).tolist()
     scans=[]
-    first=cam[:,0] < t[-1]/2
+    # Split actual play, not a session tail that may contain long idle time.
+    first=cam[:,0] < np.median(t[active])
     for lag in np.arange(-.04,.081,.002):
         ok,pr,sp,er=aligned(lag)
         mask=ok&(sp>500)&first

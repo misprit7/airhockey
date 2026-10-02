@@ -167,3 +167,33 @@ def test_sampling_does_not_bridge_tracking_holes():
     got = sample([[0, 0.1, 0.2], [1, 0.3, 0.4]], [0, 0.5, 1, 1.2])
     assert np.isnan(got[1]).all() and np.isnan(got[3]).all()
     np.testing.assert_allclose(got[[0, 2]], [[0.1, 0.2], [0.3, 0.4]])
+
+
+def test_rollout_honors_recorded_physics_and_workspace():
+    s=session(.6)
+    s['meta']['workspace_bounds_mm']=[1350,1917.5,172.9,793]
+    s['commands']=[[0,0.,.35,12,40]]
+    s['meta']['table_config']={'puck_friction':0.,'PUCK_DRAG_B':0.}
+    exact=simulate(s,[0],duration=.5)[0]
+    # Puck must preserve its initial speed in the recorded zero-drag model.
+    assert exact['frames'][-1][2]==pytest.approx(1.,abs=1e-5)
+    from airhockey.dynamics import workspace_in_sim
+    bound=workspace_in_sim(bounds_mm=s['meta']['workspace_bounds_mm'])['min_x']
+    assert exact['frames'][-1][3]>=bound-1e-6
+    s['meta']['table_config']['puck_friction']=.1
+    slower=simulate(s,[0],duration=.5)[0]
+    assert slower['frames'][-1][2]>exact['frames'][-1][2]+.05
+
+
+def test_log_records_checkpoint_thermal_model_instead_of_default(tmp_path):
+    checkpoint=tmp_path/'agent.pt';checkpoint.touch()
+    (tmp_path/'run.json').write_text(json.dumps({
+        'workspace_bounds_mm':[1200,1937.5,61.4,904.5],
+        'thermal_model':{'schema':'test-spatial'}, 'args':{'defense_max_speed':16}}))
+    path=tmp_path/'replay.jsonl'
+    log=ReplayLog(path,SimpleNamespace(policy='neural:test',live=False,ramp=3,resolved_checkpoint=str(checkpoint)))
+    log.close()
+    meta=json.loads(path.read_text())
+    assert meta['motor_profile']=={'schema':'test-spatial'}
+    assert meta['table_config']['max_puck_speed']==16
+    assert meta['workspace_bounds_mm']==[1200,1937.5,61.4,904.5]

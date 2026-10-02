@@ -191,7 +191,17 @@ def _load(filename, mtime, size):
         tracks[k] = [[round(t - origin, 6), *xy] for t, xy in sorted(samples.items())]
     commands = [[t - origin, *values] for t, *values in sorted(commands)]
     events = [dict(e, t=e["t"] - origin) for e in events]
-    cfg = TableConfig()
+    # Replay the recorded configuration, not today's simulation defaults.
+    cfg = TableConfig(**meta.get('table_config', {}))
+    bounds = meta.get('workspace_bounds_mm')
+    if bounds is None:
+        checkpoint = meta.get('checkpoint')
+        if checkpoint and Path(checkpoint).is_file():
+            from airhockey.neural_setup import checkpoint_environment
+            bounds = checkpoint_environment(checkpoint)['workspace_bounds_mm']
+        else:
+            from airhockey.neural_setup import workspace_bounds
+            bounds = workspace_bounds('legacy')
     return dict(
         name=p.name,
         duration=end - origin,
@@ -203,6 +213,8 @@ def _load(filename, mtime, size):
             policy=meta.get("policy", "unknown"),
             live=meta.get("live"),
             ramp_s=float(meta.get("ramp", 3)) / 1000,
+            table_config=meta.get('table_config', {}),
+            workspace_bounds_mm=bounds,
         ),
         table=dict(
             width=cfg.width,
@@ -271,7 +283,9 @@ def simulate(session, starts, duration=10.0, command_offset_ms=0.0):
     ):
         raise ValueError("Start time is outside the recording")
     n = len(starts)
-    env = BatchAirHockeyEnv(n_envs=n, domain_randomize=False)
+    env = BatchAirHockeyEnv(n_envs=n, domain_randomize=False,
+        table_config=TableConfig(**session['meta'].get('table_config', {})),
+        workspace_bounds_mm=session['meta'].get('workspace_bounds_mm'))
     e = env.engine = _ReplayPhysics(n, env.table_config)
     dyn = env._agent_dyn
     dyn["ramp_s"] = session["meta"]["ramp_s"]

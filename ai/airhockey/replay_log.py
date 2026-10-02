@@ -4,6 +4,7 @@ import json
 import math
 import time
 from dataclasses import asdict
+from pathlib import Path
 
 from airhockey.physics import TableConfig
 from airhockey.thermal import DEFAULT_MODEL
@@ -15,6 +16,19 @@ class ReplayLog:
         self.origin = None
         self.frames = 0
         self._rejected_jumps = 0
+        config = TableConfig()
+        motor_profile = json.loads(DEFAULT_MODEL.read_text())
+        from airhockey.dynamics import _geom as geom
+        workspace = [geom.WS_MIN_X, geom.WS_MAX_X, geom.WS_MIN_Y, geom.WS_MAX_Y]
+        checkpoint = getattr(args, "resolved_checkpoint", None)
+        if checkpoint and str(args.policy).startswith('neural:'):
+            from airhockey.neural_setup import checkpoint_environment
+            environment = checkpoint_environment(checkpoint)
+            workspace = environment['workspace_bounds_mm']
+            model = environment.get('thermal_path')
+            if model is not None:
+                motor_profile = model if isinstance(model, dict) else json.loads(Path(model).read_text())
+            config.max_puck_speed = max(config.max_puck_speed, environment['defense_max_speed'])
         self._write(
             dict(
                 type="meta",
@@ -24,8 +38,9 @@ class ReplayLog:
                 live=args.live,
                 ramp=args.ramp,
                 camera_delay_s=0.0077,
-                table_config=asdict(TableConfig()),
-                motor_profile=json.loads(DEFAULT_MODEL.read_text()),
+                table_config=asdict(config),
+                workspace_bounds_mm=workspace,
+                motor_profile=motor_profile,
                 speed_mm_s=getattr(args, "speed", None),
                 accel_mm_s2=getattr(args, "accel", None),
                 checkpoint=getattr(args, "resolved_checkpoint", None),
