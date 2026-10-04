@@ -368,7 +368,7 @@ def test_replay_keeps_marker_evidence_near_apparent_contact(tmp_path):
     tracker=SimpleNamespace(rejected_jumps=0,n_markers=2,frame_puck_members=np.array([1,2]))
     replay.tracking_diagnostics(1,tracker,np.array([[1,2,3],[4,5,6],[7,8,9]]),report)
     replay.close()
-    e=[json.loads(s) for s in p.read_text().splitlines()][1]
+    e=next(r for r in map(json.loads,p.read_text().splitlines()) if r['type']=='near_contact_tracking')
     assert e['type']=='near_contact_tracking' and e['puck_markers']==2
     assert e['puck_members']==[1,2] and len(e['blobs_px'])==3
 

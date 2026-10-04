@@ -1453,7 +1453,18 @@ const cursorLine = (mm, suffix) => (mm === null
     const frame = document.getElementById('camera-view');
     const status = document.getElementById('camera-status');
     if (!btn) return;
-    let on = false, poll = null, last = null;
+    let on = false, poll = null, last = null, streamGeneration = null;
+    let reconnectAt = 0, polling = false;
+    const connectPreview = (s) => {
+        if (!on || !s.running || s.stalled || s.error) return;
+        if (!img.getAttribute('src') || streamGeneration !== s.generation) {
+            img.src = '/camera/stream?t=' + Date.now();
+            streamGeneration = s.generation;
+        }
+    };
+    img.addEventListener('error', () => {
+        if (on) { img.removeAttribute('src'); reconnectAt = Date.now()+1000; }
+    });
 
     // Scroll to zoom, drag to pan, double-click to fit. The transform goes
     // on the <img>; the wheel listener goes on the clipping frame, which
@@ -1468,11 +1479,15 @@ const cursorLine = (mm, suffix) => (mm === null
 
     const paint = (s) => {
         last = s;
-        if (s.error) {
-            status.textContent = 'error: ' + s.error;
+        if (s.error || !s.running || s.stalled) {
+            img.removeAttribute('src'); streamGeneration = null;
+            status.textContent = s.error ? 'error: '+s.error
+                : s.stalled ? 'Camera stalled — no fresh frames ('+Math.round((s.frame_age_ms || 0)/1000)+' s)'
+                : 'Camera stopped — preview is not live';
             status.classList.add('bad');
             return;
         }
+        if (Date.now() >= reconnectAt) connectPreview(s);
         status.classList.remove('bad');
         const p = s.pose;
         // The puck's corner count is on the line for a reason: it is the one
@@ -1531,7 +1546,7 @@ const cursorLine = (mm, suffix) => (mm === null
         if (on) {
             const s = await (await fetch('/camera/start', {method: 'POST'})).json();
             paint(s);
-            if (!s.error) img.src = '/camera/stream?t=' + Date.now();
+            connectPreview(s);
             // Fetched per start, not once: re-running the extrinsics changes
             // the mapping, and a stale grid would read plausibly and wrongly.
             try {
@@ -1539,7 +1554,19 @@ const cursorLine = (mm, suffix) => (mm === null
                 grid = g.error ? null : g;
             } catch (_) { grid = null; }
             poll = setInterval(async () => {
-                paint(await (await fetch('/camera/status')).json());
+                if (polling) return;
+                polling = true;
+                try {
+                    const response = await fetch('/camera/status', {signal: AbortSignal.timeout(2000)});
+                    if (!response.ok) throw new Error('Camera status '+response.status);
+                    const s = await response.json();
+                    if (on) paint(s);
+                } catch (e) {
+                    if (on) {
+                        status.textContent = 'Camera status unavailable — preview may be stale';
+                        status.classList.add('bad');
+                    }
+                } finally { polling = false; }
             }, 500);
         } else {
             clearInterval(poll); poll = null;

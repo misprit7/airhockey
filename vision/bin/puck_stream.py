@@ -136,16 +136,22 @@ class FrameReader:
 
 
 class BlobStream:
-    """Lines of blob coordinates from the C++ tracker."""
+    """Lines of blob coordinates from the C++ tracker.
+
+    Keep enough raw blobs for the calibrated filter to run BEFORE reflections
+    crowd out real markers. The old 24-brightest cap lost puck corners in
+    daylight even though the full frame contained a valid four-marker square.
+    """
 
     def __init__(self, fps=200.0, exposure=300.0, gain=12.0, threshold=90,
-                 min_area=4, max_area=4000):
+                 min_area=4, max_area=4000, max_blobs=256):
         if not BLOBTRACK.exists():
             sys.exit(f"{BLOBTRACK} not built — run `make -C vision`")
         self.p = subprocess.Popen(
             [str(BLOBTRACK), "--fps", str(fps), "--exposure", str(exposure),
              "--gain", str(gain), "--threshold", str(threshold),
-             "--min-area", str(min_area), "--max-area", str(max_area)],
+             "--min-area", str(min_area), "--max-area", str(max_area),
+             "--max-blobs", str(max_blobs)],
             stdout=subprocess.PIPE, stderr=subprocess.DEVNULL, text=True,
             bufsize=1)
         header = self.p.stdout.readline()

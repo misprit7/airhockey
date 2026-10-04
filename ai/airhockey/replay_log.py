@@ -16,6 +16,7 @@ class ReplayLog:
         self.origin = None
         self.frames = 0
         self._rejected_jumps = 0
+        self._last_tracking_sample = -math.inf
         config = TableConfig()
         motor_profile = json.loads(DEFAULT_MODEL.read_text())
         from airhockey.dynamics import _geom as geom
@@ -74,7 +75,16 @@ class ReplayLog:
             self.file.flush()
 
     def tracking_diagnostics(self, t, tracker, blobs, report=None):
-        """Preserve marker evidence when temporal association rejects a fix."""
+        """Preserve sampled raw evidence even when no object can be identified."""
+        if t-self._last_tracking_sample >= .5:
+            self._last_tracking_sample = t
+            candidates = getattr(tracker, "frame_candidates", None)
+            self._write(dict(type="tracking_sample", t=t,
+                blobs_px=blobs.tolist(),
+                candidate_count=None if candidates is None else len(candidates[0]),
+                puck_markers=getattr(tracker, "n_markers", 0),
+                puck_fresh=bool(report is not None and report.t_puck == t),
+                agent_fresh=bool(report is not None and report.t_mallet == t)))
         # Raw marker evidence is especially useful when apparent overlap could
         # be marker confusion, lift, or a real grazing collision. Tracks alone
         # cannot distinguish these; retain the underlying detections nearby.

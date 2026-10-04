@@ -8,6 +8,8 @@ behind and never sees a stale frame.
 """
 
 import ctypes
+import os
+import time
 import select
 import signal
 import struct
@@ -41,7 +43,7 @@ class Stream:
 
     def __init__(self, exposure, gain, warmup=None):
         if not SNAP.exists():
-            sys.exit(f"{SNAP} not built — run `make` in vision/")
+            raise RuntimeError(f"{SNAP} not built — run `make` in vision/")
         # Die with the parent. Without this, killing the owning process
         # orphans snap still holding the Spinnaker device, and every later
         # attempt to open the camera blocks forever behind it — which
@@ -55,32 +57,50 @@ class Stream:
         self.p = subprocess.Popen(
             [str(SNAP), "--stream", "--exposure", str(exposure),
              "--gain", str(gain)],
-            stdin=subprocess.PIPE, stdout=subprocess.PIPE,
+            stdin=subprocess.PIPE, stdout=subprocess.PIPE, bufsize=0,
             preexec_fn=_pdeathsig)
 
         # Bounded wait for the header: a busy camera makes snap hang rather
         # than exit, and blocking here forever hides the real cause.
         if not select.select([self.p.stdout], [], [], 12.0)[0]:
             self.p.kill()
-            sys.exit("camera did not respond within 12s — another process is "
-                     "probably holding it (check: pgrep -a snap)")
-        hdr = self._read(16)
+            self.p.wait()
+            raise RuntimeError("camera delivered no stream header within 12s; "
+                               "check for another camera owner or a USB/camera stall")
+        try:
+            hdr = self._read(16)
+        except Exception:
+            self.close()
+            raise
         if hdr[:8] != b"SNAPSTRM":
-            sys.exit(f"unexpected stream header {hdr[:8]!r}")
+            self.close()
+            raise RuntimeError(f"unexpected stream header {hdr[:8]!r}")
         self.w, self.h = struct.unpack("<II", hdr[8:16])
 
         n = self.WARMUP_FRAMES if warmup is None else warmup
-        for _ in range(n):
-            self.grab()
+        try:
+            for _ in range(n):
+                self.grab()
+        except Exception:
+            self.close()
+            raise
 
-    def _read(self, n):
-        buf = b""
-        while len(buf) < n:
-            c = self.p.stdout.read(n - len(buf))
-            if not c:
-                sys.exit("camera stream closed unexpectedly")
-            buf += c
-        return buf
+    def _read(self, n, timeout_s=3.0):
+        # Buffered read(n) can wait forever after a partial frame. Read the
+        # pipe directly with one deadline so USB/process stalls reach the UI.
+        chunks = []
+        remaining = n
+        deadline = time.monotonic() + timeout_s
+        while remaining:
+            wait = deadline-time.monotonic()
+            if wait <= 0 or not select.select([self.p.stdout], [], [], wait)[0]:
+                raise TimeoutError("camera frame transfer stalled for %.1f s" % timeout_s)
+            chunk = os.read(self.p.stdout.fileno(), min(remaining, 1024*1024))
+            if not chunk:
+                raise RuntimeError("camera stream closed unexpectedly")
+            chunks.append(chunk)
+            remaining -= len(chunk)
+        return b"".join(chunks)
 
     def grab(self):
         self.p.stdin.write(b"g")

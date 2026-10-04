@@ -178,3 +178,21 @@ def test_realistic_sensing_enables_independent_command_delay():
     e = BatchAirHockeyEnv(1, **sensing_kwargs(True))
     assert e.command_delay_s == .012
     assert BatchAirHockeyEnv(1, **sensing_kwargs(False)).command_delay_s == 0
+
+
+def test_tracking_samples_survive_complete_detection_loss(tmp_path, tracker):
+    import json
+    from types import SimpleNamespace
+    from airhockey.replay_log import ReplayLog
+    path=tmp_path/'lost.jsonl'
+    log=ReplayLog(path,SimpleNamespace(policy='test',live=False,ramp=3))
+    blobs=corners(800,450,2)
+    report=SimpleNamespace(puck=None,mallet=None,t_puck=None,t_mallet=None)
+    for t in (0,.1,.49,.5,.6):
+        tracker.update(t,blobs)
+        log.tracking_diagnostics(t,tracker,blobs,report)
+    log.close()
+    samples=[r for r in map(json.loads,path.read_text().splitlines()) if r['type']=='tracking_sample']
+    assert len(samples)==2
+    assert samples[0]['blobs_px']==blobs.tolist()
+    assert not any(s['puck_fresh'] or s['agent_fresh'] for s in samples)

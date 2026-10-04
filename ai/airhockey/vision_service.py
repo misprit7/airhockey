@@ -188,6 +188,9 @@ class VisionService:
         self._pose_t = 0.0          # time.time() the frame arrived
         self._raw = None
         self._frame_t = 0.0
+        self._started_t = 0.0
+        self._generation = 0
+        self._frame_seq = 0
         self._recovered_dim_marker = False
         self._boost = False         # unpaced, JPEG only every few frames
         self._puck: dict | None = None
@@ -207,6 +210,13 @@ class VisionService:
             self._pose_t = 0.0
             self._raw = None
             self._frame_t = 0.0
+            self._jpeg = None
+            self._puck = self._player = None
+            self._fps = 0.0
+            self._note = None
+            self._started_t = time.time()
+            self._generation += 1
+            self._frame_seq = 0
         self._stop.clear()
         self._error = None
         self._thread = threading.Thread(target=self._run, daemon=True)
@@ -295,14 +305,28 @@ class VisionService:
 
     def frame_jpeg(self) -> bytes | None:
         with self._lock:
+            if not self.running or self._stop.is_set() or not 0 <= time.time()-self._frame_t <= 1.0:
+                return None
             return self._jpeg
 
     def status(self) -> dict:
         with self._lock:
-            pose, note, fps = self._pose, self._note, self._fps
-            puck, player = self._puck, self._player
+            now = time.time()
+            running = self.running and not self._stop.is_set()
+            age = now-self._frame_t if self._frame_t else None
+            fresh = running and age is not None and 0 <= age <= 1.0
+            pose = self._pose if fresh and 0 <= now-self._pose_t <= .25 else None
+            note, fps = self._note, self._fps if fresh else 0.0
+            puck, player = (self._puck, self._player) if fresh else (None, None)
+            stalled = running and (age is not None and age > 1.0 or
+                                   age is None and now-self._started_t > 3.0)
+            generation, seq = self._generation, self._frame_seq
         return {
-            "running": self.running,
+            "running": running,
+            "stalled": bool(stalled),
+            "frame_age_ms": None if age is None else round(max(0.0, age)*1000, 1),
+            "generation": generation,
+            "frame_seq": seq,
             "error": self._error,
             "fps": round(fps, 1),
             "note": note,
@@ -369,6 +393,7 @@ class VisionService:
                     self._note = note
                     self._raw = img
                     self._frame_t = now
+                    self._frame_seq += 1
                     self._recovered_dim_marker = bool(pose and pose.get('recovered_dim_marker'))
                     self._puck = puck
                     self._player = player

@@ -32,3 +32,34 @@ def test_calibration_rejects_nonfinite_pose(monkeypatch):
     service._pose = (1461.1, 447.3, float('nan'))
     service._pose_t = 100.0
     assert service.latest_pose() is None
+
+
+@pytest.mark.parametrize('running,frame_age,pose_age,expected_stall', [
+    (True,.05,.05,False), (True,2,.05,True),
+    (True,.05,2,False), (False,.05,.05,False),
+])
+def test_preview_never_presents_stale_frame_or_pose_as_live(monkeypatch, running, frame_age, pose_age, expected_stall):
+    monkeypatch.setattr('airhockey.vision_service.time.time', lambda: 100.)
+    service=VisionService()
+    service._thread=SimpleNamespace(is_alive=lambda: running)
+    service._frame_t=100-frame_age;service._pose_t=100-pose_age
+    service._pose=(1500.,450.,2.35);service._fps=12.;service._jpeg=b'jpeg'
+    service._puck={'x':800.,'y':450.,'theta':0.,'n':4}
+    status=service.status()
+    assert status['stalled']==expected_stall
+    assert (status['pose'] is not None)==(running and frame_age<=1 and pose_age<=.25)
+    assert (status['puck'] is not None)==(running and frame_age<=1)
+    assert status['fps']==(12. if running and frame_age<=1 else 0.)
+    assert service.frame_jpeg()==(b'jpeg' if running and frame_age<=1 else None)
+
+
+def test_preview_start_clears_previous_image_and_objects(monkeypatch):
+    class Thread:
+        def __init__(self,**kwargs):pass
+        def start(self):pass
+        def is_alive(self):return True
+    monkeypatch.setattr('airhockey.vision_service.threading.Thread',Thread)
+    service=VisionService();service._jpeg=b'old';service._puck={'old':True};service._fps=12
+    service.start()
+    assert service._jpeg is None and service._puck is None and service._fps==0
+    assert service.status()['generation']==1
