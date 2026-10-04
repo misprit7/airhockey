@@ -47,6 +47,7 @@ sys.path.insert(0, str(Path(__file__).resolve().parents[2] / "shared"))
 import cdpr_geometry as geom  # noqa: E402
 from puck_markers import LINK_MM, find_puck, groups  # noqa: E402
 from puck_stream import PuckTracker  # noqa: E402
+from playing_area import inside_playing_area
 
 try:
     from track_mallet import ARM_Z_MM  # measured, not inferred
@@ -110,6 +111,8 @@ class MalletTracker:
         if found is None:
             return None
         c, n = found
+        if not inside_playing_area(c, geom.MALLET_RADIUS_MM)[0]:
+            return None
         # A robot detection cannot teleport or leave its reachable box.
         # Apply only to the robot; the human has a different workspace.
         if self.markers == 3:
@@ -129,7 +132,8 @@ class MalletTracker:
     def _lone(self, world, bright):
         """A hand-held mallet: the one blob with nothing near it."""
         d = np.linalg.norm(world[:, None, :] - world[None, :, :], axis=2)
-        alone = np.flatnonzero((d <= LINK_MM).sum(axis=1) == 1)
+        alone = np.flatnonzero(((d <= LINK_MM).sum(axis=1) == 1)
+                               & inside_playing_area(world, geom.MALLET_RADIUS_MM))
         if len(alone) == 0:
             return None
         if len(alone) > 1:
@@ -159,7 +163,8 @@ class MalletTracker:
                 candidates = [(float(blobs[i, 2]), blobs[i, :2]) for i in ids]
                 pose = solve_pose(candidates, self.t.K, self.t.dist,
                                   self.t.rvec, self.t.tvec)
-                if (abs(pose['disagree']) <= 5 and
+                if (inside_playing_area(pose['centre'], geom.MALLET_RADIUS_MM)[0] and
+                        abs(pose['disagree']) <= 5 and
                         max(abs(r-geom.ARM_MARKER_R_MM) for r in pose['r']) <= 4):
                     matches.append(pose)
         if len(matches) != 1:

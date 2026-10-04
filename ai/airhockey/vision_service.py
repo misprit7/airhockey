@@ -97,7 +97,9 @@ def _detect_loose(cands, K, dist, rvec, tvec, paddle_xy):
     """
     from camera import backproject_pixels
     from puck_markers import LINK_MM, find_puck
+    from playing_area import filter_candidates, inside_playing_area
 
+    cands = filter_candidates(cands, K, dist, rvec, tvec)
     if not cands:
         return None, None
     px = np.array([c[1] for c in cands], float)
@@ -126,9 +128,10 @@ def _detect_loose(cands, K, dist, rvec, tvec, paddle_xy):
     # cands arrives brightest first, so the first survivor is the biggest
     # blob — the same tie-break the puck tracker used back when the puck was
     # the lone dot.
-    i = alone[0]
-    q = backproject_pixels(px[[i]], K, dist, rvec, tvec, PLAYER_DOT_Z_MM)[0]
-    return puck, {"x": float(q[0]), "y": float(q[1])}
+    positions = backproject_pixels(px[alone], K, dist, rvec, tvec, PLAYER_DOT_Z_MM)
+    for q in positions[inside_playing_area(positions, geom.MALLET_RADIUS_MM)]:
+        return puck, {"x": float(q[0]), "y": float(q[1])}
+    return puck, None
 
 # Inch/hole coordinates are quoted from the first hole RIGHT of the centre
 # stripe. On the 80-column grid the stripe sits between columns 39 and 40,

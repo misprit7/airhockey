@@ -29,6 +29,7 @@ import numpy as np
 
 sys.path.insert(0, str(Path(__file__).resolve().parents[2] / "shared"))
 import cdpr_geometry as geom  # noqa: E402
+from playing_area import inside_playing_area
 
 # All three lengths come from the one measured number in cdpr_geometry.
 MARK_R = geom.PUCK_MARKER_R_MM            # 21.85 — corner to centre
@@ -141,12 +142,17 @@ def find_puck(world, prev=None, max_distance=None):
 
     Never identify partial squares, including during tracking with prev.
     Missing corners must yield no measurement rather than steal paddle dots.
+    Marker and centre bounds reject rail reflections before ranking fits; the
+    puck may still pass through the physical goal openings.
     """
     world = np.asarray(world, float)
     if len(world) < 4:
         return None
     best = None
-    for g in groups(world):
+    eligible = np.flatnonzero(inside_playing_area(
+        world, geom.PUCK_RADIUS_MM - MARK_R, geom.PUCK_RADIUS_MM + MARK_R))
+    for local in groups(world[eligible]):
+        g = eligible[local]
         if len(g) < 4 or len(g) > MAX_GROUP:
             continue
         # A stray blob inside the group (a glare speck, a rail glint) would
@@ -159,6 +165,8 @@ def find_puck(world, prev=None, max_distance=None):
             if fit is None:
                 continue
             c, rms = fit
+            if not inside_playing_area(c, geom.PUCK_RADIUS_MM, geom.PUCK_RADIUS_MM)[0]:
+                continue
             if (prev is not None and max_distance is not None
                     and np.linalg.norm(c - prev) > max_distance):
                 continue

@@ -51,7 +51,7 @@ import cdpr_geometry as geom  # noqa: E402
 from calibrate_extrinsics import CALIB_DIR, load_intrinsics  # noqa: E402
 from camera import backproject_undistorted  # noqa: E402
 from puck_markers import find_puck  # noqa: E402
-from table_grid import GRID_X_MM, GRID_Y_MM  # noqa: E402
+from playing_area import marker_mask  # noqa: E402
 from track_mallet import MARKER_Z_MM, SPOOL_MARKER_Z_MM, load_pose  # noqa: E402
 
 BLOBTRACK = Path(__file__).resolve().parent.parent / "build" / "blobtrack"
@@ -64,8 +64,6 @@ BLOBTRACK = Path(__file__).resolve().parent.parent / "build" / "blobtrack"
 
 # A blob within this of a projected permanent marker IS that marker.
 MARKER_REJECT_PX = 16.0
-# Off the playing surface by more than this and it is a rail reflection.
-OUTSIDE_MM = 40.0
 
 
 class FrameReader:
@@ -253,8 +251,7 @@ class PuckTracker:
             return np.empty((0, 3)), np.empty((0, 2))
         px = px[keep]
         world = self._to_table(px, geom.PUCK_MARKER_Z_MM)
-        on = ((world[:, 0] > -OUTSIDE_MM) & (world[:, 0] < GRID_X_MM + OUTSIDE_MM) &
-              (world[:, 1] > -OUTSIDE_MM) & (world[:, 1] < GRID_Y_MM + OUTSIDE_MM))
+        on = marker_mask(px, self.K, self.dist, self.rvec, self.tvec)
         return blobs[keep][on], world[on]
 
     def update(self, t, blobs):

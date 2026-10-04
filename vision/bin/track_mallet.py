@@ -250,10 +250,13 @@ def locate(img, K, dist, rvec, tvec, field, cands=None):
     # the existing absolute brightness floor, without shrinking MIN_AREA or
     # guessing a missing marker from controller position / previous frames.
     known = field_marker_pixels(K, dist, rvec, tvec, field)
-    dim = find_candidates(img, known, threshold=64)
+    from playing_area import filter_candidates, inside_playing_area
+    dim = filter_candidates(find_candidates(img, known, threshold=64),
+                            K, dist, rvec, tvec)
     if not 3 <= len(dim) <= 32:
         return pose, note
     dim = _drop_puck(dim, K, dist, rvec, tvec)
+    dim = filter_candidates(dim, K, dist, rvec, tvec, robot_only=True)
     matches = []
     for triple in itertools.combinations(dim, 3):
         points = np.array([c[1] for c in triple])
@@ -262,7 +265,8 @@ def locate(img, K, dist, rvec, tvec, field, cands=None):
         candidate = solve_pose(triple, K, dist, rvec, tvec)
         # Lower-threshold recovery needs the measured marker radius as well
         # as the right angle. A puck, glare or arbitrary triangle won't do.
-        if (abs(candidate['disagree']) <= 5 and
+        if (inside_playing_area(candidate['centre'], geom.MALLET_RADIUS_MM)[0] and
+                abs(candidate['disagree']) <= 5 and
                 max(abs(r - geom.ARM_MARKER_R_MM) for r in candidate['r']) <= 4 and
                 abs(candidate['r'][0] - candidate['r'][1]) <= 3):
             matches.append(candidate)
@@ -276,6 +280,8 @@ def locate(img, K, dist, rvec, tvec, field, cands=None):
 
 def _locate_candidates(cands, K, dist, rvec, tvec):
     """Normal-threshold solve, also kept separate for offline diagnostics."""
+    from playing_area import filter_candidates, inside_playing_area
+    cands = filter_candidates(cands, K, dist, rvec, tvec)
     if not cands:
         return None, "no paddle markers found — is it in frame and lit?"
 
@@ -292,6 +298,7 @@ def _locate_candidates(cands, K, dist, rvec, tvec):
     # returned the puck as the paddle, 2 mm from the puck centre, with only a
     # 19.7-degree arm disagreement in the note to say anything was wrong.
     cands = _drop_puck(cands, K, dist, rvec, tvec)
+    cands = filter_candidates(cands, K, dist, rvec, tvec, robot_only=True)
     if not cands:
         return None, "only the puck is on the table — no paddle markers"
 
@@ -322,6 +329,8 @@ def _locate_candidates(cands, K, dist, rvec, tvec):
     if len(cands) < 3:
         if len(cands) == 1:
             xy = backproject_pixels(pts, K, dist, rvec, tvec, MALLET_Z_MM)[0]
+            if not inside_playing_area(xy, geom.MALLET_RADIUS_MM)[0]:
+                return None, "paddle centre would overlap a railing"
             return ({"centre": xy, "theta": None, "disagree": None,
                      "arm_r": None},
                     "only one paddle marker visible — position only, no "
@@ -335,6 +344,8 @@ def _locate_candidates(cands, K, dist, rvec, tvec):
                       "being counted")
 
     pose = solve_pose(cands, K, dist, rvec, tvec)
+    if not inside_playing_area(pose["centre"], geom.MALLET_RADIUS_MM)[0]:
+        return None, "paddle centre would overlap a railing"
     note = None
     if abs(pose["disagree"]) > 5.0:
         note = (f"the two arms disagree on orientation by "
