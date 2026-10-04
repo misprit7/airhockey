@@ -77,10 +77,8 @@ def main() -> int:
     ap.add_argument("--n", type=int, default=30, help="number of flashes")
     ap.add_argument("--flash-ms", type=int, default=40)
     ap.add_argument("--port", default=None)
-    ap.add_argument("--fps", type=float, default=200.0)
-    ap.add_argument("--exposure", type=float, default=300.0)
-    ap.add_argument("--gain", type=float, default=12.0)
-    ap.add_argument("--threshold", type=int, default=90)
+    from tracking_defaults import add_tracking_arguments
+    add_tracking_arguments(ap)
     ap.add_argument("--tol", type=float, default=12.0,
                     help="px radius for matching the LED blob")
     ap.add_argument("--min-area", type=float, default=4)

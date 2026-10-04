@@ -6,8 +6,9 @@ that wants a paddle position asks this rather than opening its own camera,
 which is why `latest_pose()` exists alongside the video.
 
 The view is the LOW-EXPOSURE tracking frame, not a photograph of the table.
-At 1000 us with the IR ring on, the scene is essentially black and the
-retroreflectors are bright dots — that is what makes detection reliable, and
+With the shared gameplay exposure/gain and the IR ring on, the scene is
+essentially black and the retroreflectors are bright dots. This makes
+detection reliable, and
 it is deliberately not a watchable picture. What makes it useful is the
 overlay: you are seeing what the tracker sees, with everything it has
 identified named. Brightness is boosted for display only; detection always
@@ -32,6 +33,7 @@ for _p in (_ROOT / "vision" / "bin", _ROOT / "shared"):
         sys.path.insert(0, str(_p))
 
 import cdpr_geometry as geom  # noqa: E402
+import tracking_defaults as tracking  # noqa: E402
 from table_grid import MARKER_NAMES as _MARKER_NAMES  # noqa: E402
 
 # Output is PORTRAIT to match the sim field beside it: the table's long
@@ -179,9 +181,11 @@ def unproject_grid(nx: int = 41, ny: int = 41, z: float = 0.0) -> dict:
 class VisionService:
     """Background camera owner. Start it, read `latest_pose()` / `frame_jpeg()`."""
 
-    def __init__(self, exposure_us: int = 1000, gain_db: float = 0.0):
+    def __init__(self, exposure_us: float = tracking.EXPOSURE_US,
+                 gain_db: float = tracking.GAIN_DB, threshold: int = tracking.THRESHOLD):
         self._exposure = exposure_us
         self._gain = gain_db
+        self._threshold = threshold
         self._lock = threading.Lock()
         self._jpeg: bytes | None = None
         self._pose: tuple[float, float, float] | None = None
@@ -323,6 +327,8 @@ class VisionService:
             generation, seq = self._generation, self._frame_seq
         return {
             "running": running,
+            "settings": {"exposure_us": self._exposure, "gain_db": self._gain,
+                         "threshold": self._threshold},
             "stalled": bool(stalled),
             "frame_age_ms": None if age is None else round(max(0.0, age)*1000, 1),
             "generation": generation,
@@ -374,7 +380,7 @@ class VisionService:
                 # Threshold and label the blobs ONCE. locate() would happily
                 # redo it, but the puck and the player's mallet come out of
                 # the same list and a second pass over 1440x1080 buys nothing.
-                cands = tm.find_candidates(img, known_px)
+                cands = tm.find_candidates(img, known_px, threshold=self._threshold)
                 pose, note = tm.locate(img, K, dist, rvec, tvec, field,
                                        cands=cands)
                 paddle_xy = None if pose is None else pose["centre"]

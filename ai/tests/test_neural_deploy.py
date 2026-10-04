@@ -259,7 +259,7 @@ def test_neural_live_loop_with_fake_hardware_feedback_load_and_goal_reset(policy
 
     _install_fake_camera(monkeypatch, duration_s=1.5, puck_path=puck_path)
     import track_mallet
-    monkeypatch.setattr(track_mallet, 'measure', lambda: (1600, 400))
+    monkeypatch.setattr(track_mallet, 'measure', lambda **kwargs: (1600, 400))
 
     class Client(_FakeClient):
         loads = 0

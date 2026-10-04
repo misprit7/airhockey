@@ -1509,6 +1509,7 @@ const cursorLine = (mm, suffix) => (mm === null
               + `${inches([p.x, p.y])}   θ ${p.theta_deg.toFixed(1)}°`
             : (s.note ? s.note : 'searching for the paddle…'))
             + `   ${s.fps} fps` + zoomLabel(zoom)
+            + (s.settings ? `\n${s.settings.exposure_us} µs · ${s.settings.gain_db} dB · threshold ${s.settings.threshold}` : '')
             + puck + player
             + '\n' + cursorLine(cursorMm, '  (table surface)');
     };

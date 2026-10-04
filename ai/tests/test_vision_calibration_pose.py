@@ -63,3 +63,37 @@ def test_preview_start_clears_previous_image_and_objects(monkeypatch):
     service.start()
     assert service._jpeg is None and service._puck is None and service._fps==0
     assert service.status()['generation']==1
+
+
+def test_preview_applies_reported_camera_settings_to_capture_and_detection(monkeypatch):
+    import numpy as np
+    import camera
+    import track_mallet as tm
+    service = VisionService(exposure_us=450, gain_db=6, threshold=170)
+    captured = {}
+
+    class Stream:
+        def __init__(self, exposure, gain):
+            captured.update(exposure_us=exposure, gain_db=gain)
+
+        def grab(self):
+            service._stop.set()  # Process one synthetic frame, then exit.
+            return np.zeros((20, 20), dtype=np.uint8)
+
+        def close(self):
+            pass
+
+    def candidates(img, known, *, threshold):
+        captured['threshold'] = threshold
+        return []
+
+    monkeypatch.setattr(camera, 'Stream', Stream)
+    monkeypatch.setattr(tm, 'load_pose', lambda: (None,) * 5)
+    monkeypatch.setattr(tm, 'field_marker_pixels', lambda *args: [])
+    monkeypatch.setattr(tm, 'find_candidates', candidates)
+    monkeypatch.setattr(tm, 'locate', lambda *args, **kwargs: (None, 'no markers'))
+    monkeypatch.setattr('airhockey.vision_service._detect_loose', lambda *args: (None, None))
+    monkeypatch.setattr(service, '_annotate', lambda *args: b'jpeg')
+    service._run()
+    assert service.error is None
+    assert captured == service.status()['settings']

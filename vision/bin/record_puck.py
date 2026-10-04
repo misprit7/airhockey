@@ -76,10 +76,8 @@ def main() -> int:
         formatter_class=argparse.RawDescriptionHelpFormatter)
     ap.add_argument("output", nargs="?", default=None,
                     help="output .jsonl (default: logs/puck_<timestamp>.jsonl)")
-    ap.add_argument("--fps", type=float, default=200.0)
-    ap.add_argument("--exposure", type=float, default=300.0)
-    ap.add_argument("--gain", type=float, default=12.0)
-    ap.add_argument("--threshold", type=int, default=90)
+    from tracking_defaults import add_tracking_arguments
+    add_tracking_arguments(ap)
     ap.add_argument("--mallet-markers", type=int, default=1, choices=(1, 3),
                     help="1 for a hand-held mallet's single dot (default), "
                          "3 for the robot mallet's cluster")

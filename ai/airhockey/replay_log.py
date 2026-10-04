@@ -39,6 +39,8 @@ class ReplayLog:
                 live=args.live,
                 ramp=args.ramp,
                 camera_delay_s=0.0077,
+                camera_settings={key: getattr(args, key, None)
+                                 for key in ("fps", "exposure", "gain", "threshold")},
                 table_config=asdict(config),
                 workspace_bounds_mm=workspace,
                 motor_profile=motor_profile,

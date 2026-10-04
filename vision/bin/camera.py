@@ -22,6 +22,8 @@ import numpy as np
 
 VISION = Path(__file__).resolve().parent.parent
 SNAP = VISION / "build" / "snap"
+sys.path.insert(0, str(VISION.parent / "shared"))
+import tracking_defaults as tracking  # noqa: E402
 
 
 class Stream:
@@ -41,7 +43,7 @@ class Stream:
     # measuring partly-cold frames.
     WARMUP_FRAMES = 8
 
-    def __init__(self, exposure, gain, warmup=None):
+    def __init__(self, exposure=tracking.EXPOSURE_US, gain=tracking.GAIN_DB, warmup=None):
         if not SNAP.exists():
             raise RuntimeError(f"{SNAP} not built — run `make` in vision/")
         # Die with the parent. Without this, killing the owning process

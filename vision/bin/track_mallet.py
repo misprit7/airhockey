@@ -41,6 +41,7 @@ import numpy as np
 sys.path.insert(0, str(Path(__file__).resolve().parent))
 sys.path.insert(0, str(Path(__file__).resolve().parents[2] / "shared"))
 import cdpr_geometry as geom  # noqa: E402
+import tracking_defaults as tracking  # noqa: E402
 from calibrate_extrinsics import (MARKER_Z_MM, MARKERS_FILE,  # noqa: E402
                                   find_glare, load_intrinsics,
                                   weighted_centroid)
@@ -89,8 +90,8 @@ CLUSTER_PX = 60.0       # paddle markers sit within this of each other
 # region the extrinsics were fitted on, and still far short of the ~35 px
 # that separates the paddle's own markers from each other.
 FIELD_REJECT_PX = 20.0
-MIN_AREA = 6
-MAX_AREA = 600
+MIN_AREA = tracking.MIN_BLOB_AREA
+MAX_AREA = tracking.MAX_BLOB_AREA
 BORDER_PX = 40         # off-field reflections hug the frame edge
 
 
@@ -132,7 +133,7 @@ def field_marker_pixels(K, dist, rvec, tvec, field):
     return px.reshape(-1, 2)
 
 
-def find_candidates(img, known_px, *, threshold=None):
+def find_candidates(img, known_px, *, threshold=tracking.THRESHOLD):
     """Bright blobs that are not glare, not a permanent marker, not an
     off-field edge reflection. Returns [(area, centroid), ...] brightest
     first."""
@@ -226,7 +227,7 @@ def _drop_puck(cands, K, dist, rvec, tvec):
     return [c for i, c in enumerate(cands) if i not in drop]
 
 
-def locate(img, K, dist, rvec, tvec, field, cands=None):
+def locate(img, K, dist, rvec, tvec, field, cands=None, *, threshold=tracking.THRESHOLD):
     """Paddle pose in the grid frame, or None if it cannot be resolved.
 
     Returns (pose, note); pose is a dict with centre/theta, note flags
@@ -239,14 +240,13 @@ def locate(img, K, dist, rvec, tvec, field, cands=None):
     """
     if cands is None:
         known = field_marker_pixels(K, dist, rvec, tvec, field)
-        cands = find_candidates(img, known)
+        cands = find_candidates(img, known, threshold=threshold)
     pose, note = _locate_candidates(cands, K, dist, rvec, tvec)
     if pose is not None and note is None:
         return pose, note
 
-    # A saturated unrelated reflector sets the normal threshold to 127.
-    # At the far end the centre marker can peak at only ~150, leaving five
-    # pixels above that threshold: real but below MIN_AREA. Recover using
+    # At the far end the centre marker can peak at only ~150, leaving too
+    # few pixels above the normal threshold for a valid blob. Recover using
     # the existing absolute brightness floor, without shrinking MIN_AREA or
     # guessing a missing marker from controller position / previous frames.
     known = field_marker_pixels(K, dist, rvec, tvec, field)
@@ -375,7 +375,8 @@ def report(pose, note, K, dist, rvec, tvec):
         print(f"  CAL {xy[0]:.1f} {xy[1]:.1f} {math.degrees(pose['theta']):.2f}")
 
 
-def measure(image=None, n_frames=5):
+def measure(image=None, n_frames=5, *, exposure=tracking.EXPOSURE_US,
+            gain=tracking.GAIN_DB, threshold=tracking.THRESHOLD):
     """Measure the mallet once. Returns (x_mm, y_mm).
 
     Importable entry point for callers that need the startup position —
@@ -393,7 +394,7 @@ def measure(image=None, n_frames=5):
         if img is None:
             raise RuntimeError(f"cannot read {image}")
     else:
-        s = Stream(1000, 0)
+        s = Stream(exposure, gain)
         try:
             frames = [f.astype(np.float32) for f in
                       (s.grab() for _ in range(n_frames)) if f is not None]
@@ -402,7 +403,7 @@ def measure(image=None, n_frames=5):
         if not frames:
             raise RuntimeError("no frames from the camera")
         img = np.clip(np.mean(frames, axis=0), 0, 255).astype(np.uint8)
-    pose, note = locate(img, K, dist, rvec, tvec, field)
+    pose, note = locate(img, K, dist, rvec, tvec, field, threshold=threshold)
     if pose is None:
         raise RuntimeError(note)
     if note:
@@ -418,7 +419,7 @@ def run_once(image, K, dist, rvec, tvec, field):
         if img is None:
             sys.exit(f"cannot read {image}")
     else:
-        s = Stream(1000, 0)
+        s = Stream()
         try:
             frames = []
             for _ in range(5):
@@ -439,7 +440,7 @@ def run_once(image, K, dist, rvec, tvec, field):
 
 
 def run_watch(K, dist, rvec, tvec, field):
-    s = Stream(1000, 0)
+    s = Stream()
     print("live mallet tracking — Ctrl+C to stop\n")
     last = time.time()
     fps = 0.0

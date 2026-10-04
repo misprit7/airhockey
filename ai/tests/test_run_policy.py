@@ -39,6 +39,33 @@ def _load():
 rp = _load()
 
 
+def test_cli_camera_defaults_match_preview_stream_and_startup_measurement(monkeypatch):
+    import inspect
+    from airhockey.vision_service import VisionService
+    from puck_stream import BlobStream
+    import track_mallet
+    captured = []
+    monkeypatch.setattr(sys, 'argv', ['run_policy.py', '--no-log'])
+    monkeypatch.setattr(rp, 'run', lambda args: captured.append(args) or 0)
+    monkeypatch.setattr(rp.signal, 'signal', lambda *args: None)
+    assert rp.main() == 0  # Parse the real CLI, without opening any hardware.
+    args = captured[0]
+    settings = VisionService().status()['settings']
+    for option, key in [('exposure', 'exposure_us'), ('gain', 'gain_db'),
+                        ('threshold', 'threshold')]:
+        value = getattr(args, option)
+        assert value == settings[key]
+        assert value == inspect.signature(BlobStream).parameters[option].default
+        assert value == inspect.signature(track_mallet.measure).parameters[option].default
+    assert args.fps == inspect.signature(BlobStream).parameters['fps'].default
+
+    monkeypatch.setattr(sys, 'argv', ['run_policy.py', '--no-log',
+                        '--exposure', '450', '--gain', '6', '--threshold', '170'])
+    assert rp.main() == 0
+    assert (captured[-1].exposure, captured[-1].gain, captured[-1].threshold) == (450, 6, 170)
+    assert VisionService().status()['settings'] == settings  # Overrides stay local.
+
+
 # ── The end-to-end selftest ─────────────────────────────────────────────
 
 
@@ -1033,7 +1060,7 @@ def test_goal_hold_brakes_once_at_current_position_and_resets_policy(monkeypatch
 
     _install_fake_camera(monkeypatch, duration_s=1.5, puck_path=path)
     import track_mallet
-    monkeypatch.setattr(track_mallet, "measure", lambda: (1600, 400))
+    monkeypatch.setattr(track_mallet, "measure", lambda **kwargs: (1600, 400))
 
     class FakeClient(_FakeClient):
         def connect(self):
@@ -1274,7 +1301,7 @@ def test_runner_returns_home_then_resumes_with_normal_caps(monkeypatch, tmp_path
 
     _install_fake_camera(monkeypatch, duration_s=2.2, puck_path=path)
     import track_mallet
-    monkeypatch.setattr(track_mallet, 'measure', lambda: (1600, 400))
+    monkeypatch.setattr(track_mallet, 'measure', lambda **kwargs: (1600, 400))
 
     class Client(_FakeClient):
         def connect(self): pass

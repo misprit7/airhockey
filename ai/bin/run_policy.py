@@ -1535,6 +1535,8 @@ def run(args) -> int:
     if slog is not None:
         slog.capture_stdout()
         slog.context(args)
+    print(f"Camera: {args.exposure:g} us, {args.gain:g} dB, "
+          f"threshold {args.threshold}, {args.fps:g} Hz")
     policy = load_policy(args.policy, caps, getattr(args, "plan", None),
                          getattr(args, "device", None),
                          shot_mode=getattr(args, "shot_type", "none"),
@@ -1558,7 +1560,8 @@ def run(args) -> int:
         # so an error here offsets the whole session.
         print("measuring the paddle for the enable reference...")
         try:
-            mx, my = tm.measure()[:2]
+            mx, my = tm.measure(exposure=args.exposure, gain=args.gain,
+                                threshold=args.threshold)[:2]
         except Exception as e:      # noqa: BLE001
             sys.exit(f"could not measure the paddle ({e}).\n"
                      "  Is the camera free? Stop the tracker view in the "
@@ -2126,10 +2129,8 @@ def main() -> int:
                     help="print the available policies and exit")
     ap.add_argument("--opponent", action="store_true",
                     help="also track the human's single-dot mallet")
-    ap.add_argument("--fps", type=float, default=200.0)
-    ap.add_argument("--exposure", type=float, default=300.0)
-    ap.add_argument("--gain", type=float, default=12.0)
-    ap.add_argument("--threshold", type=int, default=90)
+    from tracking_defaults import add_tracking_arguments
+    add_tracking_arguments(ap)
     ap.add_argument("--cmd-hz", type=float, default=ACTION_HZ,
                     help="command rate to the Teensy; tracking stays at --fps")
     ap.add_argument("--gentle", action="store_true",

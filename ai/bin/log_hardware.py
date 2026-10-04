@@ -56,10 +56,8 @@ def main() -> int:
     ap.add_argument("--port", type=int, default=8421)
     ap.add_argument("--no-master", action="store_true",
                     help="camera only; do not connect to cdpr_master")
-    ap.add_argument("--fps", type=float, default=200.0)
-    ap.add_argument("--exposure", type=float, default=300.0)
-    ap.add_argument("--gain", type=float, default=12.0)
-    ap.add_argument("--threshold", type=int, default=90)
+    from tracking_defaults import add_tracking_arguments
+    add_tracking_arguments(ap)
     args = ap.parse_args()
 
     from mallet_stream import MalletTracker  # noqa: E402

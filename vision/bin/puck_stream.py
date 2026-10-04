@@ -48,6 +48,7 @@ sys.path.insert(0, str(Path(__file__).resolve().parent))
 sys.path.insert(0, str(Path(__file__).resolve().parents[2] / "shared"))
 
 import cdpr_geometry as geom  # noqa: E402
+import tracking_defaults as tracking  # noqa: E402
 from calibrate_extrinsics import CALIB_DIR, load_intrinsics  # noqa: E402
 from camera import backproject_undistorted  # noqa: E402
 from puck_markers import find_puck  # noqa: E402
@@ -143,8 +144,10 @@ class BlobStream:
     daylight even though the full frame contained a valid four-marker square.
     """
 
-    def __init__(self, fps=200.0, exposure=300.0, gain=12.0, threshold=90,
-                 min_area=4, max_area=4000, max_blobs=256):
+    def __init__(self, fps=tracking.FPS, exposure=tracking.EXPOSURE_US,
+                 gain=tracking.GAIN_DB, threshold=tracking.THRESHOLD,
+                 min_area=tracking.MIN_BLOB_AREA, max_area=tracking.MAX_BLOB_AREA,
+                 max_blobs=tracking.MAX_BLOBS):
         if not BLOBTRACK.exists():
             sys.exit(f"{BLOBTRACK} not built — run `make -C vision`")
         self.p = subprocess.Popen(
@@ -422,10 +425,8 @@ def _selftest() -> int:
 
 def main():
     ap = argparse.ArgumentParser(description=__doc__)
-    ap.add_argument("--fps", type=float, default=200.0)
-    ap.add_argument("--exposure", type=float, default=300.0)
-    ap.add_argument("--gain", type=float, default=12.0)
-    ap.add_argument("--threshold", type=int, default=90)
+    from tracking_defaults import add_tracking_arguments
+    add_tracking_arguments(ap)
     ap.add_argument("--raw", action="store_true",
                     help="print every surviving blob, not just the puck")
     ap.add_argument("--selftest", action="store_true",

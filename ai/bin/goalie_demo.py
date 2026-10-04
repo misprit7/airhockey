@@ -53,10 +53,8 @@ def main():
                                  formatter_class=argparse.RawDescriptionHelpFormatter)
     ap.add_argument("--dry-run", action="store_true",
                     help="track and predict, but command nothing")
-    ap.add_argument("--fps", type=float, default=200.0)
-    ap.add_argument("--exposure", type=float, default=300.0)
-    ap.add_argument("--gain", type=float, default=12.0)
-    ap.add_argument("--threshold", type=int, default=90)
+    from tracking_defaults import add_tracking_arguments
+    add_tracking_arguments(ap)
     ap.add_argument("--speed", type=float, default=8000.0,
                     help="paddle speed cap mm/s. 8000 of the firmware's 12000; "
                          "the motors bind at 12968 of cable")
