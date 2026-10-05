@@ -72,3 +72,45 @@ def test_wide_defense_training_preserves_explicit_fixtures_and_actor_layout():
                        np.array([[.5,.25]]), np.array([.5]))
     env.reset(mask=np.arange(400)==399, fixtures=fixture)
     np.testing.assert_allclose([env.engine.puck_x[399],env.engine.puck_y[399],env.engine.puck_vx[399],env.engine.puck_vy[399]],fixture.puck[0])
+
+
+def test_depth_shaping_only_charges_forward_preparation():
+    env = NeuralTrainingEnv(6, defensive_depth_weight=200, defensive_depth_target=.3,
+                            realistic=False, randomize=False)
+    env.reset(seed=42)
+    e = env.engine
+    e.paddle_agent_y[:] = [.25,.4,.7,.7,.7,.7]
+    e.puck_y[:] = [1.2,1.2,1.2,.6,1.2,1.2]
+    e.puck_vx[:] = 0
+    e.puck_vy[:] = [0,0,0,0,-12,4]
+    cost=env.defensive_depth_cost()
+    assert cost[0] == cost[3] == cost[4] == 0
+    assert 0 < cost[1] < cost[2] <= 1
+    assert cost[5] == cost[2]
+
+
+def test_depth_reward_does_not_change_actions_or_physics():
+    options=dict(n_envs=8,stage=3,realistic=False,randomize=False)
+    control=NeuralTrainingEnv(**options)
+    shaped=NeuralTrainingEnv(**options,defensive_depth_weight=200)
+    fixtures=Fixtures(np.full(8,3),np.tile([.5,1.2,0,0],(8,1)),
+                      np.tile([.5,.7],(8,1)),np.full(8,.5))
+    np.testing.assert_array_equal(control.reset(seed=99,fixtures=fixtures),shaped.reset(seed=99,fixtures=fixtures))
+    a=np.zeros((8,6))
+    c=control.step(a);s=shaped.step(a)
+    np.testing.assert_array_equal(c[0],s[0])
+    np.testing.assert_allclose(c[1]-s[1],200*.02*shaped.defensive_depth_cost(),atol=1e-4)
+    np.testing.assert_array_equal(c[2],s[2])
+
+
+def test_block_only_does_not_require_control_or_opponent_half_clearance():
+    env=NeuralTrainingEnv(4,stage=2,defense_clear_reward=300,defense_block_only=True,
+                          realistic=False,randomize=False,setup_weight=0)
+    env.reset(fixtures=Fixtures(np.array([2,2,2,3]),
+        np.array([[.5,.5,0,4],[.5,.5,0,4],[.5,.5,0,-4],[.5,.5,0,4]]),
+        np.tile([.2,.2],(4,1)),np.full(4,.5)))
+    env.touch_count[0]=[1,0,1,1]
+    _,reward,terminal,_,_=env.step(np.zeros((4,6)))
+    assert terminal[0] and reward[0]>290
+    assert not terminal[1:].any()
+    assert env.capture_count[0,0]==0 and env.engine.puck_y[0]<1

@@ -70,6 +70,7 @@ class NeuralTrainingEnv(ArrivalEnv):
         wide_defense=False,
         random_defense_start_fraction=0.0,
         defense_clear_reward=0.0,
+        defense_block_only=False,
         defense_windup_fraction=0.0,
         shot_speed_scale=6.0,
         conversion_speed_scale=5.0,
@@ -102,6 +103,8 @@ class NeuralTrainingEnv(ArrivalEnv):
         recovery_approach_weight=0.0,
         readiness_weight=0.0,
         readiness_cost_weight=0.0,
+        defensive_depth_weight=0.0,
+        defensive_depth_target=.30,
         possession_delay_weight=0.0,
         game_episode_seconds=30.0,
         stationary_failure_penalty=0.0,
@@ -123,6 +126,11 @@ class NeuralTrainingEnv(ArrivalEnv):
     ):
         if goals_only and (terminate_overload or receive_drill or productive_receive_drill or possession_followthrough):
             raise ValueError('goals-only training requires full games without auxiliary drill/overload terminations')
+        if (not np.isfinite([defensive_depth_weight, defensive_depth_target]).all()
+                or defensive_depth_weight < 0 or not 0 < defensive_depth_target < .8):
+            raise ValueError("invalid defensive depth shaping")
+        self.defensive_depth_weight = defensive_depth_weight
+        self.defensive_depth_target = defensive_depth_target
         self.goals_only = bool(goals_only)
         games = games or self.goals_only
         continuous_rallies = continuous_rallies or self.goals_only
@@ -320,6 +328,7 @@ class NeuralTrainingEnv(ArrivalEnv):
         self.defense_min_speed = defense_min_speed
         self.random_defense_start_fraction = random_defense_start_fraction
         self.defense_clear_reward = defense_clear_reward
+        self.defense_block_only = bool(defense_block_only)
         if not 0 <= defense_windup_fraction <= 1:
             raise ValueError("defense windup fraction must be in [0,1]")
         self.defense_windup_fraction = defense_windup_fraction
@@ -1293,6 +1302,14 @@ class NeuralTrainingEnv(ArrivalEnv):
         self._potential = self.potential()
         return obs
 
+    def defensive_depth_cost(self):
+        e = self.engine
+        preparing = (e.puck_vy >= 0) | (np.hypot(e.puck_vx, e.puck_vy) < 2)
+        opponent_half = np.clip((e.puck_y - 1.0) / .15, 0, 1)
+        excess = np.clip((e.paddle_agent_y - self.defensive_depth_target) /
+                         max(self.decoder.high[1] - self.defensive_depth_target, .01), 0, 1)
+        return preparing * opponent_half * excess**2
+
     def step(self, action):
         action = np.asarray(action, np.float32)
         if action.shape != (self.n_envs, 6) or not np.isfinite(action).all():
@@ -1436,6 +1453,9 @@ class NeuralTrainingEnv(ArrivalEnv):
         edge_cost = self.edge_dwell_cost()
         reward -= self.edge_dwell_weight * b.action_dt * edge_cost
         reward -= (game | self.defense_windup) * self.readiness_cost_weight * b.action_dt * self._readiness_running_cost
+        # Training-only preference while the opponent can prepare a shot.
+        # Stops charging once a fast shot is incoming; never clips an action.
+        reward -= self.defensive_depth_weight * b.action_dt * self.defensive_depth_cost()
         # Small action-change cost, not a cap on learned rapid responses.
         reward -= 0.002 * ((action - previous_action) ** 2).sum(axis=1)
         skill = self.kind != 3
@@ -1456,6 +1476,12 @@ class NeuralTrainingEnv(ArrivalEnv):
                 (self.capture_count[0] > 0)
                 | ((self.touch_count[0] > 0) & (e.puck_y >= 1) & ((e.puck_vy > 0) | (gf > 0)))
             )
+            if self.defense_block_only:
+                # Resolve the first attack without demanding possession or a
+                # counterattack. A contact that still travels goalward is not
+                # a block; follow it until it reverses, stops, or concedes.
+                defended = (self.kind == 2) & (ga == 0) & (self.touch_count[0] > 0) & (
+                    (e.puck_vy > .05) | (np.hypot(e.puck_vx, e.puck_vy) < .3))
             terminal |= defended
             reward[defended] += self.defense_clear_reward
         if self.possession_followthrough:

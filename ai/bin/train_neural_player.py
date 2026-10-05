@@ -148,6 +148,7 @@ def main():
                    help="Practice direct and bank attacks across the scoring mouth and configured speeds")
     p.add_argument("--random-defense-start-fraction", type=float, default=0)
     p.add_argument("--defense-clear-reward", type=float, default=0)
+    p.add_argument("--defense-block-only", action="store_true", help="End isolated defense at a block, without requiring control or an opponent-half clearance")
     p.add_argument("--defense-windup-fraction", type=float, default=0, help="Fraction of defensive practice with a hidden delay before a fast direct launch")
     p.add_argument("--shot-speed-scale", type=float, default=6)
     p.add_argument("--conversion-speed-scale", type=float, default=5)
@@ -174,6 +175,8 @@ def main():
     p.add_argument("--recovery-approach-weight", type=float, default=0, help="Potential for meeting a slow outgoing puck on its leading side before control")
     p.add_argument("--readiness-weight", type=float, default=0, help="Training-only potential for coverage of direct goal threats")
     p.add_argument("--readiness-cost-weight", type=float, default=0, help="Per-second cost of exposed defense while the opponent can prepare a shot")
+    p.add_argument("--defensive-depth-weight", type=float, default=0, help="Per-second cost of forward positioning while the opponent prepares; training only")
+    p.add_argument("--defensive-depth-target", type=float, default=.30, help="No depth cost behind this distance from own goal, meters")
     p.add_argument("--readiness-lateral-uncertainty", type=float, default=0, help="Opponent release-position uncertainty in meters for preparation rewards")
     p.add_argument("--defense-windup-bank-fraction", type=float, default=0,
                    help="Fraction of hidden delayed defensive releases aimed via a randomly chosen side rail")
@@ -389,6 +392,7 @@ def main():
         wide_defense=args.wide_defense,
         random_defense_start_fraction=args.random_defense_start_fraction,
         defense_clear_reward=args.defense_clear_reward,
+        defense_block_only=args.defense_block_only,
         defense_windup_fraction=args.defense_windup_fraction,
         shot_speed_scale=args.shot_speed_scale,
         conversion_speed_scale=args.conversion_speed_scale,
@@ -421,6 +425,8 @@ def main():
         recovery_approach_weight=args.recovery_approach_weight,
         readiness_weight=args.readiness_weight,
         readiness_cost_weight=args.readiness_cost_weight,
+        defensive_depth_weight=args.defensive_depth_weight,
+        defensive_depth_target=args.defensive_depth_target,
         readiness_lateral_uncertainty=args.readiness_lateral_uncertainty,
         defense_windup_lateral_speed=args.defense_windup_lateral_speed,
         defense_windup_bank_fraction=args.defense_windup_bank_fraction,
