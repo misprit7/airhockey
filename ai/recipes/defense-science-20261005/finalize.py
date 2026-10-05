@@ -34,7 +34,7 @@ def finalize(state):
         gf=sum(r['goals_for'] for r in rows);ga=sum(r['goals_against'] for r in rows)
         ladder[label]=dict(goals_for=gf,goals_against=ga,goal_share=gf/max(1,gf+ga),
             simulation_minutes=sum(r['seconds']*r['games'] for r in rows)/60,
-            overload_seconds=sum(float(np.asarray(r['details']['overload_seconds']).sum()) for r in rows))
+            overload_seconds=sum(float(np.asarray(r['details']['overload_seconds'])[1 if r['swap'] else 0].sum()) for r in rows))
     attack_ok=all(attack['winner'][task]['rate']>=attack['baseline'][task]['rate']-.10 for task in ('stationary','receiving'))
     bank_positive=paired['heldout']['ci95'][0]>0
     reaction_ok=paired['immediate']['difference']>=-.03
