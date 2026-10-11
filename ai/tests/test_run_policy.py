@@ -888,6 +888,8 @@ def _install_fake_camera(monkeypatch, blank_from_s=None, duration_s=2.0, puck_pa
     fake. `blank_from_s` stops emitting the puck's corners from that time
     on, which is what a puck knocked off the table looks like.
     """
+    from airhockey import camera_handoff
+    monkeypatch.setattr(camera_handoff, "release_preview_camera", lambda: False)
     cv2 = pytest.importorskip("cv2")
     if not (_ROOT / "vision" / "calib" / "extrinsics.npz").exists():
         pytest.skip("no camera calibration in vision/calib")
@@ -951,6 +953,24 @@ def _loop_args(**over):
         park="stop", park_speed=500.0, park_accel=2000.0, no_enable=False)
     base.update(over)
     return argparse.Namespace(**base)
+
+
+def test_failed_camera_handoff_prevents_measurement_and_hardware_access(monkeypatch):
+    from airhockey import camera_handoff, hardware
+    _install_fake_camera(monkeypatch)
+    import track_mallet
+
+    def failed_handoff():
+        raise RuntimeError("preview did not release camera")
+
+    def forbidden(*args, **kwargs):
+        pytest.fail("camera or hardware accessed before confirmed handoff")
+
+    monkeypatch.setattr(camera_handoff, "release_preview_camera", failed_handoff)
+    monkeypatch.setattr(track_mallet, "measure", forbidden)
+    monkeypatch.setattr(hardware, "CDPRClient", forbidden)
+    with pytest.raises(SystemExit, match="camera handoff failed"):
+        rp.run(_loop_args(live=True))
 
 
 def test_dry_run_loop_executes_end_to_end(monkeypatch, capsys):

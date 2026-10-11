@@ -1544,6 +1544,13 @@ def run(args) -> int:
                          puck_timeout=float(getattr(args, "puck_timeout", DEFAULT_PUCK_TIMEOUT_S)),
                          ckpt=getattr(args, "resolved_checkpoint", None))
 
+    from airhockey.camera_handoff import release_preview_camera
+    try:
+        if release_preview_camera():
+            print("Stopped web UI camera preview; camera handed to policy.")
+    except RuntimeError as e:
+        sys.exit(f"camera handoff failed ({e}). No hardware was enabled.")
+
     client = None
     if args.live:
         print("\n" + "!" * 68)
@@ -1564,8 +1571,8 @@ def run(args) -> int:
                                 threshold=args.threshold)[:2]
         except Exception as e:      # noqa: BLE001
             sys.exit(f"could not measure the paddle ({e}).\n"
-                     "  Is the camera free? Stop the tracker view in the "
-                     "web UI.")
+                     "  The web preview was checked before acquisition. "
+                     "Check for another camera process or a USB/camera stall.")
         print(f"  paddle at ({mx:.1f}, {my:.1f}) mm")
 
         from airhockey.hardware import CDPRClient   # noqa: PLC0415
