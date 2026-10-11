@@ -36,11 +36,15 @@ def interval(successes, count):
 
 
 def evaluate(checkpoint, *, count=768, seed=20261051, environment_from=BASE,
-             immediate=False, record_prefix=None, device='cpu'):
+             immediate=False, record_prefix=None, device='cpu', heuristic=None):
     torch.set_num_threads(2)
     torch.manual_seed(seed)
-    net, state = load(checkpoint)
     options = checkpoint_environment(environment_from)
+    if heuristic:
+        from airhockey.defense_baselines import DefensiveBaseline
+        net = DefensiveBaseline(options, heuristic)
+    else:
+        net, state = load(checkpoint)
     if net.environment_options != options:
         net = CoordinateReference(net, net.environment_options, options)
     net.to(device).eval()
@@ -79,6 +83,7 @@ def evaluate(checkpoint, *, count=768, seed=20261051, environment_from=BASE,
     launch=np.zeros((count,4));release_paddle=np.zeros((count,2))
     peak=np.zeros(count);overload=np.zeros(count);touched=done.copy()
     traces=[]
+    finish_tick=np.full(count, 169, dtype=int)
     e=env.engine
     for tick in range(170):
         releasing=(env.elapsed>=env._windup_release)&~released
@@ -104,7 +109,9 @@ def evaluate(checkpoint, *, count=768, seed=20261051, environment_from=BASE,
             traces.append(np.column_stack((e.puck_x,e.puck_y,e.puck_vx,e.puck_vy,
                 e.paddle_agent_x,e.paddle_agent_y,e.paddle_opp_x,e.paddle_opp_y,
                 e.score_agent,e.score_opponent)).copy())
-        done |= failed|success|terminal|truncated|(released&(env.elapsed>delay+1.5))
+        finished = failed|success|terminal|truncated|(released&(env.elapsed>delay+1.5))
+        finish_tick[~done & finished] = tick
+        done |= finished
         if done.all():break
     valid=released & open_goal_outcomes(launch,{k:getattr(e,k) for k in PARAMETERS},env.cfg)
     rows=[dict(valid=bool(valid[i]),saved=bool(saved[i]),conceded=bool(conceded[i]),
@@ -114,7 +121,7 @@ def evaluate(checkpoint, *, count=768, seed=20261051, environment_from=BASE,
     def summary(mask):
         mask=mask&valid;n=int(mask.sum());s=int(saved[mask].sum())
         return dict(trials=n,saved=s,block_rate=s/max(1,n),ci95=interval(s,n),
-            conceded=int(conceded[mask].sum()),unresolved=int((~done&mask).sum()),
+            conceded=int(conceded[mask].sum()),unresolved=int((~saved&~conceded&mask).sum()),
             mean_release_depth=float(release_paddle[mask,1].mean()) if n else None,
             peak_load=float(peak[mask].max()) if n else None,
             overload_seconds=float(overload[mask].sum()))
@@ -132,14 +139,16 @@ def evaluate(checkpoint, *, count=768, seed=20261051, environment_from=BASE,
                     rec.record(FrameData(time=(t+1)*.02,puck_x=a[0],puck_y=a[1],puck_vx=a[2],puck_vy=a[3],
                         agent_x=a[4],agent_y=a[5],opponent_x=a[6],opponent_y=a[7],score_agent=int(a[8]),score_opponent=int(a[9]),
                         rally_event='hidden release' if abs((t+1)*.02-delay[i])<.025 else ''))
-                    if (t+1)*.02>delay[i]+1.5:break
+                    if t >= finish_tick[i]:break
                 dest=Path(str(record_prefix)+f'-{name}-'+('save' if outcome else 'miss')+'.json')
-                rec.save(dest,metadata=dict(run_name=Path(checkpoint).parent.name,checkpoint=str(checkpoint),
+                rec.save(dest,metadata=dict(run_name=heuristic or Path(checkpoint).parent.name,
+                    checkpoint=None if heuristic else str(checkpoint),heuristic=heuristic,
                     simulation_only=True,match_type='isolated defense',scenario=name,selected_outcome='save' if outcome else 'miss',
                     selection='first valid example of each outcome; not a random sample',seed=seed,trial=i,fps=50,
                     workspace_sim=env.base._ws,accel_cap_m_s2=options['accel']))
                 recordings.append('/?replay='+dest.name)
-    return dict(checkpoint=str(checkpoint),sha256=hashlib.sha256(Path(checkpoint).read_bytes()).hexdigest(),
+    return dict(checkpoint=str(checkpoint) if not heuristic else heuristic,
+        heuristic=heuristic,sha256=hashlib.sha256(Path('ai/airhockey/defense_baselines.py' if heuristic else checkpoint).read_bytes()).hexdigest(),
         seed=seed,immediate=immediate,metric='First on-goal attack blocked; no reward for control or counterattack',
         summary=summary(np.ones(count,bool)),groups=groups,details=rows,replays=recordings)
 
@@ -150,6 +159,7 @@ if __name__=='__main__':
     p.add_argument('--trials',type=int,default=768);p.add_argument('--seed',type=int,default=20261051)
     p.add_argument('--immediate',action='store_true');p.add_argument('--record-prefix',type=Path)
     p.add_argument('--device',default='cpu')
-    a=p.parse_args();r=evaluate(a.checkpoint,count=a.trials,seed=a.seed,immediate=a.immediate,record_prefix=a.record_prefix,device=a.device)
+    p.add_argument('--heuristic',choices=['deep-bank','forward-bank','deep-direct'])
+    a=p.parse_args();r=evaluate(a.checkpoint,count=a.trials,seed=a.seed,immediate=a.immediate,record_prefix=a.record_prefix,device=a.device,heuristic=a.heuristic)
     a.output.parent.mkdir(parents=True,exist_ok=True);a.output.write_text(json.dumps(r,indent=2))
     print(json.dumps({k:v for k,v in r.items() if k!='details'}),flush=True)

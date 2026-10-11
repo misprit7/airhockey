@@ -41,6 +41,12 @@ class NeuralTrainingEnv(ArrivalEnv):
         load_holding_weight=0.,
         load_holding_horizon=15.,
         capture_weight=2.0,
+        capture_max_speed=0.65,
+        capture_duration=0.12,
+        capture_depth_margin=0.0,
+        slow_cushion_weight=0.0,
+        slow_receiving_fraction=0.0,
+        control_speed_scale=2.0,
         conversion_weight=4.0,
         capture_first=False,
         receive_drill=False,
@@ -272,6 +278,21 @@ class NeuralTrainingEnv(ArrivalEnv):
             model.energy_weight = float(load_energy_weight)
             model.holding_forecast_weight = float(load_holding_weight)
             model.holding_forecast_seconds = float(load_holding_horizon)
+        for value in (capture_max_speed, capture_duration, control_speed_scale):
+            if not np.isfinite(value) or value <= 0:
+                raise ValueError("capture speed, duration and potential speed scale must be positive")
+        if not np.isfinite(capture_depth_margin) or not 0 <= capture_depth_margin <= .3:
+            raise ValueError("invalid capture depth margin")
+        if not np.isfinite(slow_cushion_weight) or slow_cushion_weight < 0:
+            raise ValueError("invalid slow cushioning reward")
+        if not 0 <= slow_receiving_fraction <= 1:
+            raise ValueError("invalid slow receiving fraction")
+        self.capture_max_speed = capture_max_speed
+        self.capture_duration = capture_duration
+        self.capture_depth_margin = capture_depth_margin
+        self.slow_cushion_weight = slow_cushion_weight
+        self.slow_receiving_fraction = slow_receiving_fraction
+        self.control_speed_scale = control_speed_scale
         self.capture_weight = capture_weight
         self.conversion_weight = conversion_weight
         self.capture_first = capture_first
@@ -417,6 +438,7 @@ class NeuralTrainingEnv(ArrivalEnv):
         self.convert_count = np.zeros((2, n_envs), int)
         self.captured = np.zeros((2, n_envs), bool)
         self.capture_paid = np.zeros((2, n_envs), bool)
+        self._slow_cushion_touched = np.zeros((2, n_envs), bool)
         self.control_time = np.zeros((2, n_envs))
         self.contact_clock = np.full((2, n_envs), -100.0)
         self.reward_events = np.zeros((2, n_envs))
@@ -524,6 +546,8 @@ class NeuralTrainingEnv(ArrivalEnv):
     def _contact(self, event):
         side = int(event["body"] != "agent")
         ids = event["indices"]
+        first_possession_touch = ~self._slow_cushion_touched[side, ids]
+        self._slow_cushion_touched[side, ids] = True
         self.touch_count[side, ids] += 1
         self.entry_flags[side, ids, 0] = True
         self.own_touched[ids] |= side == 0
@@ -582,6 +606,15 @@ class NeuralTrainingEnv(ArrivalEnv):
         # Reward one distinct return, never persistent overlap/contact chatter.
         # A controlled puck can be struck immediately after cushioning. A
         # blanket contact debounce would erase that very sequence's credit.
+        if self.slow_cushion_weight:
+            # Once on the first touch of this possession: favor absorbing a
+            # moving slow puck, with negative credit for accelerating it away.
+            # Accurate fast fallback shots retain their normal shot rewards.
+            slow_incoming = (incoming_speed >= .15) & (incoming_speed < 2)
+            quality = np.clip(1 - speed / np.maximum(incoming_speed, .15), -1, 1)
+            self.reward_events[side, ids] += (
+                self.slow_cushion_weight * slow_incoming * first_possession_touch * quality
+            )
         launch = (
             fresh
             | self.captured[side, ids]
@@ -807,7 +840,7 @@ class NeuralTrainingEnv(ArrivalEnv):
             ) <= self.cfg.puck_radius + self.cfg.paddle_radius
             recent = self.elapsed - self.contact_clock[0] < .6
             close = np.exp(-np.minimum((np.maximum(gap, 0) / .12) ** 2, 80))
-            slow_quality = np.exp(-np.minimum((speed / 2) ** 2, 80))
+            slow_quality = np.exp(-np.minimum((speed / self.control_speed_scale) ** 2, 80))
             potential += self.control_potential_weight * close * slow_quality * (
                 recent & reachable & (gap > -.02) & (puck[:, 1] < 1)
             )
@@ -956,6 +989,16 @@ class NeuralTrainingEnv(ArrivalEnv):
                         dx, dy = direction.T.copy()
                         direction = np.column_stack((dx*np.cos(angle)-dy*np.sin(angle), dx*np.sin(angle)+dy*np.cos(angle)))
                     paddle[easier] = puck[easier, :2] + direction*rng.uniform(.13, .19, (len(easier), 1))
+            if self.slow_receiving_fraction:
+                shallow = receiving & ~recovery & (rng.random(n) < self.slow_receiving_fraction)
+                k = shallow.sum()
+                puck[shallow, 0] = rng.uniform(.18, .82, k)
+                puck[shallow, 1] = rng.uniform(.78, .98, k)
+                puck[shallow, 2] = rng.uniform(-.18, .18, k)
+                puck[shallow, 3] = -rng.uniform(.15, 1.2, k)
+                paddle[shallow] = rng.uniform(self.decoder.low + .015, self.decoder.high - .015, (k, 2))
+                overlap = shallow & (np.linalg.norm(paddle - puck[:, :2], axis=1) < .13)
+                paddle[overlap, 1] = puck[overlap, 1] - .16
             defense = kind == 2
             k = defense.sum()
             puck[defense, 0] = rng.uniform(0.15, 0.85, k)
@@ -1204,6 +1247,7 @@ class NeuralTrainingEnv(ArrivalEnv):
             self.convert_count,
             self.captured,
             self.capture_paid,
+            self._slow_cushion_touched,
             self.control_time,
             self.reward_events,
             self.guard_changed,
@@ -1369,19 +1413,22 @@ class NeuralTrainingEnv(ArrivalEnv):
                 self.cfg.puck_radius + self.cfg.paddle_radius
             )
             controlled = (
-                (speed < 0.65)
+                (speed < self.capture_max_speed)
                 & (gap < 0.07)
                 & (gap > -0.02)
                 & (self.elapsed - self.contact_clock[side] < 0.6)
                 & reachable
+                & ((self.capture_depth_margin == 0) |
+                   (local_puck[:, 1] <= self.decoder.high[1] - self.capture_depth_margin))
             )
             own_half = e.puck_y > 1 if side else e.puck_y < 1
             self.captured[side] &= (gap < 0.30) & own_half & reachable
             self.capture_paid[side, ~own_half] = False
+            self._slow_cushion_touched[side, ~own_half] = False
             self.control_time[side] = np.where(
                 controlled, self.control_time[side] + 0.02, 0
             )
-            newly = (self.control_time[side] >= 0.12) & ~self.captured[side]
+            newly = (self.control_time[side] >= self.capture_duration) & ~self.captured[side]
             self.capture_count[side] += newly
             self.entry_flags[side, newly, 1] = True
             self.captured[side] |= newly
@@ -1546,6 +1593,7 @@ class NeuralTrainingEnv(ArrivalEnv):
             reward = gf.astype(np.float32) - ga.astype(np.float32)
         self.captured[:, (gf + ga) > 0] = False
         self.capture_paid[:, (gf + ga) > 0] = False
+        self._slow_cushion_touched[:, (gf + ga) > 0] = False
         self.own_touched[(gf + ga) > 0] = False
         self.control_time[:, (gf + ga) > 0] = 0
         obs = self._features(raw)

@@ -114,6 +114,12 @@ def main():
         help="Predictive penalty for continued holding at the current position")
     p.add_argument("--load-holding-horizon", type=float, default=15.)
     p.add_argument("--capture-weight", type=float, default=2)
+    p.add_argument("--capture-max-speed", type=float, default=.65)
+    p.add_argument("--capture-duration", type=float, default=.12)
+    p.add_argument("--capture-depth-margin", type=float, default=0)
+    p.add_argument("--slow-cushion-weight", type=float, default=0)
+    p.add_argument("--slow-receiving-fraction", type=float, default=0)
+    p.add_argument("--control-speed-scale", type=float, default=2)
     p.add_argument("--conversion-weight", type=float, default=4)
     p.add_argument("--capture-first", action="store_true")
     p.add_argument("--receive-drill", action="store_true")
@@ -363,6 +369,12 @@ def main():
         load_holding_weight=args.load_holding_weight,
         load_holding_horizon=args.load_holding_horizon,
         capture_weight=args.capture_weight,
+        capture_max_speed=args.capture_max_speed,
+        capture_duration=args.capture_duration,
+        capture_depth_margin=args.capture_depth_margin,
+        slow_cushion_weight=args.slow_cushion_weight,
+        slow_receiving_fraction=args.slow_receiving_fraction,
+        control_speed_scale=args.control_speed_scale,
         conversion_weight=args.conversion_weight,
         capture_first=args.capture_first,
         receive_drill=args.receive_drill,
