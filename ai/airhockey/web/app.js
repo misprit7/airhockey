@@ -765,6 +765,8 @@ function setMode(next) {
     // Replay appeared to do nothing.
     document.getElementById("limits-panel").classList.toggle(
         "hidden", next === "replay");
+    document.getElementById("motor-load-panel").classList.toggle(
+        "hidden", next === "replay");
 
     const replayPanel = document.getElementById("replay-panel");
     if (mode === "replay") {
