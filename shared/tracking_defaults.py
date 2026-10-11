@@ -7,7 +7,10 @@ of acquisition settings; calibration photography can use its own exposure.
 
 EXPOSURE_US = 300.0
 GAIN_DB = 12.0
-THRESHOLD = 150
+# Edge-puck markers can peak at only 153/255: threshold 150 leaves fewer
+# than four pixels per dot. 110 retained all four corners in the measured
+# edge case without changing exposure, gain, or the four-corner requirement.
+THRESHOLD = 110
 FPS = 200.0
 MIN_BLOB_AREA = 4
 MAX_BLOB_AREA = 4000

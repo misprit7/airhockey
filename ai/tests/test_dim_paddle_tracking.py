@@ -12,7 +12,10 @@ import track_mallet as tm
 from airhockey.vision_service import VisionService
 
 
-def render(*, radius=26.5, centre_peak=145, second=False, puck=False):
+def render(*, radius=26.5, centre_peak=None, second=False, puck=False):
+    # Exercise dim-marker recovery even when the shared normal threshold changes.
+    if centre_peak is None:
+        centre_peak = tm.tracking.THRESHOLD - 5
     K=np.array([[1000.,0,720],[0,1000,540],[0,0,1]])
     dist=np.zeros(5);rvec=np.array([np.pi,0,0]);tvec=np.array([-600.,400,1400])
     field=np.empty((0,2));xy=np.array([1100.,400.]);theta=np.deg2rad(135)
