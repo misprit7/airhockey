@@ -59,3 +59,83 @@ State/results: `logs/neural-player/control-defense-20261011/experiment.json`.
 Per-arm exact argv, logs, evaluations and SHA256 checks accompany each run.
 The generated HTML is served directly and refreshed every minute. Failures
 are reported in the page rather than silently claiming the experiment finished.
+
+## Completed results and review
+
+The sweep completed at 04:26 EDT on October 11. Nine actual training branches
+used 332,529,664 transitions (about 3.43 hours of training plus evaluation).
+No replacement was qualified or deployed. No training process remains active.
+The initial handoff after launch was premature: the script completed its fixed
+sweep, but interactive diagnosis and follow-up were not performed until the
+user returned. Repository instructions now explicitly require ownership of
+that full cycle and a durable handoff across context boundaries.
+
+Selected development candidate:
+`runs/_neural-control-defense-long1-20261011/agent_step_101318656.pt`.
+This is the **1536-wide, depth-200 branch with original capture rewards**;
+it is not evidence that the new stricter capture reward succeeded. The
+stricter-reward short branches did not beat that branch. Larger capacity was
+promising in this one matched-seed experiment, not conclusively established.
+
+Fresh-seed qualification:
+
+| Metric | Production baseline | Experimental candidate |
+|---|---:|---:|
+| Fast attacks blocked, 3072 trials | 27.2% | 33.4% |
+| Left banks blocked | 2.1% | 9.4% |
+| Right banks blocked | 9.2% | 16.5% |
+| Near-stop control, 1536 trials | 3.5% | 17.4% |
+| Control followed by aimed shot | 3.1% | 10.9% |
+| Fast aimed returns in control tests | 60.4% | 51.0% |
+| Goal share across past-policy ladder | 58.1% (125–90) | 40.6% (69–101) |
+| Games with candidate-side modeled overload | 0/48 | 4/48 |
+
+Paired 95% approximate CI for the block-rate improvement: +4.9 to +7.4
+percentage points. The candidate still sits too far forward (mean depth
+55.4 cm at release, versus 63.2 cm before) and is poor against both banks.
+Most settling improvement is on incoming pucks; drifting-away control
+remains below 1%. In standalone stationary shot drills, first requested
+on-target shots at >=6 m/s declined from 80/192 to 64/192.
+
+The overload events were predominantly low-speed edge/corner stalls, not
+bursts at the 100 m/s² cap. Candidate first-overload positions include a
+stationary paddle at (0.918, 0.081) m with requested acceleration about
+6.6 m/s². Modeled overload time totaled 107.58 player-seconds across the
+48 games. Reducing requested acceleration cannot eliminate the holding
+load at such a position. These are simulation predictions, not hardware
+measurements; no physical robot was activated by this experiment.
+
+Interpretation: removing imitation and increasing capacity allowed some
+new behavior, but also lost productive shooting and corner recovery.
+The isolated-shot development ranking was too permissive about full-game
+regression. Those regressions appeared only in final validation. A bigger
+sweep with the same ranking would not be the appropriate next step.
+
+Follow-up performed during review: `review_early_checkpoints.py` checks the
+20M depth-200 model and the 20M wider model against production, both player
+roles, on a new seed (12 games x 90 s per role). Results and replays are in
+`logs/neural-player/control-defense-20261011/followup/`. This checks whether
+an earlier checkpoint avoided the late regressions; it is a development
+screen, not a fresh final qualification cohort.
+
+Next experimental design: include sustained cross-play, stationary shot
+completion, drifting-away control, and corner escape checks at intermediate
+checkpoints, before choosing continuations. Preserve shooting through fresh
+practice/rollouts rather than restoring the old action imitation. Add
+starting states from the observed corner stalls so the network can learn
+escape under holding load. Increase emphasis on fast bank defense while
+requiring that full-game and thermal gates continue to pass. Stop or redirect
+branches that improve an isolated metric by sacrificing those gates. Keep
+production `rail30-100-20261001-v1` until a candidate passes all of them.
+
+Follow-up results (new development seed, 24 games per candidate):
+
+| Earlier checkpoint | Goals vs production | Modeled overload time | Peak modeled load |
+|---|---:|---:|---:|
+| depth200, 20M | 39–44 | 41.0 s | 114.8% |
+| capacity1536, 20M | 39–40 | 0 s | 94.4% |
+
+The early wider model is a promising restart point for a subsequent experiment,
+but an approximately even match and one zero-overload screen do not establish
+superiority or qualify it for production. This review and follow-up are now
+complete; no additional training was launched during the review.

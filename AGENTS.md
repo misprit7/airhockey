@@ -32,3 +32,22 @@ that editing source updates an already-running process. If the current
 environment cannot reach the process, explain that concrete limitation.
 Service-management authorization never authorizes enabling or moving the
 physical robot.
+
+# Long-running experiment ownership
+
+When the user gives hours or overnight time for an experiment, own the full
+research cycle: run it, monitor it, inspect completed results and replays,
+diagnose regressions, and perform evidence-driven follow-up within the
+user's scope and time/resource budget. Do not end the task merely because
+a background process started successfully or a fixed sweep completed.
+An unattended script is useful execution machinery, not a substitute for
+reviewing its results and choosing the next experiment.
+
+Keep a durable experiment record with the objective, hypotheses, exact run
+names, results, current interpretation, next actions, and stopping criteria.
+Use that record to continue across context compaction or session handoffs.
+Keep live status and periodic evaluation replays discoverable in the web UI.
+If work must stop before review/iteration is complete, state what remains
+and the concrete reason; do not imply follow-up is happening automatically.
+Research authorization still never authorizes physical robot activation or
+changing deployment defaults.
