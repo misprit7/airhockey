@@ -16,6 +16,9 @@ import numpy as np
 import torch
 
 from airhockey.neural_player import NeuralPlayer, PhysicalHistory, RecoveryExplorationBias, log_probability, defensive_request_consistency, recovery_exploration_scale, recovery_exploration_window, thermal_effort_exploration_scale, backtrack_actor_step
+from airhockey.neural_finetune import (MODE_NAMES, TEACHER_MASKS, adapt_learning_rate, complete_initialization,
+                                       initialization_model, load_teacher, masked_mean, reference_slots, std_floor,
+                                       teacher_mask, teacher_opponent_slots, teacher_regression, teacher_weight)
 from airhockey.neural_training import NeuralTrainingEnv
 from airhockey.on_policy import advantages
 from airhockey.thermal import DEFAULT_MODEL
@@ -227,6 +230,29 @@ def main():
     p.add_argument("--skill-reference-incoming-only", action="store_true", help="Preserve only fast incoming responses, leaving quiet-state failures free to change")
     p.add_argument("--skill-replay", type=Path, help="Previously successful neural observations/actions for training-only preservation")
     p.add_argument("--skill-replay-weight", type=float, default=0)
+    # RL fine-tuning of a distilled student. The teacher is training-only:
+    # regression targets and a sparring partner, never a runtime controller.
+    p.add_argument("--teacher", help="Training-only teacher spec, 'expert' or 'expert:key=value,...' (expert_player.py)")
+    p.add_argument("--teacher-weight", type=float, default=0,
+                   help="Actor loss weight on mean squared error of tanh(actor mean) to the teacher's action")
+    p.add_argument("--teacher-weight-final", type=float,
+                   help="Weight after --teacher-anneal-steps environment steps; default keeps --teacher-weight")
+    p.add_argument("--teacher-anneal-steps", type=int, default=0,
+                   help="Environment steps of linear annealing from --teacher-weight to --teacher-weight-final")
+    p.add_argument("--teacher-mask", choices=TEACHER_MASKS, default="all",
+                   help="Regress only where the teacher is: defense = blocking or guarding, threat = blocking, attack = attacking")
+    p.add_argument("--teacher-opponent-fraction", type=float, default=0,
+                   help="Fraction of full-game slots whose far side is the deterministic teacher, never a fixed-reference slot (id %% 4 == 0)")
+    p.add_argument("--actor-steps-min", type=int, default=0,
+                   help="Actor minibatch steps per update before the KL early stop (or --backtrack-kl) may veto a step; KL is still logged")
+    p.add_argument("--adaptive-lr", action="store_true",
+                   help="Scale the actor learning rate by 1.5 per update toward --target-kl, within [--lr-min, --lr-max]")
+    p.add_argument("--lr-min", type=float, default=1e-6)
+    p.add_argument("--lr-max", type=float, default=3e-4)
+    p.add_argument("--value-warmup-updates", type=int, default=0,
+                   help="Fit only the critic for this many first updates, actor frozen (a fresh critic after --initialize-from)")
+    p.add_argument("--std-floor", type=float, default=0,
+                   help="Training-only minimum pre-tanh exploration std per dimension, in rollouts and PPO likelihoods alike")
     args = p.parse_args()
     if not np.isfinite(args.accel) or not 0<args.accel<=120:p.error('accel must be within (0,120] m/s²')
     from airhockey.neural_setup import workspace_bounds
@@ -241,7 +267,8 @@ def main():
         if (args.receive_drill or args.productive_receive_drill or args.possession_followthrough or
                 args.terminate_overload or args.skill_reference or args.skill_replay or
                 args.skill_reference_weight or args.skill_replay_weight or args.defense_request_consistency or
-                args.opponent_checkpoint or args.opponent_reference):
+                args.opponent_checkpoint or args.opponent_reference or
+                args.teacher_weight or args.teacher_weight_final or args.teacher_opponent_fraction):
             p.error('--goals-only excludes auxiliary drills/losses, overload terminations and fixed external opponents')
         args.stage, args.game_fraction, args.continuous_rallies = 5, 1., True
     if not np.isfinite(args.recovery_persistent_bias) or not 0 <= args.recovery_persistent_bias <= 3:
@@ -270,6 +297,27 @@ def main():
         p.error("edge persistent bias must be finite and nonnegative")
     if args.edge_persistent_bias and args.recovery_persistent_bias:
         p.error("choose edge or outgoing-recovery persistent exploration for this run")
+    if args.teacher_weight_final is None:
+        args.teacher_weight_final = args.teacher_weight
+    if (not np.isfinite([args.teacher_weight, args.teacher_weight_final]).all()
+            or min(args.teacher_weight, args.teacher_weight_final) < 0):
+        p.error("teacher weights must be finite and nonnegative")
+    if args.teacher_anneal_steps < 0 or (args.teacher_weight_final != args.teacher_weight and not args.teacher_anneal_steps):
+        p.error("--teacher-weight-final needs a positive --teacher-anneal-steps")
+    if not np.isfinite(args.teacher_opponent_fraction) or not 0 <= args.teacher_opponent_fraction <= 1:
+        p.error("--teacher-opponent-fraction must be in [0,1]")
+    if args.teacher is None and (args.teacher_weight or args.teacher_weight_final or args.teacher_opponent_fraction
+                                 or args.teacher_mask != "all" or args.teacher_anneal_steps):
+        p.error("teacher options need --teacher")
+    if args.teacher_opponent_fraction and args.stage < 3:
+        p.error("--teacher-opponent-fraction needs full games with external opponents (stage >= 3)")
+    if args.actor_steps_min < 0 or args.value_warmup_updates < 0:
+        p.error("--actor-steps-min and --value-warmup-updates must be nonnegative")
+    if not np.isfinite(args.std_floor) or not 0 <= args.std_floor <= 1.5:
+        p.error("--std-floor must be finite and in [0,1.5]")
+    if args.adaptive_lr and not (np.isfinite([args.lr_min, args.lr_max]).all()
+                                 and 0 < args.lr_min <= args.lr <= args.lr_max):
+        p.error("--adaptive-lr needs 0 < --lr-min <= --lr <= --lr-max")
     torch.set_num_threads(args.torch_threads)
     device = torch.device("cuda" if torch.cuda.is_available() else "cpu") if args.device == "auto" else torch.device(args.device)
     if device.type == "cuda" and not torch.cuda.is_available():
@@ -282,16 +330,20 @@ def main():
     ACTIVE_RUN = run
     initialization = args.resume or args.initialize_from
     state = torch.load(initialization, map_location=device, weights_only=False) if initialization else None
+    # --initialize-from takes actor weights only: production files carry no
+    # optimizer, distilled ones may carry another algorithm label and omit
+    # training-only heads. Architecture fields fall back to the weights.
+    initial_model, architecture = initialization_model(state) if args.initialize_from else (None, state)
     if args.width is None:
-        args.width = state["width"] if state else 256
+        args.width = architecture["width"] if state else 256
     if args.history is None:
-        args.history = state.get("history", 1) if state else 1
+        args.history = architecture.get("history", 1) if state else 1
     if args.freeze_base_width is None:
         args.freeze_base_width = state.get("args", {}).get("freeze_base_width", 0) if state and args.resume else 0
     if not 0 <= args.freeze_base_width < args.width:
         raise ValueError("frozen base width must be zero or smaller than model width")
     if args.shot_conditioned is None:
-        args.shot_conditioned = state.get("shot_conditioned", False) if state else False
+        args.shot_conditioned = architecture.get("shot_conditioned", False) if state else False
     net = NeuralPlayer(args.width, history=args.history, shot_conditioned=args.shot_conditioned,
                        history_deltas=args.history_deltas).to(device)
     if not np.isfinite(args.std_scale) or args.std_scale <= 0:
@@ -302,7 +354,8 @@ def main():
     if initialization:
         fresh_value = copy.deepcopy(net.value_trunk.state_dict()) if args.initialize_from else None
         fresh_head = copy.deepcopy(net.critic.state_dict()) if args.initialize_from else None
-        upgraded = net.load_weights(state["model"])
+        upgraded = net.load_weights(complete_initialization(initial_model, net.state_dict())
+                                    if args.initialize_from else state["model"])
         if args.initialize_from:
             net.value_trunk.load_state_dict(fresh_value)
             net.critic.load_state_dict(fresh_head)
@@ -310,7 +363,10 @@ def main():
             saved_optimizer = state["optimizer"]
         total = state["step"] if args.resume else 0
     args.history_deltas = net.history_deltas
-    optimizer = make_optimizer(net, args.lr, args.value_lr or args.lr, saved_optimizer)
+    actor_lr = args.lr
+    if args.adaptive_lr and args.resume and state.get("actor_lr"):
+        actor_lr = min(max(float(state["actor_lr"]), args.lr_min), args.lr_max)
+    optimizer = make_optimizer(net, actor_lr, args.value_lr or args.lr, saved_optimizer)
     from airhockey.neural_player import ActorPrefixFreeze
     skill_reference = None
     if args.skill_reference is not None:
@@ -354,6 +410,13 @@ def main():
         rival=CoordinateReference(rival,checkpoint_environment(path,reference_state),coordinate_options)
         references.append(rival)
     reference = references[0] if references else None
+    # Separate instances for the learner's regression targets and the far
+    # side, so neither call's per-sample modes or state reach the other.
+    teacher = load_teacher(args.teacher, coordinate_options, ROOT) if args.teacher else None
+    teacher_opponent = (load_teacher(args.teacher, coordinate_options, ROOT)
+                        if args.teacher_opponent_fraction else None)
+    teacher_anneal_origin = (state.get("teacher_anneal_origin", state["step"])
+                             if args.resume and teacher is not None else 0)
     options = dict(
         accel=args.accel,workspace_bounds_mm=run_bounds,thermal_path=args.thermal_model,
         edge_dwell_weight=args.edge_dwell_weight,edge_dwell_band=args.edge_dwell_band,
@@ -412,7 +475,7 @@ def main():
         receiving_max_speed=args.receiving_max_speed,
         rushed_shot_penalty=args.rushed_shot_penalty,
         thermal_gain=args.thermal_gain,
-        shot_conditioned=args.shot_conditioned or any(r.shot_conditioned for r in references),
+        shot_conditioned=args.shot_conditioned or any(r.shot_conditioned for r in references) or teacher is not None,
         shot_request=args.shot_request,
         shot_request_weight=args.shot_request_weight,
         wrong_shot_penalty=args.wrong_shot_penalty,
@@ -461,15 +524,34 @@ def main():
     if args.workers > 1:
         from airhockey.neural_vector import ParallelNeuralEnv
 
-        env = ParallelNeuralEnv(args.n_envs, args.workers, **options)
+        # Workers reset finished environments right after the step that ended
+        # them: identical streams, one pipe round trip per step instead of two.
+        env = ParallelNeuralEnv(args.n_envs, args.workers, auto_reset=True, **options)
     else:
         env = NeuralTrainingEnv(args.n_envs, **options)
     ACTIVE_ENV = env
-    own_history = PhysicalHistory(args.history)
-    opponent_history = PhysicalHistory(max([args.history, *[r.history for r in references]]))
+    own_history = PhysicalHistory(max(args.history, teacher.history if teacher else 1))
+    opponent_history = PhysicalHistory(max([args.history, *[r.history for r in references],
+                                            *([teacher_opponent.history] if teacher_opponent else [])]))
     own_history.reset(env.reset(seed=args.seed))
     obs = own_history.for_policy(net)
     opponent_history.reset(env.opponent_obs())
+    game_slots = np.asarray(env.critic_context())[:, 3] > .5
+    reserved_slots = reference_slots(args.n_envs, references)
+    teacher_slots = None
+    if teacher_opponent is not None:
+        teacher_slots = teacher_opponent_slots(game_slots, args.teacher_opponent_fraction, reserved_slots)
+        if not teacher_slots.any():
+            raise ValueError("no full-game slot for the teacher opponent; check --game-fraction")
+    # Game outcomes by far-side player, cumulative over the run.
+    score_classes = dict(pool=game_slots & ~reserved_slots, reference=game_slots & reserved_slots)
+    if teacher_slots is not None:
+        score_classes["teacher"] = teacher_slots
+        score_classes["pool"] = score_classes["pool"] & ~teacher_slots
+    game_scores = {name: dict(goals=0, conceded=0, seconds=0.) for name, rows in score_classes.items() if rows.any()}
+    # The actor's own input equals the teacher's when the layouts agree.
+    teacher_shares_obs = (teacher is not None and teacher.history == net.history
+                          and teacher.shot_conditioned == net.shot_conditioned)
     meta = dict(
         algorithm="neural_ppo_v1",
         action_mode="arrival",
@@ -507,9 +589,28 @@ def main():
     )
     if args.evaluation_dir is not None:
         meta['evaluation_dir'] = str(args.evaluation_dir)
+    if args.initialize_from:
+        meta["initialization_algorithm"] = state.get("algorithm")
+    if teacher is not None:
+        meta["teacher"] = dict(
+            teacher.describe(), training_only=True, runtime_controller=False,
+            weight=args.teacher_weight, weight_final=args.teacher_weight_final,
+            anneal_steps=args.teacher_anneal_steps, anneal_origin_step=teacher_anneal_origin,
+            mask=args.teacher_mask,
+            targets="every learner observation: tanh(actor mean) regressed toward the deterministic teacher action",
+            opponent_fraction=args.teacher_opponent_fraction,
+            opponent_slots=int(teacher_slots.sum()) if teacher_slots is not None else 0,
+            game_slots=int(game_slots.sum()),
+            opponent_slot_rule="evenly spread over full-game slots with id % 4 != 0; id % 4 == 0 stays with fixed references",
+        )
+    meta["optimization"] = dict(
+        actor_steps_min=args.actor_steps_min, adaptive_lr=args.adaptive_lr,
+        lr_bounds=[args.lr_min, args.lr_max] if args.adaptive_lr else None,
+        value_warmup_updates=args.value_warmup_updates, std_floor=args.std_floor or None,
+        clip=0.2)
     meta["thermal_model"] = json.loads(args.thermal_model.read_text())
     for path in [
-        Path(__file__),
+        Path(__file__).absolute(),
         ROOT / "ai/airhockey/neural_player.py",
         ROOT / "ai/airhockey/neural_observation.py",
         ROOT / "ai/airhockey/report_sensing.py",
@@ -523,6 +624,9 @@ def main():
         ROOT / "ai/airhockey/batch_env.py",
         ROOT / "ai/airhockey/batch_physics.py",
         ROOT / "ai/airhockey/neural_vector.py",
+        ROOT / "ai/airhockey/neural_finetune.py",
+        *([ROOT / "ai/airhockey/expert_player.py", ROOT / "ai/airhockey/puck_prediction.py"]
+          if teacher is not None else []),
         ROOT / "ai/airhockey/on_policy.py",
         ROOT / "ai/airhockey/policy_benchmark.py",
         ROOT / "ai/airhockey/shot_flight.py",
@@ -584,6 +688,10 @@ def main():
     terminals, dones = [
         torch.empty(shape, device=device, dtype=torch.bool) for _ in range(2)
     ]
+    if teacher is not None:
+        teacher_actions = torch.empty((*shape, 6), device=device)
+        teacher_modes = torch.full(shape, -1, device=device, dtype=torch.int8)
+        rollout_means = torch.empty((*shape, 6), device=device)  # tanh(actor mean) as collected
 
     def save(name):
         state = dict(
@@ -601,7 +709,10 @@ def main():
             torch_rng=torch.get_rng_state(),
             cuda_rng=torch.cuda.get_rng_state() if device.type == "cuda" else None,
             args=meta["args"],
+            actor_lr=optimizer.param_groups[0]["lr"],
         )
+        if teacher is not None:
+            state["teacher_anneal_origin"] = teacher_anneal_origin
         temp = run / (name + ".tmp")
         torch.save(state, temp)
         temp.replace(run / name)
@@ -629,6 +740,7 @@ def main():
                 recovery_mask = recovery_exploration_window(context, args.recovery_exploration_seconds, practice)
                 scale = recovery_exploration_scale(x, scale, args.recovery_exploration, args.recovery_exploration_load_aware, args.quiet_exploration, mean=mu, timing=args.recovery_explore_timing, practice_mask=recovery_mask)
                 scale = thermal_effort_exploration_scale(x, scale, args.hot_effort_exploration, practice_mask=practice)
+                scale = std_floor(scale, args.std_floor)
                 sampling_mean = mu
                 if persistent_bias is not None:
                     bias = persistent_bias.sample(x, context, torch.as_tensor(contacted, device=device))
@@ -652,6 +764,8 @@ def main():
                 )
             observations[t], raw_actions[t], values[t], old_logp[t] = x, raw, val, lp
             critic_contexts[t] = context
+            if teacher is not None:
+                rollout_means[t] = mu.tanh()
             if args.stage >= 3:
                 opponent_obs = opponent_history.get()
                 if not np.isfinite(opponent_obs).all():
@@ -663,18 +777,35 @@ def main():
                     raise FloatingPointError(
                         "Non-finite opponent observation; diagnostic saved"
                     )
+                # One history view per (frames, request) layout, not per rival:
+                # at thousands of environments each view is megabytes.
+                views = {(opponent_history.frames, opponent_history.request is not None): opponent_obs}
+
+                def view(rival):
+                    key = (rival.history, bool(rival.shot_conditioned))
+                    if key not in views:
+                        views[key] = opponent_history.for_policy(rival)
+                    return views[key]
+
                 opponent_action = np.empty((args.n_envs, 6), np.float32)
                 groups = np.arange(args.n_envs) % len(opponents)
                 for j, rival in enumerate(opponents):
                     mask = groups == j
+                    if teacher_slots is not None:
+                        mask &= ~teacher_slots
+                        if not mask.any():
+                            continue
                     opponent_action[mask] = rival.act(
-                        opponent_history.for_policy(rival)[mask], stochastic=args.stochastic_opponents
+                        view(rival)[mask], stochastic=args.stochastic_opponents
                     )
                 for j, fixed_rival in enumerate(references):
                     ids = np.arange(args.n_envs)
                     mask = (ids % 4 == 0) & ((ids // 4) % len(references) == j)
                     if mask.any():
-                        opponent_action[mask] = fixed_rival.act(opponent_history.for_policy(fixed_rival)[mask])
+                        opponent_action[mask] = fixed_rival.act(view(fixed_rival)[mask])
+                if teacher_slots is not None:
+                    # Deterministic, from the same far-side history view.
+                    opponent_action[teacher_slots] = teacher_opponent.act(view(teacher_opponent)[teacher_slots])
                 if not np.isfinite(opponent_action).all():
                     np.savez_compressed(
                         run / "nonfinite_opponent_action.npz",
@@ -685,7 +816,33 @@ def main():
                         "Non-finite opponent action; diagnostic saved"
                     )
                 env.set_opponent_action(opponent_action)
-            obs, rew, term, trunc, info = env.step(raw.tanh().cpu().numpy())
+            if teacher is None:
+                obs, rew, term, trunc, info = env.step(raw.tanh().cpu().numpy())
+            else:
+                # The teacher labels exactly what the actor saw, while the
+                # workers simulate this step.
+                teacher_obs = obs if teacher_shares_obs else own_history.for_policy(teacher)
+                if hasattr(env, "step_async"):
+                    env.step_async(raw.tanh().cpu().numpy())
+                    label = teacher.act(teacher_obs)
+                    obs, rew, term, trunc, info = env.step_wait()
+                else:
+                    label = teacher.act(teacher_obs)
+                    obs, rew, term, trunc, info = env.step(raw.tanh().cpu().numpy())
+                if not np.isfinite(label).all() or np.abs(label).max() > 1:
+                    np.savez_compressed(run / "invalid_teacher_action.npz", observation=teacher_obs, action=label)
+                    raise FloatingPointError("Teacher action outside [-1,1]; diagnostic saved")
+                teacher_actions[t] = torch.as_tensor(label, device=device)
+                if teacher.last_mode is not None:
+                    teacher_modes[t] = torch.as_tensor(teacher.last_mode, device=device)
+                elif args.teacher_mask != "all":
+                    raise ValueError("--teacher-mask needs a teacher that reports last_mode")
+            if score_classes:
+                for name, rows in score_classes.items():
+                    if name in game_scores:
+                        game_scores[name]["goals"] += int(info["goals"][rows].sum())
+                        game_scores[name]["conceded"] += int(info["conceded"][rows].sum())
+                        game_scores[name]["seconds"] += 0.02 * int(rows.sum())
             if persistent_bias is not None:
                 contacted = np.asarray(info["contacts"]) > 0
             own_history.append(obs)
@@ -766,12 +923,26 @@ def main():
             target - values.flatten()
         ).var() / target.var().clamp_min(1e-8)
         kl = 0
+        kl_max = 0.0
         rollout_initial_kl = None
         actor_stopped = False
         actor_updates = 0
         actor_step_scales = []
         consistency_losses = []
         preservation_losses = []
+        used_lr = optimizer.param_groups[0]["lr"]
+        # A fresh critic (--initialize-from) first learns the initial policy's
+        # values; PPO on its random advantages would move the actor at random.
+        warming = update < args.value_warmup_updates
+        planned_steps = args.epochs * -(-len(x) // args.minibatch)
+        if teacher is not None:
+            current_teacher_weight = teacher_weight(
+                total - teacher_anneal_origin, args.teacher_weight,
+                args.teacher_weight_final, args.teacher_anneal_steps)
+            teacher_targets = teacher_actions.flatten(0, 1)
+            teacher_selected = (teacher_mask(teacher_modes.flatten(), args.teacher_mask)
+                                if args.teacher_mask != "all" else None)
+            teacher_losses = []
         for epoch in range(args.epochs):
             for ids in torch.randperm(len(x), device=device).split(args.minibatch):
                 mu, value, scale = net.distribution(x[ids], context[ids])
@@ -779,6 +950,7 @@ def main():
                 recovery_mask = recovery_exploration_window(context[ids], args.recovery_exploration_seconds, practice)
                 scale = recovery_exploration_scale(x[ids], scale, args.recovery_exploration, args.recovery_exploration_load_aware, args.quiet_exploration, mean=mu, timing=args.recovery_explore_timing, practice_mask=recovery_mask)
                 scale = thermal_effort_exploration_scale(x[ids], scale, args.hot_effort_exploration, practice_mask=practice)
+                scale = std_floor(scale, args.std_floor)
                 # Condition both PPO likelihoods on the same realized,
                 # parameter-independent exploration state. Do not resample it
                 # here or incorrectly score biased actions under an unbiased mean.
@@ -790,17 +962,29 @@ def main():
                 # large rollouts an epoch contains dozens of updates; waiting
                 # until its end can erase a precise warm-started contact policy.
                 kl = float(((ratio - 1) - log_ratio).mean().detach())
+                kl_max = max(kl_max, kl)
                 if rollout_initial_kl is None:
                     rollout_initial_kl = kl
-                actor_stopped |= kl > args.target_kl
+                # The first --actor-steps-min actor steps are taken whatever
+                # the KL; the early stop (and backtracking) apply after them.
+                forced = actor_updates < args.actor_steps_min
+                if not forced:
+                    actor_stopped |= kl > args.target_kl
+                actor_active = not actor_stopped and not warming
                 policy_loss = -torch.minimum(
                     ratio * advantage[ids], ratio.clamp(0.8, 1.2) * advantage[ids]
                 ).mean()
                 value_loss = 0.5 * (value - target[ids]).square().mean()
                 entropy = scale.sum(-1).mean()
                 loss = 0.5 * value_loss
-                if not actor_stopped:
+                if teacher is not None:
+                    teacher_loss = teacher_regression(
+                        mu, teacher_targets[ids], None if teacher_selected is None else teacher_selected[ids])
+                    teacher_losses.append(teacher_loss.detach())
+                if actor_active:
                     loss = loss + policy_loss - args.entropy * entropy
+                    if teacher is not None and current_teacher_weight:
+                        loss = loss + current_teacher_weight * teacher_loss
                     if args.defense_request_consistency:
                         consistency = defensive_request_consistency(net, x[ids], mu)
                         loss += args.defense_request_consistency * consistency
@@ -830,7 +1014,7 @@ def main():
                 )
                 actor_parameters = net.actor_parameters()
                 before = ([p.detach().clone() for p in actor_parameters]
-                          if args.backtrack_kl and not actor_stopped else None)
+                          if args.backtrack_kl and actor_active and not forced else None)
                 optimizer.step()
                 if actor_prefix is not None:
                     actor_prefix.restore()
@@ -841,6 +1025,7 @@ def main():
                         new_scale = (net.log_std + net.noise(features)).clamp(-4, 0.5)
                         new_scale = recovery_exploration_scale(x[ids], new_scale, args.recovery_exploration, args.recovery_exploration_load_aware, args.quiet_exploration, mean=new_mean, timing=args.recovery_explore_timing, practice_mask=recovery_mask)
                         new_scale = thermal_effort_exploration_scale(x[ids], new_scale, args.hot_effort_exploration, practice_mask=practice)
+                        new_scale = std_floor(new_scale, args.std_floor)
                         new_mean = new_mean if offsets is None else new_mean + offsets[ids]
                         difference = log_probability(ra[ids], new_mean, new_scale) - lp[ids]
                         return (difference.clamp(-20, 20).exp() - 1 - difference).mean()
@@ -850,6 +1035,46 @@ def main():
                     actor_step_scales.append(step_scale)
                 # The value network is independent: continue fitting it after
                 # actor early stopping without changing actor parameters.
+        with torch.no_grad():
+            # Rollout policy -> updated policy, on a fixed strided subset (no
+            # random draw, so default runs keep their random streams).
+            subset = torch.arange(0, len(x), max(1, len(x) // 8192), device=device)
+            features = net.trunk(x[subset])
+            final_mean = net.actor(features)
+            final_scale = (net.log_std + net.noise(features)).clamp(-4, 0.5)
+            final_practice = context[subset, 3] < .5 if args.practice_only_exploration else None
+            final_window = recovery_exploration_window(context[subset], args.recovery_exploration_seconds, final_practice)
+            final_scale = recovery_exploration_scale(x[subset], final_scale, args.recovery_exploration, args.recovery_exploration_load_aware, args.quiet_exploration, mean=final_mean, timing=args.recovery_explore_timing, practice_mask=final_window)
+            final_scale = thermal_effort_exploration_scale(x[subset], final_scale, args.hot_effort_exploration, practice_mask=final_practice)
+            final_scale = std_floor(final_scale, args.std_floor)
+            final_sampling = final_mean if offsets is None else final_mean + offsets[subset]
+            difference = log_probability(ra[subset], final_sampling, final_scale) - lp[subset]
+            final_kl = float((difference.clamp(-20, 20).exp() - 1 - difference).mean())
+            if teacher is not None:
+                subset_mask = None if teacher_selected is None else teacher_selected[subset]
+                teacher_final = float(teacher_regression(final_mean, teacher_targets[subset], subset_mask))
+                # The same samples under the rollout policy: the update's effect.
+                teacher_initial = float(masked_mean(
+                    (rollout_means.flatten(0, 1)[subset] - teacher_targets[subset]).square().mean(-1), subset_mask))
+                error = (rollout_means - teacher_actions).square()
+                rollout_teacher = dict(all=float(error.mean()))
+                mode_fraction = {}
+                for code, name in enumerate(MODE_NAMES):
+                    selected = teacher_modes == code
+                    mode_fraction[name] = float(selected.float().mean())
+                    if mode_fraction[name]:
+                        rollout_teacher[name] = float(error[selected].mean())
+                teacher_status = dict(
+                    weight=current_teacher_weight, mask=args.teacher_mask,
+                    mask_fraction=1.0 if teacher_selected is None else float(teacher_selected.float().mean()),
+                    mse=float(torch.stack(teacher_losses).mean()), mse_first=float(teacher_losses[0]),
+                    mse_last=float(teacher_losses[-1]), mse_initial=teacher_initial, mse_final=teacher_final,
+                    rollout_mse=rollout_teacher, rollout_mse_by_dimension=error.mean((0, 1)).tolist(),
+                    mode_fraction=mode_fraction)
+        if args.adaptive_lr and not warming:
+            optimizer.param_groups[0]["lr"] = adapt_learning_rate(
+                used_lr, final_kl, args.target_kl, args.lr_min, args.lr_max,
+                stopped_early=actor_stopped and actor_updates < planned_steps / 2)
         update += 1
         if update % 50 == 0:
             opponent = copy.deepcopy(net).eval()
@@ -915,7 +1140,24 @@ def main():
             means=means,
             by_kind=by_kind,
             running=True,
+            kl_max=kl_max,
+            final_kl=final_kl,
+            actor_lr=used_lr,
+            planned_actor_steps=planned_steps,
+            value_warmup=warming,
         )
+        if args.adaptive_lr:
+            status["next_actor_lr"] = optimizer.param_groups[0]["lr"]
+        if teacher is not None:
+            status["teacher_mse"] = teacher_status["mse"]
+            status["teacher_weight"] = teacher_status["weight"]
+            status["teacher"] = teacher_status
+        if game_scores:
+            status["game_scores"] = {
+                name: dict(score, minutes=score["seconds"] / 60,
+                           goals_per_minute=score["goals"] / max(score["seconds"] / 60, 1e-9),
+                           conceded_per_minute=score["conceded"] / max(score["seconds"] / 60, 1e-9))
+                for name, score in game_scores.items()}
         write_json(run / "status.json", status)
         with (run / "metrics.jsonl").open("a") as f:
             f.write(json.dumps(status) + "\n")
