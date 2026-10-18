@@ -169,6 +169,19 @@ thermal recipe `motor-load-20261001` at gain 1.3 (0.95 training shutdown,
 - 05:45 — fine-tune `_neural-teacher-ppo-20261018-d` from arm D's final:
   `finetune.py --teacher-mask defense --minutes 60` (default physics).
 
+- 05:50 — arm D final dev suite: human proxy club 141-12 (92.2%, CI
+  87.8-96.2) vs production 78.5%; elite 169-26 (86.7%, CI 81.7-91.1) vs
+  67.8%; no overload. Fast defense 86.8% (S 93.8 / L 76.6 / R 90.2), immediate
+  40.9%, requested fast shots stationary S/L/R 44/21/36 of 128 (production
+  75/38/42), receiving 1-4 (81-88), slow-control fast aimed 45.6% (61.7%),
+  corner 36/128 (22), side 15/128 (17), games vs production 19-3 / 14-3, hot
+  4x600 s 14-2 with zero overload (peak 0.847; production 511 s / 1.057),
+  reachable stall 474 s (production 1361 s). Arm E round 3 on the proxy:
+  club 77.9%, elite 72.4% -- E stopped; D is the line to pursue.
+- Replays (web UI replay tab, http://localhost:8420/?replay=<file>):
+  `teacher-dagger-d-vs-production.json`,
+  `teacher-dagger-d-vs-proxy_vs_human-proxy-{club,elite}-g{0,1}.json`.
+
 ## Runs
 
 | Run | What | Status |
@@ -179,7 +192,7 @@ thermal recipe `motor-load-20261001` at gain 1.3 (0.95 training shutdown,
 | `_neural-teacher-dagger-20261018-b` | DAgger, measured paddle contact (pre heat gate) | stopped after round 6 (memory) |
 | `_neural-teacher-dagger-20261018-d` | production widened to 1536; teacher defense labels, production attack labels | done (6 rounds) |
 | `_neural-teacher-ppo-20261018-d` | PPO fine-tune of D, teacher-regularised defense | running (60 min) |
-| `_neural-teacher-dagger-20261018-e` | continuation of C with an earlier-striking teacher | running |
+| `_neural-teacher-dagger-20261018-e` | continuation of C with an earlier-striking teacher | stopped after round 4 |
 
 ## Results
 
