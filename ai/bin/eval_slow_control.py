@@ -73,7 +73,7 @@ def evaluate(checkpoint, *, count=384, seed=20261072, device='cpu'):
             weak_exit_rate=float(weak_exit[mask].mean()),
             first_contact_depth=float(first_contact_depth[touched].mean()) if touched.any() else None,
             peak_load=float(peak[mask].max()),overload_seconds=float(overload[mask].sum()))
-    return dict(checkpoint=str(checkpoint),sha256=hashlib.sha256(Path(checkpoint).read_bytes()).hexdigest(),seed=seed,
+    return dict(checkpoint=str(checkpoint),sha256=hashlib.sha256(Path('ai/airhockey/expert_player.py' if str(checkpoint).startswith('expert') else checkpoint).read_bytes()).hexdigest(),seed=seed,
         metric='Touched puck below 0.15 m/s for 0.20 s, within 7 cm of paddle edge and 4 cm inside forward reach; six-second trial continues through a shot',
         summary=summary(np.ones(count,bool)),groups={name:summary(task==i) for i,name in enumerate(['shallow_incoming','interior_incoming','drifting_away'])},
         details=[dict(task=int(task[i]),settled=bool(settled[i]),converted=bool(converted[i]),fast_aimed=bool(fast[i]),weak_exit=bool(weak_exit[i])) for i in range(count)])
