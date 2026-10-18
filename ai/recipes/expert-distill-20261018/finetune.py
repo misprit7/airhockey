@@ -71,6 +71,8 @@ def argv(a):
            "--teacher-anneal-steps", str(a.anneal), "--teacher-mask", a.teacher_mask, "--teacher-opponent-fraction", "0.3",
            "--value-warmup-updates", "10", "--actor-steps-min", "16", "--lr", "1e-6", "--lr-min", "2e-7",
            "--lr-max", "5e-5", "--std-floor", "0.1", "--adaptive-lr"]
+    if a.calm_accel:
+        cmd += ["--calm-accel-weight", str(a.calm_accel), "--calm-accel-power", str(a.calm_power)]
     if a.measured_contact:
         cmd += ["--paddle-restitution-range", "0.40", "0.65", "--paddle-tangential-range", "0.76", "0.84"]
     return cmd
@@ -87,6 +89,9 @@ def main():
     p.add_argument("--measured-contact", action="store_true")
     p.add_argument("--possession-delay", type=float, default=6.0,
                    help="Cost per second (after 4 s, capped at 14 s) of keeping the puck on our half in games")
+    p.add_argument("--calm-accel", type=float, default=0.0,
+                   help="Per-second cost of the squared accel-cap fraction while the puck and the opponent are slow")
+    p.add_argument("--calm-power", type=float, default=2.0, choices=[1.0, 2.0])
     p.add_argument("--teacher-mask", default="all", choices=["all", "defense", "threat", "attack"],
                    help="States regularised toward the teacher (defense = threat + guard)")
     p.add_argument("--print", action="store_true", help="print the command instead of running it")

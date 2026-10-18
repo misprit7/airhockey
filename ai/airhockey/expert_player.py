@@ -94,6 +94,13 @@ class ExpertConfig:
     guard_line_gain: float = 1.0  # 1: centred on the straight-shot fan
     guard_half_width: float = 0.16
     guard_fraction: float = 0.55
+    # The guard's cap near its post. A fixed 0.55 made every 1-10 mm post
+    # correction a 57 m/s^2 twitch, which the student copied and which shook
+    # the table's mallet off the surface (2026-10-18). The cap rises
+    # linearly to guard_fraction as the post gets guard_calm_distance away;
+    # a shot on goal is the threat mode's, at defense_fraction.
+    guard_calm_fraction: float = 0.06
+    guard_calm_distance: float = 0.20
     # Attack
     attack_max_y: float = 0.89  # the box top plus nearly a contact radius: no unreached dead puck
     paddle_restitution: float = 0.78
@@ -773,7 +780,9 @@ class ExpertPlayer:
         x = 0.5 + (puck[:, 0] - 0.5) * c.guard_line_gain * depth / py
         x = np.clip(x, 0.5 - c.guard_half_width, 0.5 + c.guard_half_width)
         target = np.column_stack((x, depth))
-        return self._encode(target, np.zeros((n, 2)), np.full(n, 0.12), np.full(n, c.guard_fraction))
+        urgency = np.clip(np.linalg.norm(target - s.paddle, axis=1) / c.guard_calm_distance, 0, 1)
+        fraction = c.guard_calm_fraction + (c.guard_fraction - c.guard_calm_fraction) * urgency
+        return self._encode(target, np.zeros((n, 2)), np.full(n, 0.12), fraction)
 
     # ------------------------------------------------------------- policy
     def act(self, observation, stochastic=False):

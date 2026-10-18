@@ -296,6 +296,51 @@ thermal recipe `motor-load-20261001` at gain 1.3 (0.95 training shutdown,
   back corner), 36% of them above the 0.86 heat gate. Holdout suite started
   on the 80M checkpoint.
 
+## Table test 2026-10-18 10:11 — v2 FAILED (jitter), calm-accel fix
+
+The user ran v2 live (`logs/run_policy/20261018-101101.*`). It was violently
+jittery, the mallet hopped off the surface, and after ~5 s and one block
+motor 0 reported `BusVoltageLow`.
+
+**Cause (from the per-tick log).** The network's output was steady: a deep
+guard at x ~1935 of 1937.5 mm. But its accel slot asked for 55-58 m/s² on
+every tick, while production idles at 5 m/s² (Oct 11 table median, puck on
+the far side). The decoder's shooting correction still moves the target
+1-10 mm per tick, with 50-150 mm jumps near the back edge. Production makes
+the same jumps harmlessly at 5 m/s². At 57 m/s² each one is a complete
+bang-bang twitch, about 6 g against the mallet's ~1.5 g tipping point.
+Source: the teacher's guard used a fixed `guard_fraction` 0.55; distillation
+copied it, and nothing in the fine-tune charged for it. The sim's paddle
+follows any cap exactly, so the sim had no reason to object.
+
+**Supply.** Afterwards the 74 V bus collapsed on all four drives together,
+74 -> 37 -> 17 V in ~0.2 s, then held ~16 V (motor-load telemetry). That
+happened a few seconds after every ENABLE, at ~2 A per motor, including a
+production run at 5 m/s² (10:28). So it is upstream of the drives (supply
+protection, damage or wiring), not a policy effect. Hardware for the user.
+
+**Fix.**
+- `--calm-accel-weight` (`neural_training.py`): a per-second cost on the
+  accel-cap fraction, weighted by calm = 1 - max(puck speed, opponent mallet
+  speed) / 1.5 m/s, and quartered while the puck is on our half.
+  `--calm-accel-power 2` squares the fraction; `1` is linear above the 5%
+  floor.
+- The teacher's guard cap now rises from `guard_calm_fraction` 0.06 to 0.55
+  over 0.20 m of distance from its post. Threats keep `defense_fraction` 1.0.
+- `eval_human_proxy.py` reports `candidate_calm_cap_fraction` and
+  `calm_high_cap_share`. Sim reproduces the table: production 0.18 / 0.31,
+  v2 0.44 / 0.78, old teacher 0.65 / 1.00.
+
+**Runs.**
+- `_neural-teacher-calm-20261018-g`: from v2, squared, weight 40, 203M
+  steps. Calm cap ~0.20, high share 0.26-0.30 (production's level). Goal
+  share kept: final club 258-5, elite 260-7; 160M club 278-6, elite 340-13.
+- The idle cap (puck slow on the far half, mallet still) was still 13-17 m/s²
+  against production's 5. So `_neural-teacher-calm-20261018-h` continues from
+  g's final checkpoint with the linear cost, weight 40.
+- Gate before any table run: idle cap median <= ~6 m/s², and the
+  per-tick-change p90 near production's.
+
 ## Queued next (not started)
 
 1. Shots off moving pucks: the hybrid student is weak at one-timers

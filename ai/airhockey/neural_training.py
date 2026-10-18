@@ -114,6 +114,10 @@ class NeuralTrainingEnv(ArrivalEnv):
         defensive_depth_weight=0.0,
         defensive_depth_target=.30,
         possession_delay_weight=0.0,
+        calm_accel_weight=0.0,
+        calm_speed=1.5,
+        calm_own_half_scale=0.25,
+        calm_accel_power=2.0,
         game_episode_seconds=30.0,
         stationary_failure_penalty=0.0,
         stationary_rest_fraction=0.0,
@@ -169,7 +173,7 @@ class NeuralTrainingEnv(ArrivalEnv):
             self.base._perception.enable_report_estimator()
         if not 0 <= recovery_fraction <= 1:
             raise ValueError("recovery fraction must be in [0,1]")
-        if any(not np.isfinite(x) or x < 0 for x in (readiness_weight, readiness_cost_weight, possession_delay_weight, recovery_capture_bonus, recovery_cushion_bonus, recovery_get_ahead_bonus, recovery_approach_weight)):
+        if any(not np.isfinite(x) or x < 0 for x in (readiness_weight, readiness_cost_weight, possession_delay_weight, calm_accel_weight, calm_own_half_scale, recovery_capture_bonus, recovery_cushion_bonus, recovery_get_ahead_bonus, recovery_approach_weight)):
             raise ValueError("possession reward weights must be finite and nonnegative")
         if not np.isfinite(game_episode_seconds) or game_episode_seconds <= 0:
             raise ValueError("game episode duration must be finite and positive")
@@ -261,6 +265,17 @@ class NeuralTrainingEnv(ArrivalEnv):
         self.readiness_cost_weight = readiness_cost_weight
         self._readiness_running_cost = np.zeros(n_envs)
         self.possession_delay_weight = possession_delay_weight
+        if not np.isfinite(calm_speed) or calm_speed <= 0:
+            raise ValueError("calm_speed must be positive")
+        self.calm_accel_weight = calm_accel_weight
+        self.calm_speed = calm_speed
+        self.calm_own_half_scale = calm_own_half_scale
+        if calm_accel_power not in (1.0, 2.0):
+            raise ValueError("calm_accel_power must be 1 (linear above the 5% floor) or 2 (squared)")
+        self.calm_accel_power = calm_accel_power
+        self.calm_seconds = np.zeros(n_envs)
+        self.calm_cap_seconds = np.zeros(n_envs)
+        self.calm_high_cap_seconds = np.zeros(n_envs)
         self.game_episode_seconds = game_episode_seconds
         self.recovery_drill = np.zeros(n_envs, bool)
         if continuous_rallies:
@@ -1514,6 +1529,22 @@ class NeuralTrainingEnv(ArrivalEnv):
         # Training-only preference while the opponent can prepare a shot.
         # Stops charging once a fast shot is incoming; never clips an action.
         reward -= self.defensive_depth_weight * b.action_dt * self.defensive_depth_cost()
+        # Accel cap asked for while nothing on the table needs it. The sim's
+        # paddle follows any cap exactly; the table's tips its mallet past
+        # ~1.5 g, rings its cables and sags the motor supply, so a guard
+        # pose held at 57 m/s^2 shook the mallet off the surface and tripped
+        # BusVoltageLow (2026-10-18). Calm fades out as the puck or the
+        # opponent's mallet speeds up, so blocks and strikes keep the cap.
+        fraction = cap / b._agent_dyn["max_accel"]
+        activity = np.maximum(np.hypot(e.puck_vx, e.puck_vy), np.hypot(e.paddle_opp_vx, e.paddle_opp_vy))
+        calm = np.clip(1 - activity / self.calm_speed, 0, 1) * np.where(e.puck_y < self.cfg.height / 2, self.calm_own_half_scale, 1)
+        self.calm_seconds += b.action_dt * calm
+        self.calm_cap_seconds += b.action_dt * calm * fraction
+        self.calm_high_cap_seconds += b.action_dt * calm * (fraction > 0.2)
+        # Squared (2) is nearly free at small caps; linear above the 5% floor
+        # (1) keeps pulling an idle 13-17 m/s^2 guard down to production's 5.
+        excess = fraction ** 2 if self.calm_accel_power == 2 else np.maximum(fraction - 0.05, 0)
+        reward -= self.calm_accel_weight * b.action_dt * calm * excess
         # Small action-change cost, not a cap on learned rapid responses.
         reward -= 0.002 * ((action - previous_action) ** 2).sum(axis=1)
         skill = self.kind != 3

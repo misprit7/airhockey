@@ -461,6 +461,12 @@ def summarize(env, proxy, tracker, *, games, seconds, seed, tier):
         candidate_games_reaching_shutdown_level=int((env.peak_load[0] >= SHUTDOWN_LEVEL).sum()),
         candidate_peak_load=float(env.peak_load[0].max()),
         candidate_guard_unresolved=int(env.guard_unresolved[0].sum()),
+        # Accel cap asked for while the puck and the person's mallet are slow
+        # (calm-weighted mean fraction of the machine's, and the calm share
+        # spent above 20%). Production on the table: ~0.05; v2: 0.57, which
+        # shook the mallet and sagged the supply (2026-10-18).
+        candidate_calm_cap_fraction=float(env.calm_cap_seconds.sum() / max(1e-9, env.calm_seconds.sum())),
+        candidate_calm_high_cap_share=float(env.calm_high_cap_seconds.sum() / max(1e-9, env.calm_seconds.sum())),
         per_game=dict(goals_for=gf.tolist(), goals_against=ga.tolist(),
                       peak_load=env.peak_load[0].round(4).tolist(),
                       overload_seconds=env.overload_seconds[0].round(3).tolist()),
@@ -530,6 +536,8 @@ def headline(result):
             mean_shot_speed=round(r['candidate_mean_shot_speed'], 2), conceded_by_route=r['conceded_by_route'],
             stall_s=r['reachable_stall_seconds'], overload_s=round(r['candidate_overload_seconds'], 2),
             peak_load=round(r['candidate_peak_load'], 3),
+            calm_cap=round(r.get('candidate_calm_cap_fraction', float('nan')), 3),
+            calm_high=round(r.get('candidate_calm_high_cap_share', float('nan')), 3),
             person_attack_speed=c['attack_speed_centre_line_m_s'], person_bank_fraction=c['attack_bank_fraction'],
             wall_s=r['wall_seconds']))
     return rows

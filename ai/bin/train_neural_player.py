@@ -191,6 +191,10 @@ def build_parser():
                    help="Fraction of hidden delayed defensive releases aimed via a randomly chosen side rail")
     p.add_argument("--defense-windup-lateral-speed", type=float, default=0, help="Maximum lateral puck drift before a hidden delayed practice shot")
     p.add_argument("--slow-exit-penalty", type=float, default=0, help="Penalty for slow loss of reachable possession without a useful shot, even after capture")
+    p.add_argument("--calm-accel-weight", type=float, default=0, help="Per-second cost of the squared accel-cap fraction while the puck and the opponent's mallet are slow (the table's mallet tips and its supply sags under needless caps)")
+    p.add_argument("--calm-speed", type=float, default=1.5, help="Puck / opponent-mallet speed in m/s at which the calm-accel cost has faded to zero")
+    p.add_argument("--calm-accel-power", type=float, default=2.0, choices=[1.0, 2.0], help="Calm-accel cost shape: 2 = squared fraction, 1 = linear above the 5%% floor")
+    p.add_argument("--calm-own-half-scale", type=float, default=0.25, help="Calm-accel cost multiplier while the puck is on our half (strikes need the cap)")
     p.add_argument("--possession-delay-weight", type=float, default=0, help="Per-second cost for prolonged own-half possession, without teleporting the puck")
     p.add_argument("--game-episode-seconds", type=float, default=30)
     p.add_argument("--stationary-failure-penalty", type=float, default=0)
@@ -360,6 +364,10 @@ def environment_options(args, *, shot_conditioned):
         defense_windup_bank_fraction=args.defense_windup_bank_fraction,
         slow_exit_penalty=args.slow_exit_penalty,
         possession_delay_weight=args.possession_delay_weight,
+        calm_accel_weight=getattr(args, 'calm_accel_weight', 0.0),
+        calm_speed=getattr(args, 'calm_speed', 1.5),
+        calm_own_half_scale=getattr(args, 'calm_own_half_scale', 0.25),
+        calm_accel_power=getattr(args, 'calm_accel_power', 2.0),
         game_episode_seconds=args.game_episode_seconds,
         stationary_failure_penalty=args.stationary_failure_penalty,
         stationary_rest_fraction=args.stationary_rest_fraction,
