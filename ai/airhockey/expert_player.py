@@ -20,9 +20,16 @@ Behaviour, in priority order every 20 ms decision:
    glancing contact still returns the puck. Re-predicted every tick.
 2. Attack: a puck the paddle can reach is struck toward the requested route
    (straight / left bank / right bank) or, without a request, the route that
-   avoids the rival mallet. Moving pucks are met with a one-timer whose
-   contact normal is solved from the incoming and desired outgoing velocity;
-   slow pucks get a set-up point behind the puck and a strike through it.
+   avoids the rival mallet; every route aims at the goal centre, banks through
+   the lossy rail law. Moving pucks are met with a one-timer whose contact
+   normal is solved from the incoming and desired outgoing velocity; it keeps
+   its line once under way, and also takes a threat it has time for (the
+   contact is on the threat's own path). Slow pucks get a flying set-up on the
+   contact normal, then a straight full-cap drive from the paddle through the
+   contact point: the frictionless impulse follows the normal, and a drive
+   parallel to it keeps the 2.5 ms collision step from rotating it. Pucks at
+   a rail or in a back corner are driven along or into the rail rather than
+   waited on, so no reachable puck is ever left standing.
 3. Guard: otherwise wait deep on the puck-to-goal-centre line, moving
    shallower (cooler) as the observed drive load levels rise.
 """
@@ -88,24 +95,29 @@ class ExpertConfig:
     guard_half_width: float = 0.16
     guard_fraction: float = 0.55
     # Attack
-    attack_max_y: float = 0.86
-    strike_speed: float = 7.0  # desired outgoing puck speed for one-timers
+    attack_max_y: float = 0.89  # the box top plus nearly a contact radius: no unreached dead puck
     paddle_restitution: float = 0.78
     one_timer_depths: tuple = (0.18, 0.26, 0.34, 0.42, 0.50, 0.58, 0.66, 0.74)
     slow_speed: float = 0.9
     max_one_timer_speed: float = 14.0
-    one_timer_paddle_speed: float = 2.5  # paddle normal speed the outgoing target allows
+    one_timer_paddle_speed: float = 2.0  # paddle normal speed the outgoing target allows
     one_timer_min_out: float = 3.0
     one_timer_min_time: float = 0.05
-    one_timer_windup: float = 0.03  # s of paddle travel behind the contact point
+    one_timer_windup: float = 0.02  # s of paddle travel behind the contact point
     one_timer_commit: float = 0.20  # arrive when contact is this close in time
     one_timer_time_offset: float = 0.0
+    one_timer_overdrive: float = 1.6
     one_timer_slack: float = 0.0
     one_timer_keep_slack: float = -0.08  # stay with a one-timer under way
     one_timer_margin: float = 0.03  # spare time for a line to count as feasible
     one_timer_latency: float = 0.025
+    one_timer_max_y: float = 1.35  # plan one-timers only for pucks below this
     redirect_threats: bool = True
     redirect_slack: float = 0.05
+    redirect_max_speed: float = 15.0
+    catch_turn: float = 180.0  # deg; above it a one-timer becomes a catch
+    catch_min_speed: float = 1.5
+    catch_room: float = 0.12  # retreat room behind a catch
     # Line strike (slow pucks): set up on the contact normal, then drive the
     # paddle along the ray from where it is through the contact point.
     run_up: float = 0.20  # preferred set-up distance behind the contact point
@@ -125,6 +137,12 @@ class ExpertConfig:
     strike_hold: float = 0.10  # hold the strike command this close to contact
     path_margin: float = 0.015  # set-up path must keep this far from contact
     front_room: float = 0.6  # run-up <= this x the room beyond contact
+    # Experimental, off: a pinned back-wall/corner puck is rammed into the
+    # walls. Tested worse (the puck is squeezed, the paddle parks hot).
+    pinned_rescue: bool = False
+    push_room: float = 0.015  # below this run-up, ram through the contact point
+    push_depth: float = 0.05
+    push_speed: float = 2.0
     orbit_step: float = 60.0  # deg per waypoint when circling to the puck's back
     setup_clearance: float = 0.045  # paddle-edge clearance when going around
     # Aiming
@@ -144,6 +162,7 @@ class _State:
     request: np.ndarray
     accel: np.ndarray = None
     previous: np.ndarray = None
+    still: np.ndarray = None  # puck unmoved (< 3 mm) over the whole history
 
 
 class ExpertPlayer:
@@ -179,10 +198,13 @@ class ExpertPlayer:
         frames = min(self.history, obs.shape[1] // FRAME)
         self._frames = obs[:, :FRAME * frames].reshape(len(obs), frames, FRAME)
         request = obs[:, -3:] if obs.shape[1] == FRAME * self.history + 3 else np.zeros((len(obs), 3))
+        frames = obs.shape[1] // FRAME
+        past = obs[:, :FRAME * frames].reshape(len(obs), frames, FRAME)[:, :, 0:2]
+        still = (frames == self.history) & (np.linalg.norm(past - past[:, :1], axis=2).max(axis=1) < 0.003)
         return _State(
             puck=f[:, 0:2].copy(), vel=f[:, 2:4] * 6.0, paddle=f[:, 4:6].copy(),
             paddle_vel=f[:, 6:8] * 6.0, rival=f[:, 8:10].copy(), load=f[:, 21:29].copy(),
-            request=request, accel=f[:, 29:31] * 60.0, previous=f[:, 15:21].copy())
+            request=request, accel=f[:, 29:31] * 60.0, previous=f[:, 15:21].copy(), still=still)
 
     def _encode(self, position, velocity, duration, fraction):
         a = np.zeros((len(position), 6))
@@ -444,6 +466,32 @@ class ExpertPlayer:
         return threat, act
 
     # ------------------------------------------------------------- attack
+    def _reachable_normal(self, P, nrm, pinned=False):
+        """The nearest normal whose contact point P - n*R the paddle can occupy.
+
+        A puck closer to a side rail than the paddle centre can get behind is
+        pushed up-table along the rail instead of being waited on. Each bound
+        is limited on its binding side only, so an open table leaves the
+        requested normal untouched; nearer the rail than the paddle centre can
+        reach, only a normal slightly into the rail exists, and the puck then
+        banks off that rail.
+        """
+        R = self.contact
+        lo, hi = self.low + 0.002, self.high - 0.002
+        x_lo = np.minimum((P[:, 0] - hi[0]) / R, 0.95)
+        x_hi = np.maximum((P[:, 0] - lo[0]) / R, -0.95)
+        nx = np.clip(nrm[:, 0], x_lo, x_hi)
+        ny = np.sqrt(np.maximum(1 - nx**2, 0.0)) * np.where(nrm[:, 1] < 0, -1.0, 1.0)
+        # Against the back wall the paddle cannot get below the puck. Only for
+        # a pinned puck under the experimental rescue: drive it into the walls,
+        # sideways toward the open side (off by default; see pinned_rescue).
+        y_hi = np.maximum((P[:, 1] - lo[1]) / R, -0.95)
+        low = (ny > y_hi) & pinned
+        side = np.where(x_hi < 0, -1.0, np.where(x_lo > 0, 1.0, np.where(P[:, 0] < 0.5, 1.0, -1.0)))
+        ny = np.where(low, y_hi, ny)
+        nx = np.where(low, side * np.sqrt(np.maximum(1 - y_hi**2, 0.0)), nx)
+        return np.column_stack((nx, ny))
+
     def _setup_ray(self, C, nrm):
         """Approach direction (within the strike cone) and run-up behind C.
 
@@ -473,6 +521,15 @@ class ExpertPlayer:
             best_u = np.where(better[:, None], u, best_u)
             best_L = np.where(better, L, best_L)
             score = np.where(better, sc, score)
+        # Up-table along a rail: the one drive that reaches a puck lying
+        # against the rail (its normal then points slightly into the rail).
+        up = np.tile([0.0, 1.0], (len(C), 1))
+        cos_up = np.clip(nrm[:, 1], -1, 1)
+        L = room(up)
+        sc = cos_up * np.sqrt(L)
+        better = (cos_up > np.cos(np.radians(c.strike_angle - 1))) & (sc > score * 1.03)
+        best_u = np.where(better[:, None], up, best_u)
+        best_L = np.where(better, L, best_L)
         return best_u, best_L
 
     def _line_strike(self, s: _State, puck, vel):
@@ -493,6 +550,9 @@ class ExpertPlayer:
         R = self.contact
         e = c.paddle_restitution
         W = s.paddle_vel + (s.accel if s.accel is not None else 0.0) * 0.01
+        # A puck unmoved over the whole history counts as pinned (only used by
+        # the experimental rescue, which is off by default).
+        pinned = (s.still if s.still is not None else np.zeros(n, bool)) & c.pinned_rescue
         X = s.paddle + W * c.command_delay
         # Contact time when striking from here: latency + constant-accel run.
         t = np.full(n, c.strike_latency + 0.05)
@@ -504,7 +564,7 @@ class ExpertPlayer:
             v_c = np.sqrt(v0**2 + 2 * c.strike_accel * np.minimum(dist, c.strike_reach))
             out = np.clip((1 + e) * v_c, 2.0, cfg.max_puck_speed)
             want = d * out[:, None] - V
-            nrm = want / np.maximum(np.linalg.norm(want, axis=1, keepdims=True), 1e-9)
+            nrm = self._reachable_normal(P, want / np.maximum(np.linalg.norm(want, axis=1, keepdims=True), 1e-9), pinned)
             C = P - nrm * R
             dist = np.linalg.norm(C - X, axis=1)
             run = (-v0 + np.sqrt(v0**2 + 2 * c.strike_accel * dist)) / c.strike_accel
@@ -517,7 +577,10 @@ class ExpertPlayer:
         u_set_now, L = self._setup_ray(C, nrm)
         need = np.minimum(c.run_up_min, 0.8 * L)
         prev = s.previous
-        was_striking = (prev[:, 5] > 0.97) & (prev[:, 4] < -0.97) if prev is not None else np.zeros(n, bool)
+        # A strike is the only full-cap, shortest-duration command with a unit
+        # terminal velocity (blocks carry none, one-timers a marked cap).
+        was_striking = ((prev[:, 5] > 0.999) & (prev[:, 4] < -0.97)
+                        & (np.linalg.norm(prev[:, 2:4], axis=1) > 0.9)) if prev is not None else np.zeros(n, bool)
         # The physics resolves contact after up to v*2.5 ms of overlap, which
         # rotates the normal unless the drive is parallel to it: strike only
         # on the chosen set-up ray (straight behind C unless the box forbids).
@@ -525,7 +588,7 @@ class ExpertPlayer:
                    & ((u * u_set_now).sum(axis=1) > np.cos(np.radians(c.strike_tolerance))))
         ready = (aligned & (dist >= need) & (dist <= c.strike_reach)
                  & (np.linalg.norm(lateral, axis=1) < c.strike_lateral_speed)
-                 & (far - dist > (dist - R) * 0.0 + 0.02))
+                 & (far - dist > 0.02))
         # Keep driving a strike already under way while the ray stays sound.
         striking = ready | (was_striking & (cos_t > np.cos(np.radians(c.strike_angle + 15)))
                             & (far > dist) & (dist < c.strike_reach + 0.1))
@@ -542,13 +605,13 @@ class ExpertPlayer:
             strike = np.where(hold[:, None], prev, strike)
             striking = striking | hold
         # --- set-up: behind the puck's position at the expected contact time
-        S0 = C - nrm * L[:, None]
+        S0 = C - u_set_now * L[:, None]
         t_set = np.clip(self._reach_time(X, S0) + c.strike_latency
                         + np.sqrt(2 * np.maximum(L, 1e-3) / c.strike_accel), 0, 0.6)
         Ps, Vs = self._drift(puck, vel, t_set)
         ds = self._shot_direction(Ps, s)
         want = ds * out[:, None] - Vs
-        ns = want / np.maximum(np.linalg.norm(want, axis=1, keepdims=True), 1e-9)
+        ns = self._reachable_normal(Ps, want / np.maximum(np.linalg.norm(want, axis=1, keepdims=True), 1e-9), pinned)
         Cs = Ps - ns * R
         u_set, Ls = self._setup_ray(Cs, ns)
         S = np.clip(Cs - u_set * Ls[:, None], self.low, self.high)
@@ -576,7 +639,12 @@ class ExpertPlayer:
         v_end = onward * np.where(collide, c.waypoint_speed, c.setup_speed)[:, None]
         duration = np.clip(c.setup_time * self._reach_time(X, go), 0.04, 0.25)
         move = self._encode(go, v_end, duration, np.full(n, c.setup_fraction))
-        act = np.where(striking[:, None], strike, move)
+        # Experimental pinned rescue: no run-up room at all behind a puck that
+        # has not moved -- ram through the contact point instead of waiting.
+        ram = pinned & (L < c.push_room) & (dist < R + 0.05) & ~striking
+        push = self._encode(np.clip(C + u_set_now * c.push_depth, self.low, self.high), u_set_now * c.push_speed,
+                            np.full(n, 0.04), np.ones(n))
+        act = np.where(striking[:, None], strike, np.where(ram[:, None], push, move))
         self._debug = dict(striking=striking, dist=dist, cos=cos_t, L=L, collide=collide,
                            lat=np.linalg.norm(lateral, axis=1), v0=(W * u).sum(axis=1), hold=hold if prev is not None else striking)
         return act, striking
@@ -616,12 +684,22 @@ class ExpertPlayer:
         want = dk * s_out[:, None] - flat_v
         normal = want / np.maximum(np.linalg.norm(want, axis=1, keepdims=True), 1e-9)
         vpn = (flat_v * normal).sum(axis=1) + np.linalg.norm(want, axis=1) / (1 + e)
+        # A sharp turn makes the outgoing direction hinge on the unknown
+        # restitution (the puck keeps its tangential velocity): catch such a
+        # puck instead -- head-on, retreating at e/(1+e) of its speed, so it
+        # stops in front of the paddle for a line strike.
+        back = -flat_v / np.maximum(sp_in[:, None], 1e-9)
+        turn = np.degrees(np.arccos(np.clip((back * dk).sum(axis=1), -1, 1)))
+        catch = (turn > c.catch_turn) & (sp_in > c.catch_min_speed)
+        normal = np.where(catch[:, None], back, normal)
+        vpn = np.where(catch, -sp_in * e / (1 + e), vpn)
         pad = flat_p - normal * R
         pad_v = normal * vpn[:, None]
         wind = pad - normal * np.clip(vpn, 0, None)[:, None] * c.one_timer_windup
         m = 0.003
         ok = ((pad >= self.low - m) & (pad <= self.high + m)).all(axis=1) & (normal[:, 1] > 0.2) \
-            & (np.abs(pad_v) <= 3.0).all(axis=1) & (vpn > -1.5)
+            & (np.abs(pad_v) <= 3.0).all(axis=1) & ((vpn > -1.5) | catch) \
+            & (~catch | (pad[:, 1] - self.low[1] > c.catch_room))
         gap = np.linalg.norm(pad - np.repeat(s.paddle, k, 0), axis=1)
         reach = c.one_timer_latency + 2 * np.sqrt(gap / c.strike_accel)
         slack = np.where(valid.reshape(-1) & ok, t_k.reshape(-1) - reach, -np.inf).reshape(n, k)
@@ -647,7 +725,9 @@ class ExpertPlayer:
         # Full cap, marked by a fraction a hair under 1 so a one-timer under
         # way is recognisable from the previous action in the observation.
         mark = np.full(n, ONE_TIMER_FRACTION)
-        arrive = self._encode(pad[idx], pad_v[idx], t_hit, mark)
+        # The arrival reaches only part of its terminal speed by contact (the
+        # final ticks are held at the decoder's 40 ms minimum): ask for more.
+        arrive = self._encode(pad[idx], np.clip(pad_v[idx] * c.one_timer_overdrive, -3, 3), t_hit, mark)
         wait = self._encode(np.clip(wind[idx], self.low, self.high), np.zeros((n, 2)),
                             np.clip(t_hit - c.one_timer_commit, 0.04, 0.25), mark)
         act = np.where((t_hit > c.one_timer_commit)[:, None], wait, arrive)
@@ -664,7 +744,9 @@ class ExpertPlayer:
         slow = speed < c.slow_speed
         slow_act, _ = self._line_strike(s, puck, vel)
         one_ok, one, slack = self._one_timer(s, puck, vel)
-        one_ok &= speed < c.max_one_timer_speed
+        # Not while the rival can still touch the puck: running out to meet it
+        # there leaves the goal open to its re-direction.
+        one_ok &= (speed < c.max_one_timer_speed) & (puck[:, 1] < c.one_timer_max_y)
         attack = (reachable & slow) | one_ok
         act = np.where((slow | ~one_ok)[:, None], slow_act, one)
         self._debug.update(one_ok=one_ok, one_slack=slack)
@@ -693,7 +775,8 @@ class ExpertPlayer:
             # A threat whose one-timer has comfortable time is returned on the
             # requested route instead of blocked; the contact is on the threat's
             # own path, so it still stops the goal.
-            threat = threat & ~(self._debug["one_ok"] & (self._debug["one_slack"] > self.config.redirect_slack))
+            threat = threat & ~(self._debug["one_ok"] & (self._debug["one_slack"] > self.config.redirect_slack)
+                                 & (np.linalg.norm(vel, axis=1) < self.config.redirect_max_speed))
         guard = self._guard(s, puck, vel)
         action = np.where(threat[:, None], defend, np.where(attack[:, None], strike, guard))
         self.last_mode = np.where(threat, 0, np.where(attack, 1, 2))
