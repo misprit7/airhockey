@@ -113,12 +113,33 @@ thermal recipe `motor-load-20261001` at gain 1.3 (0.95 training shutdown,
   contact, teacher paddle_restitution 0.52), 8 rounds x 6M labels each,
   from the smoke student.
 
+- 05:15 — teacher heat gate (1330a39): above 0.86 observed load the attack
+  leaves pucks within 12 cm of the side/back limits to the guard. Hot 4x600 s
+  vs production: overload 110.7 s -> 0 (peak 1.026 -> 0.858), 19-1.
+  Merged teacher dev suite before the gate: fast defense 95.1%, immediate
+  47.3% (production 25.7%), requested fast shots stationary S/L/R 95/88/89
+  of 128 (production 75/38/42) but receiving 51/38/37 (production 88/86/81),
+  slow-control fast-aimed 38.5% (61.7%), corner recovery 63/128 (22) but side
+  1/128 (17), games vs production 37-5 / 51-4. Under the measured contact the
+  teacher still beats production 12-1 (16x60 s), shots 4.7 vs 6.6 m/s.
+- 05:15 — arm A rounds (defense / games vs production 16x60 s): r0 94.4% /
+  13-7, r1 89.7 / 12-2, r2 91.4 / 8-0, r3 87.0 / 10-5, r4 87.0 / 12-3. The
+  student's release depth drifts 0.12 -> 0.19 m as roll-in becomes its own
+  (noisier, hotter states; the teacher's guard depth is load-scheduled), and
+  its shots stay ~30% on target at ~5.2 m/s vs the teacher's 56% at 6.6.
+  Stopped after round 5. Arm B (measured contact) r3: 84.6% / 2-0, one
+  student overload (peak 1.08; trained before the heat gate).
+- 05:20 — continuation C `_neural-teacher-dagger-20261018-c`: from arm A's
+  final, widened to 1536, heat-gated teacher, attack-weighted loss (modes
+  3,5,1), student noise 0.05, betas 0.3/0.2/0.1/0.1/0/0, 8M labels/round.
+
 ## Runs
 
 | Run | What | Status |
 |---|---|---|
 | `_distill-smoke-20261018` | 3-round DAgger smoke, teacher v0 | done: fast defense 74.5%, 11-12 vs production |
-| `_neural-teacher-dagger-20261018-a` | 8x6M DAgger, merged teacher, default physics | running |
+| `_neural-teacher-dagger-20261018-a` | DAgger, merged teacher, default physics | stopped after round 5 |
+| `_neural-teacher-dagger-20261018-c` | continuation of A: width 1536, attack-weighted, heat-gated teacher | running |
 | `_neural-teacher-dagger-20261018-b` | same, measured paddle contact | running |
 
 ## Results
