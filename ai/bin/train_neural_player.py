@@ -17,8 +17,9 @@ import torch
 
 from airhockey.neural_player import NeuralPlayer, PhysicalHistory, RecoveryExplorationBias, log_probability, defensive_request_consistency, recovery_exploration_scale, recovery_exploration_window, thermal_effort_exploration_scale, backtrack_actor_step
 from airhockey.neural_finetune import (MODE_NAMES, TEACHER_MASKS, adapt_learning_rate, complete_initialization,
-                                       initialization_model, load_teacher, masked_mean, reference_slots, std_floor,
-                                       teacher_mask, teacher_opponent_slots, teacher_regression, teacher_weight)
+                                       diagnostic_subset, initialization_model, load_teacher, masked_mean,
+                                       reference_slots, std_floor, teacher_mask, teacher_opponent_slots,
+                                       teacher_regression, teacher_weight)
 from airhockey.neural_training import NeuralTrainingEnv
 from airhockey.on_policy import advantages
 from airhockey.thermal import DEFAULT_MODEL
@@ -364,7 +365,11 @@ def main():
         total = state["step"] if args.resume else 0
     args.history_deltas = net.history_deltas
     actor_lr = args.lr
-    if args.adaptive_lr and args.resume and state.get("actor_lr"):
+    # Continue an adaptive run at its adapted rate. Every checkpoint saves
+    # actor_lr, but a fixed-rate run's value is just its --lr, not controller
+    # state: resuming one with --adaptive-lr starts from this run's --lr.
+    if (args.adaptive_lr and args.resume and state.get("actor_lr")
+            and state.get("args", {}).get("adaptive_lr")):
         actor_lr = min(max(float(state["actor_lr"]), args.lr_min), args.lr_max)
     optimizer = make_optimizer(net, actor_lr, args.value_lr or args.lr, saved_optimizer)
     from airhockey.neural_player import ActorPrefixFreeze
@@ -692,6 +697,8 @@ def main():
         teacher_actions = torch.empty((*shape, 6), device=device)
         teacher_modes = torch.full(shape, -1, device=device, dtype=torch.int8)
         rollout_means = torch.empty((*shape, 6), device=device)  # tanh(actor mean) as collected
+    # Own stream for the per-update diagnostic sample (final KL, teacher MSE).
+    diagnostic_generator = torch.Generator().manual_seed(args.seed)
 
     def save(name):
         state = dict(
@@ -1036,9 +1043,9 @@ def main():
                 # The value network is independent: continue fitting it after
                 # actor early stopping without changing actor parameters.
         with torch.no_grad():
-            # Rollout policy -> updated policy, on a fixed strided subset (no
-            # random draw, so default runs keep their random streams).
-            subset = torch.arange(0, len(x), max(1, len(x) // 8192), device=device)
+            # Rollout policy -> updated policy, on a uniform sample drawn from
+            # its own generator, so default runs keep their random streams.
+            subset = diagnostic_subset(len(x), diagnostic_generator).to(device)
             features = net.trunk(x[subset])
             final_mean = net.actor(features)
             final_scale = (net.log_std + net.noise(features)).clamp(-4, 0.5)

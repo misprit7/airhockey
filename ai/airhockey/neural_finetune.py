@@ -178,6 +178,17 @@ def adapt_learning_rate(lr, kl, target, low, high, stopped_early=False, factor=1
     return float(min(max(lr, low), high))
 
 
+def diagnostic_subset(count, generator, size=8192):
+    """Uniform sample of flattened (rollout, env) indices for per-update checks.
+
+    Drawn from its own generator so training random streams are untouched. A
+    plain stride over the flattened buffer is not a sample: every rollout row
+    has the same environment order, so it keeps only environments whose index
+    is a multiple of the stride (64 of 2048, all of them reference games).
+    """
+    return torch.randperm(count, generator=generator)[:size]
+
+
 def std_floor(log_std, floor):
     """Training-only minimum pre-tanh std; apply in rollouts AND PPO alike."""
     if not floor:

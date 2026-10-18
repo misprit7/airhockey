@@ -12,7 +12,7 @@ import pytest
 import torch
 
 from airhockey.neural_finetune import (
-    ATTACK, GUARD, THREAT, Teacher, adapt_learning_rate, complete_initialization,
+    ATTACK, GUARD, THREAT, Teacher, adapt_learning_rate, complete_initialization, diagnostic_subset,
     initialization_model, reference_slots, same_coordinates, std_floor, teacher_mask,
     teacher_opponent_slots, teacher_regression, teacher_weight)
 from airhockey.neural_player import NeuralPlayer, log_probability
@@ -87,6 +87,20 @@ def test_adaptive_learning_rate_moves_toward_target_within_bounds():
     assert adapt_learning_rate(1e-4, .015, .02, 1e-6, 1e-3) == 1e-4
     assert adapt_learning_rate(9e-4, 0., .02, 1e-6, 1e-3) == 1e-3
     assert adapt_learning_rate(1.2e-6, 1., .02, 1e-6, 1e-3) == 1e-6
+
+
+def test_diagnostic_subset_samples_every_kind_of_slot_without_touching_training_rng():
+    rollout, n_envs = 128, 2048
+    state = torch.get_rng_state()
+    subset = diagnostic_subset(rollout * n_envs, torch.Generator().manual_seed(1))
+    assert torch.equal(torch.get_rng_state(), state)
+    assert len(subset) == 8192 and len(subset.unique()) == 8192
+    env = subset % n_envs
+    # A stride of 32 kept only env ids divisible by 32 (64 slots, all of
+    # them fixed-reference games); a sample reaches nearly every slot.
+    assert len(env.unique()) > .95 * n_envs
+    assert len((env % 32).unique()) == 32 and float((env % 4 == 0).float().mean()) < .3
+    assert len(diagnostic_subset(100, torch.Generator().manual_seed(1))) == 100
 
 
 def test_std_floor_is_one_likelihood_for_rollout_and_update():
@@ -261,24 +275,29 @@ def test_trainer_finetunes_a_distilled_student_with_teacher_and_new_optimizer(tm
     trainer = importlib.util.module_from_spec(spec)
     spec.loader.exec_module(trainer)
     monkeypatch.setattr(trainer, "ROOT", root)
-    monkeypatch.setattr(sys, "argv", [
-        "train_neural_player.py", "--run-name", "_e2e", "--n-envs", "16", "--workers", "2",
-        "--rollout", "8", "--epochs", "2", "--minibatch", "32", "--steps", "384", "--stage", "5",
-        "--accel", "100", "--workspace", "rail30", "--thermal-model", str(thermal),
-        "--history-deltas", "--initialize-from", str(runs / "_distilled" / "agent.pt"),
-        "--opponent-checkpoint", str(runs / "_reference" / "agent.pt"), "--game-fraction", ".5",
+    common = [
+        "--n-envs", "16", "--workers", "2", "--rollout", "8", "--epochs", "2", "--minibatch", "32",
+        "--stage", "5", "--accel", "100", "--workspace", "rail30", "--thermal-model", str(thermal),
+        "--history-deltas", "--opponent-checkpoint", str(runs / "_reference" / "agent.pt"), "--game-fraction", ".5",
         "--teacher", "expert", "--teacher-weight", "1", "--teacher-weight-final", ".5",
         "--teacher-anneal-steps", "256", "--teacher-mask", "defense", "--teacher-opponent-fraction", ".5",
-        "--value-warmup-updates", "1", "--actor-steps-min", "2", "--adaptive-lr", "--lr", "1e-4",
-        "--std-floor", ".1", "--device", "cpu", "--torch-threads", "1", "--save-every", "100000"])
-    handlers = {s: signal.getsignal(s) for s in (signal.SIGINT, signal.SIGTERM)}
-    threads = torch.get_num_threads()
-    try:
-        trainer.main()
-    finally:
-        for s, handler in handlers.items():
-            signal.signal(s, handler)
-        torch.set_num_threads(threads)
+        "--actor-steps-min", "2", "--adaptive-lr",
+        "--std-floor", ".1", "--device", "cpu", "--torch-threads", "1", "--save-every", "100000"]
+
+    def train(*argv):
+        monkeypatch.setattr(sys, "argv", ["train_neural_player.py", *common, *argv])
+        handlers = {s: signal.getsignal(s) for s in (signal.SIGINT, signal.SIGTERM)}
+        threads = torch.get_num_threads()
+        try:
+            trainer.main()
+        finally:
+            for s, handler in handlers.items():
+                signal.signal(s, handler)
+            torch.set_num_threads(threads)
+        return [json.loads(line) for line in (runs / argv[1] / "metrics.jsonl").read_text().splitlines()]
+
+    train("--run-name", "_e2e", "--steps", "384", "--initialize-from", str(runs / "_distilled" / "agent.pt"),
+          "--value-warmup-updates", "1", "--lr", "1e-4")
     run = runs / "_e2e"
     rows = [json.loads(line) for line in (run / "metrics.jsonl").read_text().splitlines()]
     assert [r["update"] for r in rows] == [1, 2, 3]
@@ -299,3 +318,15 @@ def test_trainer_finetunes_a_distilled_student_with_teacher_and_new_optimizer(tm
     assert saved["teacher_anneal_origin"] == 0 and saved["actor_lr"] == rows[-1]["next_actor_lr"]
     # The initialized actor is the student's; the critic is fresh.
     assert not torch.equal(saved["model"]["critic.weight"], student.state_dict()["critic.weight"])
+
+    # --resume continues the anneal from its origin and an adaptive run's rate,
+    # whatever --lr says; a fixed-rate run's saved rate is not adopted.
+    resumed = train("--run-name", "_e2e-resume", "--steps", "128", "--resume", str(run / "agent.pt"), "--lr", "2e-4")
+    assert resumed[0]["step"] == 512 and resumed[0]["teacher_weight"] == pytest.approx(.5)
+    assert resumed[0]["actor_lr"] == pytest.approx(saved["actor_lr"])
+    fixed = dict(saved, args=dict(saved["args"], adaptive_lr=False), actor_lr=5e-5)
+    (runs / "_fixed").mkdir()
+    torch.save(fixed, runs / "_fixed" / "agent.pt")
+    restarted = train("--run-name", "_e2e-fixed", "--steps", "128", "--resume", str(runs / "_fixed" / "agent.pt"),
+                      "--lr", "2e-4")
+    assert restarted[0]["actor_lr"] == pytest.approx(2e-4)
