@@ -145,6 +145,11 @@ class ExpertConfig:
     push_speed: float = 2.0
     orbit_step: float = 60.0  # deg per waypoint when circling to the puck's back
     setup_clearance: float = 0.045  # paddle-edge clearance when going around
+    # Heat: near a rail or the back wall the holding current alone can trip
+    # motor 2 (gain-1.3 model). Above this observed load leave such pucks to
+    # the guard, which stands cooler, and come back once the drive has cooled.
+    attack_hot_load: float = 0.86
+    attack_hot_margin: float = 0.12
     # Aiming
     aim_offset: float = 0.0  # straight shots: from goal centre away from the rival
     bank_aim_offset: float = 0.0
@@ -748,6 +753,11 @@ class ExpertPlayer:
         # there leaves the goal open to its re-direction.
         one_ok &= (speed < c.max_one_timer_speed) & (puck[:, 1] < c.one_timer_max_y)
         attack = (reachable & slow) | one_ok
+        hot = s.load.max(axis=1) >= c.attack_hot_load
+        m = c.attack_hot_margin
+        walled = ((puck[:, 0] < self.low[0] + m) | (puck[:, 0] > self.high[0] - m)
+                  | (puck[:, 1] < self.low[1] + m))
+        attack &= ~(hot & walled)
         act = np.where((slow | ~one_ok)[:, None], slow_act, one)
         self._debug.update(one_ok=one_ok, one_slack=slack)
         return attack, act
