@@ -173,3 +173,8 @@ Record: `ai/recipes/expert-distill-20261018/README.md`. Simulation only.
 - `_neural-teacher-ppo-20261018-f`: v2 fine-tuned under the measured paddle
   contact; agent_step_040108032 packaged as **`teacher-ppo-measured-20261018-v3`**
   (experimental, dev seeds only).
+- `_neural-teacher-calm-20261018-g` / `-h` / `-i` / `-j`: v2 fine-tuned with
+  the calm-accel cost (squared w40, then linear w40, w200, then w200 with the
+  teacher's guard accel label freed). `-j` final packaged as
+  **`teacher-calm-20261018-v4`** (idle cap 6 m/s², held-out club 99.5% /
+  elite 94.9%).

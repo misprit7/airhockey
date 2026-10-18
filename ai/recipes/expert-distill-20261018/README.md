@@ -366,6 +366,34 @@ protection, damage or wiring), not a policy effect. Hardware for the user.
   guard-mode samples; threats keep the teacher's full-cap label.
   `_neural-teacher-calm-20261018-j` continues from i with it (weight 200,
   linear, 60 min).
+- j (145M steps): the idle cap fell to 8-9 m/s² by 40M and to **6 m/s² median**
+  at the final checkpoint (p90 15; production 5 / 6). The idle command change
+  p90 is 11 mm (production 37.5, v2 27.4). Dev proxy: club 378-4, elite 386-18.
+  Packaged as **`runs/teacher-calm-20261018-v4`** (sha256 f2a5da15...), which
+  passes `run_policy.py --check-policy`. Held-out (`suite.py --tier holdout`,
+  `logs/neural-player/expert-20261018/suite/holdout-calm-j`; suite.py's
+  summary misses the proxy entry, so the proxy numbers below come from its
+  `proxy.json`):
+
+  | held-out benchmark | v2 | **v4** |
+  |---|---:|---:|
+  | human proxy club, 128x60 s | 97.4% (341-9) | **99.5% (601-3)**, CI 98.7-100 |
+  | human proxy elite | 91.0% (453-45) | **94.9% (692-37)**, CI 93.4-96.4 |
+  | fast attacks blocked (3072) | 96.9% | **98.5%** |
+  | immediate-release saves (1536) | 50.8% | 48.2% |
+  | games vs production, 48x60 s each seat | 226-9 | **514-6** |
+  | hot endurance 16x900 s | 0 s overload, peak 0.847, stall 529 s | 0 s, peak 0.853, stall 462 s |
+  | requested fast shots stationary S/L/R | 168/104/131 | **224/210/211** |
+  | receiving S/L/R (one-timers) | 49/14/14 | **103/104/120** |
+  | slow puck: fast aimed return (1536) | 78.6% | **90.3%** |
+  | corner / side recovery (of 256) | 124 / 28 | 128 / 11 |
+  | calm cap / high share (proxy) | 0.44 / 0.78 | 0.20 / 0.28 (production 0.18 / 0.31) |
+
+  Remaining table risks the sim cannot show: the idle p90 (15 m/s²) is above
+  production's, and the decoder's edge corrections still occur, now at a
+  lower cap. Side-rail recovery regressed (11/256). Not physically qualified.
+  The BusVoltageLow supply cutout is a separate hardware fault: it also
+  tripped with production idling at 5 m/s².
 
 ## Queued next (not started)
 
