@@ -213,6 +213,24 @@ thermal recipe `motor-load-20261001` at gain 1.3 (0.95 training shutdown,
 - 06:10 — stopped at 51M; restarted from that checkpoint as
   `_neural-teacher-ppo-20261018-e` with possession delay 30/s (45 min).
 
+## Queued next (not started)
+
+1. Shots off moving pucks: the hybrid student is weak at one-timers
+   (receiving requested fast shots 6-12/256 vs production 158-179). Label
+   every non-threat state with production (the teacher's threat test false),
+   not only slow/outgoing ones, so production's receiving shots are kept.
+2. Longer anti-holding fine-tunes, selected on proxy goal share with a
+   reachable-stall gate (< 100 s per 64 games) and hot endurance.
+3. Transfer: repeat the hybrid DAgger and fine-tune under the measured paddle
+   contact (`--paddle-restitution-range 0.40 0.65 --paddle-tangential-range
+   0.76 0.84`); the plumbing is in place and arm B shows it trains.
+4. Teacher gaps: side-rail recovery (1/128), receiving one-timers, puck
+   control; sim gaps: goal posts, puck dropouts near the ends, end-rail
+   coefficients (see the critic notes in this session).
+5. Table: `bash ai/bin/play.sh --policy neural:teacher-dagger-20261018-v1
+   --gentle` first, at the user's discretion. Watch bank defense, corner
+   behaviour, heat (drive RMS) and whether it ever holds the puck.
+
 ## Runs
 
 | Run | What | Status |
