@@ -148,7 +148,7 @@ def evaluate(checkpoint, *, count=768, seed=20261051, environment_from=BASE,
                     workspace_sim=env.base._ws,accel_cap_m_s2=options['accel']))
                 recordings.append('/?replay='+dest.name)
     return dict(checkpoint=str(checkpoint) if not heuristic else heuristic,
-        heuristic=heuristic,sha256=hashlib.sha256(Path('ai/airhockey/defense_baselines.py' if heuristic else checkpoint).read_bytes()).hexdigest(),
+        heuristic=heuristic,sha256=hashlib.sha256(Path('ai/airhockey/defense_baselines.py' if heuristic else 'ai/airhockey/expert_player.py' if str(checkpoint).startswith('expert') else checkpoint).read_bytes()).hexdigest(),
         seed=seed,immediate=immediate,metric='First on-goal attack blocked; no reward for control or counterattack',
         summary=summary(np.ones(count,bool)),groups=groups,details=rows,replays=recordings)
 

@@ -21,6 +21,9 @@ from airhockey.recorder import Recorder, FrameData
 
 
 def load(path):
+    if str(path).startswith("expert"):
+        from airhockey.expert_player import load_expert
+        return load_expert(str(path))
     state = torch.load(path, map_location="cpu", weights_only=False)
     net = NeuralPlayer(state["width"], history=state.get("history", 1), shot_conditioned=state.get("shot_conditioned", False))
     net.load_weights(state["model"])
