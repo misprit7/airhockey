@@ -202,6 +202,17 @@ thermal recipe `motor-load-20261001` at gain 1.3 (0.95 training shutdown,
   `expert_dagger_v1`, width 1536); loads through `NeuralPolicy` with
   production's limits and workspace. Not physically qualified.
 
+- 06:05 — fine-tune of D at 40M steps (dev): fast defense 94.0% (D 86.8%),
+  stationary requested shots 53/35/58 of 128 (D 44/21/36), games vs
+  production 23-0 / 28-0, human proxy club 129-3 (97.7%), elite 146-17
+  (89.6%). But it learned to HOLD: 494 s / 422 s of reachable stall against
+  the proxy (D: 0 / 171 s). Diagnostic (32 club games): stalled pucks sit in
+  the open interior (y 0.44-0.61, x 0.27-0.49) with the paddle 0.10-0.18 m
+  away at load 0.60-0.74 -- passive possession, not the heat gate. D shows
+  zero such samples. The possession-delay cost (6/s after 4 s) was too weak.
+- 06:10 — stopped at 51M; restarted from that checkpoint as
+  `_neural-teacher-ppo-20261018-e` with possession delay 30/s (45 min).
+
 ## Runs
 
 | Run | What | Status |
@@ -211,7 +222,8 @@ thermal recipe `motor-load-20261001` at gain 1.3 (0.95 training shutdown,
 | `_neural-teacher-dagger-20261018-c` | continuation of A: width 1536, attack-weighted, heat-gated teacher | stopped after round 2 |
 | `_neural-teacher-dagger-20261018-b` | DAgger, measured paddle contact (pre heat gate) | stopped after round 6 (memory) |
 | `_neural-teacher-dagger-20261018-d` | production widened to 1536; teacher defense labels, production attack labels | done (6 rounds) |
-| `_neural-teacher-ppo-20261018-d` | PPO fine-tune of D, teacher-regularised defense | running (60 min) |
+| `_neural-teacher-ppo-20261018-d` | PPO fine-tune of D, teacher-regularised defense | stopped at 51M: better defense, learned to hold the puck |
+| `_neural-teacher-ppo-20261018-e` | continuation from 51M with possession delay 30/s | running (45 min) |
 | `_neural-teacher-dagger-20261018-e` | continuation of C with an earlier-striking teacher | stopped after round 4 |
 
 ## Results
