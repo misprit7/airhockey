@@ -37,6 +37,14 @@ class BatchPhysicsEngine:
         self.drag_b = np.full(n_envs, cfg.PUCK_DRAG_B)
         self.paddle_restitution = np.full(n_envs, cfg.paddle_restitution)
         self.puck_mass = np.full(n_envs, cfg.puck_mass)
+        # Paddle contact randomisation. The default range is the historical
+        # guess. Table play (636 contacts, 2026-10-02..11) measured normal
+        # restitution 0.47-0.59 in the paddle frame and tangential retention
+        # 0.76-0.84, so experiments may opt into a measured range; None keeps
+        # the frictionless contact and the default random stream unchanged.
+        self.paddle_restitution_range = (0.60, 0.95)
+        self.paddle_tangential_range = None
+        self.paddle_tangential = np.ones(n_envs)
 
         # Allocate state arrays — all shape [N]
         self.puck_x = np.zeros(n_envs)
@@ -120,8 +128,10 @@ class BatchPhysicsEngine:
             rail_draw = rng.random(n)
             self.wall_tangential[idx] = 0.82 + 0.16 * rail_draw
             self.end_wall_tangential[idx] = 0.58 + 0.18 * rail_draw
-            self.paddle_restitution[idx] = rng.uniform(0.60, 0.95, size=n)
+            self.paddle_restitution[idx] = rng.uniform(*self.paddle_restitution_range, size=n)
             self.puck_mass[idx] = rng.uniform(0.01, 0.04, size=n)
+            if self.paddle_tangential_range is not None:
+                self.paddle_tangential[idx] = rng.uniform(*self.paddle_tangential_range, size=n)
 
         # Randomize puck position and velocity
         angle = rng.uniform(-np.pi * 0.8, -np.pi * 0.2, size=n)
@@ -310,6 +320,13 @@ class BatchPhysicsEngine:
 
         e = self.paddle_restitution  # per-env [N]
         impulse = -(1 + e) * rel_v_normal
+        out_vx = self.puck_vx + impulse * nx
+        out_vy = self.puck_vy + impulse * ny
+        if self.paddle_tangential_range is not None:
+            # Retain a fraction of the tangential slip in the paddle frame.
+            slip = 1 - self.paddle_tangential
+            out_vx = out_vx - slip * (rel_vx - rel_v_normal * nx)
+            out_vy = out_vy - slip * (rel_vy - rel_v_normal * ny)
 
         if self.contact_callback is not None:
             idx = np.flatnonzero(resolve)
@@ -319,14 +336,12 @@ class BatchPhysicsEngine:
                 "time": getattr(self, "_contact_time", self.time)[idx].copy(),
                 "normal": np.column_stack((nx[idx], ny[idx])),
                 "incoming": np.column_stack((self.puck_vx[idx], self.puck_vy[idx])),
-                "outgoing_before_speed_cap": np.column_stack((
-                    self.puck_vx[idx] + impulse[idx] * nx[idx],
-                    self.puck_vy[idx] + impulse[idx] * ny[idx])),
+                "outgoing_before_speed_cap": np.column_stack((out_vx[idx], out_vy[idx])),
                 "paddle_velocity": np.column_stack((pad_vx[idx], pad_vy[idx])),
             })
 
-        self.puck_vx = np.where(resolve, self.puck_vx + impulse * nx, self.puck_vx)
-        self.puck_vy = np.where(resolve, self.puck_vy + impulse * ny, self.puck_vy)
+        self.puck_vx = np.where(resolve, out_vx, self.puck_vx)
+        self.puck_vy = np.where(resolve, out_vy, self.puck_vy)
 
     def _clamp_puck_speed(self) -> None:
         speed = np.hypot(self.puck_vx, self.puck_vy)

@@ -29,6 +29,8 @@ class NeuralTrainingEnv(ArrivalEnv):
         edge_dwell_weight=0.,
         edge_dwell_band=.06,
         project_rail_contacts=False,
+        paddle_restitution_range=None,
+        paddle_tangential_range=None,
         seed=0,
         realistic=True,
         report_sensing=False,
@@ -154,6 +156,15 @@ class NeuralTrainingEnv(ArrivalEnv):
             raise ValueError('invalid edge dwell penalty')
         self.edge_dwell_weight,self.edge_dwell_band=edge_dwell_weight,edge_dwell_band
         self.engine.project_rail_contacts = bool(project_rail_contacts)
+        # Opt-in paddle contact randomisation (batch_physics); None = historical.
+        for name, value in (("paddle_restitution_range", paddle_restitution_range),
+                            ("paddle_tangential_range", paddle_tangential_range)):
+            if value is None:
+                continue
+            lo, hi = (float(v) for v in value)
+            if not (0 < lo <= hi <= 1):
+                raise ValueError(f"{name} must satisfy 0 < low <= high <= 1")
+            setattr(self.engine, name, (lo, hi))
         if report_sensing and self.base._perception is not None:
             self.base._perception.enable_report_estimator()
         if not 0 <= recovery_fraction <= 1:

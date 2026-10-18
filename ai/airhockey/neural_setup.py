@@ -19,6 +19,8 @@ def checkpoint_environment(path,state=None):
                 defense_max_speed=args.get('defense_max_speed',12),
                 project_rail_contacts=args.get('project_rail_contacts',False),
                 workspace_bounds_mm=meta.get('workspace_bounds_mm') or workspace_bounds(args.get('workspace','legacy')))
+    for key in ('paddle_restitution_range','paddle_tangential_range'):
+        if args.get(key) is not None:result[key]=list(args[key])
     model=meta.get('thermal_model')
     if model:result['thermal_path']=model
     elif args.get('thermal_model'):result['thermal_path']=args['thermal_model']
