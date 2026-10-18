@@ -56,8 +56,7 @@ def make_optimizer(net, actor_lr, value_lr, saved=None):
     return optimizer
 
 
-def main():
-    global ACTIVE_RUN, ACTIVE_SAVE, ACTIVE_ENV
+def build_parser():
     p = argparse.ArgumentParser(description=__doc__)
     p.add_argument("--run-name", required=True)
     p.add_argument("--evaluation-dir", type=Path, help="Local evaluation artifacts for the training dashboard")
@@ -254,6 +253,155 @@ def main():
                    help="Fit only the critic for this many first updates, actor frozen (a fresh critic after --initialize-from)")
     p.add_argument("--std-floor", type=float, default=0,
                    help="Training-only minimum pre-tanh exploration std per dimension, in rollouts and PPO likelihoods alike")
+    # Opt-in measured paddle contact (batch_physics); omitted = historical draws.
+    p.add_argument("--paddle-restitution-range", type=float, nargs=2, metavar=("LOW", "HIGH"),
+                   help="Per-episode paddle normal restitution range, e.g. 0.40 0.65 (table contacts: 0.47-0.59)")
+    p.add_argument("--paddle-tangential-range", type=float, nargs=2, metavar=("LOW", "HIGH"),
+                   help="Per-episode paddle tangential retention range, e.g. 0.76 0.84; omitted = frictionless")
+    return p
+
+
+def environment_options(args, *, shot_conditioned):
+    """NeuralTrainingEnv keyword arguments for parsed training arguments.
+
+    The one place a training command becomes a curriculum. Distillation and
+    any other collector reuse it with a stored command (`stored_arguments`).
+    """
+    from airhockey.neural_setup import workspace_bounds
+    return dict(
+        accel=args.accel,workspace_bounds_mm=workspace_bounds(args.workspace),thermal_path=args.thermal_model,
+        edge_dwell_weight=args.edge_dwell_weight,edge_dwell_band=args.edge_dwell_band,
+        project_rail_contacts=args.project_rail_contacts,
+        paddle_restitution_range=getattr(args, "paddle_restitution_range", None),
+        paddle_tangential_range=getattr(args, "paddle_tangential_range", None),
+        edge_clearance_weight=args.edge_clearance_weight,
+        goals_only=args.goals_only,
+        stage=args.stage,
+        seed=args.seed,
+        realistic=not args.ideal_sensing,
+        report_sensing=args.report_sensing,
+        load_weight=args.load_weight,
+        load_energy_weight=args.load_energy_weight,
+        load_holding_weight=args.load_holding_weight,
+        load_holding_horizon=args.load_holding_horizon,
+        capture_weight=args.capture_weight,
+        capture_max_speed=args.capture_max_speed,
+        capture_duration=args.capture_duration,
+        capture_depth_margin=args.capture_depth_margin,
+        slow_cushion_weight=args.slow_cushion_weight,
+        slow_receiving_fraction=args.slow_receiving_fraction,
+        control_speed_scale=args.control_speed_scale,
+        conversion_weight=args.conversion_weight,
+        capture_first=args.capture_first,
+        receive_drill=args.receive_drill,
+        productive_receive_drill=args.productive_receive_drill,
+        shot_power_weight=args.shot_power_weight,
+        shot_power_exponent=args.shot_power_exponent,
+        off_target_penalty=args.off_target_penalty,
+        conversion_speed_weight=args.conversion_speed_weight,
+        discount=args.gamma,
+        warm_start_max=args.warm_start_max,
+        warm_game_start=args.warm_game_start,
+        terminate_overload=args.terminate_overload,
+        fixed_practice_roles=args.fixed_practice_roles,
+        random_practice_opponent=args.random_practice_opponent,
+        fixed_opponent_style_fraction=args.fixed_opponent_style_fraction,
+        shutdown_penalty=args.shutdown_penalty,
+        game_goal_weight=args.game_goal_weight,
+        skill_goal_weight=args.skill_goal_weight,
+        skill_concede_weight=args.skill_concede_weight,
+        turnover_weight=args.turnover_weight,
+        practice_selfplay_fraction=args.practice_selfplay_fraction,
+        reward_scale=args.reward_scale,
+        shutdown_level=args.shutdown_level,
+        practice_defense_fraction=args.practice_defense_fraction,
+        defense_min_speed=args.defense_min_speed,
+        defense_max_speed=args.defense_max_speed,
+        wide_defense=args.wide_defense,
+        random_defense_start_fraction=args.random_defense_start_fraction,
+        defense_clear_reward=args.defense_clear_reward,
+        defense_block_only=args.defense_block_only,
+        defense_windup_fraction=args.defense_windup_fraction,
+        shot_speed_scale=args.shot_speed_scale,
+        conversion_speed_scale=args.conversion_speed_scale,
+        receiving_min_speed=args.receiving_min_speed,
+        receiving_max_speed=args.receiving_max_speed,
+        rushed_shot_penalty=args.rushed_shot_penalty,
+        thermal_gain=args.thermal_gain,
+        shot_conditioned=shot_conditioned,
+        shot_request=args.shot_request,
+        shot_request_weight=args.shot_request_weight,
+        wrong_shot_penalty=args.wrong_shot_penalty,
+        fallback_shot_scale=args.fallback_shot_scale,
+        unproductive_return_penalty=args.unproductive_return_penalty,
+        setup_weight=args.setup_weight,
+        setup_avoid_puck=args.setup_avoid_puck,
+        control_potential_weight=args.control_potential_weight,
+        shot_setup_fraction=args.shot_setup_fraction,
+        continuous_rallies=args.continuous_rallies,
+        possession_followthrough=args.possession_followthrough,
+        recovery_fraction=args.recovery_fraction,
+        recovery_min_speed=args.recovery_min_speed,
+        recovery_max_speed=args.recovery_max_speed,
+        recovery_easy_fraction=args.recovery_easy_fraction,
+        recovery_easy_arc=args.recovery_easy_arc,
+        recovery_capture_bonus=args.recovery_capture_bonus,
+        recovery_fallback_scale=args.recovery_fallback_scale,
+        recovery_cushion_bonus=args.recovery_cushion_bonus,
+        recovery_cushion_signed=args.recovery_cushion_signed,
+        recovery_get_ahead_bonus=args.recovery_get_ahead_bonus,
+        recovery_approach_weight=args.recovery_approach_weight,
+        readiness_weight=args.readiness_weight,
+        readiness_cost_weight=args.readiness_cost_weight,
+        defensive_depth_weight=args.defensive_depth_weight,
+        defensive_depth_target=args.defensive_depth_target,
+        readiness_lateral_uncertainty=args.readiness_lateral_uncertainty,
+        defense_windup_lateral_speed=args.defense_windup_lateral_speed,
+        defense_windup_bank_fraction=args.defense_windup_bank_fraction,
+        slow_exit_penalty=args.slow_exit_penalty,
+        possession_delay_weight=args.possession_delay_weight,
+        game_episode_seconds=args.game_episode_seconds,
+        stationary_failure_penalty=args.stationary_failure_penalty,
+        stationary_rest_fraction=args.stationary_rest_fraction,
+        edge_drill_fraction=args.edge_drill_fraction,
+        corner_drill_fraction=args.corner_drill_fraction,
+        edge_recovery_weight=args.edge_recovery_weight,
+        edge_approach_weight=args.edge_approach_weight,
+        stationary_replay=args.stationary_replay,
+        stationary_replay_fraction=args.stationary_replay_fraction,
+        correlated_warm_fraction=args.correlated_warm_fraction,
+        cold_practice_fraction=args.cold_practice_fraction,
+        cold_game_start_fraction=args.cold_game_start_fraction,
+        game_fraction=args.game_fraction,
+    )
+
+
+def stored_arguments(path):
+    """The arguments of a recorded training command, parsed by this program.
+
+    `path` is a run.json (its `args`) or a recipe.json (its `argv`). Flags
+    added after that run take their defaults here, which keep the behaviour
+    from before they existed. Path-valued flags come back as Paths.
+    """
+    record = json.loads(Path(path).read_text())
+    parser = build_parser()
+    if 'argv' in record:
+        argv = [str(a) for a in record['argv']]
+        script = next(i for i, a in enumerate(argv) if Path(a).name == Path(__file__).name)
+        return parser.parse_args(argv[script + 1:])
+    stored = record['args']
+    args = parser.parse_args(['--run-name', str(stored['run_name'])])
+    types = {action.dest: action.type for action in parser._actions}
+    for key, value in stored.items():
+        if types.get(key) is Path and value is not None:
+            value = [Path(v) for v in value] if isinstance(value, list) else Path(value)
+        setattr(args, key, value)
+    return args
+
+
+def main():
+    global ACTIVE_RUN, ACTIVE_SAVE, ACTIVE_ENV
+    p = build_parser()
     args = p.parse_args()
     if not np.isfinite(args.accel) or not 0<args.accel<=120:p.error('accel must be within (0,120] m/s²')
     from airhockey.neural_setup import workspace_bounds
@@ -422,110 +570,9 @@ def main():
                         if args.teacher_opponent_fraction else None)
     teacher_anneal_origin = (state.get("teacher_anneal_origin", state["step"])
                              if args.resume and teacher is not None else 0)
-    options = dict(
-        accel=args.accel,workspace_bounds_mm=run_bounds,thermal_path=args.thermal_model,
-        edge_dwell_weight=args.edge_dwell_weight,edge_dwell_band=args.edge_dwell_band,
-        project_rail_contacts=args.project_rail_contacts,
-        edge_clearance_weight=args.edge_clearance_weight,
-        goals_only=args.goals_only,
-        stage=args.stage,
-        seed=args.seed,
-        realistic=not args.ideal_sensing,
-        report_sensing=args.report_sensing,
-        load_weight=args.load_weight,
-        load_energy_weight=args.load_energy_weight,
-        load_holding_weight=args.load_holding_weight,
-        load_holding_horizon=args.load_holding_horizon,
-        capture_weight=args.capture_weight,
-        capture_max_speed=args.capture_max_speed,
-        capture_duration=args.capture_duration,
-        capture_depth_margin=args.capture_depth_margin,
-        slow_cushion_weight=args.slow_cushion_weight,
-        slow_receiving_fraction=args.slow_receiving_fraction,
-        control_speed_scale=args.control_speed_scale,
-        conversion_weight=args.conversion_weight,
-        capture_first=args.capture_first,
-        receive_drill=args.receive_drill,
-        productive_receive_drill=args.productive_receive_drill,
-        shot_power_weight=args.shot_power_weight,
-        shot_power_exponent=args.shot_power_exponent,
-        off_target_penalty=args.off_target_penalty,
-        conversion_speed_weight=args.conversion_speed_weight,
-        discount=args.gamma,
-        warm_start_max=args.warm_start_max,
-        warm_game_start=args.warm_game_start,
-        terminate_overload=args.terminate_overload,
-        fixed_practice_roles=args.fixed_practice_roles,
-        random_practice_opponent=args.random_practice_opponent,
-        fixed_opponent_style_fraction=args.fixed_opponent_style_fraction,
-        shutdown_penalty=args.shutdown_penalty,
-        game_goal_weight=args.game_goal_weight,
-        skill_goal_weight=args.skill_goal_weight,
-        skill_concede_weight=args.skill_concede_weight,
-        turnover_weight=args.turnover_weight,
-        practice_selfplay_fraction=args.practice_selfplay_fraction,
-        reward_scale=args.reward_scale,
-        shutdown_level=args.shutdown_level,
-        practice_defense_fraction=args.practice_defense_fraction,
-        defense_min_speed=args.defense_min_speed,
-        defense_max_speed=args.defense_max_speed,
-        wide_defense=args.wide_defense,
-        random_defense_start_fraction=args.random_defense_start_fraction,
-        defense_clear_reward=args.defense_clear_reward,
-        defense_block_only=args.defense_block_only,
-        defense_windup_fraction=args.defense_windup_fraction,
-        shot_speed_scale=args.shot_speed_scale,
-        conversion_speed_scale=args.conversion_speed_scale,
-        receiving_min_speed=args.receiving_min_speed,
-        receiving_max_speed=args.receiving_max_speed,
-        rushed_shot_penalty=args.rushed_shot_penalty,
-        thermal_gain=args.thermal_gain,
-        shot_conditioned=args.shot_conditioned or any(r.shot_conditioned for r in references) or teacher is not None,
-        shot_request=args.shot_request,
-        shot_request_weight=args.shot_request_weight,
-        wrong_shot_penalty=args.wrong_shot_penalty,
-        fallback_shot_scale=args.fallback_shot_scale,
-        unproductive_return_penalty=args.unproductive_return_penalty,
-        setup_weight=args.setup_weight,
-        setup_avoid_puck=args.setup_avoid_puck,
-        control_potential_weight=args.control_potential_weight,
-        shot_setup_fraction=args.shot_setup_fraction,
-        continuous_rallies=args.continuous_rallies,
-        possession_followthrough=args.possession_followthrough,
-        recovery_fraction=args.recovery_fraction,
-        recovery_min_speed=args.recovery_min_speed,
-        recovery_max_speed=args.recovery_max_speed,
-        recovery_easy_fraction=args.recovery_easy_fraction,
-        recovery_easy_arc=args.recovery_easy_arc,
-        recovery_capture_bonus=args.recovery_capture_bonus,
-        recovery_fallback_scale=args.recovery_fallback_scale,
-        recovery_cushion_bonus=args.recovery_cushion_bonus,
-        recovery_cushion_signed=args.recovery_cushion_signed,
-        recovery_get_ahead_bonus=args.recovery_get_ahead_bonus,
-        recovery_approach_weight=args.recovery_approach_weight,
-        readiness_weight=args.readiness_weight,
-        readiness_cost_weight=args.readiness_cost_weight,
-        defensive_depth_weight=args.defensive_depth_weight,
-        defensive_depth_target=args.defensive_depth_target,
-        readiness_lateral_uncertainty=args.readiness_lateral_uncertainty,
-        defense_windup_lateral_speed=args.defense_windup_lateral_speed,
-        defense_windup_bank_fraction=args.defense_windup_bank_fraction,
-        slow_exit_penalty=args.slow_exit_penalty,
-        possession_delay_weight=args.possession_delay_weight,
-        game_episode_seconds=args.game_episode_seconds,
-        stationary_failure_penalty=args.stationary_failure_penalty,
-        stationary_rest_fraction=args.stationary_rest_fraction,
-        edge_drill_fraction=args.edge_drill_fraction,
-        corner_drill_fraction=args.corner_drill_fraction,
-        edge_recovery_weight=args.edge_recovery_weight,
-        edge_approach_weight=args.edge_approach_weight,
-        stationary_replay=args.stationary_replay,
-        stationary_replay_fraction=args.stationary_replay_fraction,
-        correlated_warm_fraction=args.correlated_warm_fraction,
-        cold_practice_fraction=args.cold_practice_fraction,
-        cold_game_start_fraction=args.cold_game_start_fraction,
-        game_fraction=args.game_fraction,
-    )
+    options = environment_options(
+        args, shot_conditioned=args.shot_conditioned or any(r.shot_conditioned for r in references)
+        or teacher is not None)
     if args.workers > 1:
         from airhockey.neural_vector import ParallelNeuralEnv
 

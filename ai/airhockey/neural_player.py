@@ -288,6 +288,18 @@ class ActorPrefixFreeze:
             parameter[index].copy_(initial)
 
 
+def history_inputs(observation, history, deltas):
+    """What a PhysicalHistoryLinear multiplies: past frames minus current if `deltas`."""
+    if deltas and history > 1:
+        physical = 42 * history
+        current = observation[..., :42]
+        past = observation[..., 42:physical].reshape(
+            *observation.shape[:-1], history - 1, 42)
+        differences = (past - current.unsqueeze(-2)).flatten(-2)
+        observation = torch.cat((current, differences, observation[..., physical:]), dim=-1)
+    return observation
+
+
 class PhysicalHistoryLinear(nn.Linear):
     """Optional temporal differences; callers still supply physical histories.
 
@@ -302,14 +314,8 @@ class PhysicalHistoryLinear(nn.Linear):
         self.deltas = deltas
 
     def forward(self, observation):
-        if self.deltas and self.history > 1:
-            physical = 42 * self.history
-            current = observation[..., :42]
-            past = observation[..., 42:physical].reshape(
-                *observation.shape[:-1], self.history - 1, 42)
-            differences = (past - current.unsqueeze(-2)).flatten(-2)
-            observation = torch.cat((current, differences, observation[..., physical:]), dim=-1)
-        return nn.functional.linear(observation, self.weight, self.bias)
+        return nn.functional.linear(history_inputs(observation, self.history, self.deltas),
+                                    self.weight, self.bias)
 
 
 class NeuralPlayer(nn.Module):

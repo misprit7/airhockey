@@ -71,6 +71,10 @@ class ParallelNeuralEnv:
     ``step_async``/``step_wait`` let the caller work while the workers step.
     """
 
+    # Process entry point. Subclasses with a different message protocol
+    # supply their own and override reset/step (airhockey.distillation).
+    worker = staticmethod(_worker)
+
     def __init__(self, n_envs, workers, auto_reset=False, **options):
         if n_envs % workers:
             raise ValueError("environment count must divide evenly across workers")
@@ -82,7 +86,7 @@ class ParallelNeuralEnv:
             parent, child = context.Pipe()
             config = dict(options, seed=options.get("seed", 0) + i * 100003)
             process = context.Process(
-                target=_worker, args=(child, n_envs // workers, config), daemon=True
+                target=self.worker, args=(child, n_envs // workers, config), daemon=True
             )
             process.start()
             child.close()
