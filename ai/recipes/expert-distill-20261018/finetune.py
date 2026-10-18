@@ -6,7 +6,7 @@
         --minutes 75 [--measured-contact]
 
 The control-defense no-imitation recipe (production-equivalent rewards and
-limits) with: the teacher as regression target (all modes, weight 1 -> 0.2)
+limits) with: the teacher as regression target (--teacher-mask, weight 1 -> 0.2)
 and as 30% of game opponents, production and the student itself as rivals,
 human-speed-inclusive defense drills (5-16 m/s, half banked), the trainer
 agent's optimiser regime (adaptive lr from 1e-6, std floor 0.1, 16 forced
@@ -68,7 +68,7 @@ def argv(a):
            "--skill-replay-weight", "0", "--skill-reference-weight", "0", "--practice-defense-fraction", "0.45",
            "--game-fraction", "0.3", "--slow-receiving-fraction", "0.65", "--practice-selfplay-fraction", "0",
            "--teacher", teacher, "--teacher-weight", "1", "--teacher-weight-final", "0.2",
-           "--teacher-anneal-steps", str(a.anneal), "--teacher-mask", "all", "--teacher-opponent-fraction", "0.3",
+           "--teacher-anneal-steps", str(a.anneal), "--teacher-mask", a.teacher_mask, "--teacher-opponent-fraction", "0.3",
            "--value-warmup-updates", "10", "--actor-steps-min", "16", "--lr", "1e-6", "--lr-min", "2e-7",
            "--lr-max", "5e-5", "--std-floor", "0.1", "--adaptive-lr"]
     if a.measured_contact:
@@ -85,6 +85,8 @@ def main():
     p.add_argument("--anneal", type=int, default=200_000_000)
     p.add_argument("--seed", type=int, default=20261018)
     p.add_argument("--measured-contact", action="store_true")
+    p.add_argument("--teacher-mask", default="all", choices=["all", "defense", "threat", "attack"],
+                   help="States regularised toward the teacher (defense = threat + guard)")
     p.add_argument("--print", action="store_true", help="print the command instead of running it")
     a = p.parse_args()
     cmd = argv(a)
