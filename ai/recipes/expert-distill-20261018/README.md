@@ -63,6 +63,40 @@ thermal recipe `motor-load-20261001` at gain 1.3 (0.95 training shutdown,
   60 s overload holding deep near a side rail.
 - 01:15 — launched in parallel: DAgger pipeline, trainer extensions,
   human-proxy benchmark; teacher defense and attack specialists.
+- 01:30 — opt-in measured paddle contact (`paddle_restitution_range`,
+  `paddle_tangential_range`; table: e 0.47-0.59, tangential 0.76-0.84).
+  Defaults unchanged (production fast defense 220/768 before and after).
+  Under the measured contact: teacher 83.1%, production 28.8% fast defense.
+- 01:35 — DAgger smoke (`_distill-smoke-20261018`, 3 rounds x 2M labels,
+  ~3 min, ~83k labels/s): student fast defense 67 -> 71 -> 74.5%; games vs
+  production 15-84 (round 0, pure BC: distribution shift) -> 8-42 -> 11-12.
+
+- 02:00 — defense specialist (branch worktree-wf_dda5e07e-1a6-1, a2fe081):
+  minimum-time bang-bang arrival command (v0's fixed 40 ms request overshot
+  75-82 mm and settled in 180-200 ms), block point shifted 3 cm upstream,
+  banks forecast under three rail scenarios before the bounce, bounce-
+  straddling reports repaired, guard depth 0.11/0.17/0.30 m by hottest load.
+  Fast defense 97.3% / 97.8% (seeds 20261073 / 20261051; banks 96-98%),
+  4-10 m/s tier 99.9%, centre-line releases 100%; hot 4x600 s no overload
+  (peak 0.881); conceded to production 3 in 32x60 s (v0: 13). Its own
+  scoring fell (45 -> 18 goals) because saves return the puck to the rival.
+
+- 02:15 — STOPPED (usage limit). On main: teacher v0 + eval hooks, this
+  record and suite.py, opt-in measured paddle contact, trainer fine-tune
+  flags (cherry-picked be35050). Not yet on main, committed on branches:
+  defense teacher `worktree-wf_dda5e07e-1a6-1` (a2fe081), attack teacher
+  `worktree-wf_dda5e07e-1a6-2` (4ef588b, in progress), DAgger pipeline
+  `worktree-wf_331ba6a6-2c6-1` (cefbade; conflicts with the trainer commit in
+  ai/bin/train_neural_player.py and ai/airhockey/neural_vector.py: keep the
+  trainer's new args inside distill's build_parser(), keep its teacher
+  loading in main(), and use environment_options() with `or teacher is not
+  None` added to shot_conditioned). Human-proxy benchmark was uncommitted in
+  `.claude/worktrees/wf_331ba6a6-2c6-3`.
+- Next: merge the above, merge defense+attack teacher, run distill_expert.py
+  at scale (12 workers, ~83k labels/s), then the fine-tune command in the
+  trainer report (lr 1e-6 adaptive, std floor 0.1, teacher weight 1 -> 0.2,
+  teacher opponents 30%), with --paddle-restitution-range 0.40 0.65 and
+  --paddle-tangential-range 0.76 0.84 plumbed through environment_options.
 
 ## Runs
 
