@@ -213,6 +213,13 @@ thermal recipe `motor-load-20261001` at gain 1.3 (0.95 training shutdown,
 - 06:10 — stopped at 51M; restarted from that checkpoint as
   `_neural-teacher-ppo-20261018-e` with possession delay 30/s (45 min).
 
+- 06:27 — anti-holding fine-tune at 40M steps (`_neural-teacher-ppo-20261018-e`
+  agent_step_040108032): human proxy club 175-10 (94.6%, CI 90.8-97.8),
+  GF/min 2.73 (production 2.69), GA/min 0.16; elite 259-33 (88.7%, CI
+  85.2-92.2), GF/min 4.05 (production 3.66), GA/min 0.52; shots 5.8-6.3 m/s;
+  no overload. Stall 26 s / 78 s; the stall diagnostic now finds only pucks
+  pinned in the back corner (y 0.041, x 0.959), no held pucks.
+
 ## Queued next (not started)
 
 1. Shots off moving pucks: the hybrid student is weak at one-timers
