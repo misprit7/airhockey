@@ -18,6 +18,7 @@ One neural network at runtime (same 675-input / 6-output arrival interface, limi
 <tr><td>Corner / side-rail recovery (of 256)</td><td class="n">37 / 32</td><td class="n">57 / 39</td><td class="n">124 / 28</td></tr>
 <tr><td>One-timers: requested fast shots receiving S/L/R</td><td class="n good">172 / 158 / 179</td><td class="n weak">12 / 6 / 6</td><td class="n weak">49 / 14 / 14</td></tr>
 </table></div></section>
+<section><h2>Experimental: table-contact variant v3</h2><p><code>teacher-ppo-measured-20261018-v3</code> is v2 fine-tuned for 40M steps under the paddle contact measured on the table (restitution 0.40–0.65, tangential retention 0.76–0.84). Development seeds only. Under that contact: human proxy club 176–3 (98.3%) and elite 221–7 (96.9%) versus v2's 188–4 and 240–20; hot 4 × 600 s 7–0 with no overload (peak 0.853). Needs a held-out run before it replaces v2.</p></section>
 <section><h2>Replays</h2><ul>
 <li><a href="/?replay=teacher-ppo-v2-vs-production.json">v2 vs production (2 × 120 s)</a></li>
 <li><a href="/?replay=teacher-ppo-v2-vs-proxy_vs_human-proxy-club-g0.json">v2 vs club proxy, game 1</a> · <a href="/?replay=teacher-ppo-v2-vs-proxy_vs_human-proxy-club-g1.json">game 2</a></li>

@@ -50,6 +50,18 @@ production 18-2 in 32x60 s (production vs itself 28-40); human proxy club
 (68.2%, 71 s overload); v2 no overload. Full test suite after the night:
 891 passed, 11 failed -- the same 11 pre-existing failures as before.
 
+Experimental table-contact variant: `runs/teacher-ppo-measured-20261018-v3`
+(sha256 b12a8d7a..., v2 fine-tuned 40M steps under the measured paddle
+contact; dev seeds only, no held-out run). Under the measured contact:
+human proxy club 176-3 (98.3%) and elite 221-7 (96.9%) vs v2's 188-4 and
+240-20; shots 5.8-6.1 m/s vs v2's 5.3-5.6 (it learned to swing harder for
+the softer contact); hot 4x600 s 7-0 with zero overload (peak 0.853) and
+no stall. Peak load in proxy games 0.92-0.93 vs v2's 0.87. If the measured
+contact is right, v3 should transfer better; it needs a held-out run
+(`suite.py --tier holdout` with the measured contact) before it replaces v2.
+The run (`_neural-teacher-ppo-20261018-f`) continued to ~07:41; its final
+checkpoint is unevaluated.
+
 Report page: http://localhost:8420/training/reports/20261018 .
 Replays (web UI): `teacher-ppo-v2-vs-production.json`,
 `teacher-ppo-v2-vs-proxy_vs_human-proxy-{club,elite}-g{0,1}.json`.

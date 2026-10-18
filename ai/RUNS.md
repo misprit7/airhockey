@@ -170,3 +170,6 @@ Record: `ai/recipes/expert-distill-20261018/README.md`. Simulation only.
   defense); learned to hold the puck; stopped at 51M.
 - `_neural-teacher-ppo-20261018-e`: PPO from `-d`@51M with possession delay
   30/s; agent_step_080216064 packaged as **`teacher-ppo-20261018-v2`**.
+- `_neural-teacher-ppo-20261018-f`: v2 fine-tuned under the measured paddle
+  contact; agent_step_040108032 packaged as **`teacher-ppo-measured-20261018-v3`**
+  (experimental, dev seeds only).
