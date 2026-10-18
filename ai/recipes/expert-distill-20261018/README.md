@@ -133,6 +133,22 @@ thermal recipe `motor-load-20261001` at gain 1.3 (0.95 training shutdown,
   final, widened to 1536, heat-gated teacher, attack-weighted loss (modes
   3,5,1), student noise 0.05, betas 0.3/0.2/0.1/0.1/0/0, 8M labels/round.
 
+- 05:30 — arm A final (round 5) dev suite: fast defense 88.7% (S 96.5 /
+  L 83.2 / R 86.3, depth 0.19), immediate 42.1%, corner 94/128 (production
+  22), side 3/128, games vs production 18-3 / 11-3, hot 4x600 s 4-1 with no
+  overload (peak 0.99). But requested fast shots 0-4/128 in every cohort
+  (production 75/38/42 stationary) and slow-control fast aimed 0.3% (61.7%):
+  the teacher's aligned strike-through did not survive imitation. Human
+  proxy: club 71-30 (70.3%) vs production 78.5%; elite 115-54 (68.0%) vs
+  67.8% -- concedes far less (GA/min 0.47 / 0.84 vs 0.73 / 1.73) but scores
+  far less (1.1 / 1.8 GF/min vs 2.7 / 3.7), shots 3.4-4.3 m/s; elite peak
+  load 1.19 (20 s overload).
+- 05:30 — arm D `_neural-teacher-dagger-20261018-d`: from PRODUCTION widened
+  to 1536; teacher labels threats, fast incoming pucks and the guard;
+  production's own action labels the states where the teacher would attack a
+  slow (< 2.5 m/s) or outgoing puck (`--attack-labels production`). Arm B
+  stopped at round 6 to free memory; C paused (SIGSTOP) to give D the CPU.
+
 ## Runs
 
 | Run | What | Status |
