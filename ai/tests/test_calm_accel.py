@@ -60,3 +60,22 @@ def test_teacher_guard_is_calm_at_its_post():
     from airhockey.expert_player import ExpertConfig
     c = ExpertConfig()
     assert c.guard_calm_fraction <= 0.1 < c.guard_fraction
+
+
+def test_free_accel_drops_only_the_accel_slot():
+    import torch
+    from airhockey.neural_finetune import teacher_error, teacher_regression
+
+    target = torch.zeros(2, 6)
+    action = torch.zeros(2, 6)
+    action[:, 5] = 0.6  # accel slot off the teacher's label
+    action[1, 0] = 0.3  # and a pose error on the second row
+    free = torch.tensor([True, True])
+    assert torch.allclose(teacher_error(action, target, free), torch.tensor([0.0, 0.09 / 5]))
+    assert torch.allclose(teacher_error(action, target), (action ** 2).mean(-1))
+    mixed = teacher_error(action, target, torch.tensor([False, True]))
+    assert torch.isclose(mixed[0], torch.tensor(0.36 / 6)) and torch.isclose(mixed[1], torch.tensor(0.09 / 5))
+    # Gradient on the accel slot vanishes for free rows.
+    mean = torch.zeros(1, 6, requires_grad=True)
+    teacher_regression(mean, torch.full((1, 6), 0.5), free_accel=torch.tensor([True])).backward()
+    assert mean.grad[0, 5] == 0 and mean.grad[0, 0] != 0

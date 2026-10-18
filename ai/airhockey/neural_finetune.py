@@ -121,12 +121,28 @@ def masked_mean(values, mask=None):
     return (values * mask).sum() / mask.sum().clamp_min(1)
 
 
-def teacher_regression(mean, target, mask=None):
+def teacher_error(action, target, free_accel=None):
+    """Per-sample squared error averaged over the action dimensions.
+
+    ``free_accel`` rows leave out the accel slot (the last dimension), so the
+    reward alone sets the cap there: a teacher guard that sits a few cm from
+    the network's post labels ~0.19 of max accel and outweighed every calm
+    cost tried (2026-10-18).
+    """
+    error = (action - target).square()
+    if free_accel is None:
+        return error.mean(-1)
+    pose = error[..., :-1].mean(-1)
+    return torch.where(free_accel, pose, error.mean(-1))
+
+
+def teacher_regression(mean, target, mask=None, free_accel=None):
     """Mean squared error of tanh(actor mean) to the teacher over masked samples.
 
-    Averaged over the six action dimensions, then over selected samples.
+    Averaged over the six action dimensions (five for ``free_accel`` rows),
+    then over selected samples.
     """
-    return masked_mean((mean.tanh() - target).square().mean(-1), mask)
+    return masked_mean(teacher_error(mean.tanh(), target, free_accel), mask)
 
 
 def reference_slots(n_envs, references):

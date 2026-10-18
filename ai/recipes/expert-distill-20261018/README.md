@@ -356,6 +356,16 @@ protection, damage or wiring), not a policy effect. Hardware for the user.
   Gate not met. The weight-40 linear cost is ~0.06/s at a 0.12 cap, which is
   negligible next to goal terms. `_neural-teacher-calm-20261018-i` continues
   from h's final checkpoint at weight 200, linear, for 60 min.
+- i (133M steps): club 277-6, elite 392-21; idle cap still 11-12 m/s², so the
+  weight was not the limit. Labelling i's own idle states with the teacher
+  gave a cap of 0.19 (p90 0.22). The network guards a few cm off the
+  teacher's post, so the teacher's distance-scheduled guard cap reads
+  "urgent", and the regression (weight 0.2, unnormalised) outweighs PPO's
+  normalised advantages. New `--teacher-free-guard-accel` (recipe
+  `--free-guard-accel`) leaves the accel slot out of the teacher loss on
+  guard-mode samples; threats keep the teacher's full-cap label.
+  `_neural-teacher-calm-20261018-j` continues from i with it (weight 200,
+  linear, 60 min).
 
 ## Queued next (not started)
 

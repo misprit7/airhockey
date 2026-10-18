@@ -16,10 +16,10 @@ import numpy as np
 import torch
 
 from airhockey.neural_player import NeuralPlayer, PhysicalHistory, RecoveryExplorationBias, log_probability, defensive_request_consistency, recovery_exploration_scale, recovery_exploration_window, thermal_effort_exploration_scale, backtrack_actor_step
-from airhockey.neural_finetune import (MODE_NAMES, TEACHER_MASKS, adapt_learning_rate, complete_initialization,
+from airhockey.neural_finetune import (GUARD, MODE_NAMES, TEACHER_MASKS, adapt_learning_rate, complete_initialization,
                                        diagnostic_subset, initialization_model, load_teacher, masked_mean,
                                        reference_slots, std_floor, teacher_mask, teacher_opponent_slots,
-                                       teacher_regression, teacher_weight)
+                                       teacher_error, teacher_regression, teacher_weight)
 from airhockey.neural_training import NeuralTrainingEnv
 from airhockey.on_policy import advantages
 from airhockey.thermal import DEFAULT_MODEL
@@ -245,6 +245,8 @@ def build_parser():
                    help="Environment steps of linear annealing from --teacher-weight to --teacher-weight-final")
     p.add_argument("--teacher-mask", choices=TEACHER_MASKS, default="all",
                    help="Regress only where the teacher is: defense = blocking or guarding, threat = blocking, attack = attacking")
+    p.add_argument("--teacher-free-guard-accel", action="store_true",
+                   help="Leave the accel slot out of the teacher regression where the teacher is guarding; the reward (--calm-accel-weight) sets the idle cap")
     p.add_argument("--teacher-opponent-fraction", type=float, default=0,
                    help="Fraction of full-game slots whose far side is the deterministic teacher, never a fixed-reference slot (id %% 4 == 0)")
     p.add_argument("--actor-steps-min", type=int, default=0,
@@ -1004,6 +1006,7 @@ def main():
             teacher_targets = teacher_actions.flatten(0, 1)
             teacher_selected = (teacher_mask(teacher_modes.flatten(), args.teacher_mask)
                                 if args.teacher_mask != "all" else None)
+            teacher_free = (teacher_modes.flatten() == GUARD) if args.teacher_free_guard_accel else None
             teacher_losses = []
         for epoch in range(args.epochs):
             for ids in torch.randperm(len(x), device=device).split(args.minibatch):
@@ -1041,7 +1044,8 @@ def main():
                 loss = 0.5 * value_loss
                 if teacher is not None:
                     teacher_loss = teacher_regression(
-                        mu, teacher_targets[ids], None if teacher_selected is None else teacher_selected[ids])
+                        mu, teacher_targets[ids], None if teacher_selected is None else teacher_selected[ids],
+                        None if teacher_free is None else teacher_free[ids])
                     teacher_losses.append(teacher_loss.detach())
                 if actor_active:
                     loss = loss + policy_loss - args.entropy * entropy
@@ -1114,10 +1118,11 @@ def main():
             final_kl = float((difference.clamp(-20, 20).exp() - 1 - difference).mean())
             if teacher is not None:
                 subset_mask = None if teacher_selected is None else teacher_selected[subset]
-                teacher_final = float(teacher_regression(final_mean, teacher_targets[subset], subset_mask))
+                subset_free = None if teacher_free is None else teacher_free[subset]
+                teacher_final = float(teacher_regression(final_mean, teacher_targets[subset], subset_mask, subset_free))
                 # The same samples under the rollout policy: the update's effect.
                 teacher_initial = float(masked_mean(
-                    (rollout_means.flatten(0, 1)[subset] - teacher_targets[subset]).square().mean(-1), subset_mask))
+                    teacher_error(rollout_means.flatten(0, 1)[subset], teacher_targets[subset], subset_free), subset_mask))
                 error = (rollout_means - teacher_actions).square()
                 rollout_teacher = dict(all=float(error.mean()))
                 mode_fraction = {}

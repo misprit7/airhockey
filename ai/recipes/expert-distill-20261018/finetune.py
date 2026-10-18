@@ -73,6 +73,8 @@ def argv(a):
            "--lr-max", "5e-5", "--std-floor", "0.1", "--adaptive-lr"]
     if a.calm_accel:
         cmd += ["--calm-accel-weight", str(a.calm_accel), "--calm-accel-power", str(a.calm_power)]
+    if a.free_guard_accel:
+        cmd += ["--teacher-free-guard-accel"]
     if a.measured_contact:
         cmd += ["--paddle-restitution-range", "0.40", "0.65", "--paddle-tangential-range", "0.76", "0.84"]
     return cmd
@@ -87,6 +89,8 @@ def main():
     p.add_argument("--anneal", type=int, default=200_000_000)
     p.add_argument("--seed", type=int, default=20261018)
     p.add_argument("--measured-contact", action="store_true")
+    p.add_argument("--free-guard-accel", action="store_true",
+                   help="Do not regress the accel slot toward the teacher where it guards")
     p.add_argument("--possession-delay", type=float, default=6.0,
                    help="Cost per second (after 4 s, capped at 14 s) of keeping the puck on our half in games")
     p.add_argument("--calm-accel", type=float, default=0.0,
