@@ -149,14 +149,28 @@ thermal recipe `motor-load-20261001` at gain 1.3 (0.95 training shutdown,
   slow (< 2.5 m/s) or outgoing puck (`--attack-labels production`). Arm B
   stopped at round 6 to free memory; C paused (SIGSTOP) to give D the CPU.
 
+- 05:40 — the teacher's stationary strikes are excellent (first shots
+  9.2-9.5 m/s, 93-111/128 on target) but students average the set-up/strike
+  decision into weak pushes (arm A 2-3 m/s). Arm D round 1 recovers
+  production-style striking (stationary requested >=6 m/s 50/31/23 of 128,
+  round 0 16/1/21) and is the first clear win on the headline metric:
+  human proxy club 109-17 (86.5%, CI 80.2-92.4) vs production 78.5%; elite
+  168-27 (86.2%, CI 80.6-90.8) vs 67.8%; no overload (peak 0.85 / 0.97).
+- 05:40 — C stopped after round 2; arm E `_neural-teacher-dagger-20261018-e`
+  continues C with a teacher that commits to strikes earlier
+  (strike_tolerance 6, strike_lateral_speed 0.4: stationary 82/76/69 of 128,
+  9.1-9.4 m/s, defense 94.9%), velocity outputs weighted 3x.
+
 ## Runs
 
 | Run | What | Status |
 |---|---|---|
 | `_distill-smoke-20261018` | 3-round DAgger smoke, teacher v0 | done: fast defense 74.5%, 11-12 vs production |
 | `_neural-teacher-dagger-20261018-a` | DAgger, merged teacher, default physics | stopped after round 5 |
-| `_neural-teacher-dagger-20261018-c` | continuation of A: width 1536, attack-weighted, heat-gated teacher | running |
-| `_neural-teacher-dagger-20261018-b` | same, measured paddle contact | running |
+| `_neural-teacher-dagger-20261018-c` | continuation of A: width 1536, attack-weighted, heat-gated teacher | stopped after round 2 |
+| `_neural-teacher-dagger-20261018-b` | DAgger, measured paddle contact (pre heat gate) | stopped after round 6 (memory) |
+| `_neural-teacher-dagger-20261018-d` | production widened to 1536; teacher defense labels, production attack labels | running |
+| `_neural-teacher-dagger-20261018-e` | continuation of C with an earlier-striking teacher | running |
 
 ## Results
 
