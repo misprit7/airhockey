@@ -161,6 +161,14 @@ thermal recipe `motor-load-20261001` at gain 1.3 (0.95 training shutdown,
   (strike_tolerance 6, strike_lateral_speed 0.4: stationary 82/76/69 of 128,
   9.1-9.4 m/s, defense 94.9%), velocity outputs weighted 3x.
 
+- 05:45 — arm D rounds (fast defense / games vs production): r0 85.3% /
+  21-6, r1 86.5 / 16-2, r2 83.2 / 18-0, r3 85.7 / 13-5, r4 84.5 / 16-1,
+  r5 (final) 86.8 / 19-3. Arm E round 0: 89.3% / 23-4; its stationary first
+  shots are 7.1-8.0 m/s (production 5.5-6.9, arm A 2-3) at 43/24/24 of 128
+  requested >=6 m/s (production 75/38/42).
+- 05:45 — fine-tune `_neural-teacher-ppo-20261018-d` from arm D's final:
+  `finetune.py --teacher-mask defense --minutes 60` (default physics).
+
 ## Runs
 
 | Run | What | Status |
@@ -169,7 +177,8 @@ thermal recipe `motor-load-20261001` at gain 1.3 (0.95 training shutdown,
 | `_neural-teacher-dagger-20261018-a` | DAgger, merged teacher, default physics | stopped after round 5 |
 | `_neural-teacher-dagger-20261018-c` | continuation of A: width 1536, attack-weighted, heat-gated teacher | stopped after round 2 |
 | `_neural-teacher-dagger-20261018-b` | DAgger, measured paddle contact (pre heat gate) | stopped after round 6 (memory) |
-| `_neural-teacher-dagger-20261018-d` | production widened to 1536; teacher defense labels, production attack labels | running |
+| `_neural-teacher-dagger-20261018-d` | production widened to 1536; teacher defense labels, production attack labels | done (6 rounds) |
+| `_neural-teacher-ppo-20261018-d` | PPO fine-tune of D, teacher-regularised defense | running (60 min) |
 | `_neural-teacher-dagger-20261018-e` | continuation of C with an earlier-striking teacher | running |
 
 ## Results
