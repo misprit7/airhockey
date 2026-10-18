@@ -220,6 +220,18 @@ thermal recipe `motor-load-20261001` at gain 1.3 (0.95 training shutdown,
   no overload. Stall 26 s / 78 s; the stall diagnostic now finds only pucks
   pinned in the back corner (y 0.041, x 0.959), no held pucks.
 
+- 06:45 — anti-holding fine-tune 40M dev suite: fast defense 94.7% (S 95.7 /
+  L 92.6 / R 95.7), immediate 50.1%, requested fast shots stationary S/L/R
+  71/56/67 of 128 (production 75/38/42), moving 86/39/64 (61/36/42),
+  receiving 24/3/8 (88/86/81), slow-control fast aimed 70.8% (61.7%),
+  corner/side 21/15 (22/17), games vs production 48-0 / 51-0, hot 4x600 s
+  22-1, no overload (peak 0.827), stall 295 s. At 80M steps the human proxy
+  gives club 216-3 (98.6%, CI 96.9-100), GF/min 3.38, GA/min 0.047, stall 0;
+  elite 252-21 (92.3%, CI 89.2-95.2), GF/min 3.94, GA/min 0.33, stall 26 s;
+  no overload. Remaining stall samples are rail/corner pucks (61% in the
+  back corner), 36% of them above the 0.86 heat gate. Holdout suite started
+  on the 80M checkpoint.
+
 ## Queued next (not started)
 
 1. Shots off moving pucks: the hybrid student is weak at one-timers
