@@ -35,8 +35,39 @@ def interval(successes, count):
     return [float(center-half), float(center+half)]
 
 
+SPEED_RANGE = (10., 18.)
+BANK_FRACTION = 2/3
+RELEASE_Y_RANGE = (1.08, 1.45)
+
+
+def attack_routes(rng, count, bank_fraction=BANK_FRACTION):
+    """Hidden routes, shuffled: 0 straight, -1 left-rail bank, +1 right-rail bank.
+
+    The default two-thirds split keeps the original equal three-way tile so
+    seeded fixtures (and every number recorded with them) are unchanged.
+    """
+    if not np.isfinite(bank_fraction) or not 0 <= bank_fraction <= 1:
+        raise ValueError('bank fraction must be within [0,1]')
+    if abs(bank_fraction - BANK_FRACTION) < 1e-12:
+        route = np.tile(np.array([0, -1, 1]), (count+2)//3)[:count]
+    else:
+        banks = int(round(count*bank_fraction))
+        route = np.concatenate((np.zeros(count-banks, int), -np.ones((banks+1)//2, int),
+                                np.ones(banks//2, int)))
+    rng.shuffle(route)
+    return route
+
+
 def evaluate(checkpoint, *, count=768, seed=20261051, environment_from=BASE,
-             immediate=False, record_prefix=None, device='cpu', heuristic=None):
+             immediate=False, record_prefix=None, device='cpu', heuristic=None,
+             speed_range=SPEED_RANGE, bank_fraction=BANK_FRACTION,
+             release_y_range=RELEASE_Y_RANGE):
+    speed_lo, speed_hi = map(float, speed_range)
+    release_lo, release_hi = map(float, release_y_range)
+    if not np.isfinite([speed_lo, speed_hi]).all() or not 0 < speed_lo <= speed_hi <= 25:
+        raise ValueError('attack speeds must be ordered and within (0,25] m/s')
+    if not np.isfinite([release_lo, release_hi]).all() or not 1.0 <= release_lo <= release_hi <= 1.9:
+        raise ValueError('release depths must be ordered and within the far half [1.0,1.9] m')
     torch.set_num_threads(2)
     torch.manual_seed(seed)
     options = checkpoint_environment(environment_from)
@@ -51,13 +82,12 @@ def evaluate(checkpoint, *, count=768, seed=20261051, environment_from=BASE,
     env = NeuralTrainingEnv(count, stage=2, seed=seed, report_sensing=True,
         shot_conditioned=net.shot_conditioned, **options,
         defense_windup_lateral_speed=.4, defense_windup_bank_fraction=2/3)
-    env.cfg.max_puck_speed = 18
+    env.cfg.max_puck_speed = max(18., speed_hi)
     rng = np.random.default_rng(seed+31)
-    route = np.tile(np.array([0,-1,1]), (count+2)//3)[:count]
-    rng.shuffle(route)
-    speed = rng.uniform(10,18,count)
+    route = attack_routes(rng, count, bank_fraction)
+    speed = rng.uniform(speed_lo,speed_hi,count)
     puck = np.zeros((count,4))
-    puck[:,:2] = rng.uniform([.15,1.08],[.85,1.45],(count,2))
+    puck[:,:2] = rng.uniform([.15,release_lo],[.85,release_hi],(count,2))
     puck[:,2] = rng.uniform(-.4,.4,count) if not immediate else 0
     paddle = rng.uniform(env.decoder.low+.005,env.decoder.high-.005,(count,2))
     aim = rng.uniform(.5-env.cfg.goal_width/2+env.cfg.puck_radius+.012,
@@ -126,7 +156,9 @@ def evaluate(checkpoint, *, count=768, seed=20261051, environment_from=BASE,
             peak_load=float(peak[mask].max()) if n else None,
             overload_seconds=float(overload[mask].sum()))
     groups={name:summary(route==code) for name,code in [('straight',0),('left_bank',-1),('right_bank',1)]}
-    groups.update({name:summary(mask) for name,mask in [('10-14m_s',speed<14),('14-18m_s',speed>=14),('cold',loads<.5),('warm',loads>=.5)]})
+    middle=(speed_lo+speed_hi)/2
+    groups.update({name:summary(mask) for name,mask in [(f'{speed_lo:g}-{middle:g}m_s',speed<middle),
+        (f'{middle:g}-{speed_hi:g}m_s',speed>=middle),('cold',loads<.5),('warm',loads>=.5)]})
     recordings=[]
     if record_prefix:
         for name,code in [('straight',0),('left_bank',-1),('right_bank',1)]:
@@ -150,6 +182,8 @@ def evaluate(checkpoint, *, count=768, seed=20261051, environment_from=BASE,
     return dict(checkpoint=str(checkpoint) if not heuristic else heuristic,
         heuristic=heuristic,sha256=hashlib.sha256(Path('ai/airhockey/defense_baselines.py' if heuristic else 'ai/airhockey/expert_player.py' if str(checkpoint).startswith('expert') else checkpoint).read_bytes()).hexdigest(),
         seed=seed,immediate=immediate,metric='First on-goal attack blocked; no reward for control or counterattack',
+        scenario=dict(speed_range_m_s=[speed_lo,speed_hi],bank_fraction=float(bank_fraction),
+                      release_y_range_m=[release_lo,release_hi]),
         summary=summary(np.ones(count,bool)),groups=groups,details=rows,replays=recordings)
 
 
@@ -160,6 +194,20 @@ if __name__=='__main__':
     p.add_argument('--immediate',action='store_true');p.add_argument('--record-prefix',type=Path)
     p.add_argument('--device',default='cpu')
     p.add_argument('--heuristic',choices=['deep-bank','forward-bank','deep-direct'])
-    a=p.parse_args();r=evaluate(a.checkpoint,count=a.trials,seed=a.seed,immediate=a.immediate,record_prefix=a.record_prefix,device=a.device,heuristic=a.heuristic)
+    p.add_argument('--speed-min',type=float,default=SPEED_RANGE[0],help='Slowest hidden release, m/s (default 10)')
+    p.add_argument('--speed-max',type=float,default=SPEED_RANGE[1],help='Fastest hidden release, m/s (default 18)')
+    p.add_argument('--bank-fraction',type=float,default=BANK_FRACTION,
+                   help='Share of single side-rail banks, split evenly left/right (default 2/3)')
+    p.add_argument('--release-y-min',type=float,default=RELEASE_Y_RANGE[0],
+                   help='Nearest release point to the robot goal, sim m (default 1.08; centre line 1.0)')
+    p.add_argument('--release-y-max',type=float,default=RELEASE_Y_RANGE[1],help='Deepest release point, sim m (default 1.45)')
+    a=p.parse_args()
+    try:
+        options=dict(speed_range=(a.speed_min,a.speed_max),bank_fraction=a.bank_fraction,
+                     release_y_range=(a.release_y_min,a.release_y_max))
+        r=evaluate(a.checkpoint,count=a.trials,seed=a.seed,immediate=a.immediate,record_prefix=a.record_prefix,
+                   device=a.device,heuristic=a.heuristic,**options)
+    except ValueError as error:
+        p.error(str(error))
     a.output.parent.mkdir(parents=True,exist_ok=True);a.output.write_text(json.dumps(r,indent=2))
     print(json.dumps({k:v for k,v in r.items() if k!='details'}),flush=True)

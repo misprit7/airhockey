@@ -53,6 +53,7 @@ OPP_CORNER = 4
 OPP_RANDOM = 5
 OPP_SNIPER = 6        # scripted striker on a free body: fast shots at the goal
 OPP_WEAK_GOALIE = 7   # scripted, slow, tracks the puck across its line
+OPP_HUMAN_PROXY = 8   # free body commanded each tick by airhockey.human_proxy
 
 _OPP_POLICY_MAP = {
     "idle": OPP_IDLE,
@@ -63,7 +64,10 @@ _OPP_POLICY_MAP = {
     "random": OPP_RANDOM,
     "sniper": OPP_SNIPER,
     "weak_goalie": OPP_WEAK_GOALIE,
+    "human_proxy": OPP_HUMAN_PROXY,
 }
+# Far-side kinds that drive the first-order free body instead of _opp_dyn.
+_FREE_BODY_KINDS = (OPP_SNIPER, OPP_WEAK_GOALIE, OPP_HUMAN_PROXY)
 
 
 class BatchAirHockeyEnv:
@@ -204,6 +208,14 @@ class BatchAirHockeyEnv:
     WEAK_SPEED = 2.0
     WEAK_ACCEL = 15.0
     WEAK_DEADZONE = 0.08
+    # HUMAN PROXY (benchmark opponent, airhockey/human_proxy.py): the script
+    # lives outside the env and reads only observations. The env holds its
+    # latest command -- a target, speed and accel cap for the free body --
+    # set once per tick with set_human_proxy_command(). Until the first
+    # command it holds its station at the caps below.
+    PROXY_STATION_Y = 0.15
+    PROXY_IDLE_SPEED = 1.5
+    PROXY_IDLE_ACCEL = 30.0
 
     # Sensing fuzz (ai/RETRAIN.md item 6): in a fuzz_p fraction of episodes
     # the camera loses the opponent's mallet for FUZZ_OPP_WINDOWS spells of
@@ -582,6 +594,12 @@ class BatchAirHockeyEnv:
         self._sniper_t = np.zeros(n_envs)
         self._sniper_aim_x = np.full(n_envs, cfg.width / 2.0)
         self._sniper_speed = np.full(n_envs, self.SNIPER_STRIKE_SPEED[0])
+        # Human-proxy command (table frame), written once per tick by the
+        # external script; read only for envs of that kind.
+        self._proxy_target_x = np.full(n_envs, cfg.width / 2.0)
+        self._proxy_target_y = np.full(n_envs, cfg.height - self.PROXY_STATION_Y)
+        self._proxy_speed = np.full(n_envs, self.PROXY_IDLE_SPEED)
+        self._proxy_accel = np.full(n_envs, self.PROXY_IDLE_ACCEL)
 
         # The firmware keeps the cart's PATH inside the box, not only its
         # target (motionProfileContain); the sim's profile body gets the same
@@ -851,7 +869,7 @@ class BatchAirHockeyEnv:
 
         # The free-body scripts start on their stations, whatever the
         # far-side body is, and are exempt from the robot box below.
-        self._opp_free = np.isin(self._opp_policy_id, (OPP_SNIPER, OPP_WEAK_GOALIE))
+        self._opp_free = np.isin(self._opp_policy_id, _FREE_BODY_KINDS)
         sniper_reset = resetting & (self._opp_policy_id == OPP_SNIPER)
         if np.any(sniper_reset):
             self.engine.paddle_opp_x[sniper_reset] = cfg.width / 2
@@ -862,6 +880,15 @@ class BatchAirHockeyEnv:
         if np.any(weak_reset):
             self.engine.paddle_opp_x[weak_reset] = cfg.width / 2
             self.engine.paddle_opp_y[weak_reset] = cfg.height - self.WEAK_STATION_Y
+        proxy_reset = resetting & (self._opp_policy_id == OPP_HUMAN_PROXY)
+        if np.any(proxy_reset):
+            self.engine.paddle_opp_x[proxy_reset] = cfg.width / 2
+            self.engine.paddle_opp_y[proxy_reset] = cfg.height - self.PROXY_STATION_Y
+            # No stale command survives a reset: hold the station gently.
+            self._proxy_target_x[proxy_reset] = cfg.width / 2
+            self._proxy_target_y[proxy_reset] = cfg.height - self.PROXY_STATION_Y
+            self._proxy_speed[proxy_reset] = self.PROXY_IDLE_SPEED
+            self._proxy_accel[proxy_reset] = self.PROXY_IDLE_ACCEL
 
         if self._ws_opp is not None:
             boxed = resetting & ~self._opp_free
@@ -1349,6 +1376,30 @@ class BatchAirHockeyEnv:
         self._ext_opp_target_x = target_x.copy()
         self._ext_opp_target_y = target_y.copy()
 
+    def set_human_proxy_command(self, target_x, target_y, max_speed, max_accel,
+                                time_constant=None) -> None:
+        """Command the free far-side body for envs of kind "human_proxy".
+
+        Table frame, metres; caps in m/s and m/s^2 hold until the next call
+        (one per action tick). time_constant, when given, sets the body's
+        first-order lag per env. Other envs ignore these values.
+        """
+        values = [np.broadcast_to(np.asarray(v, dtype=float), (self.n_envs,))
+                  for v in (target_x, target_y, max_speed, max_accel)]
+        if not all(np.isfinite(v).all() for v in values):
+            raise ValueError("human-proxy commands must be finite")
+        if (values[2] <= 0).any() or (values[3] <= 0).any():
+            raise ValueError("human-proxy speed and accel caps must be positive")
+        self._proxy_target_x[:], self._proxy_target_y[:] = values[0], values[1]
+        self._proxy_speed[:], self._proxy_accel[:] = values[2], values[3]
+        if time_constant is not None:
+            tc = np.broadcast_to(np.asarray(time_constant, dtype=float), (self.n_envs,))
+            if not np.isfinite(tc).all() or (tc <= 0).any():
+                raise ValueError("human-proxy time constant must be finite and positive")
+            # Only the proxy's envs: a scripted kind sharing the batch keeps its lag.
+            proxy = self._opp_policy_id == OPP_HUMAN_PROXY
+            self._opp_dyn_free["time_constant"][proxy] = tc[proxy]
+
     @property
     def external_mask(self) -> np.ndarray:
         """Boolean mask [N] — True for envs using external (self-play) opponent."""
@@ -1733,6 +1784,14 @@ class BatchAirHockeyEnv:
                                              self.SNIPER_WAIT_SPEED)
             free["max_accel"][sn] = np.where(striking[sn], self.SNIPER_STRIKE_ACCEL,
                                              self.SNIPER_WAIT_ACCEL)
+
+        # ── human proxy: the externally set command, nothing computed here ──
+        hp = self._opp_policy_id == OPP_HUMAN_PROXY
+        if np.any(hp):
+            tx = np.where(hp, self._proxy_target_x, tx)
+            ty = np.where(hp, self._proxy_target_y, ty)
+            free["max_speed"][hp] = self._proxy_speed[hp]
+            free["max_accel"][hp] = self._proxy_accel[hp]
         # The half is the script's limit; the far wall is the body's.
         r = cfg.paddle_radius
         tx = np.clip(tx, r, W - r)

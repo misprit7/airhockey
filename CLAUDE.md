@@ -67,6 +67,15 @@ Robotic air hockey table that uses reinforcement learning trained in simulation,
     - `eval_play.py` - The shared play loop for the checkpoint diagnostics
       in `bin/` (env vs one named opponent, planner or prior, the far side
       driven by the same checkpoint when "external").
+    - `human_proxy.py` - BENCHMARK OPPONENT standing in for a person
+      (2026-10-18): drives the free far-side body (`BatchAirHockeyEnv` kind
+      "human_proxy", commanded once per tick via
+      `set_human_proxy_command`) from the far side's own camera view only.
+      Reaches the centre line; per-game speed/accel caps, lag and a
+      0.15-0.25 s reaction delay when defending; strikes slow pucks (half
+      single side-rail banks, release speed calibrated to the people's
+      attacks), feints, soft blocks, reads the robot's mallet. Tiers
+      `club` and `elite` (8-14 m/s shots). Never a runtime controller.
     - `run_names.py` - The `<major>.<minor>-<description>-<stage>` scheme,
       enforced by both trainers (see "Run names").
     - `perception.py` - The sim's tracker model: 6-frame slope estimator,
@@ -103,6 +112,15 @@ Robotic air hockey table that uses reinforcement learning trained in simulation,
       each vs the scripted opponents, realistic sensing + DR, shared fixtures
     - `eval_policy.py` - A trained policy on the SAME terms (90 s games, same
       seed, same opponents) so its rows compare line-for-line with the bots'
+    - `eval_human_proxy.py` - The "against people" headline: a candidate
+      (checkpoint or `expert...`) on the robot body vs the human-proxy panel,
+      64 x 60 s paired games per tier, live-like sensing/rules/heat. Goal
+      share with a bootstrap CI, GF/GA per minute, concessions by route, and
+      the panel's own play checked against the table sessions with people
+      (`calibration.checks`). `--record <dir>/<name>` writes web replays.
+    - `eval_fast_defense.py` - First-attack defense benchmark; `--speed-min/
+      --speed-max/--bank-fraction/--release-y-min/--release-y-max` re-tier
+      it (defaults reproduce the original fixtures exactly)
     - `follow_test_rescore.py` - Re-judge a tracking-test CSV with the
       current scoring
     - `run_policy.py` - Drives the table from a policy: heuristic bots or a
@@ -142,6 +160,10 @@ Robotic air hockey table that uses reinforcement learning trained in simulation,
       the demonstrator; the naming scheme and `trained_horizon`; encoder vs
       env parity; the runner's shedder, lag gate, caps and watchdog; the
       tracking test in virtual time; the planner smoothness flags
+    - `test_human_proxy.py` - the benchmark person: reach to the centre line
+      and drawn caps, camera-only input, reaction delay when defending but
+      not for a planned strike, paired panels, untouched old kinds, the
+      fast-defense defaults
 - `shared/` - Geometry shared by every control path. **Canonical.**
   - `cdpr_geometry.h` - Table frame, motor anchors, spool, paddle attachment,
     and the cable-length model (tangency + wrap). Included by `fw/` and
@@ -433,6 +455,13 @@ python ai/bin/bench_planner.py --run 3.11-shot-ramp-selfplay --compile
 python ai/bin/eval_heuristics.py
 python ai/bin/eval_heuristics.py --bots goalie,striker --opponents random
 python ai/bin/eval_policy.py 3.11-shot-ramp-selfplay --iterations 6   # a checkpoint on the same terms
+
+# Against people (sim): club + elite human-proxy panels, ~40 s CPU per tier
+python ai/bin/eval_human_proxy.py runs/rail30-100-20261001-v1/agent.pt
+python ai/bin/eval_human_proxy.py expert --tier club --record ai/recordings/expert
+# Fast defense at human speeds (defaults = the original 10-18 m/s fixtures)
+python ai/bin/eval_fast_defense.py expert --output logs/fd-human.json \
+    --speed-min 3.7 --speed-max 10 --bank-fraction 0.5 --release-y-min 1.0
 ```
 
 ## Hardware

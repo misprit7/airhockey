@@ -252,7 +252,8 @@ class ArrivalEnv:
         self.base._opp_policy_id[ids] = [_OPP_POLICY_MAP[k] for k in kind]
         self.base._opp_free = np.isin(
             self.base._opp_policy_id,
-            [_OPP_POLICY_MAP["sniper"], _OPP_POLICY_MAP["weak_goalie"]],
+            [_OPP_POLICY_MAP["sniper"], _OPP_POLICY_MAP["weak_goalie"],
+             _OPP_POLICY_MAP["human_proxy"]],
         )
         self.base.reset(seed=seed, mask=mask)
         for j, k in enumerate(("puck_x", "puck_y", "puck_vx", "puck_vy")):
