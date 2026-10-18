@@ -54,7 +54,7 @@ def argv(a):
            "--defense-windup-fraction", "0.85", "--defense-windup-bank-fraction", "0.5", "--defense-windup-lateral-speed", "0.5",
            "--defense-min-speed", "5", "--defense-max-speed", "16", "--defense-clear-reward", "300", "--defense-block-only",
            "--defensive-depth-weight", "0", "--defensive-depth-target", "0.3", "--slow-exit-penalty", "0.0",
-           "--possession-delay-weight", "6.0", "--game-episode-seconds", "900.0", "--stationary-failure-penalty", "600.0",
+           "--possession-delay-weight", str(a.possession_delay), "--game-episode-seconds", "900.0", "--stationary-failure-penalty", "600.0",
            "--stationary-rest-fraction", "0.5",
            "--stationary-replay", "logs/neural-player/expanded-100-consolidation-20261001/expanded-failures.npz",
            "--stationary-replay-fraction", "0.5", "--edge-drill-fraction", ".1", "--corner-drill-fraction", ".1",
@@ -85,6 +85,8 @@ def main():
     p.add_argument("--anneal", type=int, default=200_000_000)
     p.add_argument("--seed", type=int, default=20261018)
     p.add_argument("--measured-contact", action="store_true")
+    p.add_argument("--possession-delay", type=float, default=6.0,
+                   help="Cost per second (after 4 s, capped at 14 s) of keeping the puck on our half in games")
     p.add_argument("--teacher-mask", default="all", choices=["all", "defense", "threat", "attack"],
                    help="States regularised toward the teacher (defense = threat + guard)")
     p.add_argument("--print", action="store_true", help="print the command instead of running it")
