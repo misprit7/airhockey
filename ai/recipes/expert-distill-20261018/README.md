@@ -340,6 +340,22 @@ protection, damage or wiring), not a policy effect. Hardware for the user.
   g's final checkpoint with the linear cost, weight 40.
 - Gate before any table run: idle cap median <= ~6 m/s², and the
   per-tick-change p90 near production's.
+- h (166M steps) kept the goal share: final club 298-6, elite 353-15; 120M
+  club 305-6, elite 333-23. Calm cap 0.19-0.21, high share 0.21-0.27. But the
+  idle cap only went 15 -> 12-13 m/s². Measured on a wider idle set (puck on
+  the far half, puck and rival under 0.6 m/s, 64 games x 90 s, 2-5k ticks):
+
+  | checkpoint | idle cap p50 / p90 (m/s²) | cmd change p50 / p90 (mm) |
+  |---|---|---|
+  | production rail30-100-20261001-v1 | 5 / 6 | 5.3 / 37.5 |
+  | v2 | 56 / 57 | 4.8 / 27.4 |
+  | g final | 15 / 29 | 3.8 / 55.1 |
+  | h 120M | 12 / 14 | 2.3 / 42.1 |
+  | h final | 13 / 15 | 2.6 / 40.2 |
+
+  Gate not met. The weight-40 linear cost is ~0.06/s at a 0.12 cap, which is
+  negligible next to goal terms. `_neural-teacher-calm-20261018-i` continues
+  from h's final checkpoint at weight 200, linear, for 60 min.
 
 ## Queued next (not started)
 
