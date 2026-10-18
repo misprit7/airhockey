@@ -4,6 +4,50 @@ Simulation only. No hardware calls, firmware changes or deployment-default
 changes. The robot still runs exactly one learned network at the table; the
 teacher below exists only to train and to benchmark it.
 
+## Morning summary (07:00)
+
+**Candidate: `runs/teacher-ppo-20261018-v2`** (sha256 ed6b7da8..., one
+1536-wide NeuralPlayer, `neural_ppo_v1`, same 675-input / 6-output arrival
+interface, limits, workspace and thermal model as production). Passes
+`run_policy.py --check-policy`. Not physically qualified; nothing was run on
+the robot. Held-out seeds (`suite.py --tier holdout`, each candidate once):
+
+| held-out benchmark | production v1 | **v2** |
+|---|---:|---:|
+| human proxy, club tier, 128x60 s | 71.0% (303-124) | **97.4% (341-9)**, CI 95.7-98.9 |
+| human proxy, elite tier (8-14 m/s shots) | 59.5% (379-258) | **91.0% (453-45)**, CI 88.3-93.4 |
+| goals scored / conceded per minute (club) | 2.37 / 0.97 | **2.66 / 0.07** |
+| fast attacks blocked, 10-18 m/s, 2/3 banks (3072) | 27.1% (left banks 2.1%) | **96.9%** (left 96.2%, right 97.2%) |
+| immediate-release saves (1536) | 26.8% | **50.8%** |
+| games vs production, 48x60 s each seat | -- | **226-9** |
+| hot endurance 16x900 s (start 0.8, gain 1.3) | 2879 s overload, peak 1.057 | **0 s, peak 0.847** |
+| requested fast shots, stationary S/L/R (of 256) | 126 / 82 / 80 | **168 / 104 / 131** |
+| slow puck: fast aimed return (1536) | 60.9% | **78.6%** |
+| corner / side-rail recovery (of 256) | 37 / 32 | **124** / 28 |
+| one-timers: requested fast shots receiving S/L/R | **172 / 158 / 179** | 49 / 14 / 14 |
+
+How it was made: a simulation-only physics teacher (`expert_player.py`)
+-> DAgger into production's network widened to 1536, with the teacher
+labelling defense/guard states and production labelling its own slow-puck
+attacks (arm D) -> PPO, teacher-regularised on defense: 51M steps, then
+80M with a stronger possession-delay cost after the first fine-tune learned
+to hold the puck. The human proxy (`eval_human_proxy.py`) is calibrated to
+the table sessions with people; production's ~58% inferred goal share on
+the real table vs 71% here says the proxy is somewhat easier than the
+person, so read the gap, not the level.
+
+Known weaknesses: one-timers off fast incoming pucks; slow pucks pinned at
+a rail or in a back corner can sit (529 s over 16x900 s hot games; when the
+drives are hot the teacher-derived behaviour backs off rail pucks by
+design); sim contact is still the historical paddle model (the measured one
+is opt-in and not used for v2). Fallback: `runs/teacher-dagger-20261018-v1`
+(the DAgger student before fine-tuning; club 92.4%, elite 88.2% held-out).
+
+Replays (web UI): `teacher-ppo-v2-vs-production.json`,
+`teacher-ppo-v2-vs-proxy_vs_human-proxy-{club,elite}-g{0,1}.json`.
+First table run, at the user's discretion (the runner flags `--gentle` as a
+deviation): `bash ai/bin/play.sh --policy neural:teacher-ppo-20261018-v2 --gentle`.
+
 ## Objective
 
 A much stronger player against people on the physical table, under the same

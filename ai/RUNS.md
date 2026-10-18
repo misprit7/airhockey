@@ -151,3 +151,22 @@ that snapshot with the earlier successful shot examples plus successful
 neural retrieval prefixes. Its edge cost is 20/second/rail (2 points for a
 100 ms visit, versus a 600-point goal); load weight is 48 and shutdown cost
 12,000. These remain simulation-only experiments, not production selections.
+
+
+## Teacher distillation (2026-10-18)
+
+Record: `ai/recipes/expert-distill-20261018/README.md`. Simulation only.
+
+- `_distill-smoke-20261018`: 3-round DAgger smoke from production, teacher v0.
+- `_neural-teacher-dagger-20261018-a` / `-b`: DAgger from the smoke student,
+  merged teacher; `-b` under the measured paddle contact. Strong defense,
+  weak striking.
+- `-c`, `-e`: continuations of `-a` (width 1536, attack-weighted; `-e` with an
+  earlier-striking teacher). Stopped.
+- `_neural-teacher-dagger-20261018-d`: production widened to 1536, teacher
+  labels for defense/guard, production labels for slow attacks; packaged as
+  **`teacher-dagger-20261018-v1`**.
+- `_neural-teacher-ppo-20261018-d`: PPO from `-d` (teacher-regularised
+  defense); learned to hold the puck; stopped at 51M.
+- `_neural-teacher-ppo-20261018-e`: PPO from `-d`@51M with possession delay
+  30/s; agent_step_080216064 packaged as **`teacher-ppo-20261018-v2`**.
