@@ -43,6 +43,14 @@ design); sim contact is still the historical paddle model (the measured one
 is opt-in and not used for v2). Fallback: `runs/teacher-dagger-20261018-v1`
 (the DAgger student before fine-tuning; club 92.4%, elite 88.2% held-out).
 
+Transfer check under the table-measured paddle contact (both players;
+paddle restitution 0.40-0.65, tangential 0.76-0.84; dev seeds): v2 vs
+production 18-2 in 32x60 s (production vs itself 28-40); human proxy club
+188-4 (97.9%) vs production 151-26 (85.3%), elite 240-20 (92.3%) vs 202-94
+(68.2%, 71 s overload); v2 no overload. Full test suite after the night:
+891 passed, 11 failed -- the same 11 pre-existing failures as before.
+
+Report page: http://localhost:8420/training/reports/20261018 .
 Replays (web UI): `teacher-ppo-v2-vs-production.json`,
 `teacher-ppo-v2-vs-proxy_vs_human-proxy-{club,elite}-g{0,1}.json`.
 First table run, at the user's discretion (the runner flags `--gentle` as a
@@ -304,7 +312,8 @@ thermal recipe `motor-load-20261001` at gain 1.3 (0.95 training shutdown,
 | `_neural-teacher-dagger-20261018-b` | DAgger, measured paddle contact (pre heat gate) | stopped after round 6 (memory) |
 | `_neural-teacher-dagger-20261018-d` | production widened to 1536; teacher defense labels, production attack labels | done (6 rounds) |
 | `_neural-teacher-ppo-20261018-d` | PPO fine-tune of D, teacher-regularised defense | stopped at 51M: better defense, learned to hold the puck |
-| `_neural-teacher-ppo-20261018-e` | continuation from 51M with possession delay 30/s | running (45 min) |
+| `_neural-teacher-ppo-20261018-e` | continuation from 51M with possession delay 30/s | done (105M); 80M packaged as `teacher-ppo-20261018-v2` |
+| `_neural-teacher-ppo-20261018-f` | v2 fine-tuned 42 min under the measured paddle contact | experimental; see the end of this file |
 | `_neural-teacher-dagger-20261018-e` | continuation of C with an earlier-striking teacher | stopped after round 4 |
 
 ## Results

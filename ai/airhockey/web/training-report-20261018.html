@@ -1,0 +1,34 @@
+<!doctype html><html><head><meta charset="utf-8"><meta name="viewport" content="width=device-width"><title>Teacher distillation — October 18</title><style>body{background:#101827;color:#e5e7eb;font:16px system-ui;max-width:1300px;margin:30px auto;padding:20px}a{color:#7dd3fc}p,li{line-height:1.6}td,th{padding:9px 12px;border-bottom:1px solid #374151;text-align:left}th{color:#9ca3af;font-weight:600}td.n{text-align:right;font-variant-numeric:tabular-nums}.scroll{overflow:auto}table{border-collapse:collapse}.good{color:#86efac}.weak{color:#fca5a5}code{color:#a7f3d0}</style></head><body>
+<h1>Teacher distillation — October 18</h1>
+<p><b>Complete — candidate <code>teacher-ppo-20261018-v2</code>; simulation only, not physically qualified.</b><br>
+One neural network at runtime (same 675-input / 6-output arrival interface, limits, workspace and thermal model as production). Nothing was run on the robot. Record: <code>ai/recipes/expert-distill-20261018/README.md</code>. <a href="/training">Live run status and checkpoints</a></p>
+<section><h2>Held-out results</h2><p>Reserved seeds (<code>suite.py --tier holdout</code>), each candidate evaluated once. The human proxy (<code>eval_human_proxy.py</code>) is a scripted far-side person calibrated to the table sessions: reach to the centre line, reaction delay when defending, half single-rail banks, club and elite (8–14 m/s) tiers.</p>
+<div class="scroll"><table>
+<tr><th>Held-out benchmark</th><th>Production v1</th><th>Distilled v1</th><th>Fine-tuned v2</th></tr>
+<tr><td>Human proxy, club tier (128 × 60 s)</td><td class="n">71.0% (303–124)</td><td class="n">92.4% (278–23)</td><td class="n good">97.4% (341–9)</td></tr>
+<tr><td>Human proxy, elite tier</td><td class="n">59.5% (379–258)</td><td class="n">88.2% (388–52)</td><td class="n good">91.0% (453–45)</td></tr>
+<tr><td>Goals scored / conceded per minute (club)</td><td class="n">2.37 / 0.97</td><td class="n">2.17 / 0.18</td><td class="n good">2.66 / 0.07</td></tr>
+<tr><td>Fast attacks blocked, 10–18 m/s, 2/3 banks (3072)</td><td class="n">27.1%</td><td class="n">86.9%</td><td class="n good">96.9%</td></tr>
+<tr><td>Left / right banks blocked</td><td class="n">2.1% / 9.1%</td><td class="n">76.5% / 88.9%</td><td class="n good">96.2% / 97.2%</td></tr>
+<tr><td>Immediate-release saves (1536)</td><td class="n">26.8%</td><td class="n">43.3%</td><td class="n good">50.8%</td></tr>
+<tr><td>Games vs production, 48 × 60 s each seat</td><td class="n">—</td><td class="n">71–11</td><td class="n good">226–9</td></tr>
+<tr><td>Hot endurance 16 × 900 s (start 0.8, gain 1.3): overload</td><td class="n weak">2879 s, peak 1.057</td><td class="n">0 s, peak 0.854</td><td class="n good">0 s, peak 0.847</td></tr>
+<tr><td>Requested fast shots, stationary S/L/R (of 256)</td><td class="n">126 / 82 / 80</td><td class="n">88 / 35 / 64</td><td class="n good">168 / 104 / 131</td></tr>
+<tr><td>Slow puck: fast aimed return (1536)</td><td class="n">60.9%</td><td class="n">47.1%</td><td class="n good">78.6%</td></tr>
+<tr><td>Corner / side-rail recovery (of 256)</td><td class="n">37 / 32</td><td class="n">57 / 39</td><td class="n">124 / 28</td></tr>
+<tr><td>One-timers: requested fast shots receiving S/L/R</td><td class="n good">172 / 158 / 179</td><td class="n weak">12 / 6 / 6</td><td class="n weak">49 / 14 / 14</td></tr>
+</table></div></section>
+<section><h2>Replays</h2><ul>
+<li><a href="/?replay=teacher-ppo-v2-vs-production.json">v2 vs production (2 × 120 s)</a></li>
+<li><a href="/?replay=teacher-ppo-v2-vs-proxy_vs_human-proxy-club-g0.json">v2 vs club proxy, game 1</a> · <a href="/?replay=teacher-ppo-v2-vs-proxy_vs_human-proxy-club-g1.json">game 2</a></li>
+<li><a href="/?replay=teacher-ppo-v2-vs-proxy_vs_human-proxy-elite-g0.json">v2 vs elite proxy, game 1</a> · <a href="/?replay=teacher-ppo-v2-vs-proxy_vs_human-proxy-elite-g1.json">game 2</a></li>
+<li><a href="/?replay=teacher-dagger-d-vs-production.json">distilled v1 vs production</a></li>
+</ul></section>
+<section><h2>How it was made</h2><ol>
+<li>A simulation-only physics teacher (<code>expert_player.py</code>) that sees the same delayed frames and drives the same decoder, guard and thermal model: minimum-time blocks on the line with the most time margin, banks forecast under the rail-restitution spread, deep load-scheduled guard, contact-normal strikes, and rail pucks left alone when the drives are hot.</li>
+<li>DAgger into production's network widened to 1536: the teacher labels defense and guard states; production's own action labels its slow-puck attacks (the teacher's precise strikes did not survive imitation).</li>
+<li>PPO with the trainer's new regime (adaptive learning rate from 1e-6, std floor, critic warm-up) and teacher regularisation on defense: 51M steps, then 80M with a 30/s possession-delay cost after the first fine-tune learned to hold the puck.</li>
+</ol>
+<p><b>Known weaknesses:</b> one-timers off fast incoming pucks; slow pucks pinned at a rail or back corner can sit, especially when the drives are hot; the sim still uses the historical paddle contact (the table-measured one is opt-in). The proxy is somewhat easier than the real person (production's inferred table share ~58% vs 71% here): read the gap, not the level.</p>
+<p><b>Table, at the user's discretion:</b> <code>bash ai/bin/play.sh --policy neural:teacher-ppo-20261018-v2 --gentle</code> (the runner names <code>--gentle</code> as a deviation).</p></section>
+</body></html>
