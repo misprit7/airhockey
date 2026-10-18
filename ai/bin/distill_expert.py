@@ -44,7 +44,7 @@ import torch
 from airhockey.arrival import ArrivalDecoder
 from airhockey.distillation import (DistillationEnv, Collector, LabelBuffer, RollIn, StandardizedInputs,
                                     actor_parameters, fit, heldout_report, parse_floats, parse_mix,
-                                    physical_scales, widened)
+                                    physical_scales, relabel_with_network, slow_attack_rows, widened)
 from airhockey.dynamics import workspace_in_sim
 from airhockey.expert_player import load_expert, parse_spec
 from eval_neural_player import load
@@ -264,6 +264,11 @@ def main():
     p.add_argument("--device", choices=["auto", "cpu", "cuda"], default="auto")
     p.add_argument("--torch-threads", type=int, default=4)
     p.add_argument("--seed", type=int, default=20261018)
+    p.add_argument("--attack-labels", choices=["teacher", "production"], default="teacher",
+                   help="Who labels states the teacher would attack on a slow or outgoing puck: the teacher, "
+                        "or --production's own network (keeps its trained attack; the teacher labels the rest)")
+    p.add_argument("--attack-production-max-speed", type=float, default=2.5,
+                   help="With --attack-labels production: puck speed below which (or moving away) attack rows are relabelled")
     p.add_argument("--paddle-restitution-range", type=float, nargs=2, metavar=("LOW", "HIGH"),
                    help="Override the recorded curriculum's paddle restitution range (table: 0.47-0.59)")
     p.add_argument("--paddle-tangential-range", type=float, nargs=2, metavar=("LOW", "HIGH"),
@@ -450,6 +455,11 @@ def main():
                                   labelled_per_s=round(collected["labelled_per_s"]),
                                   robot_transitions_per_s=round(collected["transitions_per_s"]),
                                   buffer=buffer.size, games=collected["games"], shutdowns=collected["shutdowns"])), flush=True)
+            if args.attack_labels == "production":
+                rows = slow_attack_rows(buffer, [k], args.attack_production_max_speed)
+                relabelled = relabel_with_network(buffer, production, rows, device=device)
+                emit("relabel", round=k, rows=relabelled, by="production")
+                print(json.dumps(dict(round=k, relabelled_by_production=relabelled)), flush=True)
             before = heldout_report(student, buffer, device=device, scales=scales, rounds=[k])
             publish(phase="fitting", step=robot_total, labelled=buffer.added)
             if optimizer is None:

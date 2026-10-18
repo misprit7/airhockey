@@ -306,6 +306,31 @@ class LabelBuffer:
         return torch.nonzero(mask).squeeze(1)
 
 
+@torch.no_grad()
+def relabel_with_network(buffer, net, rows, *, device, chunk=65536):
+    """Overwrite the labels of `rows` with `net`'s deterministic actions.
+
+    Used to keep an existing network's behaviour (e.g. production's attack)
+    on a subset of states while the teacher labels the rest.
+    """
+    rows = torch.as_tensor(rows, dtype=torch.long)
+    for start in range(0, len(rows), chunk):
+        part = rows[start:start + chunk]
+        obs = buffer.obs[part].to(device).float()
+        action = net.actor(net.trunk(obs)).tanh()
+        buffer.label[part] = action.to(buffer.label.device, buffer.label.dtype)
+    return len(rows)
+
+
+def slow_attack_rows(buffer, rounds, max_speed):
+    """Rows of `rounds` the teacher labelled as attacks on a slow or outgoing puck."""
+    mode = buffer.tag("mode")
+    in_rounds = torch.isin(buffer.tag("round"), torch.as_tensor(list(rounds), dtype=torch.int16, device=mode.device))
+    vel = buffer.obs[:buffer.size, 2:4].float() * 6
+    calm = (vel.norm(dim=1) < max_speed) | (vel[:, 1] > 0)
+    return torch.nonzero(in_rounds & (mode == MODES.index("attack")) & calm.to(mode.device)).squeeze(1)
+
+
 class StandardizedInputs(torch.nn.Module):
     """Training-time reparameterization of the first layer on standardized inputs.
 

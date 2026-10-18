@@ -261,3 +261,23 @@ def test_checkpoint_loads_like_production(tmp_path):
     probe = np.random.default_rng(0).normal(0, .3, (16, 675)).astype(np.float32)
     np.testing.assert_allclose(net.act(probe), production.act(probe), atol=1e-6)
     assert STUDENT != PRODUCTION != TEACHER
+
+
+def test_production_relabels_only_slow_attack_rows_of_the_round():
+    import torch
+    from airhockey.distillation import LabelBuffer, MODES, TAGS, relabel_with_network, slow_attack_rows
+    from airhockey.neural_player import NeuralPlayer
+    buffer = LabelBuffer(8, 675)
+    obs = np.zeros((4, 675), np.float32)
+    obs[1, 2:4] = (0, 4.0 / 6)  # fast but moving away: calm
+    obs[2, 2:4] = (0, -4.0 / 6)  # fast and incoming: keep the teacher
+    tags = {k: 0 for k in TAGS}
+    tags["mode"] = np.array([MODES.index("attack")] * 3 + [MODES.index("threat")])
+    buffer.add(obs, np.full((4, 6), 0.5, np.float32), **tags)
+    rows = slow_attack_rows(buffer, [0], 2.5)
+    assert rows.tolist() == [0, 1]
+    net = NeuralPlayer(64, history=16, shot_conditioned=True)
+    assert relabel_with_network(buffer, net, rows, device="cpu") == 2
+    expected = net.actor(net.trunk(torch.from_numpy(obs[:2]).half().float())).tanh()
+    assert torch.allclose(buffer.label[:2], expected, atol=1e-6)
+    assert torch.all(buffer.label[2:4] == 0.5)
