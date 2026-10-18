@@ -12,16 +12,19 @@ state, hidden release times or trial parameters are read.
 Behaviour, in priority order every 20 ms decision:
 
 1. Threat: a puck predicted (drag + lossy rail bounces, latency-compensated)
-   to enter the goal mouth is blocked on the line that gives the most time
-   margin, deepest first. Banks are handled by the same forecast and are
-   re-predicted every tick, so a mis-estimated rail is corrected after it.
+   to enter the goal mouth under any plausible rail restitution is blocked on
+   the deepest line the paddle can reach with margin (minimum-time model,
+   current velocity included). Before a bank is seen the paddle stands at the
+   centre of the crossings the rail's restitution range allows; afterwards the
+   crossings coincide. The block point sits slightly upstream of the path so a
+   glancing contact still returns the puck. Re-predicted every tick.
 2. Attack: a puck the paddle can reach is struck toward the requested route
    (straight / left bank / right bank) or, without a request, the route that
    avoids the rival mallet. Moving pucks are met with a one-timer whose
    contact normal is solved from the incoming and desired outgoing velocity;
    slow pucks get a set-up point behind the puck and a strike through it.
-3. Guard: otherwise wait on the puck-to-goal line, deep enough to cover banks,
-   moving shallower (cooler) as the thermal model's levels rise.
+3. Guard: otherwise wait deep on the puck-to-goal-centre line, moving
+   shallower (cooler) as the observed drive load levels rise.
 """
 from __future__ import annotations
 
@@ -45,15 +48,41 @@ class ExpertConfig:
     # Threat detection
     threat_min_speed: float = 0.25
     goal_margin: float = 0.03  # widen the mouth for the threat test
-    block_depths: tuple = (0.12, 0.16, 0.20, 0.26, 0.34, 0.44, 0.56)
+    # Paddle-centre depths of the candidate block lines (ascending).
+    block_depths: tuple = (0.085, 0.10, 0.12, 0.14, 0.17, 0.20, 0.24, 0.28, 0.33, 0.39,
+                           0.46, 0.54, 0.63, 0.72)
     reach_latency_s: float = 0.035
     reach_accel: float = 64.0  # effective m/s^2 for bang-bang reach estimates
-    # Guard stance
-    guard_depth: float = 0.17
-    guard_hot_depth: float = 0.36
-    guard_hot_start: float = 0.70
-    guard_hot_full: float = 0.88
-    guard_line_gain: float = 0.65
+    # Blocking. Reach times come from a minimum-time model of the paddle
+    # (current velocity included) calibrated through the decoder, guard and
+    # firmware: rest-to-rest arrival within 1 cm took 2*sqrt(d/100) + ~18 ms.
+    defense_latency_s: float = 0.010  # report age; the command delay is in the reach model
+    defense_accel: float = 100.0
+    defense_reach_latency_s: float = 0.018
+    defense_time_scale: float = 1.0  # arrival duration = scale * minimum time
+    block_margin_s: float = 0.03  # slack that makes a line comfortable
+    # Upstream offset of the block point, metres per unit tan(incidence): a
+    # contact on the side the puck comes from turns its normal toward the
+    # far end, which returns the puck even at low paddle restitution.
+    block_bias: float = 0.03
+    block_bias_max: float = 0.05
+    # Restitution scenarios for rail bounces not yet observed (paired
+    # normal/tangential; nominal first, then the lowest and highest ratio
+    # the rails are randomised over).
+    bank_normal: tuple = (0.785, 0.72, 0.86)
+    bank_tangential: tuple = (0.90, 0.98, 0.82)
+    bounce_window_s: float = 0.03  # velocity report unusable this long after a bounce
+    bounce_trust_report: bool = True  # keep a report that already fits a rail coefficient
+    defense_fraction: float = 1.0
+    # Guard stance. Depth follows the hottest observed load level through
+    # these knots (piecewise linear, clamped). Blocking measured 96.6-97.8%
+    # anywhere from 0.10 to 0.17 deep and 92% at 0.24; holding at the goal
+    # centre settles near 0.97 / 0.92 / 0.82 / 0.73 of the drive limit at
+    # 0.10 / 0.12 / 0.17 / 0.24 deep (gain 1.3), so the stance stays deep
+    # while cool and the load settles near 0.81 when the drives run hot.
+    guard_loads: tuple = (0.72, 0.82, 0.90)
+    guard_depths: tuple = (0.11, 0.17, 0.30)
+    guard_line_gain: float = 1.0  # 1: centred on the straight-shot fan
     guard_half_width: float = 0.16
     guard_fraction: float = 0.55
     # Attack
@@ -113,6 +142,8 @@ class ExpertPlayer:
     def _state(self, obs):
         obs = np.asarray(obs, dtype=np.float64)
         f = obs[:, :FRAME]
+        frames = min(self.history, obs.shape[1] // FRAME)
+        self._frames = obs[:, :FRAME * frames].reshape(len(obs), frames, FRAME)
         request = obs[:, -3:] if obs.shape[1] == FRAME * self.history + 3 else np.zeros((len(obs), 3))
         return _State(
             puck=f[:, 0:2].copy(), vel=f[:, 2:4] * 6.0, paddle=f[:, 4:6].copy(),
@@ -195,25 +226,134 @@ class ExpertPlayer:
         return np.where(requested > 0, requested, free)
 
     # ------------------------------------------------------------- defense
+    def _min_time(self, start, velocity, goal, accel):
+        """Minimum time to come to rest at goal under a vector accel cap.
+
+        Along the displacement this is the exact bang-bang time from the
+        current velocity (including overshoot when it cannot stop in time);
+        velocity across it costs half its braking time on top.
+        """
+        rel = goal - start
+        d = np.linalg.norm(rel, axis=-1)
+        u = rel / np.maximum(d, 1e-9)[..., None]
+        along = (velocity * u).sum(axis=-1)
+        across = np.abs(velocity[..., 0] * u[..., 1] - velocity[..., 1] * u[..., 0])
+        stops = (along <= 0) | (along**2 <= 2 * accel * d)
+        peak = np.sqrt(np.maximum(accel * d + along**2 / 2, 0))
+        direct = (2 * peak - along) / accel
+        overshoot = along / accel + 2 * np.sqrt(np.maximum(along**2 / (2 * accel) - d, 0) / accel)
+        return np.where(stops, direct, overshoot) + 0.5 * across / accel
+
+    def _scenario_crossings(self, states, lines):
+        """incoming_crossings of per-scenario states [m, n, 4]: [m, n, k, 4]."""
+        c = self.config
+        key = (tuple(c.bank_normal), tuple(c.bank_tangential))
+        if getattr(self, "_scenario_key", None) != key:
+            self._scenario_key = key
+            # No speed clamp: the forecast must follow a puck the table allows.
+            self._scenario_tables = [TableConfig(wall_restitution=en, wall_tangential=et, max_puck_speed=40.0)
+                                     for en, et in zip(*key)]
+        return np.stack([incoming_crossings(state, lines, config=table, max_seconds=2.0)
+                         for state, table in zip(states, self._scenario_tables)])
+
+    def _flight(self, pos, vel, seconds, en, et):
+        """Short free flight with drag and side-rail bounces; [..., 2] arrays."""
+        cfg = self.table
+        p, v = pos.copy(), vel.copy()
+        a, b = cfg.puck_friction * 9.81, cfg.PUCK_DRAG_B
+        steps = max(1, int(np.ceil(seconds / 0.005)))
+        dt = seconds / steps
+        lo, hi = cfg.puck_radius, cfg.width - cfg.puck_radius
+        for _ in range(steps):
+            speed = np.linalg.norm(v, axis=-1)
+            decel = np.minimum(a + b * speed**2, speed / dt)
+            p = p + v * dt
+            v = v * np.where(speed > 1e-9, 1 - decel * dt / np.maximum(speed, 1e-9), 0)[..., None]
+            for wall, beyond in ((lo, p[..., 0] < lo), (hi, p[..., 0] > hi)):
+                # Reflect the overshoot at the reduced normal speed.
+                p[..., 0] = np.where(beyond, wall + (wall - p[..., 0]) * en, p[..., 0])
+                v[..., 0] = np.where(beyond, -v[..., 0] * en, v[..., 0])
+                v[..., 1] = np.where(beyond, v[..., 1] * et, v[..., 1])
+        return p, v
+
+    def _defense_states(self, s):
+        """Puck state now under each restitution scenario, [m, n, 4].
+
+        The velocity report is a slope over the last ~30 ms of camera
+        samples; while those straddle a side-rail bounce it points nowhere
+        useful. Detected from an older frame whose flight reaches the rail
+        inside that window (and agrees with the current position); unless
+        the report already fits a rail coefficient, the post-bounce velocity
+        is then that frame's velocity through the bounce, per scenario, at
+        the current reported position.
+        """
+        c, cfg = self.config, self.table
+        en = np.asarray(c.bank_normal, dtype=float)[:, None]
+        et = np.asarray(c.bank_tangential, dtype=float)[:, None]
+        m, n = len(en), len(s.puck)
+        pos = np.broadcast_to(s.puck, (m, n, 2)).copy()
+        vel = np.broadcast_to(s.vel, (m, n, 2)).copy()
+        frames = self._frames
+        dt = self.decoder.config.action_dt
+        j = 2
+        if c.bounce_window_s > 0 and frames.shape[1] > j:
+            age = j * dt
+            p_old, v_old = frames[:, j, 0:2], frames[:, j, 2:4] * 6.0
+            lo, hi = cfg.puck_radius, cfg.width - cfg.puck_radius
+            vx = v_old[:, 0]
+            to_rail = np.where(vx < -0.3, (lo - p_old[:, 0]) / np.minimum(vx, -1e-9),
+                               np.where(vx > 0.3, (hi - p_old[:, 0]) / np.maximum(vx, 1e-9), np.inf))
+            since = age - to_rail  # bounce this long before the current report
+            p_pred, v_pred = self._flight(np.broadcast_to(p_old, (m, n, 2)), np.broadcast_to(v_old, (m, n, 2)),
+                                          age, en, et)
+            agree = np.linalg.norm(p_pred[0] - s.puck, axis=1) < 0.02 + 0.1 * np.linalg.norm(v_old, axis=1) * age
+            straddle = (since > -0.002) & (since < c.bounce_window_s) & agree
+            if c.bounce_trust_report:
+                # A report already consistent with some rail coefficient is
+                # a clean post-bounce fit: keep it, it knows the actual rail.
+                ratio_n = -s.vel[:, 0] / np.where(np.abs(vx) > 1e-9, vx, 1e-9)
+                ratio_t = s.vel[:, 1] / np.where(np.abs(v_old[:, 1]) > 1e-9, v_old[:, 1], 1e-9)
+                clean = (ratio_n > en.min() - 0.08) & (ratio_n < en.max() + 0.08) & \
+                        (ratio_t > et.min() - 0.08) & (ratio_t < et.max() + 0.06)
+                straddle &= ~clean
+            vel = np.where(straddle[None, :, None], v_pred, vel)
+        pos, vel = self._flight(pos, vel, c.defense_latency_s, en, et)
+        return np.concatenate((pos, vel), axis=-1)
+
     def _defense(self, s: _State, puck, vel):
         cfg, c = self.table, self.config
         n = len(puck)
+        # The shared forecast is tuned for striking; defend from the report.
+        states = self._defense_states(s)  # [m, n, 4]
+        puck, vel = states[0, :, :2], states[0, :, 2:]
         incoming = vel[:, 1] < -c.threat_min_speed
-        state = np.column_stack((puck, vel))
-        goal_line = incoming_crossings(state, [cfg.puck_radius], max_seconds=2.0)[:, 0]
-        threat = incoming & np.isfinite(goal_line[:, 1]) & (
-            np.abs(goal_line[:, 0] - 0.5) < cfg.goal_width / 2 + c.goal_margin)
-        depths = np.asarray(c.block_depths)
-        lines = depths + self.contact
-        cross = incoming_crossings(state, lines, max_seconds=2.0)  # [n, k, 4]
-        x_k, t_k = cross[..., 0], cross[..., 1]
-        valid = np.isfinite(t_k) & (puck[:, 1:2] > lines[None, :])
-        target = np.stack((np.clip(x_k, self.low[0], self.high[0]),
-                           np.broadcast_to(depths, x_k.shape)), axis=-1)
-        reach = self._reach_time(s.paddle[:, None, :], np.where(valid[..., None], target, s.paddle[:, None, :]))
-        slack = np.where(valid, t_k - reach, -np.inf)
+        goal_line = self._scenario_crossings(states, np.array([cfg.puck_radius]))[:, :, 0]
+        on_goal = np.isfinite(goal_line[..., 1]) & (
+            np.abs(goal_line[..., 0] - 0.5) < cfg.goal_width / 2 + c.goal_margin)
+        threat = incoming & on_goal.any(axis=0)
+        depths = np.asarray(c.block_depths, dtype=float)
+        cross = self._scenario_crossings(states, depths)  # [m, n, k, 4]
+        x_m, t_m = cross[..., 0], cross[..., 1]
+        finite = np.isfinite(t_m)
+        nominal = cross[0]
+        valid = finite[0] & (puck[:, 1:2] > depths[None, :])
+        # Stand at the centre of the plausible crossings (they coincide once
+        # the bounce has been seen) and be there by the earliest one.
+        x_lo = np.where(valid, np.where(finite, x_m, np.inf).min(axis=0), 0.5)
+        x_hi = np.where(valid, np.where(finite, x_m, -np.inf).max(axis=0), 0.5)
+        x_mid = (x_lo + x_hi) / 2
+        speed_k = np.hypot(nominal[..., 2], nominal[..., 3])
+        earliest = np.where(finite, t_m, np.inf).min(axis=0)
+        t_contact = earliest - self.contact / np.maximum(np.where(valid, speed_k, 1.0), 0.3)
+        tan = np.where(valid, nominal[..., 2] / np.maximum(-nominal[..., 3], 1e-3), 0.0)
+        shift = np.clip(-c.block_bias * tan, -c.block_bias_max, c.block_bias_max)
+        target = np.stack((np.clip(x_mid + shift, self.low[0], self.high[0]),
+                           np.broadcast_to(np.clip(depths, self.low[1], self.high[1]), x_mid.shape)), axis=-1)
+        reach = self._min_time(s.paddle[:, None, :], s.paddle_vel[:, None, :], target, c.defense_accel) \
+            + c.defense_reach_latency_s
+        slack = np.where(valid, t_contact - reach, -np.inf)
         # Deepest line that leaves a comfortable margin; otherwise best slack.
-        comfortable = slack > 0.03
+        comfortable = slack > c.block_margin_s
         deepest = np.argmax(comfortable, axis=1)
         best = np.argmax(slack, axis=1)
         pick = np.where(comfortable.any(axis=1), deepest, best)
@@ -224,7 +364,9 @@ class ExpertPlayer:
         fallback = np.column_stack((np.clip(puck[:, 0], 0.5 - cfg.goal_width / 2, 0.5 + cfg.goal_width / 2),
                                     np.full(n, self.low[1])))
         block = np.where(has[:, None], block, fallback)
-        act = self._encode(block, np.zeros((n, 2)), np.full(n, 0.04), np.ones(n))
+        duration = c.defense_time_scale * self._min_time(s.paddle, s.paddle_vel, block, c.defense_accel)
+        act = self._encode(block, np.zeros((n, 2)), duration, np.full(n, c.defense_fraction))
+        self._defense_trace = dict(line=np.where(has, depths[pick], np.nan), slack=slack[rows, pick])
         return threat, act
 
     # ------------------------------------------------------------- attack
@@ -300,10 +442,9 @@ class ExpertPlayer:
     def _guard(self, s: _State, puck, vel):
         cfg, c = self.table, self.config
         n = len(puck)
-        hot = np.clip((s.load.max(axis=1) - c.guard_hot_start) / (c.guard_hot_full - c.guard_hot_start), 0, 1)
-        depth = c.guard_depth + hot * (c.guard_hot_depth - c.guard_depth)
-        # On the puck-to-goal-centre line at this depth, pulled toward the
-        # centre (guard_line_gain < 1) so a bank off either rail stays covered.
+        depth = np.interp(s.load.max(axis=1), c.guard_loads, c.guard_depths)
+        # On the puck-to-goal-centre line at this depth: the centre of the
+        # fan of straight shots, which banks (slower to arrive) also cross.
         py = np.maximum(puck[:, 1], depth + 0.05)
         x = 0.5 + (puck[:, 0] - 0.5) * c.guard_line_gain * depth / py
         x = np.clip(x, 0.5 - c.guard_half_width, 0.5 + c.guard_half_width)
