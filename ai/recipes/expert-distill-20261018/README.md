@@ -98,10 +98,28 @@ thermal recipe `motor-load-20261001` at gain 1.3 (0.95 training shutdown,
   teacher opponents 30%), with --paddle-restitution-range 0.40 0.65 and
   --paddle-tangential-range 0.76 0.84 plumbed through environment_options.
 
+- 05:00 — resumed. Cherry-picked onto main: trainer review fixes (diagnostic
+  sample covered only reference slots), the DAgger pipeline (conflicts
+  resolved; paddle-contact flags added to train_neural_player and
+  distill_expert), the defense and attack teachers, and the human-proxy
+  benchmark (`eval_human_proxy.py`, committed from its worktree).
+- 05:10 — merged teacher: fast defense 95.1% (seed 20261073), 16x60 s vs
+  production 37-5 (56% on target, 6.6 m/s). Human proxy (64x60 s/tier):
+  club 314-17 (94.9%, CI 92.4-97.1) vs production 172-47 (78.5%); elite
+  368-27 (93.2%) vs 234-111 (67.8%); teacher 0 s overload (peak 0.943 club,
+  0.881 elite), production 73 s / 64 s overload.
+- 05:10 — DAgger arm A `_neural-teacher-dagger-20261018-a` (default
+  physics) and arm B `_neural-teacher-dagger-20261018-b` (measured paddle
+  contact, teacher paddle_restitution 0.52), 8 rounds x 6M labels each,
+  from the smoke student.
+
 ## Runs
 
 | Run | What | Status |
 |---|---|---|
+| `_distill-smoke-20261018` | 3-round DAgger smoke, teacher v0 | done: fast defense 74.5%, 11-12 vs production |
+| `_neural-teacher-dagger-20261018-a` | 8x6M DAgger, merged teacher, default physics | running |
+| `_neural-teacher-dagger-20261018-b` | same, measured paddle contact | running |
 
 ## Results
 
