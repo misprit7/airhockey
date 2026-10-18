@@ -67,6 +67,26 @@ Robotic air hockey table that uses reinforcement learning trained in simulation,
     - `eval_play.py` - The shared play loop for the checkpoint diagnostics
       in `bin/` (env vs one named opponent, planner or prior, the far side
       driven by the same checkpoint when "external").
+    - `expert_player.py` - TRAINING/BENCHMARK-ONLY physics teacher
+      (2026-10-18): same 16-frame observation and 6-D arrival action as the
+      neural player, through the same decoder/guard/thermal model. Blocks on
+      the line with the most time margin (minimum-time bang-bang reach, banks
+      forecast under the rail-restitution spread), strikes along the contact
+      normal, guards deep with a load-scheduled depth and leaves rail pucks
+      alone when hot. Evaluators accept `expert[:key=value,...]` wherever
+      they take a checkpoint. Never a runtime controller: the robot runs one
+      network, distilled from it.
+    - `distillation.py` + `bin/distill_expert.py` - DAgger from the teacher
+      into a NeuralPlayer (labels both seats, float16 buffer, per-round evals);
+      `--attack-labels production` keeps production's own action on slow
+      attack states. Output runs have algorithm `expert_dagger_v1`, which the
+      deploy loader accepts.
+    - `neural_finetune.py` - teacher regularisation, teacher opponents and
+      the adaptive-lr / std-floor / critic warm-up options of
+      `train_neural_player.py` (`--teacher*`, `--actor-steps-min`,
+      `--adaptive-lr`, `--value-warmup-updates`, `--std-floor`); also
+      `--paddle-restitution-range/--paddle-tangential-range` (measured table
+      contact, opt-in). Record: `ai/recipes/expert-distill-20261018/`.
     - `human_proxy.py` - BENCHMARK OPPONENT standing in for a person
       (2026-10-18): drives the free far-side body (`BatchAirHockeyEnv` kind
       "human_proxy", commanded once per tick via
