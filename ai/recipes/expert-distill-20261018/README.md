@@ -182,6 +182,26 @@ thermal recipe `motor-load-20261001` at gain 1.3 (0.95 training shutdown,
   `teacher-dagger-d-vs-production.json`,
   `teacher-dagger-d-vs-proxy_vs_human-proxy-{club,elite}-g{0,1}.json`.
 
+- 06:00 — HELD-OUT evaluation (`suite.py --tier holdout`, reserved seeds,
+  each candidate evaluated once), arm D final vs production:
+
+  | | production v1 | arm D final |
+  |---|---:|---:|
+  | human proxy, club, 128x60 s | 71.0% (303-124), GA 0.97/min, 38.7 s overload | **92.4% (278-23)**, CI 89.5-95.1, GA 0.18/min, 0 s |
+  | human proxy, elite, 128x60 s | 59.5% (379-258), GA 2.02/min, 63.3 s overload | **88.2% (388-52)**, CI 85.0-91.2, GA 0.41/min, 0 s |
+  | fast attacks blocked, 3072 | 27.1% (S 70.1 / L 2.1 / R 9.1) | **86.9%** (S 95.4 / L 76.5 / R 88.9) |
+  | immediate release, 1536 | 26.8% | 43.3% |
+  | games vs production, 48x60 s each seat | 58-71 / 73-72 (itself) | **26-6 / 45-5** |
+  | hot endurance 16x900 s (0.8, gain 1.3) vs production | 74-61; 2879 s overload, peak 1.057; stall 5204 s | **29-6; 0 s overload, peak 0.854; stall 0** |
+  | requested fast shots stationary S/L/R (of 256) | 126 / 82 / 80 | 88 / 35 / 64 |
+  | requested fast shots receiving S/L/R (of 256) | 172 / 158 / 179 | 12 / 6 / 6 |
+  | slow control: fast aimed return (1536) | 60.9% | 47.1% |
+  | corner / side recovery (of 256) | 37 / 32 | 57 / 39 |
+
+  Packaged as `runs/teacher-dagger-20261018-v1` (sha256 01f7f482...,
+  `expert_dagger_v1`, width 1536); loads through `NeuralPolicy` with
+  production's limits and workspace. Not physically qualified.
+
 ## Runs
 
 | Run | What | Status |
