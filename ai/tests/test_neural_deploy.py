@@ -221,6 +221,18 @@ def test_imitation_arrival_artifact_uses_same_actor_and_limit_checks(checkpoint)
     with pytest.raises(ValueError): NeuralPolicy(checkpoint, 12000, 60000)
 
 
+def test_teacher_distilled_artifact_loads_as_the_same_single_network(checkpoint):
+    original = NeuralPolicy(checkpoint, 12000, 60000, shot_mode='straight')
+    path = checkpoint.parent / 'run.json'
+    metadata = json.loads(path.read_text())
+    metadata['algorithm'] = 'expert_dagger_v1'
+    path.write_text(json.dumps(metadata))
+    distilled = NeuralPolicy(checkpoint, 12000, 60000, shot_mode='straight')
+    observation = np.random.default_rng(72).normal(size=(8, 45)).astype(np.float32)
+    np.testing.assert_array_equal(original.net.act(observation), distilled.net.act(observation))
+    with pytest.raises(ValueError): NeuralPolicy(checkpoint, 12000, 61000)
+
+
 def test_report_only_supplies_controller_velocity_when_selected_and_fresh():
     r = rp.ReportBuilder()
     r.set_controller_mallet(1.0, 1600, 400, velocity=(20, -40))

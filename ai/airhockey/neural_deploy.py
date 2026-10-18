@@ -46,7 +46,9 @@ def resolve_neural_checkpoint(name):
 
 def neural_limits(checkpoint):
     meta = json.loads((Path(checkpoint).parent / 'run.json').read_text())
-    algorithms = ('neural_ppo_v1', 'successful_neural_trajectory_imitation_v1')
+    # expert_dagger_v1: a network distilled from the simulation-only physics
+    # teacher (expert_player.py). Still one network at runtime, same interface.
+    algorithms = ('neural_ppo_v1', 'successful_neural_trajectory_imitation_v1', 'expert_dagger_v1')
     if meta.get('algorithm') not in algorithms or meta.get('action_mode') != 'arrival':
         raise ValueError('not a neural arrival training run')
     # Validate the checkpoint's own coordinate envelope before loading weights.
