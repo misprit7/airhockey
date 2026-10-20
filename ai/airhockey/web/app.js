@@ -15,7 +15,8 @@ let replayIndex = 0;
 let replayPlaying = false;
 let replaySpeed = 1;
 let replayFps = 60;
-let replayTimer = null;
+let replayPosition = 0;     // fractional frame index while playing
+let replayLastTime = null;  // rAF timestamp of the last advance
 let scale = 1;
 let offsetX = 0;
 let offsetY = 0;
@@ -320,7 +321,8 @@ function darken(hex, amt) {
     return `rgb(${r},${g},${b})`;
 }
 
-function render() {
+function render(now) {
+    if (mode === "replay") advanceReplay(now ?? performance.now());
     ctx.clearRect(0, 0, canvas.width, canvas.height);
     drawTable();
 
@@ -965,31 +967,69 @@ async function loadRecording(path, li) {
 function showReplayFrame(idx) {
     if (!replayData || idx < 0 || idx >= replayData.length) return;
     replayIndex = idx;
+    replayPosition = idx;
     frame = replayData[idx];
     updateScoreboard(frame);
     document.getElementById("replay-slider").value = idx;
 }
 
+// Bodies drawn between recorded frames. Recordings are sampled at the
+// control rate (50 Hz), so a 10 m/s puck moves 0.2 m per frame; stepping one
+// frame per setInterval tick against a 60 Hz display both jumped that far and
+// held frames for uneven times. A jump longer than REPLAY_TELEPORT_M in one
+// frame is a reset (goal, relaunch) and is shown as a jump.
+const REPLAY_BODIES = [["puck_x", "puck_y"], ["agent_x", "agent_y"], ["opponent_x", "opponent_y"]];
+const REPLAY_TELEPORT_M = 0.45;
+
+function interpolatedReplayFrame(position) {
+    const i = Math.floor(position);
+    const a = replayData[i];
+    const b = replayData[i + 1];
+    const t = position - i;
+    if (!b || t <= 0) return a;
+    const out = Object.assign({}, a);
+    for (const [kx, ky] of REPLAY_BODIES) {
+        if (a[kx] === undefined || b[kx] === undefined) continue;
+        if (Math.hypot(b[kx] - a[kx], b[ky] - a[ky]) > REPLAY_TELEPORT_M) continue;
+        out[kx] = a[kx] + (b[kx] - a[kx]) * t;
+        out[ky] = a[ky] + (b[ky] - a[ky]) * t;
+    }
+    return out;
+}
+
+// Advanced from render(), i.e. on the display's own clock.
+function advanceReplay(now) {
+    if (!replayPlaying || !replayData) return;
+    if (replayLastTime === null) replayLastTime = now;
+    // A backgrounded tab stops rAF; do not leap ahead when it comes back.
+    const dt = Math.min(now - replayLastTime, 100) / 1000;
+    replayLastTime = now;
+    const last = replayData.length - 1;
+    replayPosition = Math.min(last, replayPosition + dt * replayFps * replaySpeed);
+    const idx = Math.floor(replayPosition);
+    if (idx !== replayIndex) {
+        replayIndex = idx;
+        updateScoreboard(replayData[idx]);
+        document.getElementById("replay-slider").value = idx;
+    }
+    frame = interpolatedReplayFrame(replayPosition);
+    if (replayPosition >= last) stopReplay();
+}
+
 function stopReplay() {
     replayPlaying = false;
-    if (replayTimer) clearInterval(replayTimer);
-    replayTimer = null;
+    replayLastTime = null;
     document.getElementById("btn-play-pause").textContent = "Play";
 }
 
 document.getElementById("btn-play-pause").addEventListener("click", () => {
     if (replayPlaying) {
         stopReplay();
-    } else {
+    } else if (replayData) {
+        if (replayIndex >= replayData.length - 1) showReplayFrame(0);
         replayPlaying = true;
+        replayLastTime = null;
         document.getElementById("btn-play-pause").textContent = "Pause";
-        replayTimer = setInterval(() => {
-            if (replayIndex < replayData.length - 1) {
-                showReplayFrame(replayIndex + 1);
-            } else {
-                stopReplay();
-            }
-        }, (1000 / replayFps) / replaySpeed);
     }
 });
 
@@ -1010,16 +1050,6 @@ document.getElementById("replay-slider").addEventListener("input", (e) => {
 
 document.getElementById("replay-speed").addEventListener("change", (e) => {
     replaySpeed = parseFloat(e.target.value);
-    if (replayPlaying) {
-        clearInterval(replayTimer);
-        replayTimer = setInterval(() => {
-            if (replayIndex < replayData.length - 1) {
-                showReplayFrame(replayIndex + 1);
-            } else {
-                stopReplay();
-            }
-        }, (1000 / replayFps) / replaySpeed);
-    }
 });
 
 // Mobile sidebar menu
@@ -1091,6 +1121,7 @@ async function loadLatestRecording() {
             replayWorkspace = metadata?.workspace_sim || null;
             replayFps = metadata?.fps > 0 ? metadata.fps : 60;
             replayIndex = 0;
+            replayPosition = 0;
             const controls = document.getElementById("replay-controls");
             controls.classList.remove("hidden");
 
