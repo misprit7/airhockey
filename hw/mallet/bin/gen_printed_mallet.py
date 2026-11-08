@@ -3,18 +3,21 @@
 
 The net cable pull acts at one height and the mallet's inertia at its centre
 of mass; any offset d tips it at about a = g * r / d, whatever it weighs. So
-the low striking ring is balanced by steel nuts in a tower ABOVE the springs.
+the low striking ring is balanced by metal and epoxy in a tower ABOVE the springs.
 
 The spring clevises copy mallet-mount(5): two 5 mm lugs, a 5 mm gap, 2 mm
 vertical pin holes at radius 31.74, 10 mm wide, tip at 36.75.
 
-The underside is open, so table air vents through instead of lifting it.
+Eight deep vertical ribs carry puck hits from the ring into the spring mount;
+the load runs along the printed layers. The underside is open.
 
 Frame: z = 0 is the table, +z up, x and y along the lugs.
 Prints bottom-down, solid (100% infill), so the mass model holds.
 
     pip install manifold3d trimesh numpy
-    python hw/mallet/bin/gen_printed_mallet.py [--cable-z MM] [--nuts N]
+    python hw/mallet/bin/gen_printed_mallet.py [--cable-z MM]
+
+It prints the ballast mass that puts the centre of mass on the spring plane.
 """
 
 import argparse
@@ -47,19 +50,17 @@ MARKER_R = 26.8
 MARKER_D = 7.0
 MARKER_DEPTH = 0.2
 
-STRUT_W = 10.0
-SHELL_Z = 3.5          # vertical thickness of the 45-degree shells (2.5 mm true)
+RIB_W = 4.0
+SHELL_Z = 3.5          # vertical thickness of the 45-degree shell (2.5 mm true)
 
-# M10 hex nuts, ISO 4032
-NUT_AF = 17.0
-NUT_H = 8.4
-NUT_G = 11.0
-POCKET_CLEAR = 0.4
-TOWER_R = 12.7
+# Ballast pocket: scrap metal cast in epoxy, filled to the top.
+BALLAST_R = 12.0
+BALLAST_H = 16.0
+TOWER_R = 14.4
 TOWER_FLOOR_Z = 52.5
 LID_PLUG = 2.0
 LID_T = 2.0
-LID_CLEAR = 0.15
+LID_CLEAR = 0.1
 
 
 def section(points):
@@ -76,10 +77,6 @@ def cylinder(radius, z0, z1, segments=SEGMENTS):
     return Manifold.cylinder(z1 - z0, radius, radius, segments).translate((0, 0, z0))
 
 
-def hex_prism(across_flats, z0, z1):
-    return cylinder(across_flats / math.sqrt(3), z0, z1, 6)
-
-
 def box(x0, x1, y0, y1, z0, z1):
     return Manifold.cube((x1 - x0, y1 - y0, z1 - z0)).translate((x0, y0, z0))
 
@@ -92,7 +89,7 @@ def lug(z0):
     return (plate ^ keep) - cylinder(PIN_D / 2, z0 - 1, z0 + LUG_T + 1, 48).translate((PIN_R, 0, 0))
 
 
-def build_body(cable_z, nuts):
+def build_body(cable_z):
     mount_lo = cable_z - LUG_GAP / 2 - LUG_T
     mount_hi = cable_z + LUG_GAP / 2 + LUG_T
 
@@ -100,23 +97,21 @@ def build_body(cable_z, nuts):
     ring = revolve([(ring_in, 0), (MALLET_R - 0.5, 0), (MALLET_R, 0.5), (MALLET_R, RING_H - 1),
                     (MALLET_R - 1, RING_H), (ring_in + 1, RING_H), (ring_in, RING_H - 1)])
 
-    lower = lambda r: 6.0 + (ring_in - r)
-    shell = revolve([(ring_in + 0.5, lower(ring_in + 0.5)), (MOUNT_OD_R - 0.5, lower(MOUNT_OD_R - 0.5)),
-                     (MOUNT_OD_R - 0.5, lower(MOUNT_OD_R - 0.5) + SHELL_Z),
-                     (ring_in + 0.5, lower(ring_in + 0.5) + SHELL_Z)])
-    spokes = box(-60, 60, -STRUT_W / 2, STRUT_W / 2, 0, 60)
-    for a in (45, 90, 135):
-        spokes += box(-60, 60, -STRUT_W / 2, STRUT_W / 2, 0, 60).rotate((0, 0, a))
-    struts = shell ^ spokes
+    ribs = []
+    rib_pts = [(ring_in + 0.5, 2.0), (MOUNT_OD_R - 0.5, 2.0 + ring_in + 0.5 - MOUNT_OD_R + 0.5),
+               (MOUNT_OD_R - 0.5, mount_lo + 1.5), (ring_in + 0.5, RING_H)]
+    for a in range(0, 360, 45):
+        rib = Manifold.extrude(section(rib_pts), RIB_W).rotate((90, 0, 0)).translate((0, RIB_W / 2, 0))
+        ribs.append(rib.rotate((0, 0, a)))
 
     # The chamfered underside prints without support.
     mount = revolve([(MOUNT_ID_R, mount_lo + MOUNT_OD_R - MOUNT_ID_R), (MOUNT_OD_R, mount_lo),
                      (MOUNT_OD_R, mount_hi), (MOUNT_ID_R, mount_hi)])
-    parts = [ring, struts, mount]
+    parts = [ring, mount] + ribs
     for a in (0, 90, 180, 270):
         lugs = lug(mount_lo) + lug(cable_z + LUG_GAP / 2)
-        # Web from the strut up to the lower lug, so the lug needs no support.
-        web_pts = [(MOUNT_OD_R - 0.5, lower(MOUNT_OD_R - 0.5) + 1), (LUG_TIP_R - 0.5, lower(LUG_TIP_R - 0.5) + 1),
+        # Under the lower lug, so it needs no support.
+        web_pts = [(MOUNT_OD_R - 0.5, mount_lo - 1 - (LUG_TIP_R - MOUNT_OD_R)), (LUG_TIP_R - 0.5, mount_lo - 0.5),
                    (LUG_TIP_R - 0.5, mount_lo + 0.5), (MOUNT_OD_R - 0.5, mount_lo + 0.5)]
         web = Manifold.extrude(section(web_pts), LUG_W - 1).rotate((90, 0, 0)).translate((0, (LUG_W - 1) / 2, 0))
         parts.append((lugs + web).rotate((0, 0, a)))
@@ -128,12 +123,12 @@ def build_body(cable_z, nuts):
     parts.append(cone)
 
     floor = max(TOWER_FLOOR_Z, top_z)
-    pocket_top = floor + nuts * NUT_H + 0.3
+    pocket_top = floor + BALLAST_H
     tower_top = pocket_top + LID_PLUG
     # A pointed underside, so the tower floor needs no bridge or support.
     tip = floor - 1.5 - TOWER_R
     tower = revolve([(0, tip), (TOWER_R, tip + TOWER_R), (TOWER_R, tower_top), (0, tower_top)])
-    tower -= hex_prism(NUT_AF + POCKET_CLEAR, floor, tower_top + 1)
+    tower -= cylinder(BALLAST_R, floor, tower_top + 1)
     parts.append(tower)
 
     body = parts[0]
@@ -145,7 +140,7 @@ def build_body(cable_z, nuts):
 
 
 def build_lid(tower_top):
-    plug = hex_prism(NUT_AF + POCKET_CLEAR - LID_CLEAR, 0, LID_PLUG)
+    plug = cylinder(BALLAST_R - LID_CLEAR, 0, LID_PLUG)
     flange = cylinder(TOWER_R, LID_PLUG, LID_PLUG + LID_T)
     recess = cylinder(MARKER_D / 2, LID_PLUG + LID_T - MARKER_DEPTH, LID_PLUG + LID_T + 1, 64)
     return ((plug + flange) - recess).translate((0, 0, tower_top - LID_PLUG))
@@ -156,34 +151,33 @@ def to_trimesh(man):
     return trimesh.Trimesh(vertices=np.asarray(m.vert_properties)[:, :3], faces=np.asarray(m.tri_verts), process=False)
 
 
-def report(body, lid, info, nuts, cable_z):
-    masses = []
+def report(body, lid, info, cable_z):
     b, l = to_trimesh(body), to_trimesh(lid)
     assert b.is_watertight and l.is_watertight
-    masses.append(("body", b.volume / 1000 * PETG_G_CM3, b.center_mass[2]))
-    masses.append(("lid", l.volume / 1000 * PETG_G_CM3, l.center_mass[2]))
-    for i in range(nuts):
-        masses.append((f"M10 nut {i + 1}", NUT_G, info["floor"] + (i + 0.5) * NUT_H))
+    masses = [("body", b.volume / 1000 * PETG_G_CM3, b.center_mass[2]),
+              ("lid", l.volume / 1000 * PETG_G_CM3, l.center_mass[2])]
+    z_ballast = info["floor"] + BALLAST_H / 2
+    ballast = -sum(m * (z - cable_z) for _, m, z in masses) / (z_ballast - cable_z)
+    volume = math.pi * BALLAST_R ** 2 * BALLAST_H / 1000
+    masses.append(("ballast", ballast, z_ballast))
     total = sum(m for _, m, _ in masses)
-    z_com = sum(m * z for _, m, z in masses) / total
-    d = z_com - cable_z
     print("part            g        z mm")
     for name, m, z in masses:
         print(f"{name:12s} {m:7.1f} {z:9.1f}")
-    print(f"total        {total:7.1f} g; centre of mass z = {z_com:.1f}; cable plane z = {cable_z:.1f}; offset {d:+.1f} mm")
-    print(f"static tip limit {'none' if abs(d) < 1e-3 else f'{9.81 * MALLET_R / abs(d):.0f} m/s^2'}")
+    print(f"total        {total:7.1f} g; cable plane z = {cable_z:.1f}")
+    print(f"ballast: {ballast:.1f} g in {volume:.1f} cm^3 ({ballast / volume:.1f} g/cm^3), filled to the top")
+    print(f"each gram of ballast moves the centre of mass {(z_ballast - cable_z) / total:.2f} mm")
     print(f"side markers z = {info['mount_hi'] - MARKER_DEPTH:.2f}, centre marker z = {info['tower_top'] + LID_T - MARKER_DEPTH:.2f}")
-    return b, l, total, z_com
+    return b, l
 
 
 def main():
     ap = argparse.ArgumentParser(description=__doc__, formatter_class=argparse.RawDescriptionHelpFormatter)
     ap.add_argument("--cable-z", type=float, default=33.0, help="height of the springs above the table, mm")
-    ap.add_argument("--nuts", type=int, default=2, help="M10 nuts in the tower")
     args = ap.parse_args()
-    body, info = build_body(args.cable_z, args.nuts)
+    body, info = build_body(args.cable_z)
     lid = build_lid(info["tower_top"])
-    b, l, *_ = report(body, lid, info, args.nuts, args.cable_z)
+    b, l = report(body, lid, info, args.cable_z)
     b.export(OUT / "printed_mallet_body.stl")
     # The lid prints flange-down.
     l2 = l.copy()
