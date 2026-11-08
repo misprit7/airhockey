@@ -89,6 +89,20 @@ bool ClearPath::readParameter(unsigned node, int index, double &value, std::stri
   }
 }
 
+bool ClearPath::writeParameter(unsigned node, int index, double value, std::string *err) {
+  if (!connected_ || !port_ || node >= static_cast<unsigned>(node_count_)) {
+    if (err) *err = "disconnected";
+    return false;
+  }
+  try {
+    port_->Nodes(node).Info.Ex.Parameter(static_cast<nodeparam>(index), value);
+    return true;
+  } catch (mnErr &e) {
+    if (err) *err = describe(e);
+    return false;
+  }
+}
+
 bool ClearPath::saveConfig(unsigned node, const char *path, std::string *err) {
   if (!connected_ || !port_ || node >= static_cast<unsigned>(node_count_)) {
     if (err) *err = "disconnected";

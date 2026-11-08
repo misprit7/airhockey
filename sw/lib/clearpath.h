@@ -93,6 +93,10 @@ public:
   // One raw drive parameter by SDK index. Read-only.
   bool readParameter(unsigned node, int index, double &value, std::string *err);
 
+  // Write one raw drive parameter by SDK index. Tuning parameters are
+  // non-volatile: the new value survives a power cycle. Callers read it back.
+  bool writeParameter(unsigned node, int index, double value, std::string *err);
+
   // Write the node's whole configuration to a ClearView-loadable file.
   // Changes nothing on the drive.
   bool saveConfig(unsigned node, const char *path, std::string *err);
