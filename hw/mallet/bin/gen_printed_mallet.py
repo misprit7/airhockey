@@ -1,0 +1,196 @@
+#!/usr/bin/env python3
+"""Generate a 3D-printable mallet whose centre of mass sits at the cable plane.
+
+The net cable pull acts at one height and the mallet's inertia at its centre
+of mass; any offset d tips it at about a = g * r / d, whatever it weighs. So
+the low striking ring is balanced by steel nuts in a tower ABOVE the springs.
+
+The spring clevises copy mallet-mount(5): two 5 mm lugs, a 5 mm gap, 2 mm
+vertical pin holes at radius 31.74, 10 mm wide, tip at 36.75.
+
+The underside is open, so table air vents through instead of lifting it.
+
+Frame: z = 0 is the table, +z up, x and y along the lugs.
+Prints bottom-down, solid (100% infill), so the mass model holds.
+
+    pip install manifold3d trimesh numpy
+    python hw/mallet/bin/gen_printed_mallet.py [--cable-z MM] [--nuts N]
+"""
+
+import argparse
+import math
+from pathlib import Path
+
+import numpy as np
+import trimesh
+from manifold3d import CrossSection, JoinType, Manifold
+
+OUT = Path(__file__).resolve().parents[1]
+
+SEGMENTS = 240
+PETG_G_CM3 = 1.27
+
+MALLET_R = 50.4        # striking radius, as shared/cdpr_geometry MALLET_RADIUS_MM
+RING_WALL = 5.0
+RING_H = 20.0
+
+# Spring mount, from mallet-mount(5)
+LUG_T = 5.0
+LUG_GAP = 5.0
+LUG_W = 10.0
+LUG_TIP_R = 36.75
+PIN_R = 31.74
+PIN_D = 2.0
+MOUNT_ID_R = 23.0
+MOUNT_OD_R = 26.74
+MARKER_R = 26.8
+MARKER_D = 7.0
+MARKER_DEPTH = 0.2
+
+STRUT_W = 10.0
+SHELL_Z = 3.5          # vertical thickness of the 45-degree shells (2.5 mm true)
+
+# M10 hex nuts, ISO 4032
+NUT_AF = 17.0
+NUT_H = 8.4
+NUT_G = 11.0
+POCKET_CLEAR = 0.4
+TOWER_R = 12.7
+TOWER_FLOOR_Z = 52.5
+LID_PLUG = 2.0
+LID_T = 2.0
+LID_CLEAR = 0.15
+
+
+def section(points):
+    """A CrossSection from a simple polygon of either winding."""
+    area = sum(x0 * y1 - x1 * y0 for (x0, y0), (x1, y1) in zip(points, points[1:] + points[:1]))
+    return CrossSection([points if area > 0 else points[::-1]])
+
+
+def revolve(points):
+    return Manifold.revolve(section(points), SEGMENTS)
+
+
+def cylinder(radius, z0, z1, segments=SEGMENTS):
+    return Manifold.cylinder(z1 - z0, radius, radius, segments).translate((0, 0, z0))
+
+
+def hex_prism(across_flats, z0, z1):
+    return cylinder(across_flats / math.sqrt(3), z0, z1, 6)
+
+
+def box(x0, x1, y0, y1, z0, z1):
+    return Manifold.cube((x1 - x0, y1 - y0, z1 - z0)).translate((x0, y0, z0))
+
+
+def lug(z0):
+    plan = (CrossSection.square((LUG_TIP_R + 1 - 25.0, LUG_W)).translate((25.0, -LUG_W / 2))
+            .offset(-1.0, JoinType.Round).offset(1.0, JoinType.Round))
+    plate = Manifold.extrude(plan, LUG_T).translate((0, 0, z0))
+    keep = box(0, LUG_TIP_R, -LUG_W, LUG_W, z0 - 1, z0 + LUG_T + 1)
+    return (plate ^ keep) - cylinder(PIN_D / 2, z0 - 1, z0 + LUG_T + 1, 48).translate((PIN_R, 0, 0))
+
+
+def build_body(cable_z, nuts):
+    mount_lo = cable_z - LUG_GAP / 2 - LUG_T
+    mount_hi = cable_z + LUG_GAP / 2 + LUG_T
+
+    ring_in = MALLET_R - RING_WALL
+    ring = revolve([(ring_in, 0), (MALLET_R - 0.5, 0), (MALLET_R, 0.5), (MALLET_R, RING_H - 1),
+                    (MALLET_R - 1, RING_H), (ring_in + 1, RING_H), (ring_in, RING_H - 1)])
+
+    lower = lambda r: 6.0 + (ring_in - r)
+    shell = revolve([(ring_in + 0.5, lower(ring_in + 0.5)), (MOUNT_OD_R - 0.5, lower(MOUNT_OD_R - 0.5)),
+                     (MOUNT_OD_R - 0.5, lower(MOUNT_OD_R - 0.5) + SHELL_Z),
+                     (ring_in + 0.5, lower(ring_in + 0.5) + SHELL_Z)])
+    spokes = box(-60, 60, -STRUT_W / 2, STRUT_W / 2, 0, 60)
+    for a in (45, 90, 135):
+        spokes += box(-60, 60, -STRUT_W / 2, STRUT_W / 2, 0, 60).rotate((0, 0, a))
+    struts = shell ^ spokes
+
+    # The chamfered underside prints without support.
+    mount = revolve([(MOUNT_ID_R, mount_lo + MOUNT_OD_R - MOUNT_ID_R), (MOUNT_OD_R, mount_lo),
+                     (MOUNT_OD_R, mount_hi), (MOUNT_ID_R, mount_hi)])
+    parts = [ring, struts, mount]
+    for a in (0, 90, 180, 270):
+        lugs = lug(mount_lo) + lug(cable_z + LUG_GAP / 2)
+        # Web from the strut up to the lower lug, so the lug needs no support.
+        web_pts = [(MOUNT_OD_R - 0.5, lower(MOUNT_OD_R - 0.5) + 1), (LUG_TIP_R - 0.5, lower(LUG_TIP_R - 0.5) + 1),
+                   (LUG_TIP_R - 0.5, mount_lo + 0.5), (MOUNT_OD_R - 0.5, mount_lo + 0.5)]
+        web = Manifold.extrude(section(web_pts), LUG_W - 1).rotate((90, 0, 0)).translate((0, (LUG_W - 1) / 2, 0))
+        parts.append((lugs + web).rotate((0, 0, a)))
+
+    # Inverted shell up to the ballast tower: leaves the marker face clear.
+    top_z = mount_hi + (MOUNT_ID_R + 0.2 - TOWER_R)
+    cone = revolve([(MOUNT_ID_R + 0.2, mount_hi), (TOWER_R - 1, top_z + 1),
+                    (TOWER_R - 1, top_z + 1 - SHELL_Z), (MOUNT_ID_R + 0.2, mount_hi - SHELL_Z)])
+    parts.append(cone)
+
+    floor = max(TOWER_FLOOR_Z, top_z)
+    pocket_top = floor + nuts * NUT_H + 0.3
+    tower_top = pocket_top + LID_PLUG
+    # A pointed underside, so the tower floor needs no bridge or support.
+    tip = floor - 1.5 - TOWER_R
+    tower = revolve([(0, tip), (TOWER_R, tip + TOWER_R), (TOWER_R, tower_top), (0, tower_top)])
+    tower -= hex_prism(NUT_AF + POCKET_CLEAR, floor, tower_top + 1)
+    parts.append(tower)
+
+    body = parts[0]
+    for p in parts[1:]:
+        body += p
+    for a in (0, 90, 180, 270):
+        body -= cylinder(MARKER_D / 2, mount_hi - MARKER_DEPTH, mount_hi + 1, 64).translate((MARKER_R, 0, 0)).rotate((0, 0, a))
+    return body, dict(mount_lo=mount_lo, mount_hi=mount_hi, floor=floor, tower_top=tower_top)
+
+
+def build_lid(tower_top):
+    plug = hex_prism(NUT_AF + POCKET_CLEAR - LID_CLEAR, 0, LID_PLUG)
+    flange = cylinder(TOWER_R, LID_PLUG, LID_PLUG + LID_T)
+    recess = cylinder(MARKER_D / 2, LID_PLUG + LID_T - MARKER_DEPTH, LID_PLUG + LID_T + 1, 64)
+    return ((plug + flange) - recess).translate((0, 0, tower_top - LID_PLUG))
+
+
+def to_trimesh(man):
+    m = man.to_mesh()
+    return trimesh.Trimesh(vertices=np.asarray(m.vert_properties)[:, :3], faces=np.asarray(m.tri_verts), process=False)
+
+
+def report(body, lid, info, nuts, cable_z):
+    masses = []
+    b, l = to_trimesh(body), to_trimesh(lid)
+    assert b.is_watertight and l.is_watertight
+    masses.append(("body", b.volume / 1000 * PETG_G_CM3, b.center_mass[2]))
+    masses.append(("lid", l.volume / 1000 * PETG_G_CM3, l.center_mass[2]))
+    for i in range(nuts):
+        masses.append((f"M10 nut {i + 1}", NUT_G, info["floor"] + (i + 0.5) * NUT_H))
+    total = sum(m for _, m, _ in masses)
+    z_com = sum(m * z for _, m, z in masses) / total
+    d = z_com - cable_z
+    print("part            g        z mm")
+    for name, m, z in masses:
+        print(f"{name:12s} {m:7.1f} {z:9.1f}")
+    print(f"total        {total:7.1f} g; centre of mass z = {z_com:.1f}; cable plane z = {cable_z:.1f}; offset {d:+.1f} mm")
+    print(f"static tip limit {'none' if abs(d) < 1e-3 else f'{9.81 * MALLET_R / abs(d):.0f} m/s^2'}")
+    print(f"side markers z = {info['mount_hi'] - MARKER_DEPTH:.2f}, centre marker z = {info['tower_top'] + LID_T - MARKER_DEPTH:.2f}")
+    return b, l, total, z_com
+
+
+def main():
+    ap = argparse.ArgumentParser(description=__doc__, formatter_class=argparse.RawDescriptionHelpFormatter)
+    ap.add_argument("--cable-z", type=float, default=33.0, help="height of the springs above the table, mm")
+    ap.add_argument("--nuts", type=int, default=2, help="M10 nuts in the tower")
+    args = ap.parse_args()
+    body, info = build_body(args.cable_z, args.nuts)
+    lid = build_lid(info["tower_top"])
+    b, l, *_ = report(body, lid, info, args.nuts, args.cable_z)
+    b.export(OUT / "printed_mallet_body.stl")
+    # The lid prints flange-down.
+    l2 = l.copy()
+    l2.apply_transform(trimesh.transformations.rotation_matrix(math.pi, [1, 0, 0]))
+    l2.apply_translation([0, 0, -l2.bounds[0][2]])
+    l2.export(OUT / "printed_mallet_lid.stl")
+
+
+if __name__ == "__main__":
+    main()
