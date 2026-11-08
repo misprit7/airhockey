@@ -69,6 +69,49 @@ LoadValue ClearPath::readLoad(unsigned node, LoadField field) {
   return out;
 }
 
+static std::string describe(const mnErr &e) {
+  char text[640];
+  snprintf(text, sizeof(text), "0x%08x %s", e.ErrorCode, e.ErrorMsg);
+  return text;
+}
+
+bool ClearPath::readParameter(unsigned node, int index, double &value, std::string *err) {
+  if (!connected_ || !port_ || node >= static_cast<unsigned>(node_count_)) {
+    if (err) *err = "disconnected";
+    return false;
+  }
+  try {
+    value = port_->Nodes(node).Info.Ex.Parameter(static_cast<nodeparam>(index));
+    return true;
+  } catch (mnErr &e) {
+    if (err) *err = describe(e);
+    return false;
+  }
+}
+
+bool ClearPath::saveConfig(unsigned node, const char *path, std::string *err) {
+  if (!connected_ || !port_ || node >= static_cast<unsigned>(node_count_)) {
+    if (err) *err = "disconnected";
+    return false;
+  }
+  try {
+    port_->Nodes(node).Setup.ConfigSave(path);
+    return true;
+  } catch (mnErr &e) {
+    if (err) *err = describe(e);
+    return false;
+  }
+}
+
+bool ClearPath::hasFullAccess(unsigned node) {
+  if (!connected_ || !port_ || node >= static_cast<unsigned>(node_count_)) return false;
+  try {
+    return port_->Nodes(node).Setup.AccessLevelIsFull();
+  } catch (mnErr &) {
+    return false;
+  }
+}
+
 ClearPath::~ClearPath() {
   if (enabled_) disable();
   if (connected_) disconnect();

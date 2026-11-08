@@ -19,7 +19,7 @@ LIB_SRCS := $(wildcard $(LIB_DIR)/*.cpp)
 LIB_OBJS := $(patsubst $(LIB_DIR)/%.cpp,$(BUILD_DIR)/%.o,$(LIB_SRCS))
 
 # Programs that link against the library
-PROGRAMS := $(BUILD_DIR)/cdpr_master
+PROGRAMS := $(BUILD_DIR)/cdpr_master $(BUILD_DIR)/drive_gains
 
 # Standalone programs (no library dependency)
 STANDALONE := $(BUILD_DIR)/test_motor $(BUILD_DIR)/scan_motors $(BUILD_DIR)/retract_test $(BUILD_DIR)/activate $(BUILD_DIR)/calibrate $(BUILD_DIR)/check_limits

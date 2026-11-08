@@ -90,6 +90,16 @@ public:
   // limits, enable state or alerts. Failures remain invalid, not zero load.
   LoadValue readLoad(unsigned node, LoadField field);
 
+  // One raw drive parameter by SDK index. Read-only.
+  bool readParameter(unsigned node, int index, double &value, std::string *err);
+
+  // Write the node's whole configuration to a ClearView-loadable file.
+  // Changes nothing on the drive.
+  bool saveConfig(unsigned node, const char *path, std::string *err);
+
+  // Whether this connection is allowed to change the node's settings.
+  bool hasFullAccess(unsigned node);
+
   bool connected() const { return connected_; }
   bool enabled() const { return enabled_; }
 
