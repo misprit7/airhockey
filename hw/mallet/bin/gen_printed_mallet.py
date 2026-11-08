@@ -9,8 +9,8 @@ The spring clevises copy mallet-mount(5): two 5 mm lugs, a 5 mm gap, 2 mm
 vertical pin holes at radius 31.74, 10 mm wide, tip at 36.74, with the ends
 rounded concentric with the pins.
 
-Eight deep vertical ribs carry puck hits from the ring into the spring mount;
-the load runs along the printed layers. The underside is open.
+A continuous 45-degree shell carries puck hits from the ring into the spring
+mount and carries the lugs; eight vertical holes keep the underside open.
 
 Frame: z = 0 is the table, +z up, x and y along the lugs.
 Prints bottom-down, solid (100% infill), so the mass model holds.
@@ -35,7 +35,7 @@ SEGMENTS = 240
 PETG_G_CM3 = 1.27
 
 MALLET_R = 50.4        # striking radius, as shared/cdpr_geometry MALLET_RADIUS_MM
-RING_WALL = 5.0
+RING_WALL = 4.0
 RING_H = 20.0
 
 # Spring mount, from mallet-mount(5)
@@ -51,8 +51,11 @@ MARKER_R = 26.8
 MARKER_D = 7.0
 MARKER_DEPTH = 0.2
 
-RIB_W = 4.0
-SHELL_Z = 3.5          # vertical thickness of the 45-degree shell (2.5 mm true)
+SHELL_T = 3.0          # true thickness of the 45-degree shells
+SHELL_Z = SHELL_T * math.sqrt(2)
+SHELL_DROP = 3.5       # how far the shell passes below the lug tips
+VENT_D = 13.0
+VENT_R = 36.5
 
 # Ballast pocket: scrap metal cast in epoxy, filled to the top.
 BALLAST_R = 12.0
@@ -101,25 +104,26 @@ def build_body(cable_z):
     ring = revolve([(ring_in, 0), (MALLET_R - 0.5, 0), (MALLET_R, 0.5), (MALLET_R, RING_H - 1),
                     (MALLET_R - 1, RING_H), (ring_in + 1, RING_H), (ring_in, RING_H - 1)])
 
-    ribs = []
-    rib_pts = [(ring_in + 0.5, 0.5), (MOUNT_OD_R - 0.5, 0.5 + ring_in + 0.5 - MOUNT_OD_R + 0.5),
-               (MOUNT_OD_R - 0.5, mount_lo + 3.0), (ring_in + 0.5, RING_H)]
-    for a in range(0, 360, 45):
-        rib = Manifold.extrude(section(rib_pts), RIB_W).rotate((90, 0, 0)).translate((0, RIB_W / 2, 0))
-        ribs.append(rib.rotate((0, 0, a)))
+    # Shell from the ring to the mount. Its top is cut flat at the lower lug's
+    # top face, which keeps the spring gap clear all the way round.
+    upper = lambda r: mount_lo - SHELL_DROP + LUG_TIP_R - r
+    lower = lambda r: upper(r) - SHELL_Z
+    lug_top = mount_lo + LUG_T
+    flat_r = LUG_TIP_R + mount_lo - SHELL_DROP - lug_top
+    shell = revolve([(ring_in + 0.5, lower(ring_in + 0.5)), (MOUNT_OD_R - 0.5, lower(MOUNT_OD_R - 0.5)),
+                     (MOUNT_OD_R - 0.5, lug_top), (flat_r, lug_top), (ring_in + 0.5, upper(ring_in + 0.5))])
+    # Everything above the shell's underside, to trim the lug pads against.
+    above = revolve([(15.0, lower(15.0)), (55.0, lower(55.0)), (55.0, 80.0), (15.0, 80.0)])
 
     # The chamfered underside prints without support.
     mount = revolve([(MOUNT_ID_R, mount_lo + MOUNT_OD_R - MOUNT_ID_R), (MOUNT_OD_R, mount_lo),
                      (MOUNT_OD_R, mount_hi), (MOUNT_ID_R, mount_hi)])
-    parts = [ring, mount] + ribs
+    parts = [ring, mount, shell]
     for a in (0, 90, 180, 270):
         lugs = lug(mount_lo) + lug(cable_z + LUG_GAP / 2)
-        # Under the lower lug, so it needs no support.
-        web_pts = [(MOUNT_OD_R - 0.5, mount_lo - 1 - (LUG_TIP_R - MOUNT_OD_R)), (LUG_TIP_R - 0.5, mount_lo - 0.5),
-                   (LUG_TIP_R - 0.5, mount_lo + 0.5), (MOUNT_OD_R - 0.5, mount_lo + 0.5)]
-        web = Manifold.extrude(section(web_pts), LUG_W - 1).rotate((90, 0, 0)).translate((0, (LUG_W - 1) / 2, 0))
-        web ^= Manifold.extrude(lug_plan(), 80.0)
-        parts.append((lugs + web).rotate((0, 0, a)))
+        # Extends the lower lug straight down into the shell: no overhang.
+        pad = Manifold.extrude(lug_plan(), mount_lo - 10.0).translate((0, 0, 10.0)) ^ above
+        parts.append((lugs + pad).rotate((0, 0, a)))
 
     # Inverted shell up to the ballast tower: leaves the marker face clear.
     top_z = mount_hi + (MOUNT_ID_R + 0.2 - TOWER_R)
@@ -142,6 +146,8 @@ def build_body(cable_z):
         body += p
     for a in (0, 90, 180, 270):
         body -= cylinder(MARKER_D / 2, mount_hi - MARKER_DEPTH, mount_hi + 1, 64).translate((MARKER_R, 0, 0)).rotate((0, 0, a))
+        vent = cylinder(VENT_D / 2, -1, lug_top - 0.1, 96).translate((VENT_R, 0, 0)).rotate((0, 0, a + 22.5))
+        body -= vent + vent.rotate((0, 0, 45))
         # Clear through everything below the lugs, so a pin can be pushed out.
         body -= cylinder(PIN_D / 2, -1, mount_hi + 1, 48).translate((PIN_R, 0, 0)).rotate((0, 0, a))
     return body, dict(mount_lo=mount_lo, mount_hi=mount_hi, floor=floor, tower_top=tower_top)
