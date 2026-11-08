@@ -58,7 +58,7 @@ SHELL_Z = 3.5          # vertical thickness of the 45-degree shell (2.5 mm true)
 BALLAST_R = 12.0
 BALLAST_H = 16.0
 TOWER_R = 14.4
-TOWER_FLOOR_Z = 52.5
+TOWER_FLOOR_ABOVE_SHELL = 2.0
 LID_PLUG = 2.0
 LID_T = 2.0
 LID_CLEAR = 0.1
@@ -127,7 +127,8 @@ def build_body(cable_z):
                     (TOWER_R - 1, top_z + 1 - SHELL_Z), (MOUNT_ID_R + 0.2, mount_hi - SHELL_Z)])
     parts.append(cone)
 
-    floor = max(TOWER_FLOOR_Z, top_z)
+    # Tied to the shell: any higher and the tower's underside misses it.
+    floor = top_z + TOWER_FLOOR_ABOVE_SHELL
     pocket_top = floor + BALLAST_H
     tower_top = pocket_top + LID_PLUG
     # A pointed underside, so the tower floor needs no bridge or support.
@@ -159,6 +160,7 @@ def to_trimesh(man):
 
 
 def report(body, lid, info, cable_z):
+    assert len(body.decompose()) == 1, "the body is in separate pieces"
     b, l = to_trimesh(body), to_trimesh(lid)
     assert b.is_watertight and l.is_watertight
     masses = [("body", b.volume / 1000 * PETG_G_CM3, b.center_mass[2]),
