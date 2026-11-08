@@ -248,6 +248,17 @@ class CDPRClient:
             }
         raise RuntimeError(f"CDPR enc failed: {resp}")
 
+    def sample_drives(self, seconds: float) -> str:
+        """Log every drive's encoder as fast as the bus allows, for `seconds`.
+
+        Returns at once with the master-relative CSV path; the file appears
+        when sampling ends. Reads only.
+        """
+        resp = self._send(f"SAMPLE {seconds:.2f}")
+        if resp.startswith("OK SAMPLE "):
+            return resp.split(maxsplit=2)[2]
+        raise RuntimeError(f"CDPR sample failed: {resp}")
+
     def get_motor_load(self, *, metadata_only: bool = False) -> dict:
         """Read the master's cached load snapshot or recording source.
 

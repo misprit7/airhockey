@@ -208,6 +208,34 @@ def test_gentle_caps_lengthen_the_estimate():
     assert slow > fast > 5.0
 
 
+# ── fast drive sampling ──────────────────────────────────────────────
+
+def test_fast_sampling_replaces_the_slow_encoder_reads(tmp_path):
+    clock = VirtualClock()
+    rig = FakeRig(clock)
+    asked = []
+    rig.sample_drives = lambda s: asked.append(s) or "logs/drive_samples/x.csv"
+    rig.get_encoders = lambda: pytest.fail("ENC would open a gap in the samples")
+    _, s = _run(rig, clock, tmp_path)
+    assert s["drive_samples"] == "logs/drive_samples/x.csv"
+    assert len(asked) == 1 and asked[0] > ft.SAMPLE_MARGIN_S
+    assert s["verdict"] == "close", ft.format_summary(s)
+
+
+def test_an_older_master_falls_back_to_encoder_reads(tmp_path):
+    clock = VirtualClock()
+    rig = FakeRig(clock)
+
+    def refuse(_seconds):
+        raise RuntimeError("CDPR sample failed: ERR unknown command")
+
+    rig.sample_drives = refuse
+    _, s = _run(rig, clock, tmp_path)
+    assert s["drive_samples"] is None
+    assert any("sampling unavailable" in n for n in s["notes"])
+    assert all(e["gain"] is not None for e in s["encoders"])
+
+
 # ── verdicts ─────────────────────────────────────────────────────────
 
 def test_a_paddle_on_the_body_is_close(tmp_path):

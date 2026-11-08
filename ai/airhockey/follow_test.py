@@ -93,6 +93,7 @@ CLOSE_MOVING_P90_MM = 30.0
 CLOSE_REST_P50_MM = 10.0
 CLOSE_ARRIVE_LAG_MS = 60.0   # camera latency + one camera frame, with room
 LOST_REST_P50_MM = 25.0
+SAMPLE_MARGIN_S = 2.0   # fast drive sampling outlasts the estimated run by this
 ENC_FIT_MIN_TRAVEL_MM = 20.0
 ENC_GAIN_TOL = 0.05     # |gain| this far from 1 = step scale mismatch
 ENC_REST_MM = 5.0       # drive vs steps at rest beyond this = lost position
@@ -292,7 +293,18 @@ class FollowTest:
         c_zero = [s["c0"], s["c1"], s["c2"], s["c3"]]
         enc_zero = None
         period = 1.0 / self.sample_hz
+        # Fast sampling replaces ENC when the master offers it: each ENC is a
+        # ~50 ms hole in the bus, about the length of one ringing period.
+        drive_samples = None
+        sample_note = None
+        if hasattr(self.client, "sample_drives"):
+            try:
+                drive_samples = self.client.sample_drives(
+                    self.progress["estimate_s"] + SAMPLE_MARGIN_S)
+            except Exception as e:                   # noqa: BLE001
+                sample_note = f"fast drive sampling unavailable: {e}"
         t0 = self.clock()
+        monotonic_t0 = time.monotonic()
         next_t = t0
         seg_i = -1
         seg_end = t0
@@ -342,7 +354,7 @@ class FollowTest:
                     row["cam_y"] = cam[2]
                     self.progress["gap_mm"] = round(
                         math.hypot(cam[1] - s["x"], cam[2] - s["y"]), 1)
-                if t - last_enc_t >= ENC_EVERY_S:
+                if drive_samples is None and t - last_enc_t >= ENC_EVERY_S:
                     last_enc_t = t
                     e0 = self.clock()
                     try:
@@ -382,6 +394,10 @@ class FollowTest:
         summary = summarize(rows, segs, camera=self.camera is not None)
         summary["caps"] = {"speed_mm_s": v_max, "accel_mm_s2": a_max}
         summary["stopped_early"] = self._stop.is_set()
+        summary["drive_samples"] = drive_samples
+        summary["monotonic_t0"] = monotonic_t0
+        if sample_note:
+            summary.setdefault("notes", []).append(sample_note)
         summary["estimate_s"] = round(self.progress["estimate_s"], 1)
         summary.update(self._write_logs(rows, summary))
         self.result = summary

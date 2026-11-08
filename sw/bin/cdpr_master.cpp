@@ -12,6 +12,7 @@
 #include <chrono>
 #include <memory>
 #include <functional>
+#include <vector>
 #include <unistd.h>
 #include <sys/socket.h>
 #include <netinet/in.h>
@@ -200,6 +201,11 @@ static std::atomic<double> g_watchdog_checked{0}, g_watchdog_gap_ms{0};
 static std::atomic<double> g_watchdog_max_gap_ms{0};
 static MotorLoadLogger *g_motor_load = nullptr;
 
+// True while SAMPLE owns the SC-Hub's spare bandwidth. The fault watchdog
+// keeps running; only the slow telemetry and health reads stand aside.
+static std::atomic<bool> g_sampling{false};
+static std::thread g_sampler;
+
 static std::string loadContext(double tension_mm) {
     std::lock_guard<std::mutex> lock(g_status_mutex);
     const auto &s = g_status;
@@ -264,6 +270,55 @@ static void faultWatchdog(ClearPath *robot, int teensy_fd) {
     }
 }
 
+// One SDK read that gives way to the fault watchdog first. An SDK transaction
+// already in progress cannot be preempted, but none starts ahead of it.
+static LoadValue readYielding(ClearPath &robot, unsigned node, LoadField field) {
+    while (!g_stop) {
+        if (!g_watchdog_waiting) {
+            std::unique_lock<std::mutex> lock(g_robot_mutex, std::try_to_lock);
+            if (lock.owns_lock() && !g_watchdog_waiting)
+                return robot.readLoad(node, field);
+        }
+        usleep(200);
+    }
+    LoadValue stopped;
+    stopped.error = "stopping";
+    stopped.start = stopped.end = loadMonotonic();
+    return stopped;
+}
+
+// Read every drive's encoder in turn as fast as the bus allows, for `seconds`.
+//
+// WHY: a 10-25 Hz ring after a stop is invisible to the 10 Hz telemetry and to
+// ENC, which reads several values per drive. Whether the SHAFTS ring or only
+// the mallet does decides whether servo gains can help at all.
+//
+// Held in memory and written at the end, so disk latency cannot open a gap.
+// Times are CLOCK_MONOTONIC. Ends early on DISABLE or a fault.
+static void sampleDrives(ClearPath *robot, double seconds, std::string path) {
+    struct Sample { double start, end, value; unsigned node; bool valid; };
+    std::vector<Sample> samples;
+    samples.reserve(static_cast<std::size_t>(seconds * 2000.0));
+    const double deadline = loadMonotonic() + seconds;
+    while (!g_stop && g_motors_enabled && loadMonotonic() < deadline) {
+        for (unsigned node = 0; node < 4 && !g_stop; node++) {
+            LoadValue v = readYielding(*robot, node, LoadField::Encoder);
+            samples.push_back({v.start, v.end, v.value, node, v.valid});
+        }
+    }
+    FILE *f = fopen(path.c_str(), "w");
+    if (f) {
+        fprintf(f, "start_monotonic,end_monotonic,node,encoder_counts,valid\n");
+        for (const Sample &s : samples)
+            fprintf(f, "%.6f,%.6f,%u,%.1f,%d\n", s.start, s.end, s.node, s.value, s.valid);
+        fclose(f);
+        logf("  drive samples: %zu reads -> %s\n", samples.size(), path.c_str());
+    } else {
+        logf("  drive samples: cannot write %s: %s\n", path.c_str(), strerror(errno));
+    }
+    g_sampling = false;
+}
+
 // Human-readable diagnostics perform several slow SDK transactions. They
 // must never run on the TCP/Teensy command thread: a once-per-second 40ms
 // stall there interrupts a 100Hz trajectory. Keep SDK access serialized and
@@ -272,7 +327,8 @@ static void faultWatchdog(ClearPath *robot, int teensy_fd) {
 static void backgroundHealth(const std::function<void()> &poll) {
     double next = loadMonotonic() + 1.0;
     while (!g_stop) {
-        if (g_motors_enabled && !g_fault && !g_watchdog_waiting && loadMonotonic() >= next) {
+        if (g_motors_enabled && !g_fault && !g_watchdog_waiting && !g_sampling &&
+            loadMonotonic() >= next) {
             std::unique_lock<std::mutex> lock(g_robot_mutex, std::try_to_lock);
             if (lock.owns_lock() && !g_stop && g_motors_enabled && !g_fault && !g_watchdog_waiting) {
                 poll();
@@ -645,6 +701,28 @@ static int handleCommand(const char *line, ClearPath &robot, int client_fd, int 
                      trq[0], trq[1], trq[2], trq[3]);
         }
 
+    } else if (strncmp(line, "SAMPLE", 6) == 0) {
+        // Starts in the background and answers at once: the client has moves
+        // to send while this runs. Reads only.
+        double seconds = 0.0;
+        char extra;
+        if (sscanf(line, "SAMPLE %lf %c", &seconds, &extra) != 1 ||
+            !(seconds >= 0.5 && seconds <= 120.0)) {
+            snprintf(resp, sizeof(resp), "ERR SAMPLE needs seconds, 0.5 to 120\n");
+        } else if (!g_motors_enabled || g_fault) {
+            snprintf(resp, sizeof(resp), "ERR motors not enabled\n");
+        } else if (g_sampling.exchange(true)) {
+            snprintf(resp, sizeof(resp), "ERR sampling already running\n");
+        } else {
+            if (g_sampler.joinable()) g_sampler.join();
+            mkdir("logs/drive_samples", 0755);
+            char path[256];
+            snprintf(path, sizeof(path), "logs/drive_samples/%.0f-%d.csv",
+                     loadWallTime() * 1000000, getpid());
+            g_sampler = std::thread(sampleDrives, &robot, seconds, std::string(path));
+            snprintf(resp, sizeof(resp), "OK SAMPLE %s\n", path);
+        }
+
     } else if (strncmp(line, "QUIT", 4) == 0) {
         return 0;
 
@@ -805,18 +883,8 @@ int main(int argc, char *argv[]) {
         load_logger.reset(new MotorLoadLogger(path, load_hz,
             [&robot](unsigned node, LoadField field) {
                 // Yield to safety/enable operations between EVERY SDK field.
-                // An SDK transaction already in progress cannot be preempted;
-                // its actual duration and watchdog gaps are recorded.
-                while (!g_stop) {
-                    if (!g_watchdog_waiting) {
-                        std::unique_lock<std::mutex> lock(g_robot_mutex, std::try_to_lock);
-                        if (lock.owns_lock() && !g_watchdog_waiting)
-                            return robot.readLoad(node, field);
-                    }
-                    usleep(200);
-                }
-                LoadValue stopped; stopped.error = "stopping";
-                stopped.start = stopped.end = loadMonotonic(); return stopped;
+                // Actual durations and watchdog gaps are recorded.
+                return readYielding(robot, node, field);
             }, []() { return loadContext(g_tension_mm.load()); }));
         if (load_logger->open()) {
             g_motor_load = load_logger.get();
@@ -824,7 +892,7 @@ int main(int argc, char *argv[]) {
             telemetry = std::thread([&load_logger, load_hz]() {
                 while (!g_stop) {
                     double next = loadMonotonic() + 1.0 / load_hz;
-                    load_logger->sample();
+                    if (!g_sampling) load_logger->sample();
                     // No catch-up bursts after slow I/O. Remain responsive to exit.
                     while (!g_stop && loadMonotonic() < next) usleep(2000);
                 }
@@ -936,6 +1004,7 @@ int main(int argc, char *argv[]) {
     // ── Shutdown ──
     logf("\nShutting down...\n");
     watchdog.join();
+    if (g_sampler.joinable()) g_sampler.join();
 
     if (g_motors_enabled) {
         std::lock_guard<std::mutex> lock(g_robot_mutex);
