@@ -6,9 +6,10 @@ import track_mallet
 from airhockey.physics import TableConfig
 
 
-def test_both_paddles_keep_their_measured_values():
+def test_all_paddles_keep_their_measured_values():
     assert geom.PADDLES["standard"] == geom.Paddle(0.170, 65.0, 33.0)
     assert geom.PADDLES["heavy"] == geom.Paddle(0.370, 68.52, 30.55)
+    assert geom.PADDLES["printed"] == geom.Paddle(0.098, 68.10, 37.30)
 
 
 def test_the_tracker_and_sim_follow_the_active_paddle():

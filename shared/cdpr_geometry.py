@@ -159,11 +159,15 @@ PADDLES = {
     # Fitted 2026-11-08 against jumping; mass and heights measured by hand.
     # Radii and cable attachment were not re-measured and are assumed equal.
     "heavy": Paddle(mass_kg=0.370, centre_marker_z_mm=68.52, arm_marker_z_mm=30.55),
+    # 3D-printed, hw/mallet/bin/gen_printed_mallet.py, installed 2026-11-08.
+    # DESIGN values from that generator, not calipered: mass assumes the
+    # 18.9 g ballast. Spring pins and markers keep the standard radii.
+    "printed": Paddle(mass_kg=0.098, centre_marker_z_mm=68.10, arm_marker_z_mm=37.30),
 }
 
 # Which paddle is on the robot. Change this one word when swapping, then
 # restart the web server and anything else that tracks the paddle.
-ACTIVE_PADDLE = "standard"
+ACTIVE_PADDLE = "printed"
 PADDLE = PADDLES[ACTIVE_PADDLE]
 
 
