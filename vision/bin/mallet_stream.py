@@ -52,7 +52,7 @@ from playing_area import inside_playing_area
 try:
     from track_mallet import ARM_Z_MM  # measured, not inferred
 except Exception:                       # noqa: BLE001
-    ARM_Z_MM = 30.55
+    ARM_Z_MM = geom.PADDLE.arm_marker_z_mm
 
 # Robot mallet only: its markers sit ARM_MARKER_R apart, so the cluster spans
 # roughly 2 * 26.5, with room for perspective and extra stray detections.

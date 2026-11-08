@@ -11,6 +11,7 @@ If you change a value in the header, change it here and run:
 """
 
 import math
+from typing import NamedTuple
 
 NUM_MOTORS = 4
 
@@ -143,6 +144,27 @@ MALLET_Z_MM = 67.0   # retroreflector on top of the mallet
 # the error growing radially — i.e. worst exactly where a goalie needs the
 # prediction to be good.
 PUCK_MARKER_Z_MM = 8.0
+
+
+
+# ── Robot paddles ──
+class Paddle(NamedTuple):
+    mass_kg: float
+    centre_marker_z_mm: float  # marker on top, above the playing surface
+    arm_marker_z_mm: float     # the two side markers
+
+
+PADDLES = {
+    "standard": Paddle(mass_kg=0.170, centre_marker_z_mm=65.0, arm_marker_z_mm=33.0),
+    # Fitted 2026-11-08 against jumping; mass and heights measured by hand.
+    # Radii and cable attachment were not re-measured and are assumed equal.
+    "heavy": Paddle(mass_kg=0.370, centre_marker_z_mm=68.52, arm_marker_z_mm=30.55),
+}
+
+# Which paddle is on the robot. Change this one word when swapping, then
+# restart the web server and anything else that tracks the paddle.
+ACTIVE_PADDLE = "standard"
+PADDLE = PADDLES[ACTIVE_PADDLE]
 
 
 def in_workspace(x, y):

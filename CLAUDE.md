@@ -192,6 +192,8 @@ Robotic air hockey table that uses reinforcement learning trained in simulation,
   - `cdpr_geometry.py` - Python mirror of the header (Python can't include
     a C header). Every Python consumer imports from here — never hardcode
     a geometry constant elsewhere.
+    `PADDLES` / `ACTIVE_PADDLE` name each robot paddle's mass and marker
+    heights; swapping paddles is that one word plus a web server restart.
   - `check_geometry.py` - Verifies the mirror matches the header constant
     for constant, AND that the C++ and NumPy cable models agree numerically
 - `fw/` - Teensy 4.1 step/dir firmware. **All motion runs here.**

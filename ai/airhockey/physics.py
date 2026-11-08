@@ -36,7 +36,7 @@ class TableConfig:
     # whose bots compute contact geometry explicitly.
     paddle_radius: float = _geom.MALLET_RADIUS_MM / 1000.0
     puck_mass: float = 0.015  # 15g puck
-    paddle_mass: float = 0.17  # 170g paddle
+    paddle_mass: float = _geom.PADDLE.mass_kg
     # ROLLING term only, mu, MEASURED over two sessions. The quadratic model
     # is now actually USED (see _apply_friction) rather than stored beside a
     # constant that ignored it, so this is no longer the constant-model
