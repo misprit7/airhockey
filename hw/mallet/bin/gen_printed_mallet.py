@@ -6,7 +6,8 @@ of mass; any offset d tips it at about a = g * r / d, whatever it weighs. So
 the low striking ring is balanced by metal and epoxy in a tower ABOVE the springs.
 
 The spring clevises copy mallet-mount(5): two 5 mm lugs, a 5 mm gap, 2 mm
-vertical pin holes at radius 31.74, 10 mm wide, tip at 36.75.
+vertical pin holes at radius 31.74, 10 mm wide, tip at 36.74, with the ends
+rounded concentric with the pins.
 
 Eight deep vertical ribs carry puck hits from the ring into the spring mount;
 the load runs along the printed layers. The underside is open.
@@ -81,12 +82,15 @@ def box(x0, x1, y0, y1, z0, z1):
     return Manifold.cube((x1 - x0, y1 - y0, z1 - z0)).translate((x0, y0, z0))
 
 
+def lug_plan():
+    """Lug outline: a full round end, concentric with the pin hole."""
+    return (CrossSection.square((PIN_R - 25.0, LUG_W)).translate((25.0, -LUG_W / 2))
+            + CrossSection.circle(LUG_W / 2, 96).translate((PIN_R, 0)))
+
+
 def lug(z0):
-    plan = (CrossSection.square((LUG_TIP_R + 1 - 25.0, LUG_W)).translate((25.0, -LUG_W / 2))
-            .offset(-1.0, JoinType.Round).offset(1.0, JoinType.Round))
-    plate = Manifold.extrude(plan, LUG_T).translate((0, 0, z0))
-    keep = box(0, LUG_TIP_R, -LUG_W, LUG_W, z0 - 1, z0 + LUG_T + 1)
-    return (plate ^ keep) - cylinder(PIN_D / 2, z0 - 1, z0 + LUG_T + 1, 48).translate((PIN_R, 0, 0))
+    plate = Manifold.extrude(lug_plan(), LUG_T).translate((0, 0, z0))
+    return plate - cylinder(PIN_D / 2, z0 - 1, z0 + LUG_T + 1, 48).translate((PIN_R, 0, 0))
 
 
 def build_body(cable_z):
@@ -114,6 +118,7 @@ def build_body(cable_z):
         web_pts = [(MOUNT_OD_R - 0.5, mount_lo - 1 - (LUG_TIP_R - MOUNT_OD_R)), (LUG_TIP_R - 0.5, mount_lo - 0.5),
                    (LUG_TIP_R - 0.5, mount_lo + 0.5), (MOUNT_OD_R - 0.5, mount_lo + 0.5)]
         web = Manifold.extrude(section(web_pts), LUG_W - 1).rotate((90, 0, 0)).translate((0, (LUG_W - 1) / 2, 0))
+        web ^= Manifold.extrude(lug_plan(), 80.0)
         parts.append((lugs + web).rotate((0, 0, a)))
 
     # Inverted shell up to the ballast tower: leaves the marker face clear.
