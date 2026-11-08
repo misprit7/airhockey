@@ -102,8 +102,8 @@ def build_body(cable_z):
                     (MALLET_R - 1, RING_H), (ring_in + 1, RING_H), (ring_in, RING_H - 1)])
 
     ribs = []
-    rib_pts = [(ring_in + 0.5, 2.0), (MOUNT_OD_R - 0.5, 2.0 + ring_in + 0.5 - MOUNT_OD_R + 0.5),
-               (MOUNT_OD_R - 0.5, mount_lo + 1.5), (ring_in + 0.5, RING_H)]
+    rib_pts = [(ring_in + 0.5, 0.5), (MOUNT_OD_R - 0.5, 0.5 + ring_in + 0.5 - MOUNT_OD_R + 0.5),
+               (MOUNT_OD_R - 0.5, mount_lo + 3.0), (ring_in + 0.5, RING_H)]
     for a in range(0, 360, 45):
         rib = Manifold.extrude(section(rib_pts), RIB_W).rotate((90, 0, 0)).translate((0, RIB_W / 2, 0))
         ribs.append(rib.rotate((0, 0, a)))
@@ -141,6 +141,8 @@ def build_body(cable_z):
         body += p
     for a in (0, 90, 180, 270):
         body -= cylinder(MARKER_D / 2, mount_hi - MARKER_DEPTH, mount_hi + 1, 64).translate((MARKER_R, 0, 0)).rotate((0, 0, a))
+        # Clear through everything below the lugs, so a pin can be pushed out.
+        body -= cylinder(PIN_D / 2, -1, mount_hi + 1, 48).translate((PIN_R, 0, 0)).rotate((0, 0, a))
     return body, dict(mount_lo=mount_lo, mount_hi=mount_hi, floor=floor, tower_top=tower_top)
 
 
@@ -178,7 +180,7 @@ def report(body, lid, info, cable_z):
 
 def main():
     ap = argparse.ArgumentParser(description=__doc__, formatter_class=argparse.RawDescriptionHelpFormatter)
-    ap.add_argument("--cable-z", type=float, default=33.0, help="height of the springs above the table, mm")
+    ap.add_argument("--cable-z", type=float, default=30.0, help="height of the springs above the table, mm")
     args = ap.parse_args()
     body, info = build_body(args.cable_z)
     lid = build_lid(info["tower_top"])
