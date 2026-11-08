@@ -65,7 +65,11 @@ CALIB_DIR = Path(__file__).resolve().parent.parent / "calib"
 #
 # Worth a caliper — it also shifts the measured paddle POSITION by ~0.8 mm,
 # which is the reference every cable length is taken from at ENABLE.
-MALLET_Z_MM = 65.0      # centre marker, on top of the paddle
+#
+# The notes above and below describe the PREVIOUS paddle (centre 65.0, arms
+# 33.0). The heavier paddle fitted 2026-11-08 was measured by hand: centre
+# 68.52, arms 30.55. Its cable attachment height has not been measured.
+MALLET_Z_MM = 68.52     # centre marker, on top of the paddle
 # Height of the two side MARKERS, which is what back-projecting them needs.
 # Measured 2026-08-16 (was 49.0 before the arms were lowered).
 #
@@ -81,7 +85,7 @@ MALLET_Z_MM = 65.0      # centre marker, on top of the paddle
 #   * the spool axes sit at 33.5, so the cables are now within ~1 mm of
 #     horizontal. The planar cable model's error from ignoring z drops from
 #     0.30 mm at a 400 mm span to under a micron.
-ARM_Z_MM = 33.0         # the two side markers
+ARM_Z_MM = 30.55        # the two side markers
 SPOOL_MARKER_Z_MM = 33.5  # retroreflectors on the four spool axes
 ARM_SPAN_DEG = 90.0     # arms 0 and 3 are adjacent, so 90 deg apart
 CLUSTER_PX = 60.0       # paddle markers sit within this of each other
