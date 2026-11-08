@@ -167,7 +167,7 @@ PADDLES = {
 
 # Which paddle is on the robot. Change this one word when swapping, then
 # restart the web server and anything else that tracks the paddle.
-ACTIVE_PADDLE = "printed"
+ACTIVE_PADDLE = "heavy"
 PADDLE = PADDLES[ACTIVE_PADDLE]
 
 
