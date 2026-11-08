@@ -112,11 +112,11 @@ static void test_startup_pretension_configuration_never_moves() {
         assert(read(serial[1], &byte, 1) == -1 && (errno == EAGAIN || errno == EWOULDBLOCK));
     };
     g_motors_enabled = false;
-    for (const char *text : {"PRETENSION 0", "PRETENSION 3", "PRETENSION 1.5"})
+    for (const char *text : {"PRETENSION 0", "PRETENSION 6", "PRETENSION 1.5"})
         command(text, "OK PRETENSION");
     assert(g_tension_mm.load() == 1.5);
     for (const char *text : {"PRETENSION", "PRETENSION nan", "PRETENSION inf",
-             "PRETENSION -1", "PRETENSION 3.1", "PRETENSION 1 garbage"}) {
+             "PRETENSION -1", "PRETENSION 6.1", "PRETENSION 1 garbage"}) {
         command(text, "ERR PRETENSION");
         assert(g_tension_mm.load() == 1.5);
     }

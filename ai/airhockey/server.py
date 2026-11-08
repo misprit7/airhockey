@@ -429,8 +429,8 @@ async def live_game(ws: WebSocket):
                         if use_hardware:
                             try:
                                 tension_mm = float(msg.get('tension_mm', 1.5))
-                                if not math.isfinite(tension_mm) or not 0 <= tension_mm <= 3:
-                                    raise ValueError('Startup pretension must be between 0 and 3 mm')
+                                if not math.isfinite(tension_mm) or not 0 <= tension_mm <= 6:
+                                    raise ValueError('Startup pretension must be between 0 and 6 mm')
                                 # Measure where the mallet ACTUALLY is before
                                 # energizing. Assuming it sits at the centre
                                 # of the robot half offsets every subsequent

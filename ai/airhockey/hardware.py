@@ -144,8 +144,8 @@ class CDPRClient:
     def set_startup_tension(self, mm: float) -> None:
         """Configure next ENABLE while disabled; this command never moves cables."""
         mm = float(mm)
-        if not math.isfinite(mm) or not 0 <= mm <= 3:
-            raise ValueError('Startup pretension must be between 0 and 3 mm')
+        if not math.isfinite(mm) or not 0 <= mm <= 6:
+            raise ValueError('Startup pretension must be between 0 and 6 mm')
         resp = self._send(f'PRETENSION {mm:.2f}')
         if not resp.startswith('OK PRETENSION '):
             hint = ' Restart cdpr_master to load support for UI pretension.' if 'unknown' in resp.lower() else ''

@@ -12,7 +12,7 @@ def test_client_validates_and_requires_explicit_configuration_ack(monkeypatch):
     monkeypatch.setattr(client,'_send',send)
     client.set_startup_tension(1.5)
     assert commands==['PRETENSION 1.50']
-    for value in (-1,3.1,float('nan'),float('inf')):
+    for value in (-1,6.1,float('nan'),float('inf')):
         with pytest.raises(ValueError):client.set_startup_tension(value)
     assert len(commands)==1
     monkeypatch.setattr(client,'_send',lambda _: 'ERR unknown command')

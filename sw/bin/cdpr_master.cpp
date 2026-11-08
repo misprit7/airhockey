@@ -415,8 +415,8 @@ static int handleCommand(const char *line, ClearPath &robot, int client_fd, int 
         double mm = 0;
         char extra;
         if (sscanf(line, "PRETENSION %lf %c", &mm, &extra) != 1 ||
-            !std::isfinite(mm) || mm < 0 || mm > 3) {
-            snprintf(resp, sizeof(resp), "ERR PRETENSION requires 0..3 mm\n");
+            !std::isfinite(mm) || mm < 0 || mm > 6) {
+            snprintf(resp, sizeof(resp), "ERR PRETENSION requires 0..6 mm\n");
         } else if (g_motors_enabled) {
             snprintf(resp, sizeof(resp), "ERR disable hardware before changing startup pretension\n");
         } else {
