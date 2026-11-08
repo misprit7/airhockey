@@ -115,15 +115,15 @@ def build_body(cable_z):
     # Everything above the shell's underside, to trim the lug pads against.
     above = revolve([(15.0, lower(15.0)), (55.0, lower(55.0)), (55.0, 80.0), (15.0, 80.0)])
 
-    # The chamfered underside prints without support.
-    mount = revolve([(MOUNT_ID_R, mount_lo + MOUNT_OD_R - MOUNT_ID_R), (MOUNT_OD_R, mount_lo),
+    # Its underside continues the shell's, so nothing starts in mid-air.
+    mount = revolve([(MOUNT_ID_R, lower(MOUNT_ID_R)), (MOUNT_OD_R, lower(MOUNT_OD_R)),
                      (MOUNT_OD_R, mount_hi), (MOUNT_ID_R, mount_hi)])
     parts = [ring, mount, shell]
     for a in (0, 90, 180, 270):
         lugs = lug(mount_lo) + lug(cable_z + LUG_GAP / 2)
         # Extends the lower lug straight down into the shell: no overhang.
         pad = Manifold.extrude(lug_plan(), mount_lo - 10.0).translate((0, 0, 10.0)) ^ above
-        parts.append((lugs + pad).rotate((0, 0, a)))
+        parts.append(((lugs ^ above) + pad).rotate((0, 0, a)))
 
     # Inverted shell up to the ballast tower: leaves the marker face clear.
     top_z = mount_hi + (MOUNT_ID_R + 0.2 - TOWER_R)
