@@ -25,6 +25,16 @@ default is arm A; README.md "Round 2" has the reasons and the numbers.
     PYTHONPATH=ai python3 ai/recipes/table-faithful-20261110/finetune.py \
         --arm a2 --run-name _neural-table-faithful-20261110-a2 --minutes 150
 
+ROUND 3 (`--arm a3`): arm a2's options plus two IMITATION ANCHORS on resting
+pucks, because reward and exploration did not find the strike: the physics
+teacher's action where a puck has lain on the open table, v4's in corner and
+edge drills and on pucks lying in the rail strip. Label sources in training
+only. `--resume` chooses the starting point (default arm a2's `agent.pt`);
+README.md "Round 3".
+
+    PYTHONPATH=ai python3 ai/recipes/table-faithful-20261110/finetune.py \
+        --arm a3 --run-name _neural-table-faithful-20261110-a3 --minutes 150
+
 Simulation only; nothing here touches the table.
 """
 import argparse
@@ -37,6 +47,9 @@ ROOT = Path(__file__).resolve().parents[3]
 PRODUCTION = "runs/rail30-100-20261001-v1/agent.pt"
 V4 = "runs/teacher-calm-20261018-v4/agent.pt"
 V5A = "runs/_neural-table-faithful-20261110-a/agent.pt"
+A2 = "runs/_neural-table-faithful-20261110-a2/agent.pt"
+# Arm a3's anchor weights (README "Round 3" has the smoke run they were read from).
+TEACHER_RESTING, REFERENCE_RAIL = 1.0, 1.0
 # Launcher defaults per arm; "a" is the parser's own.
 ARMS = {
     "a": {},
@@ -48,6 +61,9 @@ ARMS = {
         sim_option=['mallet_lift={"b0": [0.0, 0.30], "a0": [10, 90], "flat_probability": 0.25, '
                     '"closing_probability": 0.25, "far_body": false}']),
 }
+# Round 3: a2's options and the two anchors; --resume picks a, a2 or v4.
+ARMS["a3"] = dict(ARMS["a2"], resume=A2, seed=20261113, teacher_resting=TEACHER_RESTING, reference_rail=REFERENCE_RAIL,
+                  anchor_space="pre-squash")
 
 
 def argv(a):
@@ -139,6 +155,13 @@ def argv(a):
                         ("--accel-effort-weight", a.accel_effort), ("--idle-speed-weight", a.idle_speed)):
         if value:
             cmd += [flag, str(value)]
+    # Round 3: each absent at its arm-A / a2 default.
+    if a.teacher_resting:
+        cmd += ["--teacher-resting-weight", str(a.teacher_resting), "--teacher-resting-start", str(a.teacher_resting_start)]
+    if a.reference_rail:
+        cmd += ["--skill-reference", a.skill_reference, "--skill-reference-rail-weight", str(a.reference_rail)]
+    if a.teacher_resting or a.reference_rail:
+        cmd += ["--anchor-space", a.anchor_space] + (["--anchor-kl-exempt"] if a.anchor_kl_exempt else [])
     return cmd
 
 
@@ -184,6 +207,16 @@ def build_parser():
     p.add_argument("--accel-effort", type=float, default=0.0, help="Weight of the quadratic accel cost above 40 m/s^2")
     p.add_argument("--idle-speed", type=float, default=0.0, help="Cost per metre moved while the table is calm")
     p.add_argument("--shot-speed-scale", default="8.0", help="Shot speed at which the shot shaping saturates, m/s")
+    # Round 3. Defaults are arms A and a2; --arm a3 sets them.
+    p.add_argument("--teacher-resting", type=float, default=0.0,
+                   help="Weight of the teacher's action where a puck has lain on the open table")
+    p.add_argument("--teacher-resting-start", type=float, default=1.0, help="s the puck has lain before it applies")
+    p.add_argument("--reference-rail", type=float, default=0.0,
+                   help="Weight of --skill-reference's action in corner / edge drills and on rail-strip pucks")
+    p.add_argument("--skill-reference", default=V4, help="Checkpoint the rail anchor copies (training only)")
+    p.add_argument("--anchor-space", choices=["squashed", "pre-squash"], default="squashed")
+    p.add_argument("--anchor-kl-exempt", action=argparse.BooleanOptionalAction, default=False,
+                   help="Keep anchored samples out of the KL that limits the actor step")
     p.add_argument("--n-envs", type=int, default=2048, help="128 per worker keeps the slot layout")
     p.add_argument("--workers", type=int, default=16)
     p.add_argument("--device", default="cuda")

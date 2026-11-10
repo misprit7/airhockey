@@ -581,6 +581,81 @@ def test_dead_puck_exploration_widens_time_and_cap_where_the_puck_lies():
     assert dead_puck_exploration_scale(log_std, None, 1.0, 2.0) is log_std
 
 
+# ------------------------------------------- round 3: imitation anchors
+def test_anchor_zone_is_the_open_table_or_the_rail_strip_where_a_puck_lies():
+    from airhockey.neural_training import ANCHOR_NONE, ANCHOR_OPEN, ANCHOR_RAIL, RAIL_ZONE_MARGIN
+    env = NeuralTrainingEnv(2, **QUIET)
+    env.reset(seed=2)
+    low, high = env.decoder.low, env.decoder.high
+
+    def zone(x, y, speed=0.0, steps=3):
+        e, info = env.engine, None
+        for _ in range(steps):
+            e.puck_x[:], e.puck_y[:], e.puck_vx[:], e.puck_vy[:] = x, y, speed, 0.0
+            info = env.step(np.zeros((2, 6), np.float32))[4]
+        return info["anchor_zone"].tolist(), info["dead_puck_clock"]
+
+    assert zone(0.77, 0.80) == ([ANCHOR_OPEN] * 2, pytest.approx([0.06, 0.06], abs=1e-6))
+    assert zone(0.10, 0.80)[0] == [ANCHOR_OPEN] * 2                    # the stall map's rail column: the teacher's
+    # The strip the corner and edge drills use: beside a side rail, behind the back edge.
+    for x, y in ((low[0] + RAIL_ZONE_MARGIN - .002, 0.5), (high[0] - RAIL_ZONE_MARGIN + .002, 0.5),
+                 (0.5, low[1] + RAIL_ZONE_MARGIN - .002), (0.05, 0.05)):
+        assert zone(x, y)[0] == [ANCHOR_RAIL] * 2
+    # Not lying: in flight, on the far half, out of reach.
+    for x, y, speed in ((0.77, 0.80, 2.0), (0.5, 1.4, 0.0), (0.5, 0.97, 0.0)):
+        assert zone(x, y, speed)[0] == [ANCHOR_NONE] * 2
+    # A corner / edge drill slot is the reference's from its first step to its last, wherever the puck is.
+    env.edge_drill[:] = [True, False]
+    assert zone(0.5, 1.4)[0] == [ANCHOR_RAIL, ANCHOR_NONE] and zone(0.77, 0.80)[0] == [ANCHOR_RAIL, ANCHOR_OPEN]
+    drills = NeuralTrainingEnv(200, **{**GAMES, "game_fraction": 0.0}, corner_drill_fraction=1.0)
+    drills.reset(seed=4)
+    drills.set_opponent_action(np.zeros((200, 6), np.float32))
+    info = drills.step(np.zeros((200, 6), np.float32))[4]
+    rows = drills.kind == 0
+    assert rows.any() and (info["anchor_zone"][rows] == ANCHOR_RAIL).all() and drills.edge_drill[rows].all()
+    # Bookkeeping only: the environment is the same one.
+    assert info["anchor_zone"].dtype == np.int8
+
+
+def test_anchor_errors_keep_a_gradient_where_the_hover_is_saturated():
+    from airhockey.neural_finetune import (ATTACK, GUARD, PRE_SQUASH_LIMIT, THREAT, anchor_error, anchor_mean,
+                                           rail_reference_mask, resting_teacher_mask, teacher_error)
+    # The hover: a full-length arrival at the cap floor. The teacher: go now, at the cap.
+    hover = torch.tensor([[0.5, 0.9, -0.7, 1.0, 2.0, -1.8]], requires_grad=True)
+    strike = torch.tensor([[0.95, 0.45, -0.26, 0.21, -0.4, 0.89]])
+    squashed = anchor_error(hover, strike, "squashed")
+    assert torch.allclose(squashed, teacher_error(hover.tanh(), strike))          # the teacher regression's own space
+    raw = anchor_error(hover, strike, "pre-squash")
+    assert torch.allclose(raw, (hover - torch.atanh(strike)).square().mean(-1))
+    g_squashed, = torch.autograd.grad(squashed.sum(), hover)
+    g_raw, = torch.autograd.grad(raw.sum(), hover)
+    # Both push the time down and the cap up; pre-squash about ten times harder on the saturated time.
+    assert (g_squashed[0, 4] > 0) and (g_squashed[0, 5] < 0) and (g_raw[0, 4] > 0) and (g_raw[0, 5] < 0)
+    assert g_raw[0, 4] > 8 * g_squashed[0, 4] and g_raw[0, 5].abs() > 3 * g_squashed[0, 5].abs()
+    # A label at the edge of the box asks for "at least there": finite, and no pull back from beyond.
+    edge = torch.tensor([[1.0, -1.0, 0.0, 0.0, -1.0, 1.0]])
+    beyond = torch.tensor([[3.0, -2.5, 0.0, 0.0, -2.2, 2.4]], requires_grad=True)
+    error = anchor_error(beyond, edge, "pre-squash")
+    assert float(error.detach()) == 0 and not torch.autograd.grad(error.sum(), beyond)[0].any()
+    short = anchor_error(torch.zeros(1, 6), edge, "pre-squash")
+    assert torch.allclose(short, torch.tensor(4 * np.arctanh(PRE_SQUASH_LIMIT) ** 2 / 6, dtype=torch.float32))
+    with pytest.raises(ValueError):
+        anchor_error(hover, strike, "logit")
+    # Mean over the anchored samples, with a floor on how few may carry it; nothing anchored is exactly zero.
+    values = torch.tensor([4.0, 2.0, 6.0, 8.0], requires_grad=True)
+    assert anchor_mean(values, torch.tensor([True, False, True, False]), min_count=2).item() == 5
+    assert anchor_mean(values, torch.tensor([True, False, False, False]), min_count=2).item() == 2
+    none = anchor_mean(values, torch.zeros(4, dtype=torch.bool))
+    assert none.item() == 0 and not torch.autograd.grad(none, values)[0].any()
+    # Teacher: a puck that has lain on the open table past the start, where the teacher attacks it.
+    zone = torch.tensor([1, 1, 1, 2, 0, 1], dtype=torch.int8)
+    clock = torch.tensor([1.5, 0.5, 1.5, 1.5, 0.0, 1.5])
+    modes = torch.tensor([ATTACK, ATTACK, GUARD, ATTACK, ATTACK, THREAT], dtype=torch.int8)
+    assert resting_teacher_mask(zone, clock, modes, 1.0).tolist() == [True, False, False, False, False, False]
+    assert resting_teacher_mask(zone, clock, modes, 0.0).tolist() == [True, True, False, False, False, False]
+    assert rail_reference_mask(zone).tolist() == [False, False, False, True, False, False]
+
+
 # ----------------------------------------------------------------- trainer
 def load_trainer(root):
     spec = importlib.util.spec_from_file_location("trainer_table", root / "ai/bin/train_neural_player.py")
@@ -736,6 +811,46 @@ def test_trainer_continues_a_run_with_every_table_option(tmp_path, monkeypatch):
         assert all(np.isfinite(v) for slot in r["motion_by_slot"].values() for v in slot.values())
         # Resting pucks from the first tick: the wide noise is in the rollout and PPO scores it finitely.
         assert r["dead_puck_exploration_share"] > 0.01 and np.isfinite(r["kl"])
+    assert all("anchors" not in r for r in second)
+
+    # Round 3: the teacher on resting open-table pucks, a reference in corner drills, labelled on the
+    # learner's own rollout states.
+    torch.manual_seed(6)
+    save_player(runs / "_anchor" / "agent.pt", NeuralPlayer(32, history=16, shot_conditioned=True, history_deltas=True),
+                width=32, history=16, shot_conditioned=True, step=1)
+    drills = ["--stationary-failure-penalty", "600", "--dead-puck-weight", "40", "--cross-bank-drill-fraction", ".5",
+              "--corner-drill-fraction", ".5", "--skill-reference", str(runs / "_anchor" / "agent.pt"),
+              "--n-envs", "64", "--rollout", "32", "--steps", "6144", "--game-fraction", ".25"]
+    for space in ("pre-squash", "squashed"):
+        third = train("--run-name", "_round3-" + space, "--resume", str(runs / "_first" / "agent.pt"), *drills,
+                      "--teacher-resting-weight", "1", "--teacher-resting-start", ".2",
+                      "--skill-reference-rail-weight", "1", "--anchor-space", space,
+                      *(["--anchor-kl-exempt"] if space == "squashed" else []))
+        key = space.replace("-", "_")
+        for r in third:
+            assert set(r["anchors"]) == {"teacher_resting", "reference_rail"}
+            # Optionally the KL that limits the step is of the samples no anchor covers.
+            assert ("anchor_kl_exempt" in r) == (space == "squashed")
+            if space == "squashed":
+                both = sum(a["share"] for a in r["anchors"].values())
+                assert r["anchor_kl_exempt"]["share"] == pytest.approx(both) and np.isfinite(r["anchor_kl_exempt"]["final_kl_all"])
+            for anchor in r["anchors"].values():
+                assert anchor["space"] == space and 0 < anchor["share"] < 1 and anchor["samples"] > 0
+                assert np.isfinite([anchor["loss"], anchor["loss_first"], anchor["loss_last"]]).all()
+                assert np.isfinite([anchor[k + e] for k in ("squashed", "pre_squash") for e in ("_initial", "_final")]).all()
+                assert len(anchor["squashed_initial_by_dimension"]) == 6
+            assert np.isfinite(r["final_kl"])
+        # Each update lowers the error it regresses, on the samples it was taken on. (The reference here is
+        # another untrained network: its error starts near zero and only has to stay finite.)
+        assert np.mean([r["anchors"]["teacher_resting"][key + "_final"] < r["anchors"]["teacher_resting"][key + "_initial"]
+                        for r in third]) > 0.6
+    meta = json.loads((runs / "_round3-pre-squash" / "run.json").read_text())
+    assert meta["anchors"]["space"] == "pre-squash" and meta["anchors"]["training_only"]
+    assert meta["anchors"]["reference_rail"]["reference"].endswith("_anchor/agent.pt")
+    assert not meta["anchors"]["kl_exempt"]
+    for bad in (["--teacher-resting-weight", "-1"], ["--skill-reference-rail-weight", "1"], ["--anchor-kl-exempt"]):
+        with pytest.raises(SystemExit):
+            train("--run-name", "_bad", "--steps", "128", *bad)
     with pytest.raises(SystemExit):
         train("--run-name", "_wide", "--steps", "128", "--dead-puck-exploration", "2", "5")
     assert json.loads((runs / "_single" / "run.json").read_text())["sim_profile"]["workers"] == [True]
@@ -758,6 +873,8 @@ def test_recipe_is_v4s_command_continued_with_the_table_options():
               "dead_puck_exploration_hold", "calm_reachable_scale", "guard_weight", "guard_unresolved_weight",
               "far_cap_max_speed", "accel_effort_weight", "accel_effort_threshold", "idle_speed_weight",
               "cross_bank_drill_fraction", "corner_far_start_fraction"}
+    round3 = {"teacher_resting_weight", "teacher_resting_start", "skill_reference_rail_weight", "anchor_space",
+              "anchor_kl_exempt"}
     cmd, args = parsed()
     # Continuation, and the pitfalls v4's record paid for.
     assert args.resume == Path(recipe.V4) and args.initialize_from is None and args.value_warmup_updates == 0
@@ -777,9 +894,11 @@ def test_recipe_is_v4s_command_continued_with_the_table_options():
     defaults = trainer.build_parser().parse_args(["--run-name", "_x"])
     assert all(getattr(plain, key) == getattr(defaults, key) for key in new)
     # Arm A carries none of round 2.
-    assert all(getattr(args, key) == getattr(defaults, key) for key in round2)
+    assert all(getattr(args, key) == getattr(defaults, key) for key in round2 | round3)
     assert not any(flag.startswith(("--dead-puck", "--calm-reachable", "--guard", "--accel-effort", "--idle-speed",
-                                    "--cross-bank", "--corner-far")) for flag in cmd)
+                                    "--cross-bank", "--corner-far", "--teacher-resting", "--skill-reference-rail",
+                                    "--anchor-space")) for flag in cmd)
+    assert args.skill_reference is None
     assert not any(flag.startswith(("--sim-", "--human-proxy", "--defense-strike", "--left-bank", "--accel-duty",
                                     "--reversal", "--far-cap", "--stagger")) for flag in plain_cmd)
     record = REPO / "runs/teacher-calm-20261018-v4/run.json"
@@ -790,7 +909,7 @@ def test_recipe_is_v4s_command_continued_with_the_table_options():
         changed = {k for k in old if old[k] != mine[k]}
         assert changed == {"run_name", "evaluation_dir", "resume", "initialize_from", "opponent_reference", "minutes",
                            "seed", "value_warmup_updates", "width"}
-        assert set(mine) - set(old) == new | round2
+        assert set(mine) - set(old) == new | round2 | round3
 
 
 def test_round2_arm_continues_v5a_with_its_evaluations_changes():
@@ -824,3 +943,32 @@ def test_round2_arm_continues_v5a_with_its_evaluations_changes():
         "guard_unresolved_weight", "far_cap_max_speed", "accel_effort_weight", "idle_speed_weight"}
     # A typed flag still wins over the arm's default.
     assert parse("--arm", "a2", "--dead-puck", "0", "--left-bank", "2").dead_puck_weight == 0
+
+
+def test_round3_arm_is_a2_with_the_two_anchors():
+    spec = importlib.util.spec_from_file_location("recipe_v5", REPO / "ai/recipes/table-faithful-20261110/finetune.py")
+    recipe = importlib.util.module_from_spec(spec)
+    spec.loader.exec_module(recipe)
+    trainer = load_trainer(REPO)
+    command = lambda *argv: recipe.argv(recipe.parse(["--run-name", "_x", *argv]))
+    parse = lambda *argv: trainer.build_parser().parse_args(command(*argv)[2:])
+    second, third = parse("--arm", "a2"), parse("--arm", "a3")
+    # Arm a2's own command has none of it.
+    assert not any(flag.startswith(("--teacher-resting", "--skill-reference-rail", "--anchor-space"))
+                   for flag in command("--arm", "a2"))
+    assert second.skill_reference is None and second.teacher_resting_weight == second.skill_reference_rail_weight == 0
+    # Continues a2 by default; the starting point is a flag.
+    assert third.resume == Path(recipe.A2) and third.initialize_from is None and third.value_warmup_updates == 0
+    assert parse("--arm", "a3", "--resume", recipe.V4).resume == Path(recipe.V4)
+    # The teacher where a puck has lain on the open table as long as the cost's grace; v4 in the rail strip.
+    assert third.teacher_resting_weight == recipe.TEACHER_RESTING > 0 and third.teacher_resting_start == third.dead_puck_grace
+    assert third.skill_reference == Path(recipe.V4) and third.skill_reference_rail_weight == recipe.REFERENCE_RAIL > 0
+    assert third.anchor_space == "pre-squash"
+    # v4 is not the anchor for resting pucks in general (it has the hover), and the defense teacher is as it was.
+    assert third.skill_reference_weight == 0 and third.teacher_mask == "defense" and third.teacher_weight_final == 0.2
+    changed = {k for k in vars(second) if getattr(second, k) != getattr(third, k)}
+    assert changed == {"resume", "seed", "teacher_resting_weight", "skill_reference", "skill_reference_rail_weight",
+                       "anchor_space"}
+    # A typed flag still wins.
+    off = parse("--arm", "a3", "--teacher-resting", "0", "--reference-rail", "0")
+    assert off.skill_reference is None and off.anchor_space == "squashed" and off.teacher_resting_weight == 0

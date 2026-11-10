@@ -37,6 +37,16 @@ MOTION_COLUMNS = ("accel_duty_s", "accel_duty", "reversals", "far_half_s", "far_
 # clears nor pauses it.
 DEAD_PUCK_SPEED = 0.3
 DEAD_PUCK_RELEASE = 1.0
+# info["anchor_zone"]: where a training-only imitation anchor may apply (the
+# trainer's --teacher-resting-weight and --skill-reference-rail-weight). OPEN =
+# a puck lying within reach on the own half (the dead-puck clock running) on
+# the open table; RAIL = the same with the puck's centre within
+# RAIL_ZONE_MARGIN of the mallet-centre box's side or back edge (the strip the
+# corner and edge drills place it in), and every step of a corner / edge
+# drill slot. Privileged bookkeeping that selects training examples; it never
+# enters an observation, a reward or a random draw.
+ANCHOR_NONE, ANCHOR_OPEN, ANCHOR_RAIL = 0, 1, 2
+RAIL_ZONE_MARGIN = 0.015
 REVERSAL_WINDOW_TICKS = 5      # 100 ms, as airhockey.playability counts them
 REVERSAL_GAP_S = 0.15
 STRIKE_DRILL_SECONDS = 6       # a person takes up to ~4 s to get to a puck and strike it
@@ -1938,6 +1948,10 @@ class NeuralTrainingEnv(ArrivalEnv):
         waiting = within_reach & (speed < DEAD_PUCK_RELEASE) & ((gf + ga) == 0) & (lying | (self.dead_puck_clock > 0))
         self.dead_puck_clock[waiting] += b.action_dt
         dead = waiting & (self.dead_puck_clock > self.dead_puck_grace)
+        fringe = ((e.puck_x < self.decoder.low[0] + RAIL_ZONE_MARGIN) | (e.puck_x > self.decoder.high[0] - RAIL_ZONE_MARGIN)
+                  | (e.puck_y < self.decoder.low[1] + RAIL_ZONE_MARGIN))
+        anchor_zone = np.where(self.edge_drill | (waiting & fringe), ANCHOR_RAIL,
+                               np.where(waiting, ANCHOR_OPEN, ANCHOR_NONE)).astype(np.int8)
         effort = np.maximum(realized ** 2 - self.accel_effort_threshold ** 2, 0) / limit ** 2
         motion = np.column_stack((
             b.action_dt * over, b.action_dt * over * np.minimum(realized / limit, 1),
@@ -2076,6 +2090,7 @@ class NeuralTrainingEnv(ArrivalEnv):
             edge_dwell_cost=edge_cost.copy(),
             motion=motion.astype(np.float32),
             dead_puck_clock=self.dead_puck_clock.astype(np.float32),
+            anchor_zone=anchor_zone,
         )
         return (
             obs,

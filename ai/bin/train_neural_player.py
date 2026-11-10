@@ -16,9 +16,10 @@ import numpy as np
 import torch
 
 from airhockey.neural_player import NeuralPlayer, PhysicalHistory, RecoveryExplorationBias, log_probability, defensive_request_consistency, recovery_exploration_scale, recovery_exploration_window, thermal_effort_exploration_scale, backtrack_actor_step
-from airhockey.neural_finetune import (GUARD, MODE_NAMES, TEACHER_MASKS, adapt_learning_rate, complete_initialization,
+from airhockey.neural_finetune import (ANCHOR_SPACES, GUARD, MODE_NAMES, TEACHER_MASKS, adapt_learning_rate, anchor_error,
+                                       anchor_mean, complete_initialization,
                                        diagnostic_subset, initialization_model, load_teacher, masked_mean,
-                                       reference_slots, std_floor, dead_puck_exploration_scale, teacher_mask, teacher_opponent_slots,
+                                       rail_reference_mask, reference_slots, resting_teacher_mask, std_floor, dead_puck_exploration_scale, teacher_mask, teacher_opponent_slots,
                                        teacher_error, teacher_regression, teacher_weight)
 from airhockey.neural_training import MOTION_COLUMNS, NeuralTrainingEnv
 from airhockey.on_policy import advantages
@@ -247,6 +248,23 @@ def build_parser():
                    help="Regress only where the teacher is: defense = blocking or guarding, threat = blocking, attack = attacking")
     p.add_argument("--teacher-free-guard-accel", action="store_true",
                    help="Leave the accel slot out of the teacher regression where the teacher is guarding; the reward (--calm-accel-weight) sets the idle cap")
+    # Imitation anchors on resting pucks (round 3, 2026-11-10). Training-only
+    # label sources; the one network is still all that runs.
+    p.add_argument("--teacher-resting-weight", type=float, default=0,
+                   help="Actor loss weight on the teacher's action where a puck has lain within reach on the open table "
+                        "(not a corner / rail zone or drill) and the teacher attacks it; on top of --teacher-weight, "
+                        "whatever --teacher-mask, and not annealed")
+    p.add_argument("--teacher-resting-start", type=float, default=1.0,
+                   help="s the puck has lain (the dead-puck clock) before that anchor applies")
+    p.add_argument("--skill-reference-rail-weight", type=float, default=0,
+                   help="Actor loss weight on --skill-reference's action in corner / edge drill slots and where a puck "
+                        "lies in the rail strip; independent of --skill-reference-weight")
+    p.add_argument("--anchor-space", choices=ANCHOR_SPACES, default="squashed",
+                   help="Where those two errors are taken: tanh(actor mean) against the action, or the mean against "
+                        "atanh(action), which keeps a gradient where the output is saturated")
+    p.add_argument("--anchor-kl-exempt", action="store_true",
+                   help="Leave anchored samples out of the KL that stops, backtracks and adapts the actor step: the "
+                        "trust region then guards every state except the ones the anchors are there to change")
     p.add_argument("--teacher-opponent-fraction", type=float, default=0,
                    help="Fraction of full-game slots whose far side is the deterministic teacher, never a fixed-reference slot (id %% 4 == 0)")
     p.add_argument("--actor-steps-min", type=int, default=0,
@@ -588,6 +606,15 @@ def main():
     if args.teacher is None and (args.teacher_weight or args.teacher_weight_final or args.teacher_opponent_fraction
                                  or args.teacher_mask != "all" or args.teacher_anneal_steps):
         p.error("teacher options need --teacher")
+    for name in ("teacher_resting_weight", "teacher_resting_start", "skill_reference_rail_weight"):
+        if not np.isfinite(getattr(args, name)) or getattr(args, name) < 0:
+            p.error(f"--{name.replace('_', '-')} must be finite and nonnegative")
+    if args.teacher_resting_weight and args.teacher is None:
+        p.error("--teacher-resting-weight needs --teacher")
+    if args.skill_reference_rail_weight and args.skill_reference is None:
+        p.error("--skill-reference-rail-weight needs --skill-reference")
+    if args.anchor_kl_exempt and not (args.teacher_resting_weight or args.skill_reference_rail_weight):
+        p.error("--anchor-kl-exempt needs an anchor weight")
     if args.teacher_opponent_fraction and args.stage < 3:
         p.error("--teacher-opponent-fraction needs full games with external opponents (stage >= 3)")
     if args.actor_steps_min < 0 or args.value_warmup_updates < 0:
@@ -827,6 +854,15 @@ def main():
             game_slots=int(game_slots.sum()),
             opponent_slot_rule="evenly spread over full-game slots with id % 4 != 0; id % 4 == 0 stays with fixed references",
         )
+    if args.teacher_resting_weight or args.skill_reference_rail_weight:
+        meta["anchors"] = dict(
+            training_only=True, runtime_controller=False, space=args.anchor_space, kl_exempt=args.anchor_kl_exempt,
+            teacher_resting=dict(weight=args.teacher_resting_weight, start_s=args.teacher_resting_start,
+                                 states="dead-puck clock past start, puck outside the rail strip, not a corner/edge "
+                                        "drill slot, teacher attacking; labelled on the learner's own rollout states"),
+            reference_rail=dict(weight=args.skill_reference_rail_weight,
+                                reference=str(args.skill_reference) if args.skill_reference else None,
+                                states="corner/edge drill slots and pucks lying in the rail strip"))
     if fidelity:
         meta["sim_profile"] = dict(spec=args.sim_profile, options=fidelity, share=args.sim_profile_share,
                                    workers=with_profile.tolist() if args.workers > 1 else [True])
@@ -925,6 +961,13 @@ def main():
     dwelling = torch.zeros(args.n_envs, dtype=torch.bool, device=device)
     dwell_masks = torch.zeros(shape, dtype=torch.bool, device=device) if dead_explore else None
     held_noise = torch.zeros((args.n_envs, 2), device=device)
+    # Imitation anchors: the environment's zone and dead-puck clock for the
+    # state each action was chosen in (reported with the step before it).
+    anchored = bool(args.teacher_resting_weight or args.skill_reference_rail_weight)
+    anchor_zone = torch.zeros(args.n_envs, dtype=torch.int8, device=device)
+    anchor_clock = torch.zeros(args.n_envs, device=device)
+    anchor_zones = torch.zeros(shape, dtype=torch.int8, device=device) if anchored else None
+    anchor_clocks = torch.zeros(shape, device=device) if anchored else None
     old_logp, values, rewards, next_values = [
         torch.empty(shape, device=device) for _ in range(4)
     ]
@@ -992,6 +1035,8 @@ def main():
                 if dead_explore:
                     dwell_masks[t] = dwelling
                     scale = dead_puck_exploration_scale(scale, dwelling, *args.dead_puck_exploration)
+                if anchored:
+                    anchor_zones[t], anchor_clocks[t] = anchor_zone, anchor_clock
                 scale = std_floor(scale, args.std_floor)
                 sampling_mean = mu
                 if persistent_bias is not None:
@@ -1160,6 +1205,10 @@ def main():
                 kind_history[int(row["kind"])].append(row)
             if dead_explore:
                 dwelling = torch.as_tensor((info["dead_puck_clock"] > args.dead_puck_exploration_start) & ~done, device=device)
+            if anchored:
+                # A finished slot's next state is a reset: no zone until its first step reports one.
+                anchor_zone = torch.as_tensor(np.where(done, 0, info["anchor_zone"]), device=device, dtype=torch.int8)
+                anchor_clock = torch.as_tensor(np.where(done, 0, info["dead_puck_clock"]), device=device, dtype=torch.float32)
             if done.any():
                 if persistent_bias is not None:
                     persistent_bias.reset(done)
@@ -1214,6 +1263,42 @@ def main():
                                 if args.teacher_mask != "all" else None)
             teacher_free = (teacher_modes.flatten() == GUARD) if args.teacher_free_guard_accel else None
             teacher_losses = []
+        anchors = {}
+        if args.teacher_resting_weight:
+            anchors["teacher_resting"] = dict(
+                weight=args.teacher_resting_weight, target=teacher_targets,
+                mask=resting_teacher_mask(anchor_zones.flatten(), anchor_clocks.flatten(), teacher_modes.flatten(),
+                                          args.teacher_resting_start))
+        if args.skill_reference_rail_weight:
+            anchors["reference_rail"] = dict(weight=args.skill_reference_rail_weight, target=None,
+                                             mask=rail_reference_mask(anchor_zones.flatten()))
+
+        def anchor_target(anchor, rows):
+            if anchor["target"] is not None:
+                return anchor["target"][rows]
+            with torch.no_grad():
+                return skill_reference.action_mean(x[rows])
+
+        for name, anchor in anchors.items():
+            # The same anchored samples before and after the update (at most 8192 of them).
+            rows = anchor["mask"].nonzero().flatten()
+            rows = rows[torch.linspace(0, len(rows) - 1, min(len(rows), 8192), device=device).round().long()] if len(rows) else rows
+            anchor.update(rows=rows, losses=[], counts=[])
+            if len(rows):
+                with torch.no_grad():
+                    anchor["goal"] = anchor_target(anchor, rows)
+                    anchor["before"] = net.actor(net.trunk(x[rows]))
+        # Samples the KL controls look at: all of them, or all but the anchored ones.
+        kl_rows = None
+        if args.anchor_kl_exempt:
+            kl_rows = ~torch.stack([anchor["mask"] for anchor in anchors.values()]).any(0)
+
+        def sampled_kl(log_ratio, rows):
+            terms = log_ratio.clamp(-20, 20).exp() - 1 - log_ratio
+            if kl_rows is None:
+                return terms.mean()
+            keep = kl_rows[rows].to(terms.dtype)
+            return (terms * keep).sum() / keep.sum().clamp_min(1)
         for epoch in range(args.epochs):
             for ids in torch.randperm(len(x), device=device).split(args.minibatch):
                 mu, value, scale = net.distribution(x[ids], context[ids])
@@ -1234,7 +1319,8 @@ def main():
                 # Check each minibatch, before taking another actor step. With
                 # large rollouts an epoch contains dozens of updates; waiting
                 # until its end can erase a precise warm-started contact policy.
-                kl = float(((ratio - 1) - log_ratio).mean().detach())
+                kl = float(((ratio - 1) - log_ratio).mean().detach()) if kl_rows is None else float(
+                    sampled_kl(log_ratio.detach(), ids))
                 kl_max = max(kl_max, kl)
                 if rollout_initial_kl is None:
                     rollout_initial_kl = kl
@@ -1259,6 +1345,17 @@ def main():
                     loss = loss + policy_loss - args.entropy * entropy
                     if teacher is not None and current_teacher_weight:
                         loss = loss + current_teacher_weight * teacher_loss
+                    for anchor in anchors.values():
+                        chosen = anchor["mask"][ids]
+                        anchor["counts"].append(int(chosen.sum()))
+                        if not anchor["counts"][-1]:
+                            continue
+                        rows = ids[chosen]
+                        errors = mu.new_zeros(len(ids))
+                        errors[chosen] = anchor_error(mu[chosen], anchor_target(anchor, rows), args.anchor_space)
+                        anchor_loss = anchor_mean(errors, chosen)
+                        loss = loss + anchor["weight"] * anchor_loss
+                        anchor["losses"].append(float(anchor_loss.detach()))
                     if args.defense_request_consistency:
                         consistency = defensive_request_consistency(net, x[ids], mu)
                         loss += args.defense_request_consistency * consistency
@@ -1304,6 +1401,8 @@ def main():
                         new_scale = std_floor(new_scale, args.std_floor)
                         new_mean = new_mean if offsets is None else new_mean + offsets[ids]
                         difference = log_probability(ra[ids], new_mean, new_scale) - lp[ids]
+                        if kl_rows is not None:
+                            return sampled_kl(difference, ids)
                         return (difference.clamp(-20, 20).exp() - 1 - difference).mean()
 
                     step_scale, _ = backtrack_actor_step(
@@ -1328,6 +1427,9 @@ def main():
             final_sampling = final_mean if offsets is None else final_mean + offsets[subset]
             difference = log_probability(ra[subset], final_sampling, final_scale) - lp[subset]
             final_kl = float((difference.clamp(-20, 20).exp() - 1 - difference).mean())
+            final_kl_all = final_kl
+            if kl_rows is not None:
+                final_kl = float(sampled_kl(difference, subset))
             if teacher is not None:
                 subset_mask = None if teacher_selected is None else teacher_selected[subset]
                 subset_free = None if teacher_free is None else teacher_free[subset]
@@ -1350,6 +1452,28 @@ def main():
                     mse_last=float(teacher_losses[-1]), mse_initial=teacher_initial, mse_final=teacher_final,
                     rollout_mse=rollout_teacher, rollout_mse_by_dimension=error.mean((0, 1)).tolist(),
                     mode_fraction=mode_fraction)
+            anchor_status = {}
+            for name, anchor in anchors.items():
+                rows = anchor["rows"]
+                entry = dict(weight=anchor["weight"], space=args.anchor_space,
+                             share=float(anchor["mask"].float().mean()), samples=int(anchor["mask"].sum()),
+                             minibatches_with_samples=int(np.count_nonzero(anchor["counts"])),
+                             actor_minibatches=len(anchor["counts"]))
+                if anchor["losses"]:
+                    entry.update(loss=float(np.mean(anchor["losses"])), loss_first=anchor["losses"][0],
+                                 loss_last=anchor["losses"][-1])
+                if len(rows):
+                    after = net.actor(net.trunk(x[rows]))
+                    for space in ANCHOR_SPACES:
+                        key = space.replace("-", "_")
+                        entry[key + "_initial"] = float(anchor_error(anchor["before"], anchor["goal"], space).mean())
+                        entry[key + "_final"] = float(anchor_error(after, anchor["goal"], space).mean())
+                    entry["squashed_initial_by_dimension"] = (anchor["before"].tanh() - anchor["goal"]).square().mean(0).tolist()
+                    entry["squashed_final_by_dimension"] = (after.tanh() - anchor["goal"]).square().mean(0).tolist()
+                    entry["target_mean"] = anchor["goal"].mean(0).tolist()
+                    entry["actor_mean_initial"] = anchor["before"].tanh().mean(0).tolist()
+                    entry["actor_mean_final"] = after.tanh().mean(0).tolist()
+                anchor_status[name] = entry
         if args.adaptive_lr and not warming:
             optimizer.param_groups[0]["lr"] = adapt_learning_rate(
                 used_lr, final_kl, args.target_kl, args.lr_min, args.lr_max,
@@ -1466,6 +1590,11 @@ def main():
             status["lift_events_per_minute"] = dict(zip(("own", "opponent"), (60 * lifts / seconds).tolist()))
         if args.adaptive_lr:
             status["next_actor_lr"] = optimizer.param_groups[0]["lr"]
+        if anchor_status:
+            status["anchors"] = anchor_status
+            if kl_rows is not None:
+                # kl / final_kl above are of the samples no anchor covers.
+                status["anchor_kl_exempt"] = dict(share=float((~kl_rows).float().mean()), final_kl_all=final_kl_all)
         if teacher is not None:
             status["teacher_mse"] = teacher_status["mse"]
             status["teacher_weight"] = teacher_status["weight"]

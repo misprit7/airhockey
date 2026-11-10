@@ -145,6 +145,61 @@ def teacher_regression(mean, target, mask=None, free_accel=None):
     return masked_mean(teacher_error(mean.tanh(), target, free_accel), mask)
 
 
+# Imitation anchors on resting pucks (2026-11-10, round 3). `squashed` is the
+# teacher regression's own space, tanh(actor mean) against the action;
+# `pre-squash` regresses the mean itself toward atanh(action). In the hover
+# the arrival time sits at pre-tanh +2 (tanh' = 0.07) and the cap at -0.9 to
+# -1.9 (0.1-0.5): the squashed error there is the largest of any state and its
+# gradient on the time dimension about a tenth of the pre-squash one.
+ANCHOR_SPACES = ("squashed", "pre-squash")
+PRE_SQUASH_LIMIT = 0.964    # atanh = 2.0, where the hover itself saturates
+
+
+def anchor_error(mean, target, space="squashed", limit=PRE_SQUASH_LIMIT):
+    """Per-sample squared error of the actor's pre-tanh mean to a target action.
+
+    Averaged over the six dimensions. In `pre-squash` a target at or beyond
+    +-`limit` asks for "at least that far": a mean already beyond it on the
+    same side has no error, so a clipped label never pulls a saturated output
+    back.
+    """
+    if space == "squashed":
+        return (mean.tanh() - target).square().mean(-1)
+    if space != "pre-squash":
+        raise ValueError(f"unknown anchor space {space!r}")
+    bound = math.atanh(limit)
+    error = (mean - torch.atanh(target.clamp(-limit, limit))).square()
+    beyond = ((target >= limit) & (mean > bound)) | ((target <= -limit) & (mean < -bound))
+    return torch.where(beyond, torch.zeros_like(error), error).mean(-1)
+
+
+def anchor_mean(values, mask, min_count=16):
+    """Mean over the anchored samples of a minibatch, at least `min_count` of them.
+
+    Like masked_mean, the size of the term does not shrink with how rare the
+    state is; the floor keeps two or three samples from carrying the whole
+    weight on their own. Exactly zero, with zero gradient, for none.
+    """
+    mask = mask.to(values.dtype)
+    return (values * mask).sum() / mask.sum().clamp_min(min_count)
+
+
+def resting_teacher_mask(zone, clock, modes, start):
+    """Open-table resting pucks the teacher would strike.
+
+    `zone` and `clock` are the environment's anchor zone and dead-puck clock
+    for the state the actor saw (neural_training.ANCHOR_OPEN = 1); `modes` the
+    teacher's own. Only where the teacher attacks: its guard over a puck it
+    will not go for (too far forward, or hot beside a wall) is the stall.
+    """
+    return (zone == 1) & (clock > start) & (modes == ATTACK)
+
+
+def rail_reference_mask(zone):
+    """Corner / edge drill slots and pucks lying in the rail strip (ANCHOR_RAIL = 2)."""
+    return zone == 2
+
+
 def reference_slots(n_envs, references):
     """Environments the fixed references may use: ``id % 4 == 0``.
 

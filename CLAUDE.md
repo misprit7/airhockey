@@ -149,7 +149,14 @@ Robotic air hockey table that uses reinforcement learning trained in simulation,
       `--reversal-weight`, `--far-cap-weight`; rates always logged in
       `status["motion"]`), `--stagger-games`, `--left-bank-request-weight`
       -- the record and the recommended command are in
-      `ai/recipes/table-faithful-20261110/`. Tests:
+      `ai/recipes/table-faithful-20261110/`. Round 3 (arm `a3`) adds two
+      IMITATION ANCHORS on resting pucks, training-only label sources: the
+      teacher's action where a puck has lain on the open table
+      (`--teacher-resting-weight`) and a reference checkpoint's (v4) in
+      corner / edge drills and the rail strip
+      (`--skill-reference-rail-weight`), taken before the tanh
+      (`--anchor-space pre-squash`) because the hover is saturated there;
+      `info["anchor_zone"]` selects the states. Tests:
       `tests/test_table_training.py`. Continue a run with `--resume` under
       a new run name: critic, optimiser, pool and teacher anneal carry over.
       ROUND 2 (same day, after arm A = "v5a" was evaluated; opt-in too, arm

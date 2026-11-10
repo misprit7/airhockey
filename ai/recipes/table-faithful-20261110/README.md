@@ -5,8 +5,9 @@ network through the existing decoder; the people, the teacher and the costs
 below exist only in training. Arm A below was run on 2026-11-10 (150 min,
 145M -> 352M steps): `runs/_neural-table-faithful-20261110-a`, "v5a". Its
 evaluation is in `logs/table-faithful-20261110/eval-a/`; what it found and
-the second arm that answers it are under "Round 2" at the end. Arm a2 has
-not been trained: its only run is a smoke test.
+the second arm that answers it are under "Round 2". Arm a2 was started the
+same day and was still training when "Round 3" at the end was written: arm
+a3, a2 plus two imitation anchors on resting pucks, which has not been run.
 
 ## Why
 
@@ -560,3 +561,249 @@ only difference is the added `motion` keys and `motion_by_slot`.
 - The historical sim's own findings (more own-deflection goals against, the
   head-to-head loss to v4) have no dedicated term; the wider lift model and
   the effort cost are the only pressure on meeting pucks under acceleration.
+
+## Round 3: arm a3, imitation anchors on resting pucks (2026-11-10)
+
+Simulation only, and still one network. Round 2's answer to the resting puck
+was a cost, wide noise and a drill; 40M steps into arm a2 the cross-bank stall
+was down (91% -> 44%, v4 40%) but other forward cells were still at 17-33% and
+the right corner had collapsed (right / straight 0 of 48 touched, right /
+left bank 9; v4 46-48). Reward plus exploration was not finding the strike.
+Round 3 adds two supervised terms that say what to do there. Both label
+sources are training-only: the teacher (`expert_player.py`) and v4.
+
+### What the teacher does in the hover (measured before anything was built)
+
+`eval_resting_puck`'s stall map in the profile, arm a2's checkpoint at 432.3M
+steps (a copy, taken while it trained), the teacher labelling every tick of
+every trial the way the trainer does. 66 of 1632 trials stall, 51 of them in
+the forward strip.
+
+- **It attacks, with one steady label.** In the stalled trials the teacher is
+  in attack mode on 100% of ticks. Its label hardly moves while the mallet
+  hovers (per-dimension std over time 0.01-0.03) and it is a strike: the cap
+  slot at 0.89 (90 m/s²) where the student holds -0.66 to -0.88 (6-8 m/s²),
+  the arrival time at -0.4 to 0 (0.10-0.15 s) where the student holds +0.96
+  (the 0.25 s maximum). It does not wind back. It first re-poses the mallet
+  onto the shot line (about 0.1 m, at that cap), and once there its label is
+  the strike itself: through the puck, time at its minimum, cap 1.0.
+- **Tick by tick it is the student's own action.** Same 16-frame,
+  request-conditioned observation (`teacher_shares_obs`), same 6-D arrival
+  encoding through the same decoder, and the teacher is a function of the
+  observation alone, so a label on a state the student reached is well
+  defined. The squared error to the student in the hover is 0.69 a
+  dimension, the largest of any state: target y 1.5, time 0.78, cap 1.4.
+- **Following the labels only where the anchor applies strikes the puck.**
+  The same trials with the teacher's action executed on the ticks where the
+  puck has lain past 1 s, and the student's everywhere else: 63 of the 66
+  stalled trials are struck (forward strip 51 -> 3, rail columns 14 -> 0, mid
+  1 -> 1), after a median 40 ticks (0.8 s) of the teacher, at a median
+  3.7 m/s (p10 2.3, p90 6.1). The teacher has 2.7% of all ticks. Handing
+  over at 3 s instead leaves 3; v4 as the student leaves 5.
+- **The hover is a fixed point, not ignorance.** From the tick after the
+  mallet starts to move under the teacher's command, the student's own output
+  is a strike too (cap +0.89). It only needs the state changed.
+- **The teacher's own stall is in the labels.** The 3-5 trials left are all
+  at x 0.15 under the right-bank request: the teacher, in attack mode, asks
+  for a set-up pose past the workspace's left edge and waits there
+  (its forward-left / right-bank cell is 5 of 70 in
+  `expert-resting.json`, not 0; forward-right / left-bank is 0 of 70). The
+  anchor cannot teach better than that there; the dead-puck cost and noise
+  stay on.
+- **Corner pucks are v4's, not the teacher's.** `corner_recovery` under arm
+  a2's sim options (the profile with its three-mechanism lift): v4 touches 48
+  of 48 in seven cells and 43 in left / straight at the default seed, 46-48
+  in all eight at seed 4242; the teacher 34-45.
+
+DAgger was already there: the trainer calls the teacher on every observation
+of the learner's own rollout and stores label and mode
+(`teacher_actions`, `teacher_modes`). The new mask selects among those.
+
+### Where the loss has a gradient
+
+The existing teacher regression is the squared error of tanh(actor mean), so
+its gradient carries a factor 1 - tanh². In the hover that is 0.08 on the
+arrival time (pre-tanh +2) and 0.2-0.6 on the cap (-0.7 to -1.4): not zero,
+because the error is as large as it can be, but small where it matters. Over
+the stalled trials the mean gradient magnitude on the pre-tanh mean is
+0.20 (time) and 0.31 (cap) squashed against 0.42 and 0.58 taken before the
+squash; on a typical saturated trial 0.04 against 0.8 on the time. So the
+anchors can be taken in either space (`--anchor-space`), and arm a3 uses
+`pre-squash`: the mean regressed toward atanh(label), labels clamped at
++-0.964 (atanh 2.0, where the hover itself sits), and a label at the clamp
+read as "at least that far" so a clipped teacher target never pulls a
+saturated output back.
+
+### What the trainer gained (all opt-in, defaults unchanged)
+
+| flag | default | what it does |
+|---|---|---|
+| `--teacher-resting-weight W`, `--teacher-resting-start S` | 0, 1.0 | Actor loss on the teacher's action where the dead-puck clock is past S, the puck is on the open table and the teacher is attacking. On top of `--teacher-weight` whatever `--teacher-mask`, and constant: the defense weight's anneal does not touch it. |
+| `--skill-reference-rail-weight W` | 0 | Actor loss on `--skill-reference`'s action in every step of a corner / edge drill slot and wherever a puck lies in the rail strip. Independent of `--skill-reference-weight`, which stays 0 (v4 has the hover; anchoring every resting puck to it would hold the stall). |
+| `--anchor-space squashed\|pre-squash` | squashed | Where both errors are taken. |
+| `--anchor-kl-exempt` | off | The KL that stops, backtracks and adapts the actor step is taken over the samples no anchor covers. Not in arm a3; see the tiny runs. |
+
+The environment reports `info["anchor_zone"]` every step: 0, 1 (open table:
+the dead-puck clock is running) or 2 (rail: the same with the puck's centre
+within 15 mm of the mallet-centre box's side or back edge, i.e. where the
+corner and edge drills put it and the mallet cannot get behind it; and every
+step of a corner / edge drill slot). The stall map's rail columns (x 0.10,
+0.90) are open table: the teacher stalls on 0 of 168 there, v4 on 18%. It is
+bookkeeping from the true puck position that selects training examples, as
+`controlled` already is for the skill reference; it enters no observation,
+reward or random draw. The zone belongs to the state the action was chosen
+in (it is reported with the step before, like the exploration mask), and a
+slot's first step after a reset has none.
+
+Each anchor's term is its weight times the mean error over its samples in the
+minibatch, with at least 16 in the denominator. Like the teacher regression's
+masked mean it does not shrink with how rare the state is, so a hover sample
+weighs about a hundred times a PPO sample; the floor keeps two or three from
+carrying the whole weight. Logged per update under `anchors`: share of steps,
+samples, the loss over the minibatches, and on a fixed set of the anchored
+samples the error before and after the update in both spaces, per dimension,
+with the mean label and the mean action.
+
+### Arm a3
+
+```bash
+PYTHONPATH=ai python3 ai/recipes/table-faithful-20261110/finetune.py \
+    --arm a3 --run-name _neural-table-faithful-20261110-a3 --minutes 150 --print   # inspect
+PYTHONPATH=ai python3 ai/recipes/table-faithful-20261110/finetune.py \
+    --arm a3 --run-name _neural-table-faithful-20261110-a3 --minutes 150
+# from another starting point: add --resume runs/_neural-table-faithful-20261110-a/agent.pt
+#                              or  --resume runs/teacher-calm-20261018-v4/agent.pt
+```
+
+Arm a2's command (`ARMS["a3"]`; a typed flag still wins) with:
+
+```
+--resume runs/_neural-table-faithful-20261110-a2/agent.pt   (a launcher flag)     --seed 20261113
+--teacher-resting-weight 1.0 --teacher-resting-start 1.0
+--skill-reference runs/teacher-calm-20261018-v4/agent.pt --skill-reference-rail-weight 1.0
+--anchor-space pre-squash
+```
+
+- **Everything of a2 stays**: the dead-puck cost and noise, the cross-bank
+  drill, the corner drills from anywhere. The anchor applies from the same
+  second the cost and the noise start, and the wide noise there is what makes
+  moving the time and cap means cheap in KL (std 2.0 on those two
+  dimensions); the target position and velocity move under the 0.1 floor.
+- **The starting point is a flag.** From a2 both anchors have work to do.
+  From v4 the rail anchor is zero at the first update (the student is the
+  reference) and only holds the corners while the rest changes; v4's critic
+  has seen neither round's terms (arm a2 from v5a: explained variance 0.83,
+  0.95, 0.98 over three updates).
+- **Where the teacher is weak the reward is alone** (task: its mid-left /
+  right-bank cell stalls 10 of 84, mid-right / left-bank 8 of 84). Nothing
+  was added for it. Arm a2's checkpoint stalls on 1 of 540 mid trials, strikes
+  a mid puck at a median 0.68 s (p99 1.4 s), so the anchor's states (lain past
+  1 s) are 1.2% of its mid ticks, and with the teacher acting on exactly
+  those the mid count stayed 1. The cross-bank drill reaches down to y 0.60;
+  below that the cover is the uniform stationary reset and the dead-puck cost.
+
+### Smoke test of arm a3 (2026-11-10)
+
+`--arm a3 --n-envs 512 --workers 4 --device cpu --steps 196608` from the copy
+of a2 into a throwaway `_smoke-a3` run (deleted). Three updates:
+
+| | update 1 | 2 | 3 |
+|---|---|---|---|
+| teacher anchor: share of steps (samples of 65,536) | 0.40% (261) | 0.32% (212) | 0.44% (288) |
+| its error before -> after the update, pre-squash | 0.868 -> 0.838 | 1.158 -> 1.107 | 1.631 -> 1.510 |
+| the same, squashed | 0.362 -> 0.350 | 0.438 -> 0.427 | 0.554 -> 0.530 |
+| its loss over the minibatches (weight 1) | 0.37 | 0.46 | 0.84 |
+| rail anchor: share of steps | 10.3% | 11.9% | 11.9% |
+| its error before -> after, pre-squash | 0.091 -> 0.083 | 0.103 -> 0.093 | 0.106 -> 0.096 |
+| the same, squashed | 0.044 -> 0.042 | 0.052 -> 0.049 | 0.052 -> 0.050 |
+| final KL (target 0.02), actor steps of 64 | 0.021, 16 | 0.026, 16 | 0.063, 16 |
+| actor lr | 7.6e-6 | 5.1e-6 | 3.4e-6 |
+| explained variance | 0.91 | 0.95 | 0.96 |
+
+Everything finite. The teacher anchor's states are rare: the stationary
+slots' lying time is mostly corner and edge drills (the rail anchor's), and
+the first second of every rest is left to the student. Its error is ten
+times the rail anchor's. The rise of the "before" error over these three
+updates is the rollout filling with the long drills, as in arm a2's smoke
+(stationary dead-puck share 0.27, 0.51, 0.57), not the policy getting worse:
+see the fixed states below.
+
+### Does the hover's loss fall closed loop? (tiny runs)
+
+The smoke run's three updates cannot answer that, so: arm a3 at 256
+environments on two CPU workers, 16 updates (524,288 steps, about two updates
+of the real run's data, under 400 actor steps), from the same copy of a2,
+two seeds, each with and without `--anchor-kl-exempt`; the two without it
+then continued for 16 more. Throwaway `_smoke-a3*` runs, deleted. Each end
+checkpoint was then played closed loop, deterministic, in the profile: the
+stall map's forward strip (450 trials, x 0.15-0.85, y 0.65-0.85) and the
+corner cells. "Label error" is the pre-squash error to the teacher on the
+ticks of that stall map where the puck had lain past 1 s (the anchor's own
+states, so the population shrinks as the stall does).
+
+| | updates | forward strip stalled / 450 | right + left bank, left + right bank / 70 | label error | corner cells, worst of 8 |
+|---|---|---|---|---|---|
+| a2 at 432.3M, the start | 0 | 55 | 24, 15 | 1.62 | 9 (right / left bank; right / straight 10) |
+| seed A | 16 | 57 | 16, 13 | 1.00 | 48 |
+| seed A | 32 | 7 | 1, 4 | 0.75 | 47 |
+| seed B | 16 | 73 | 16, 16 | 1.09 | 48 |
+| seed B | 32 | 46 | 8, 8 | 0.45 | 48 |
+| seed A, KL exempt | 16 | 16 | 2, 6 | 0.78 | 48 |
+| seed B, KL exempt | 16 | 33 | 11, 8 | 0.89 | 47 |
+
+In training, the teacher anchor's error on each rollout's own samples (before
+that update, sample-weighted) went from 1.06 over the first four updates to
+0.53 over the last four of the first leg (seed A; squashed 0.40 -> 0.25) and
+sat at 0.26-0.59 through seed B's second leg; the rail anchor's went 0.092 ->
+0.036 -> 0.02-0.04. Every update lowered both on its own samples.
+
+What this says, and what it does not:
+
+- **The corners come back at once.** Every end checkpoint touches 47 or 48
+  of 48 in all eight cells, from 9 and 10 in the two collapsed ones, after
+  half a million steps. The rail anchor is 10-15% of all steps.
+- **The hover's loss falls, in the rollouts and on the stall map's own
+  states, in all six runs.** The stall itself follows later and noisily:
+  nothing or worse at 16 updates without the exemption (57, 73), then 7 and
+  46 at 32. Between the two there is a stretch where the labels are half
+  learned; a stalled trial is one never struck above 1.5 m/s, which a weak
+  push still is.
+- **The exemption was faster twice out of two and is not the reason it
+  works.** The KL with and without the anchored samples differs by under 10%
+  in most updates (20% at most), the exempt runs took fewer actor steps, and
+  each pair is the same run through its first four or five updates. Two
+  seeds do not separate that from chance, the plain runs get there with more
+  updates, and the real run has some three hundred. Arm a3 leaves it off; `--anchor-kl-exempt` on the
+  launcher turns it on.
+- **Scale.** These runs are 1/8 of the real batch with at most 32 actor
+  steps an update at 3-8e-6; the adaptive rate fell under the anchors' KL in
+  the first updates (7.6e-6 -> 3.4e-6) and came back to 5.1e-6. Nothing here
+  says what 150 minutes do to strength, playability or the mid cells: gate
+  a3 as a2 (`eval_resting_puck.py`, `eval_playability.py`, the lift arms).
+
+Watch in the real run: `anchors.teacher_resting.pre_squash_initial` falling
+toward the rail anchor's level and its `share` shrinking (fewer pucks left
+lying), `anchors.reference_rail.pre_squash_initial` under 0.03,
+`by_kind.0.aimed`, `motion_by_slot.stationary.dead_puck_share`, and
+`game_scores.human_proxy` not below a2's. If the teacher anchor's error
+stalls above about 0.5, raise `--teacher-resting` (2-4) before anything else;
+if goals for against people fall, the anchors are the first thing to halve.
+
+Flags off is still the trainer from before: arm a2's own command, one update
+(CPU, 128 envs, one process, `--resume` the copy of a2) on the commit before
+and on this tree gives identical weights, optimiser moments and metrics, with
+no new keys. Arm a2's printed command is byte-identical.
+
+### Not done in round 3
+
+- No real run. Arm a3 has only the runs above.
+- The teacher's own stalls are in its labels: x 0.15 under the right-bank
+  request (forward-left 5 of 70), and its mid cross-bank cells (8-10 of 84)
+  for any puck the student leaves lying there past a second.
+- v4 is the rail anchor everywhere in the rail strip and in every corner /
+  edge drill. It was verified on corner pucks only; the thin side-fringe
+  strip of the edge drills was not measured for v4 or for the teacher.
+- A puck's first second at rest, and anything the teacher would guard
+  instead of attack, carries no label.
+- The zone test uses the true puck position at 15 mm from the mallet-centre
+  box; the margin was not tuned.
