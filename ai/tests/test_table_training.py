@@ -641,6 +641,17 @@ def test_anchor_errors_keep_a_gradient_where_the_hover_is_saturated():
     assert torch.allclose(short, torch.tensor(4 * np.arctanh(PRE_SQUASH_LIMIT) ** 2 / 6, dtype=torch.float32))
     with pytest.raises(ValueError):
         anchor_error(hover, strike, "logit")
+    # Some outputs only (--teacher-resting-dims): the others carry no error and no gradient, and a weight
+    # keeps its meaning per dimension (still a mean over six).
+    from airhockey.neural_finetune import ANCHOR_DIMS
+    assert ANCHOR_DIMS == {"all": None, "time-cap": (4, 5), "cap": (5,)}
+    for space in ("squashed", "pre-squash"):
+        full, = torch.autograd.grad(anchor_error(hover, strike, space).sum(), hover)
+        cap, = torch.autograd.grad(anchor_error(hover, strike, space, dims=ANCHOR_DIMS["cap"]).sum(), hover)
+        both, = torch.autograd.grad(anchor_error(hover, strike, space, dims=ANCHOR_DIMS["time-cap"]).sum(), hover)
+        assert not cap[0, :5].any() and cap[0, 5] == full[0, 5]
+        assert not both[0, :4].any() and torch.equal(both[0, 4:], full[0, 4:])
+    assert float(anchor_error(beyond, edge, "pre-squash", dims=(5,)).detach()) == 0
     # Mean over the anchored samples, with a floor on how few may carry it; nothing anchored is exactly zero.
     values = torch.tensor([4.0, 2.0, 6.0, 8.0], requires_grad=True)
     assert anchor_mean(values, torch.tensor([True, False, True, False]), min_count=2).item() == 5
@@ -825,10 +836,12 @@ def test_trainer_continues_a_run_with_every_table_option(tmp_path, monkeypatch):
         third = train("--run-name", "_round3-" + space, "--resume", str(runs / "_first" / "agent.pt"), *drills,
                       "--teacher-resting-weight", "1", "--teacher-resting-start", ".2",
                       "--skill-reference-rail-weight", "1", "--anchor-space", space,
-                      *(["--anchor-kl-exempt"] if space == "squashed" else []))
+                      *(["--anchor-kl-exempt", "--teacher-resting-dims", "cap"] if space == "squashed" else []))
         key = space.replace("-", "_")
         for r in third:
             assert set(r["anchors"]) == {"teacher_resting", "reference_rail"}
+            assert r["anchors"]["teacher_resting"]["dims"] == ([5] if space == "squashed" else "all")
+            assert r["anchors"]["reference_rail"]["dims"] == "all"
             # Optionally the KL that limits the step is of the samples no anchor covers.
             assert ("anchor_kl_exempt" in r) == (space == "squashed")
             if space == "squashed":
@@ -839,6 +852,15 @@ def test_trainer_continues_a_run_with_every_table_option(tmp_path, monkeypatch):
                 assert np.isfinite([anchor["loss"], anchor["loss_first"], anchor["loss_last"]]).all()
                 assert np.isfinite([anchor[k + e] for k in ("squashed", "pre_squash") for e in ("_initial", "_final")]).all()
                 assert len(anchor["squashed_initial_by_dimension"]) == 6
+                # Where its samples are, per slot class, and the policy change on them.
+                assert sum(anchor["samples_by_slot"].values()) == anchor["samples"]
+                assert set(anchor["share_by_slot"]) <= set(anchor["samples_by_slot"]) == {
+                    "stationary", "receiving", "defense", "games", "people"}
+                assert all(0 <= share <= 1 for share in anchor["share_by_slot"].values())
+                assert np.isfinite(list(anchor["initial_by_slot"].values())).all()
+            # ... and the policy change everywhere else, which is what the anchors cost the rest of the play.
+            assert np.isfinite(r["anchors_final_kl_outside"]) and r["anchors_final_kl_outside"] >= 0
+            assert np.isfinite(list(r["anchors_final_kl_outside_by_slot"].values())).all()
             assert np.isfinite(r["final_kl"])
         # Each update lowers the error it regresses, on the samples it was taken on. (The reference here is
         # another untrained network: its error starts near zero and only has to stay finite.)
@@ -873,8 +895,8 @@ def test_recipe_is_v4s_command_continued_with_the_table_options():
               "dead_puck_exploration_hold", "calm_reachable_scale", "guard_weight", "guard_unresolved_weight",
               "far_cap_max_speed", "accel_effort_weight", "accel_effort_threshold", "idle_speed_weight",
               "cross_bank_drill_fraction", "corner_far_start_fraction"}
-    round3 = {"teacher_resting_weight", "teacher_resting_start", "skill_reference_rail_weight", "anchor_space",
-              "anchor_kl_exempt"}
+    round3 = {"teacher_resting_weight", "teacher_resting_start", "teacher_resting_dims", "skill_reference_rail_weight",
+              "anchor_space", "anchor_kl_exempt"}
     cmd, args = parsed()
     # Continuation, and the pitfalls v4's record paid for.
     assert args.resume == Path(recipe.V4) and args.initialize_from is None and args.value_warmup_updates == 0
@@ -964,11 +986,15 @@ def test_round3_arm_is_a2_with_the_two_anchors():
     assert third.teacher_resting_weight == recipe.TEACHER_RESTING > 0 and third.teacher_resting_start == third.dead_puck_grace
     assert third.skill_reference == Path(recipe.V4) and third.skill_reference_rail_weight == recipe.REFERENCE_RAIL > 0
     assert third.anchor_space == "pre-squash"
+    # Only the teacher's accel cap is copied: the aim and the shot stay the learner's own.
+    assert third.teacher_resting_dims == recipe.TEACHER_RESTING_DIMS == "cap"
+    assert parse("--arm", "a3", "--teacher-resting-dims", "all").teacher_resting_dims == "all"
     # v4 is not the anchor for resting pucks in general (it has the hover), and the defense teacher is as it was.
     assert third.skill_reference_weight == 0 and third.teacher_mask == "defense" and third.teacher_weight_final == 0.2
     changed = {k for k in vars(second) if getattr(second, k) != getattr(third, k)}
-    assert changed == {"resume", "seed", "teacher_resting_weight", "skill_reference", "skill_reference_rail_weight",
-                       "anchor_space"}
+    assert changed == {"resume", "seed", "teacher_resting_weight", "teacher_resting_dims", "skill_reference",
+                       "skill_reference_rail_weight", "anchor_space"}
     # A typed flag still wins.
     off = parse("--arm", "a3", "--teacher-resting", "0", "--reference-rail", "0")
     assert off.skill_reference is None and off.anchor_space == "squashed" and off.teacher_resting_weight == 0
+    assert off.teacher_resting_dims == "all"

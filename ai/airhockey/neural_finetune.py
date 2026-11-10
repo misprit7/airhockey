@@ -153,24 +153,37 @@ def teacher_regression(mean, target, mask=None, free_accel=None):
 # gradient on the time dimension about a tenth of the pre-squash one.
 ANCHOR_SPACES = ("squashed", "pre-squash")
 PRE_SQUASH_LIMIT = 0.964    # atanh = 2.0, where the hover itself saturates
+# Which outputs an anchor copies (--teacher-resting-dims). The hover is the cap
+# held at its floor: executed closed loop on v5a's stall map, the teacher's cap
+# alone (the student's own target, arrival velocity and time) leaves 0 of 450
+# forward-strip pucks lying, all six dimensions 3. The cap is also the output
+# with the widest learned std, so moving it costs the least KL, and an anchor on
+# it alone cannot copy the teacher's aim or shot into possession play.
+ANCHOR_DIMS = {"all": None, "time-cap": (4, 5), "cap": (5,)}
 
 
-def anchor_error(mean, target, space="squashed", limit=PRE_SQUASH_LIMIT):
+def anchor_error(mean, target, space="squashed", limit=PRE_SQUASH_LIMIT, dims=None):
     """Per-sample squared error of the actor's pre-tanh mean to a target action.
 
-    Averaged over the six dimensions. In `pre-squash` a target at or beyond
-    +-`limit` asks for "at least that far": a mean already beyond it on the
-    same side has no error, so a clipped label never pulls a saturated output
-    back.
+    Averaged over the six dimensions; with `dims`, the other dimensions count
+    as zero (still divided by six, so a weight means the same per dimension).
+    In `pre-squash` a target at or beyond +-`limit` asks for "at least that
+    far": a mean already beyond it on the same side has no error, so a clipped
+    label never pulls a saturated output back.
     """
     if space == "squashed":
-        return (mean.tanh() - target).square().mean(-1)
-    if space != "pre-squash":
+        error = (mean.tanh() - target).square()
+    elif space == "pre-squash":
+        bound = math.atanh(limit)
+        error = (mean - torch.atanh(target.clamp(-limit, limit))).square()
+        beyond = ((target >= limit) & (mean > bound)) | ((target <= -limit) & (mean < -bound))
+        error = torch.where(beyond, torch.zeros_like(error), error)
+    else:
         raise ValueError(f"unknown anchor space {space!r}")
-    bound = math.atanh(limit)
-    error = (mean - torch.atanh(target.clamp(-limit, limit))).square()
-    beyond = ((target >= limit) & (mean > bound)) | ((target <= -limit) & (mean < -bound))
-    return torch.where(beyond, torch.zeros_like(error), error).mean(-1)
+    if dims is not None:
+        error = error[..., list(dims)]
+        return error.sum(-1) / mean.shape[-1]
+    return error.mean(-1)
 
 
 def anchor_mean(values, mask, min_count=16):

@@ -639,6 +639,7 @@ saturated output back.
 | flag | default | what it does |
 |---|---|---|
 | `--teacher-resting-weight W`, `--teacher-resting-start S` | 0, 1.0 | Actor loss on the teacher's action where the dead-puck clock is past S, the puck is on the open table and the teacher is attacking. On top of `--teacher-weight` whatever `--teacher-mask`, and constant: the defense weight's anneal does not touch it. |
+| `--teacher-resting-dims all\|time-cap\|cap` | all | Outputs that anchor copies from the teacher; the others keep no error term. Arm a3: `cap` (review below). |
 | `--skill-reference-rail-weight W` | 0 | Actor loss on `--skill-reference`'s action in every step of a corner / edge drill slot and wherever a puck lies in the rail strip. Independent of `--skill-reference-weight`, which stays 0 (v4 has the hover; anchoring every resting puck to it would hold the stall). |
 | `--anchor-space squashed\|pre-squash` | squashed | Where both errors are taken. |
 | `--anchor-kl-exempt` | off | The KL that stops, backtracks and adapts the actor step is taken over the samples no anchor covers. Not in arm a3; see the tiny runs. |
@@ -679,7 +680,8 @@ Arm a2's command (`ARMS["a3"]`; a typed flag still wins) with:
 
 ```
 --resume runs/_neural-table-faithful-20261110-a2/agent.pt   (a launcher flag)     --seed 20261113
---teacher-resting-weight 1.0 --teacher-resting-start 1.0
+--teacher-resting-weight 1.0 --teacher-resting-start 1.0 --teacher-resting-dims cap   (the review below; the
+                                                         smoke and tiny runs of this section were all six outputs)
 --skill-reference runs/teacher-calm-20261018-v4/agent.pt --skill-reference-rail-weight 1.0
 --anchor-space pre-squash
 ```
@@ -793,6 +795,105 @@ Flags off is still the trainer from before: arm a2's own command, one update
 (CPU, 128 envs, one process, `--resume` the copy of a2) on the commit before
 and on this tree gives identical weights, optimiser moments and metrics, with
 no new keys. Arm a2's printed command is byte-identical.
+
+### Round 3 review (2026-11-10): the teacher anchor copies the cap only
+
+An independent check of the commit above, from v5a (`runs/_neural-table-faithful-20261110-a/agent.pt`,
+not a2), found the anchors do what they are for and that the teacher anchor on
+all six outputs costs game offence. Arm a3 now passes
+`--teacher-resting-dims cap`; `all` is the first commit's behaviour.
+
+**What held up.** Arm a2's command for one update on the commit before and on
+this tree is identical (weights, optimiser moments, metrics, no new keys).
+The rollout holds the learner's seat only, the zone and clock are those of
+the state the action was chosen in, the teacher labels the observation the
+actor saw, and nothing of the zone reaches an observation or a reward. At
+v5a's own hover (4096 ticks of its stalled stall-map trials, profile): actor
+mean pre-tanh +1.87 on the time and -1.43 on the cap; gradient per sample on
+the time 0.043 squashed against 0.80 pre-squash, on the cap 0.14 against 0.98.
+On a real minibatch (2048, 6-11 teacher and 190-270 rail samples) the gradient
+norms on the actor are PPO 18-28, teacher anchor 9-18, rail anchor 3.5-5.4,
+defense teacher 0.15-0.18: weight 1.0 is of PPO's order, not above it.
+
+**Which outputs break the hover.** v5a on the forward strip (450 trials,
+profile), with the teacher's label executed in place of the student's on the
+listed outputs where the puck has lain past 1 s:
+
+| teacher's outputs used | stalled / 450 | ticks under the teacher | strikes after 1 s, m/s p10 / p50 / p90 |
+|---|---|---|---|
+| none (v5a) | 111 | 0 | 3.6 / 6.3 / 7.9 |
+| all six | 3 | 4.2% | 3.6 / 6.3 / 8.2 |
+| arrival time and cap | 0 | 1.5% | 2.5 / 5.0 / 7.2 |
+| cap | 0 | 1.7% | 3.5 / 5.8 / 7.6 |
+| arrival time | 5 | 3.0% | 3.6 / 5.4 / 7.5 |
+
+The hover is the cap held at its floor; with the cap raised the student's own
+target, arrival velocity and time strike the puck. (A raised cap alone does
+move the mallet there, contrary to the note under `--dead-puck-exploration-hold`.)
+
+**Tiny runs from v5a** (512 envs, 4 CPU workers, 65,536 steps an update, seed
+20261113, throwaway `_smoke-r3*`, deleted). Each end checkpoint played
+deterministically in the profile: forward strip of the stall map, the corner
+cells, and 64 x 60 s against each of `table` / `table_plus`
+(`eval_human_proxy.py --tier tables`, same seeds for every candidate).
+
+| | updates | forward strip stalled / 450 | right + left bank, left + right bank / 70 | corner cells under 46 (worst) | goals for per min | mean shot m/s | calm share above 20% cap |
+|---|---|---|---|---|---|---|---|
+| v5a, the start | 0 | 111 | 62, 21 | 6 (33) | 5.75 / 5.72 | 7.36 / 7.57 | 0.09 / 0.11 |
+| arm a2, no anchors (control) | 10 | 93 | 55, 18 | 6 (32) | 6.05 / 5.84 | 7.37 / 7.54 | 0.10 / 0.10 |
+| a3 as first committed (all six, weight 1) | 10 | 19 | 4, 8 | 1 (41) | 4.38 / 4.94 | 6.76 / 6.87 | 0.21 / 0.22 |
+| the same | 20 | 13 | 3, 5 | 1 (39) | 4.72 / 4.94 | 6.28 / 6.42 | 0.24 / 0.23 |
+| the same, `--lr-max 1e-6` | 10 | 34 | 13, 15 | 3 (34) | 5.94 / 5.42 | 7.35 / 7.46 | 0.14 / 0.15 |
+| **cap only, weight 1 (arm a3 now)** | 10 | 12 | 3, 9 | 1 (42) | 6.11 / 6.20 | 7.40 / 7.52 | 0.16 / 0.18 |
+| the same through the launcher's `--arm a3`, seed 20261114 | 10 | 8 | 2, 6 | 1 (42) | 6.20 / 5.61 | 7.41 / 7.56 | 0.15 / 0.22 |
+| cap only, weight 3 | 10 | 7 | 1, 6 | 1 (41) | 5.77 / 5.48 | 7.11 / 7.21 | 0.20 / 0.22 |
+
+For reference a2's final `agent.pt` (583.8M) in the same games: 5.52 / 5.20
+goals a minute, shots 7.42 / 7.39, calm share 0.18 / 0.18. Goals against moved
+within 0.14-0.42 a minute in all rows with no pattern. One seed per row; the
+cap-only arm twice.
+
+- **The stall moves, and it is the anchors.** 111 -> 8-19 of 450 in 0.66M
+  steps, where a2's options alone leave it at 93; the corner cells go from six
+  short to one (left / straight, 39-42, v5a 33).
+- **All six outputs at weight 1 took a fifth of the goals in 0.66M steps** and
+  1.1 m/s of shot speed by 1.3M, and held the actor rate at 1e-6 through twelve
+  updates (it had been 5e-6). About 70% of the teacher anchor's samples are in receiving slots (a
+  received puck that has lain past 1 s) and under 1% of stationary-slot steps
+  are its: the cross-bank drills end fast under the wide noise. So most of what
+  the six-output anchor copied was the teacher's aim and arrival velocity on
+  possession pucks, from a teacher this network beats.
+- **The cap alone fixes as much and takes nothing measurable from the games**,
+  and the rate was back at 3.4e-6 by the tenth update. Weight 3 starts to cost
+  shots; weight 1 stays.
+- **A lower rate also protects the games** (`--lr-max 1e-6`: the controller
+  sat at 2e-7 to 7e-7) at a third of the progress; not needed with the cap alone.
+- **What is left is the teacher's own stall.** With the cap alone the only
+  cell over 5% is forward-left under the right-bank request (6-9 of 70), where
+  the teacher asks for a pose past the left edge; the stalled mallet ends
+  0.4-0.55 m behind the puck at 20 m/s², no longer in the hover. The left /
+  straight corner cell stays at 41-42 of 48 in every anchor run (v4 43-46).
+- **The first two updates overshoot.** `--actor-steps-min 16` takes sixteen
+  steps whatever the KL: 0.37 and 0.18 with the cap alone (0.61 / 0.33 with all
+  six, 0.02 / 0.01 without anchors), 0.31-0.42 in the game slots, mostly the
+  rail anchor undoing v5a's corner play. From the third update it is at the
+  target. The cap-only row above includes that transient.
+- **The calm share above 20% cap rises with every anchor run** (0.10 -> 0.16
+  with the cap alone; a2's own final is 0.18). `eval_human_proxy` counts a
+  slow puck within reach on the own half as a quarter-calm table, so striking
+  pucks that used to lie there is part of it; how much is not separated. Check
+  `eval_playability.py`'s idle cap before any table time.
+
+Logged since this review, per update when an anchor is on:
+`anchors.<name>.samples_by_slot` / `share_by_slot` / `initial_by_slot`
+(stationary, receiving, defense, games, people), `anchors.<name>.final_kl`
+(the update's policy change on its own samples), and
+`anchors_final_kl_outside` / `_by_slot` (the change on the samples no anchor
+covers: what the anchors cost the rest of the play). In the real run watch
+`anchors_final_kl_outside_by_slot.games` and `.people` back at the target by
+the third or fourth update, `game_scores.human_proxy` goals for not below
+a2's, and the things listed above. If goals for fall, halve
+`--reference-rail` first (it is 10-15% of all steps and most of the early KL).
 
 ### Not done in round 3
 

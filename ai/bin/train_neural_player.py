@@ -16,7 +16,7 @@ import numpy as np
 import torch
 
 from airhockey.neural_player import NeuralPlayer, PhysicalHistory, RecoveryExplorationBias, log_probability, defensive_request_consistency, recovery_exploration_scale, recovery_exploration_window, thermal_effort_exploration_scale, backtrack_actor_step
-from airhockey.neural_finetune import (ANCHOR_SPACES, GUARD, MODE_NAMES, TEACHER_MASKS, adapt_learning_rate, anchor_error,
+from airhockey.neural_finetune import (ANCHOR_DIMS, ANCHOR_SPACES, GUARD, MODE_NAMES, TEACHER_MASKS, adapt_learning_rate, anchor_error,
                                        anchor_mean, complete_initialization,
                                        diagnostic_subset, initialization_model, load_teacher, masked_mean,
                                        rail_reference_mask, reference_slots, resting_teacher_mask, std_floor, dead_puck_exploration_scale, teacher_mask, teacher_opponent_slots,
@@ -29,6 +29,8 @@ ROOT = Path(__file__).resolve().parents[2]
 ACTIVE_RUN = None
 ACTIVE_SAVE = None
 ACTIVE_ENV = None
+# Slot classes of the per-slot reports: the environment's kinds 0-3, people-driven games apart.
+SLOT_NAMES = ("stationary", "receiving", "defense", "games", "people")
 
 
 def write_json(path, value):
@@ -256,6 +258,9 @@ def build_parser():
                         "whatever --teacher-mask, and not annealed")
     p.add_argument("--teacher-resting-start", type=float, default=1.0,
                    help="s the puck has lain (the dead-puck clock) before that anchor applies")
+    p.add_argument("--teacher-resting-dims", choices=sorted(ANCHOR_DIMS), default="all",
+                   help="Outputs that anchor copies from the teacher: all six, the arrival time and accel cap, or the "
+                        "cap alone (the rest stays the learner's own aim and shot)")
     p.add_argument("--skill-reference-rail-weight", type=float, default=0,
                    help="Actor loss weight on --skill-reference's action in corner / edge drill slots and where a puck "
                         "lies in the rail strip; independent of --skill-reference-weight")
@@ -613,6 +618,8 @@ def main():
         p.error("--teacher-resting-weight needs --teacher")
     if args.skill_reference_rail_weight and args.skill_reference is None:
         p.error("--skill-reference-rail-weight needs --skill-reference")
+    if args.teacher_resting_dims != "all" and not args.teacher_resting_weight:
+        p.error("--teacher-resting-dims needs --teacher-resting-weight")
     if args.anchor_kl_exempt and not (args.teacher_resting_weight or args.skill_reference_rail_weight):
         p.error("--anchor-kl-exempt needs an anchor weight")
     if args.teacher_opponent_fraction and args.stage < 3:
@@ -858,6 +865,7 @@ def main():
         meta["anchors"] = dict(
             training_only=True, runtime_controller=False, space=args.anchor_space, kl_exempt=args.anchor_kl_exempt,
             teacher_resting=dict(weight=args.teacher_resting_weight, start_s=args.teacher_resting_start,
+                                 dims=args.teacher_resting_dims,
                                  states="dead-puck clock past start, puck outside the rail strip, not a corner/edge "
                                         "drill slot, teacher attacking; labelled on the learner's own rollout states"),
             reference_rail=dict(weight=args.skill_reference_rail_weight,
@@ -968,6 +976,7 @@ def main():
     anchor_clock = torch.zeros(args.n_envs, device=device)
     anchor_zones = torch.zeros(shape, dtype=torch.int8, device=device) if anchored else None
     anchor_clocks = torch.zeros(shape, device=device) if anchored else None
+    anchor_slots = torch.zeros(shape, dtype=torch.int8, device=device) if anchored else None
     old_logp, values, rewards, next_values = [
         torch.empty(shape, device=device) for _ in range(4)
     ]
@@ -1155,6 +1164,8 @@ def main():
             slots = np.where(people_rows, 4, info["kind"])
             np.add.at(motion_by_kind, slots, info["motion"])
             slot_steps += np.bincount(slots, minlength=5)
+            if anchored:
+                anchor_slots[t] = torch.as_tensor(slots, device=device, dtype=torch.int8)
             if "lift_events" in info:
                 lifts += info["lift_events"].sum(), info["opponent_lift_events"].sum()
             own_history.append(obs)
@@ -1266,11 +1277,11 @@ def main():
         anchors = {}
         if args.teacher_resting_weight:
             anchors["teacher_resting"] = dict(
-                weight=args.teacher_resting_weight, target=teacher_targets,
+                weight=args.teacher_resting_weight, target=teacher_targets, dims=ANCHOR_DIMS[args.teacher_resting_dims],
                 mask=resting_teacher_mask(anchor_zones.flatten(), anchor_clocks.flatten(), teacher_modes.flatten(),
                                           args.teacher_resting_start))
         if args.skill_reference_rail_weight:
-            anchors["reference_rail"] = dict(weight=args.skill_reference_rail_weight, target=None,
+            anchors["reference_rail"] = dict(weight=args.skill_reference_rail_weight, target=None, dims=None,
                                              mask=rail_reference_mask(anchor_zones.flatten()))
 
         def anchor_target(anchor, rows):
@@ -1352,7 +1363,7 @@ def main():
                             continue
                         rows = ids[chosen]
                         errors = mu.new_zeros(len(ids))
-                        errors[chosen] = anchor_error(mu[chosen], anchor_target(anchor, rows), args.anchor_space)
+                        errors[chosen] = anchor_error(mu[chosen], anchor_target(anchor, rows), args.anchor_space, dims=anchor["dims"])
                         anchor_loss = anchor_mean(errors, chosen)
                         loss = loss + anchor["weight"] * anchor_loss
                         anchor["losses"].append(float(anchor_loss.detach()))
@@ -1428,6 +1439,15 @@ def main():
             difference = log_probability(ra[subset], final_sampling, final_scale) - lp[subset]
             final_kl = float((difference.clamp(-20, 20).exp() - 1 - difference).mean())
             final_kl_all = final_kl
+            if anchors:
+                # The policy change on the samples no anchor covers: what the anchors cost everywhere else.
+                outside = ~torch.stack([anchor["mask"] for anchor in anchors.values()]).any(0)[subset]
+                kl_terms = difference.clamp(-20, 20).exp() - 1 - difference
+                final_kl_outside = float(kl_terms[outside].mean()) if outside.any() else 0.0
+                subset_slots = anchor_slots.flatten()[subset]
+                final_kl_outside_by_slot = {
+                    slot: float(kl_terms[outside & (subset_slots == code)].mean())
+                    for code, slot in enumerate(SLOT_NAMES) if (outside & (subset_slots == code)).any()}
             if kl_rows is not None:
                 final_kl = float(sampled_kl(difference, subset))
             if teacher is not None:
@@ -1456,9 +1476,19 @@ def main():
             for name, anchor in anchors.items():
                 rows = anchor["rows"]
                 entry = dict(weight=anchor["weight"], space=args.anchor_space,
+                             dims="all" if anchor["dims"] is None else list(anchor["dims"]),
                              share=float(anchor["mask"].float().mean()), samples=int(anchor["mask"].sum()),
                              minibatches_with_samples=int(np.count_nonzero(anchor["counts"])),
                              actor_minibatches=len(anchor["counts"]))
+                # Where the anchor's samples are: it must stay out of game play.
+                per_slot = torch.bincount(anchor_slots.flatten()[anchor["mask"]].long(), minlength=5).tolist()
+                entry["samples_by_slot"] = dict(zip(SLOT_NAMES, per_slot))
+                entry["share_by_slot"] = {slot: count / steps for slot, count, steps in zip(SLOT_NAMES, per_slot, slot_steps)
+                                          if steps}
+                inside = anchor["mask"][subset]
+                if inside.any():
+                    # This update's policy change on the anchor's own samples (of the diagnostic subset).
+                    entry["final_kl"] = float(kl_terms[inside].mean())
                 if anchor["losses"]:
                     entry.update(loss=float(np.mean(anchor["losses"])), loss_first=anchor["losses"][0],
                                  loss_last=anchor["losses"][-1])
@@ -1466,8 +1496,12 @@ def main():
                     after = net.actor(net.trunk(x[rows]))
                     for space in ANCHOR_SPACES:
                         key = space.replace("-", "_")
-                        entry[key + "_initial"] = float(anchor_error(anchor["before"], anchor["goal"], space).mean())
-                        entry[key + "_final"] = float(anchor_error(after, anchor["goal"], space).mean())
+                        entry[key + "_initial"] = float(anchor_error(anchor["before"], anchor["goal"], space, dims=anchor["dims"]).mean())
+                        entry[key + "_final"] = float(anchor_error(after, anchor["goal"], space, dims=anchor["dims"]).mean())
+                    row_slots = anchor_slots.flatten()[rows]
+                    row_errors = anchor_error(anchor["before"], anchor["goal"], args.anchor_space, dims=anchor["dims"])
+                    entry["initial_by_slot"] = {slot: float(row_errors[row_slots == code].mean())
+                                                for code, slot in enumerate(SLOT_NAMES) if (row_slots == code).any()}
                     entry["squashed_initial_by_dimension"] = (anchor["before"].tanh() - anchor["goal"]).square().mean(0).tolist()
                     entry["squashed_final_by_dimension"] = (after.tanh() - anchor["goal"]).square().mean(0).tolist()
                     entry["target_mean"] = anchor["goal"].mean(0).tolist()
@@ -1582,7 +1616,7 @@ def main():
                 accel_effort_per_s=float(row[8]) / (0.02 * steps),
                 idle_path_per_s=float(row[9]) / (0.02 * steps),
                 dead_puck_share=float(row[10]) / (0.02 * steps))
-            for name, row, steps in zip(("stationary", "receiving", "defense", "games", "people"),
+            for name, row, steps in zip(SLOT_NAMES,
                                         motion_by_kind, slot_steps) if steps}
         if dead_explore:
             status["dead_puck_exploration_share"] = float(dwell_masks.float().mean())
@@ -1595,6 +1629,8 @@ def main():
             if kl_rows is not None:
                 # kl / final_kl above are of the samples no anchor covers.
                 status["anchor_kl_exempt"] = dict(share=float((~kl_rows).float().mean()), final_kl_all=final_kl_all)
+            status["anchors_final_kl_outside"] = final_kl_outside
+            status["anchors_final_kl_outside_by_slot"] = final_kl_outside_by_slot
         if teacher is not None:
             status["teacher_mse"] = teacher_status["mse"]
             status["teacher_weight"] = teacher_status["weight"]

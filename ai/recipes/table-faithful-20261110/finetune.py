@@ -27,7 +27,8 @@ default is arm A; README.md "Round 2" has the reasons and the numbers.
 
 ROUND 3 (`--arm a3`): arm a2's options plus two IMITATION ANCHORS on resting
 pucks, because reward and exploration did not find the strike: the physics
-teacher's action where a puck has lain on the open table, v4's in corner and
+teacher's accel cap where a puck has lain on the open table (the cap alone:
+`--teacher-resting-dims all` copied its aim and shot into game play), v4's in corner and
 edge drills and on pucks lying in the rail strip. Label sources in training
 only. `--resume` chooses the starting point (default arm a2's `agent.pt`);
 README.md "Round 3".
@@ -50,6 +51,8 @@ V5A = "runs/_neural-table-faithful-20261110-a/agent.pt"
 A2 = "runs/_neural-table-faithful-20261110-a2/agent.pt"
 # Arm a3's anchor weights (README "Round 3" has the smoke run they were read from).
 TEACHER_RESTING, REFERENCE_RAIL = 1.0, 1.0
+# The teacher anchor copies the accel cap only: README "Round 3 review".
+TEACHER_RESTING_DIMS = "cap"
 # Launcher defaults per arm; "a" is the parser's own.
 ARMS = {
     "a": {},
@@ -63,7 +66,7 @@ ARMS = {
 }
 # Round 3: a2's options and the two anchors; --resume picks a, a2 or v4.
 ARMS["a3"] = dict(ARMS["a2"], resume=A2, seed=20261113, teacher_resting=TEACHER_RESTING, reference_rail=REFERENCE_RAIL,
-                  anchor_space="pre-squash")
+                  teacher_resting_dims=TEACHER_RESTING_DIMS, anchor_space="pre-squash")
 
 
 def argv(a):
@@ -158,6 +161,8 @@ def argv(a):
     # Round 3: each absent at its arm-A / a2 default.
     if a.teacher_resting:
         cmd += ["--teacher-resting-weight", str(a.teacher_resting), "--teacher-resting-start", str(a.teacher_resting_start)]
+        if a.teacher_resting_dims != "all":
+            cmd += ["--teacher-resting-dims", a.teacher_resting_dims]
     if a.reference_rail:
         cmd += ["--skill-reference", a.skill_reference, "--skill-reference-rail-weight", str(a.reference_rail)]
     if a.teacher_resting or a.reference_rail:
@@ -211,6 +216,8 @@ def build_parser():
     p.add_argument("--teacher-resting", type=float, default=0.0,
                    help="Weight of the teacher's action where a puck has lain on the open table")
     p.add_argument("--teacher-resting-start", type=float, default=1.0, help="s the puck has lain before it applies")
+    p.add_argument("--teacher-resting-dims", choices=["all", "time-cap", "cap"], default="all",
+                   help="Outputs the teacher anchor copies: all six, arrival time and accel cap, or the cap alone")
     p.add_argument("--reference-rail", type=float, default=0.0,
                    help="Weight of --skill-reference's action in corner / edge drills and on rail-strip pucks")
     p.add_argument("--skill-reference", default=V4, help="Checkpoint the rail anchor copies (training only)")
