@@ -99,6 +99,22 @@ Robotic air hockey table that uses reinforcement learning trained in simulation,
       single side-rail banks, release speed calibrated to the people's
       attacks), feints, soft blocks, reads the robot's mallet. Tiers
       `club` and `elite` (8-14 m/s shots). Never a runtime controller.
+    - `table_fidelity.py` - OPT-IN table-faithful sim for the neural player
+      (2026-11-10), from the 13 table sessions of teacher-calm v4:
+      `table_fidelity("table-20261029")` returns the `NeuralTrainingEnv`
+      kwargs every trainer/evaluator should share. Four parts, each
+      droppable (`contact=`, `lift=`, `sensing=`, `actuator=`): robot-mallet
+      restitution 0.50 -> 0.33 with closing speed plus tangential 0.70-0.90
+      (`batch_physics.SpeedRestitution`); the MALLET LIFT, a 6-8 m/s puck
+      passing under a hard-braking mallet (`batch_physics.MalletLift`,
+      counted in `info["lift_events"]` and `engine.lift_events`); camera
+      dropouts as per-frame hazards -- larger glare hole, blind end bands,
+      flicker, hidden opponent mallet (`perception.TableSensing`; the old
+      `fuzz_p` windows never open in a NeuralTrainingEnv); and command
+      latency 9-19 ms with late ticks (`enable_command_jitter`). A
+      robot-bodied far side gets all of it; the human proxy keeps its
+      mallet, never lifts and keeps its own puck view. All off by default.
+      Tests: `tests/test_table_fidelity.py`.
     - `run_names.py` - The `<major>.<minor>-<description>-<stage>` scheme,
       enforced by both trainers (see "Run names").
     - `perception.py` - The sim's tracker model: 6-frame slope estimator,

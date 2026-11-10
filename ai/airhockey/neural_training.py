@@ -135,6 +135,13 @@ class NeuralTrainingEnv(ArrivalEnv):
         readiness_lateral_uncertainty=0.0,
         defense_windup_lateral_speed=0.0,
         defense_windup_bank_fraction=0.0,
+        # Opt-in table fidelity; airhockey.table_fidelity builds these.
+        # None = off; True = the measured model; a dict overrides its fields.
+        speed_restitution=None,
+        mallet_lift=None,
+        table_sensing=None,
+        command_delay_range=None,
+        late_command_probability=None,
     ):
         if goals_only and (terminate_overload or receive_drill or productive_receive_drill or possession_followthrough):
             raise ValueError('goals-only training requires full games without auxiliary drill/overload terminations')
@@ -169,8 +176,20 @@ class NeuralTrainingEnv(ArrivalEnv):
             if not (0 < lo <= hi <= 1):
                 raise ValueError(f"{name} must satisfy 0 < low <= high <= 1")
             setattr(self.engine, name, (lo, hi))
+        # Table fidelity (opt-in): measured robot-mallet contact, contact
+        # failure, camera dropouts and command latency. A robot-bodied far
+        # side is the same machine and gets all of them; a free body (the
+        # human proxy, the scripted kinds) keeps its contact and its eyes.
+        for enable, option in ((self.engine.enable_speed_restitution, speed_restitution),
+                               (self.engine.enable_mallet_lift, mallet_lift),
+                               (self.base.enable_table_sensing, table_sensing)):
+            if option is None or option is False:
+                continue
+            enable(**({} if option is True else dict(option)))
+        if command_delay_range is not None or late_command_probability is not None:
+            self.base.enable_command_jitter(command_delay_range, late_command_probability)
         if report_sensing and self.base._perception is not None:
-            self.base._perception.enable_report_estimator()
+            self.base.enable_report_estimator()
         if not 0 <= recovery_fraction <= 1:
             raise ValueError("recovery fraction must be in [0,1]")
         if any(not np.isfinite(x) or x < 0 for x in (readiness_weight, readiness_cost_weight, possession_delay_weight, calm_accel_weight, calm_own_half_scale, recovery_capture_bonus, recovery_cushion_bonus, recovery_get_ahead_bonus, recovery_approach_weight)):

@@ -28,6 +28,8 @@ implements as an observation ring buffer.
 
 from __future__ import annotations
 
+from dataclasses import dataclass
+
 import numpy as np
 
 # ── Loop latency, MEASURED 2026-08-23 ──────────────────────────────────
@@ -98,6 +100,7 @@ class PuckPerception:
         self.cx, self.cy = table_w / 2.0, table_h / 2.0
         self.hw = GLARE_W_MM / 2000.0        # mm -> m, halved
         self.hh = GLARE_H_MM / 2000.0
+        self._glare_cy = self.cy
         self.pos_noise = POS_NOISE_MM / 1000.0
 
         self._hist_x = np.zeros((SLOPE_WINDOW, n_envs))
@@ -113,6 +116,11 @@ class PuckPerception:
         t = np.arange(SLOPE_WINDOW) * dt
         self._tc = (t - t.mean())[:, None]
         self._den = float((self._tc[:, 0] ** 2).sum())
+
+    def set_glare(self, width_mm: float, height_mm: float, offset_y: float = 0.0) -> None:
+        """Resize the blind patch (TableSensing measured a larger one)."""
+        self.hw, self.hh = width_mm / 2000.0, height_mm / 2000.0
+        self._glare_cy = self.cy + offset_y
 
     def set_rng(self, rng: np.random.Generator) -> None:
         """Adopt a new generator, e.g. when the environment is reseeded.
@@ -160,7 +168,7 @@ class PuckPerception:
     def visible(self, x: np.ndarray, y: np.ndarray) -> np.ndarray:
         if not self.glare:
             return np.ones(self.n, dtype=bool)
-        return ~((np.abs(x - self.cx) < self.hw) & (np.abs(y - self.cy) < self.hh))
+        return ~((np.abs(x - self.cx) < self.hw) & (np.abs(y - self._glare_cy) < self.hh))
 
     def update(self, true_x: np.ndarray, true_y: np.ndarray,
                hidden: np.ndarray | None = None):
@@ -232,3 +240,133 @@ class PuckPerception:
             vy = np.where(hidden, np.where(alive, self._last_vy, 0.0), vy)
 
         return out_x, out_y, vx, vy
+
+
+@dataclass(frozen=True)
+class TableSensing:
+    """What the camera lost in play on the table (v4 sessions, 19.6 min).
+
+    The puck was seen in 95.65% of in-play frames, with 14 unseen spells of
+    50 ms or more a minute -- 30% of them at each end, 17% at the centre.
+    Three position-dependent pieces, all per 200 Hz frame:
+
+      GLARE     the centre hole is 160 x 150 mm for the puck centre, not the
+                92 x 103 of GLARE_*_MM.
+      END BANDS near either end rail the puck is unseen with stationary
+                probability `end_bands` (the robot's end, y = 0) or
+                `far_end_bands` (the person's), by distance from the rail
+                face and speed -- whether or not a mallet is near. A
+                two-state chain so spells have the measured length:
+                P(unseen -> seen) = end_recover.
+      FLICKER   anywhere, spells start at `flicker_hazard` per seen frame
+                (drawn per episode; the days differed 3x) with lengths from
+                `flicker_frames` -- mostly one or two frames, 0.6% past
+                150 ms. Includes dropped camera frames.
+
+    The OPPONENT's mallet is hidden in spells of `opponent_frames` starting
+    at opponent_per_min x a per-episode scale (0 in `opponent_off` of
+    episodes; sessions ranged from 0 to 42% hidden). As the runner does, a
+    hidden mallet is reported at its last fix for `stale_s`, then at the
+    default pose, at rest throughout.
+    """
+    glare_w_mm: float = 160.0
+    glare_h_mm: float = 150.0
+    glare_offset_y_m: float = -0.005
+    # (far edge of the band in metres from the end rail face,
+    #  unseen probability at puck speed < 1, 1-4, >= 4 m/s); nearest first.
+    end_bands: tuple = ((0.097, (0.375, 0.75, 0.75)),
+                        (0.146, (0.45, 0.75, 0.78)),
+                        (0.215, (0.10, 0.25, 0.65)),
+                        (0.313, (0.05, 0.05, 0.25)))
+    far_end_bands: tuple = ((0.083, (0.66, 0.66, 0.66)),
+                            (0.132, (0.31, 0.73, 0.66)),
+                            (0.201, (0.02, 0.19, 0.35)),
+                            (0.300, (0.06, 0.06, 0.06)))
+    end_speeds_m_s: tuple[float, float] = (1.0, 4.0)
+    end_recover: float = 0.18
+    flicker_hazard: tuple[float, float] = (0.004, 0.025)
+    flicker_nominal: float = 0.0148
+    # (frames low, frames high, share of spells)
+    flicker_frames: tuple = ((1, 1, 0.685), (2, 2, 0.213), (3, 5, 0.074),
+                             (6, 9, 0.010), (10, 19, 0.008), (20, 29, 0.004),
+                             (30, 59, 0.004), (60, 98, 0.002))
+    opponent_per_min: float = 89.1
+    opponent_frames: tuple = ((1, 1, 0.420), (2, 2, 0.308), (3, 5, 0.159),
+                              (6, 9, 0.047), (10, 29, 0.0494), (30, 59, 0.0090),
+                              (60, 299, 0.0056), (300, 1420, 0.0022))
+    opponent_off: float = 0.25
+    opponent_scale: tuple[float, float] = (0.2, 2.5)
+    stale_s: float = 0.150
+
+
+class TableDropouts:
+    """Per-env dropout state for TableSensing; one call per camera frame."""
+
+    def __init__(self, n_envs: int, model: TableSensing, table_h: float):
+        self.n = n_envs
+        self.model = model
+        self.table_h = table_h
+        # Per end (robot's, person's): band edges, and unseen probability
+        # with a last all-zero row -- beyond the bands the chain only recovers.
+        self._band_edges = [np.array([edge for edge, _ in bands])
+                            for bands in (model.end_bands, model.far_end_bands)]
+        self._band_unseen = [np.array([m for _, m in bands] + [(0.0, 0.0, 0.0)])
+                             for bands in (model.end_bands, model.far_end_bands)]
+        self._speed_edges = np.array(model.end_speeds_m_s)
+        self.flicker_hazard = np.full(n_envs, model.flicker_nominal)
+        self.opponent_hazard = np.full(
+            n_envs, model.opponent_per_min * FRAME_INTERVAL_S / 60.0)
+        self._flicker = np.zeros(n_envs, dtype=np.int32)    # frames left
+        self._end = np.zeros(n_envs, dtype=bool)
+        self._opponent = np.zeros(n_envs, dtype=np.int32)
+
+    def reset(self, rng: np.random.Generator, idx, n: int, randomize: bool) -> None:
+        self._flicker[idx] = 0
+        self._end[idx] = False
+        self._opponent[idx] = 0
+        if not randomize:
+            return
+        m = self.model
+        self.flicker_hazard[idx] = rng.uniform(*m.flicker_hazard, size=n)
+        scale = rng.uniform(*m.opponent_scale, size=n) * (rng.random(n) >= m.opponent_off)
+        self.opponent_hazard[idx] = scale * m.opponent_per_min * FRAME_INTERVAL_S / 60.0
+
+    @staticmethod
+    def _lengths(table, k: int, rng: np.random.Generator) -> np.ndarray:
+        """k spell lengths in frames: a class by its share, then log-uniform."""
+        lo, hi, share = (np.array(col, dtype=float) for col in zip(*table))
+        pick = np.minimum(np.searchsorted(np.cumsum(share) / share.sum(), rng.random(k)),
+                          len(share) - 1)
+        return np.rint(lo[pick] * (hi[pick] / lo[pick]) ** rng.random(k)).astype(np.int32)
+
+    def _spells(self, left, hazard, table, rng) -> np.ndarray:
+        start = (left <= 0) & (rng.random(self.n) < hazard)
+        k = int(start.sum())
+        if k:
+            left[start] = self._lengths(table, k, rng)
+        hidden = left > 0
+        left[hidden] -= 1
+        return hidden
+
+    def puck_hidden(self, y: np.ndarray, speed: np.ndarray,
+                    rng: np.random.Generator) -> np.ndarray:
+        """[N] bool: flicker or an end band hides the puck this frame."""
+        m = self.model
+        flicker = self._spells(self._flicker, self.flicker_hazard, m.flicker_frames, rng)
+        column = np.searchsorted(self._speed_edges, speed, side="right")
+        near, far = (unseen[np.searchsorted(edges, distance, side="right"), column]
+                     for edges, unseen, distance in zip(
+                         self._band_edges, self._band_unseen, (y, self.table_h - y)))
+        unseen = np.where(y < self.table_h / 2, near, far)
+        lose = np.minimum(unseen * m.end_recover / (1.0 - unseen), 1.0)
+        u = rng.random(self.n)
+        # The cause is the place: a puck that has left the bands is seen
+        # again at once (holding it through the chain's 28 ms mean doubled
+        # the long spells behind every shot that reached an end rail).
+        self._end = np.where(self._end, (u >= m.end_recover) & (unseen > 0), u < lose)
+        return flicker | self._end
+
+    def opponent_hidden(self, rng: np.random.Generator) -> np.ndarray:
+        """[N] bool: the camera has no fix on the far mallet this frame."""
+        return self._spells(self._opponent, self.opponent_hazard,
+                            self.model.opponent_frames, rng)

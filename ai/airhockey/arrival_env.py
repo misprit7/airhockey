@@ -295,6 +295,7 @@ class ArrivalEnv:
             ):
                 b._cam_ring[:, ids, col] = getattr(e, name)[ids]
             b._cam_ring[:, ids, 8] = 0
+            b._sync_far_view(ids)
         for prefix, body in [
             ("agent", "agent"),
             ("opp", "opp"),

@@ -19,7 +19,7 @@ from airhockey.dynamics import (ACTION_DT, AGENT_DR_ACCEL_M_S2, AGENT_DR_SPEED_M
                                 workspace_in_sim)
 from airhockey.motion import DEFAULT_SIM_DT, CartState, advance
 from airhockey.perception import (CAMERA_DELAY_RANGE_S, FRAME_INTERVAL_S,
-                                  PuckPerception)
+                                  PuckPerception, TableDropouts, TableSensing)
 from airhockey.physics import TableConfig
 
 
@@ -655,6 +655,24 @@ class BatchAirHockeyEnv:
         self._opp_default = (cfg.width / 2.0, cfg.height * 0.85)   # = deploy's
         self._rival_default = (cfg.width / 2.0, cfg.height * 0.15)
 
+        # Opt-in table fidelity (airhockey.table_fidelity); all off here.
+        # Command jitter: the delay each env's commands actually take, drawn
+        # per episode, and the per-tick chance a command lands a tick late.
+        # command_delay_s stays what the controller ASSUMES.
+        self._command_delay_range = None
+        self._command_delay_env = None
+        self._late_command_range = None
+        self._late_command_p = None
+        # Table sensing: measured dropouts, and the far side's own puck
+        # track for a hand-held opponent, who watches the table, not the
+        # camera (ring columns 9-12; 13 flags the rival mallet hidden).
+        self._table_sensing = None
+        self._perception_far = None
+        self._rival_hidden_col = 8
+        self._hidden_frames = np.zeros((2, n_envs), dtype=np.int32)
+        self._last_fix = np.zeros((2, n_envs, 2))
+        self.puck_hidden = np.zeros(n_envs, dtype=bool)
+
         # Shot-type requests, one per side, and the possession edges that
         # trigger a draw (the puck entering a half).
         if shot_types and obs_mode == "history":
@@ -674,6 +692,85 @@ class BatchAirHockeyEnv:
         self._puck_slow_count = np.zeros(n_envs, dtype=np.int32)
         self._stuck_unattended_steps = max(1, int(round(self.STUCK_UNATTENDED_S / action_dt)))
         self._stuck_attended_steps = max(1, int(round(self.STUCK_ATTENDED_S / action_dt)))
+
+    def enable_command_jitter(self, delay_range=None, late_probability=None) -> None:
+        """Opt into per-episode command latency and late ticks.
+
+        delay_range: (low, high) seconds; each env's commands take a delay
+        drawn from it per episode instead of command_delay_s, which the
+        decoder and guard keep assuming. The table measured host 4.6 ms +
+        ack 2.1 ms + mallet follow lag 4.2 ms at the median, 19 ms at p90.
+        late_probability: (low, high) per-tick probability, drawn
+        log-uniformly per episode, that a command misses its tick and takes
+        effect at the next one (0.1% of ticks on a clean day, 2.8% on a bad
+        one). A robot-bodied far side gets the same delay and its own rolls.
+        Call before reset().
+        """
+        if delay_range is not None:
+            lo, hi = (float(v) for v in delay_range)
+            if not np.isfinite([lo, hi]).all() or not 0 <= lo <= hi < self.action_dt:
+                raise ValueError("command delay range must be ordered and in [0, action_dt)")
+            self._command_delay_range = (lo, hi)
+            self._command_delay_env = np.full(self.n_envs, self.command_delay_s)
+        if late_probability is not None:
+            lo, hi = (float(v) for v in late_probability)
+            if not np.isfinite([lo, hi]).all() or not 0 < lo <= hi < 1:
+                raise ValueError("late command probability must be ordered and in (0, 1)")
+            self._late_command_range = (lo, hi)
+            self._late_command_p = np.full(self.n_envs, np.sqrt(lo * hi))
+
+    def enable_table_sensing(self, **overrides) -> None:
+        """Opt into perception.TableSensing. Needs realistic_perception and
+        kinematic observations; call before reset()."""
+        if self._perception is None or self.obs_mode != "kinematic":
+            raise ValueError("table sensing needs realistic_perception and kinematic observations")
+        model = TableSensing(**overrides)
+        cfg = self.table_config
+        self._table_sensing = TableDropouts(self.n_envs, model, cfg.height)
+        self._perception_far = PuckPerception(self.n_envs, cfg.width, cfg.height,
+                                              self._cam_dt, self._rng)
+        if self._perception._report_history is not None:
+            self._perception_far.enable_report_estimator()
+        self._perception.set_glare(model.glare_w_mm, model.glare_h_mm, model.glare_offset_y_m)
+        self._stale_frames = int(round(model.stale_s / self._cam_dt))
+        self._cam_ring = np.zeros((self._cam_ring_size, self.n_envs, 14))
+        self._rival_hidden_col = 13
+
+    def enable_report_estimator(self) -> None:
+        """The live encoder's sample fit, for every tracker model in use."""
+        self._perception.enable_report_estimator()
+        if self._perception_far is not None:
+            self._perception_far.enable_report_estimator()
+
+    def _sync_far_view(self, idx) -> None:
+        """Restart the far side's own puck track at the engine's puck."""
+        if self._perception_far is None:
+            return
+        e = self.engine
+        self._perception_far.reset(e.puck_x, e.puck_y, idx)
+        self._cam_ring[:, idx, 9] = e.puck_x[idx]
+        self._cam_ring[:, idx, 10] = e.puck_y[idx]
+        self._cam_ring[:, idx, 11:14] = 0.0
+        self._hidden_frames[:, idx] = 0
+        self._last_fix[0, idx, 0] = e.paddle_opp_x[idx]
+        self._last_fix[0, idx, 1] = e.paddle_opp_y[idx]
+        self._last_fix[1, idx, 0] = e.paddle_agent_x[idx]
+        self._last_fix[1, idx, 1] = e.paddle_agent_y[idx]
+
+    def _draw_table_fidelity(self, mask: np.ndarray) -> None:
+        """Per-episode draws of the opt-in models for the envs in `mask`."""
+        n = int(mask.sum())
+        if n == 0:
+            return
+        rng = self._rng
+        if self._command_delay_range is not None:
+            self._command_delay_env[mask] = rng.uniform(*self._command_delay_range, size=n)
+        if self._late_command_range is not None:
+            lo, hi = np.log(self._late_command_range)
+            self._late_command_p[mask] = np.exp(rng.uniform(lo, hi, size=n))
+        if self._table_sensing is not None:
+            self._table_sensing.reset(rng, mask, n, self.domain_randomize)
+            self._sync_far_view(mask)
 
     @staticmethod
     def _clear_profile_accel(dyn: dict[str, Any], idx) -> None:
@@ -776,6 +873,8 @@ class BatchAirHockeyEnv:
             # collision downstream of it.
             if self._perception is not None:
                 self._perception.set_rng(self._rng)
+            if self._perception_far is not None:
+                self._perception_far.set_rng(self._rng)
 
         self.engine.reset(self._rng, mask=mask)
         self._reset_agent_into_workspace(mask)
@@ -955,6 +1054,7 @@ class BatchAirHockeyEnv:
         self._prev_opp_action[idx] = 0.0
 
         self._draw_fuzz(resetting)
+        self._draw_table_fidelity(resetting)
 
         # Shot-type requests restart with the episode: none until the puck
         # first enters a half, which for a puck launched from the centre is
@@ -1051,8 +1151,29 @@ class BatchAirHockeyEnv:
         else:
             ws_overshoot = np.zeros(self.n_envs)
 
+        # Table fidelity: which far paddles are the machine (contact model),
+        # and this tick's actual command latency per env and per body.
+        e = self.engine
+        lifts = None
+        if e.speed_restitution is not None or e.mallet_lift is not None:
+            e.opponent_robot = (~self._opp_free if self.opponent_body == "robot"
+                                else np.zeros(self.n_envs, dtype=bool))
+            lifts = e.lift_events.copy()
+        delay_agent = delay_opp = None
+        if self._command_delay_env is not None or self._late_command_p is not None:
+            delay_agent = (np.full(self.n_envs, self.command_delay_s)
+                           if self._command_delay_env is None else self._command_delay_env)
+            delay_opp = delay_agent
+            if self._late_command_p is not None:
+                late = self._rng.random((2, self.n_envs)) < self._late_command_p
+                delay_agent = np.where(late[0], np.inf, delay_agent)
+                delay_opp = np.where(late[1], np.inf, delay_opp)
+
         for sub in range(self.n_substeps):
             dt = self.sub_dt
+            defer_agent = defer_opp = sub * dt < self.command_delay_s
+            if delay_agent is not None:
+                defer_agent, defer_opp = sub * dt < delay_agent, sub * dt < delay_opp
 
             if self.motion_callback is not None:
                 old_agent_v = np.column_stack((self._agent_dyn["vx"], self._agent_dyn["vy"]))
@@ -1062,12 +1183,12 @@ class BatchAirHockeyEnv:
             ax, ay = self._update_dynamics(self._agent_dyn, target_x, target_y,
                                            dt, speed_cap=agent_speed_cap,
                                            accel_cap=agent_accel_cap,
-                                           defer_command=sub * dt < self.command_delay_s)
+                                           defer_command=defer_agent)
             ax, ay = self._clamp_to_half(ax, ay, agent=True)
             self.engine.update_paddle_agent(ax, ay, dt)
 
             # Update opponent
-            ox, oy = self._opponent_action(dt, defer_command=sub * dt < self.command_delay_s)
+            ox, oy = self._opponent_action(dt, defer_command=defer_opp)
             ox, oy = self._clamp_to_half(ox, oy, agent=False)
             self.engine.update_paddle_opponent(ox, oy, dt)
 
@@ -1192,6 +1313,10 @@ class BatchAirHockeyEnv:
             "fuzzed": self._fuzzed.copy(),
             "t_side": self._t_side.copy(),
         }
+        if lifts is not None and e.mallet_lift is not None:
+            # Pucks that passed under each robot mallet during this step.
+            info["lift_events"] = e.lift_events[0] - lifts[0]
+            info["opponent_lift_events"] = e.lift_events[1] - lifts[1]
 
         return obs, rewards, terminated, truncated, info
 
@@ -1502,8 +1627,14 @@ class BatchAirHockeyEnv:
             seen = self._cam_ring[idx, self._env_idx]
             before = self._cam_ring[prev, self._env_idx]
             px, py, pvx, pvy = seen[:, 0], seen[:, 1], seen[:, 2], seen[:, 3]
+            if self._perception_far is not None:
+                # A person sees the puck where the camera lost it.
+                free = self._opp_free
+                px, py, pvx, pvy = (np.where(free, seen[:, 9 + k], seen[:, k])
+                                    for k in range(4))
             rx, ry = seen[:, 6], seen[:, 7]
-            edge = (seen[:, 8] > 0) | (before[:, 8] > 0)
+            col = self._rival_hidden_col
+            edge = (seen[:, col] > 0) | (before[:, col] > 0)
             rvx = np.where(edge, 0.0, (seen[:, 6] - before[:, 6]) / self._cam_dt)
             rvy = np.where(edge, 0.0, (seen[:, 7] - before[:, 7]) / self._cam_dt)
         else:
@@ -1565,7 +1696,18 @@ class BatchAirHockeyEnv:
         a_cap = dyn["max_accel"] if accel_cap is None else accel_cap
         # Preserve a request even if its delay rounds to the entire interval.
         dyn["queued_command"] = (target_x, target_y, v_cap, a_cap)
-        if defer_command:
+        if isinstance(defer_command, np.ndarray):
+            # Per-env latency (enable_command_jitter): each env keeps its
+            # command in force until its own delay has passed.
+            target_x = np.where(defer_command, dyn["command_x"], target_x)
+            target_y = np.where(defer_command, dyn["command_y"], target_y)
+            v_cap = np.where(defer_command, dyn["command_speed"], v_cap)
+            a_cap = np.where(defer_command, dyn["command_accel"], a_cap)
+            dyn["command_x"][:] = target_x
+            dyn["command_y"][:] = target_y
+            dyn["command_speed"][:] = v_cap
+            dyn["command_accel"][:] = a_cap
+        elif defer_command:
             target_x, target_y = dyn["command_x"], dyn["command_y"]
             v_cap, a_cap = dyn["command_speed"], dyn["command_accel"]
         else:
@@ -1695,7 +1837,8 @@ class BatchAirHockeyEnv:
                                      self._ext_opp_accel_frac, 1.0) * self._opp_dyn["max_accel"]
         mx, my = self._update_dynamics(self._opp_dyn, target_x, target_y, dt,
                                        accel_cap=opp_accel_cap,
-                                       defer_command=defer_command and self.opponent_body == "robot")
+                                       defer_command=(defer_command if self.opponent_body == "robot"
+                                                      else False))
         if not np.any(free):
             return mx, my
         fx, fy = self._update_dynamics(self._opp_dyn_free, target_x, target_y, dt)
@@ -1832,6 +1975,8 @@ class BatchAirHockeyEnv:
         """
         e = self.engine
         hidden = None
+        if self._table_sensing is not None:
+            return self._table_camera_tick()
         if self._perception is not None:
             if self.fuzz_p > 0:
                 hidden = self._fuzz_active(self._fuzz_puck)
@@ -1856,6 +2001,53 @@ class BatchAirHockeyEnv:
             self._cam_ring[w, :, 6] = e.paddle_agent_x
             self._cam_ring[w, :, 7] = e.paddle_agent_y
             self._cam_ring[w, :, 8] = 0.0
+        self._cam_write = (w + 1) % self._cam_ring_size
+
+    def _table_camera_tick(self) -> None:
+        """The camera frame under TableSensing (enable_table_sensing).
+
+        The puck goes through the same tracker model with the measured
+        dropouts as `hidden`; a hidden mallet is frozen at its last fix and
+        falls back to the default pose once stale. A lifted mallet hides
+        the puck under it and loses its own marker cluster for stale_s.
+        """
+        e = self.engine
+        rng = self._rng
+        drops = self._table_sensing
+        hidden = drops.puck_hidden(e.puck_y, np.hypot(e.puck_vx, e.puck_vy), rng)
+        gone_opp = drops.opponent_hidden(rng)
+        # The far robot's camera loses the agent's mallet in the same spell.
+        gone_rival = gone_opp & ~self._opp_free
+        if self.fuzz_p > 0:
+            hidden |= self._fuzz_active(self._fuzz_puck)
+            fuzz = self._fuzz_active(self._fuzz_opp)
+            gone_opp, gone_rival = gone_opp | fuzz, gone_rival | fuzz
+        if e.mallet_lift is not None:
+            hidden |= e.lift_through.any(axis=0)
+            blind = e.lift_age < drops.model.stale_s
+            gone_opp = gone_opp | blind[1]
+            gone_rival = gone_rival | (blind[0] & ~self._opp_free)
+        # Every reason the puck is unseen this frame, glare included.
+        self.puck_hidden = hidden | ~self._perception.visible(e.puck_x, e.puck_y)
+        w = self._cam_write
+        ring = self._cam_ring
+        ring[w, :, 0:4] = np.column_stack(
+            self._perception.update(e.puck_x, e.puck_y, hidden=hidden))
+        if self._opp_free.any():
+            ring[w, :, 9:13] = np.column_stack(
+                self._perception_far.update(e.puck_x, e.puck_y))
+        for view, (gone, x, y, default, col) in enumerate((
+                (gone_opp, e.paddle_opp_x, e.paddle_opp_y, self._opp_default, 4),
+                (gone_rival, e.paddle_agent_x, e.paddle_agent_y, self._rival_default, 6))):
+            frames = self._hidden_frames[view]
+            frames[:] = np.where(gone, frames + 1, 0)
+            fix = self._last_fix[view]
+            fix[~gone, 0], fix[~gone, 1] = x[~gone], y[~gone]
+            stale = frames > self._stale_frames
+            ring[w, :, col] = np.where(stale, default[0], fix[:, 0])
+            ring[w, :, col + 1] = np.where(stale, default[1], fix[:, 1])
+        ring[w, :, 8] = gone_opp
+        ring[w, :, 13] = gone_rival
         self._cam_write = (w + 1) % self._cam_ring_size
 
     def _camera_read(self):
