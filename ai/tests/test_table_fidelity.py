@@ -265,6 +265,81 @@ def test_lift_draws_include_zero_and_a_zero_episode_never_lifts():
         BatchPhysicsEngine(2).enable_mallet_lift(p100=(0.2, 1.5))
 
 
+PINNED = dict(off_probability=0.0, p100=(1.0, 1.0), b0=(0.0, 0.0), a0=(10.0, 10.0), k_hi=(0.0, 0.0),
+              speed_shift=(0.0, 0.0))
+
+
+def _meet_accelerating(engine, steps=30):
+    """A 7 m/s puck met by a mallet ACCELERATING into it at 60 m/s^2 (v5a's
+    way round the braking term): about 2.5 m/s at the puck on contact."""
+    n = engine.n_envs
+    engine.puck_x[:], engine.puck_y[:], engine.puck_vx[:], engine.puck_vy[:] = 0.5, 0.70, 0.0, -7.0
+    engine.paddle_agent_x[:], engine.paddle_agent_y[:] = 0.5, 0.38
+    engine.paddle_opp_x[:], engine.paddle_opp_y[:] = 0.05, 1.9
+    y, v = 0.38, 1.0
+    for _ in range(steps):
+        v += 60.0 * DT
+        y += v * DT
+        engine.update_paddle_agent(np.full(n, 0.5), np.full(n, y), DT)
+        engine.update_paddle_opponent(np.full(n, 0.05), np.full(n, 1.9), DT)
+        engine.step(DT)
+    return engine
+
+
+@pytest.mark.parametrize("mechanism, lifts", [
+    (dict(), False),                                              # braking: accelerating in is the way round
+    (dict(flat_probability=1.0, flat_rate=(1.0, 1.0)), True),     # whatever the mallet's acceleration
+    (dict(closing_probability=1.0, closing_full=2.0), True),      # by its speed at the puck
+])
+def test_lift_mechanism_is_drawn_per_episode(mechanism, lifts):
+    e = BatchPhysicsEngine(8, domain_randomize=True)
+    e.enable_mallet_lift(**PINNED, **mechanism)
+    e.reset(np.random.default_rng(0))
+    _meet_accelerating(e)
+    assert (e.lift_events[0] == 1).all() if lifts else e.lift_events.sum() == 0
+    # A mallet standing still is safe under every mechanism (0/30 on the table).
+    e.reset(np.random.default_rng(0))
+    e.lift_events[:] = 0
+    _lunge(e, steps=40, braking=0.0)
+    assert e.lift_events.sum() == 0
+    # The braking lunge of the table's events lifts whenever braking or
+    # nothing decides; by closing speed alone it has slowed to a partial rate.
+    e.reset(np.random.default_rng(0))
+    _lunge(e, steps=30)
+    assert (e.lift_events[0] == 1).all() or "closing_probability" in mechanism
+
+
+def test_lift_mechanisms_mix_and_leave_the_default_draws_alone():
+    plain, mixed = (BatchPhysicsEngine(4000, domain_randomize=True) for _ in range(2))
+    plain.enable_mallet_lift()
+    mixed.enable_mallet_lift(flat_probability=0.25, closing_probability=0.25)
+    plain.reset(np.random.default_rng(1))
+    mixed.reset(np.random.default_rng(1))
+    assert (plain.lift_mode == 0).all() and np.array_equal(plain.lift_parameters, mixed.lift_parameters)
+    share = np.bincount(mixed.lift_mode, minlength=3) / 4000
+    assert np.allclose(share, [0.5, 0.25, 0.25], atol=0.03)
+    assert 0.08 <= mixed.lift_flat_rate.min() and mixed.lift_flat_rate.max() <= 0.40
+    # An episode with lift off is off in every mechanism.
+    _meet_accelerating(mixed)
+    assert mixed.lift_events[0, mixed.lift_parameters[0] == 0].sum() == 0
+    assert mixed.lift_events[0, mixed.lift_mode == 1].sum() > 0 and mixed.lift_events[0, mixed.lift_mode == 0].mean() < 0.05   # b0 only
+    for bad in (dict(flat_probability=0.7, closing_probability=0.5), dict(flat_rate=(0.5, 0.2)),
+                dict(closing_probability=0.5, closing_full=0.4)):
+        with pytest.raises(ValueError):
+            BatchPhysicsEngine(2).enable_mallet_lift(**bad)
+
+
+def test_a_far_robot_can_be_kept_from_lifting():
+    e = BatchPhysicsEngine(8)
+    e.enable_mallet_lift(**CERTAIN, far_body=False)
+    e.reset(np.random.default_rng(0))
+    e.opponent_robot[:] = True
+    _lunge(e, steps=30, body="opponent")
+    assert e.lift_events.sum() == 0 and (e.puck_vy < 0).all()
+    _lunge(e, steps=30)
+    assert (e.lift_events[0] == 1).all()
+
+
 def test_env_marks_which_far_bodies_are_the_machine_and_counts_lifts():
     env = NeuralTrainingEnv(8, seed=1, stage=3, games=True, mallet_lift=dict(CERTAIN),
                             speed_restitution=True, randomize=False)

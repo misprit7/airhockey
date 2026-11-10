@@ -21,7 +21,21 @@ from airhockey.thermal import DEFAULT_MODEL
 #   far_cap_s      of those, seconds with the commanded cap above far_cap_threshold
 #   far_cap        the same, each second scaled by the cap's excess over the
 #                  threshold as a fraction of the room up to the machine's cap
-MOTION_COLUMNS = ("accel_duty_s", "accel_duty", "reversals", "far_half_s", "far_cap_s", "far_cap")
+#                  (both only below far_cap_max_speed of mallet speed, if set)
+# Round 2 (after v5a), appended so the six above keep their places:
+#   guard_changed     1 where the motion guard replaced the learner's command
+#   guard_unresolved  1 where even a full brake was predicted to reach the clamp
+#   accel_effort      seconds x max(|dv/dt|^2 - accel_effort_threshold^2, 0) / cap^2
+#   idle_path         metres the mallet moved, weighted by how calm the table was
+#   dead_puck_s       seconds a puck lay within reach on the own half past
+#                     dead_puck_grace (the open-table stall)
+MOTION_COLUMNS = ("accel_duty_s", "accel_duty", "reversals", "far_half_s", "far_cap_s", "far_cap",
+                  "guard_changed", "guard_unresolved", "accel_effort", "idle_path", "dead_puck_s")
+# The dead-puck clock runs while the puck is on the own half, within reach and
+# slower than DEAD_PUCK_SPEED; only a release above DEAD_PUCK_RELEASE (or the
+# puck leaving reach) clears it, so a nudge every second does not.
+DEAD_PUCK_SPEED = 0.3
+DEAD_PUCK_RELEASE = 1.0
 REVERSAL_WINDOW_TICKS = 5      # 100 ms, as airhockey.playability counts them
 REVERSAL_GAP_S = 0.15
 STRIKE_DRILL_SECONDS = 6       # a person takes up to ~4 s to get to a puck and strike it
@@ -178,6 +192,35 @@ class NeuralTrainingEnv(ArrivalEnv):
         far_cap_threshold=40.0,
         # Start every game slot at its own point of the game clock.
         stagger_games=False,
+        # Round 2 (2026-11-10, after v5a; ai/recipes/table-faithful-20261110).
+        # Cost per second a puck has lain within reach on the own half for
+        # longer than the grace: the table has no referee.
+        dead_puck_weight=0.0,
+        dead_puck_grace=1.0,
+        # Calm-accel scale while such a puck (slow, own half, within reach)
+        # is waiting to be struck; None = calm_own_half_scale as before.
+        calm_reachable_scale=None,
+        # Cost per tick the motion guard replaced the learner's command, and
+        # per tick it could not resolve it.
+        guard_weight=0.0,
+        guard_unresolved_weight=0.0,
+        # Charge the far-half cap only while the mallet is slower than this
+        # (m/s): the brake after a strike is not the idle cap. None = always.
+        far_cap_max_speed=None,
+        # Cost per second, quadratic in the realised acceleration above the
+        # threshold: weight * (a^2 - threshold^2) / cap^2.
+        accel_effort_weight=0.0,
+        accel_effort_threshold=40.0,
+        # Cost per metre moved while the table is calm (the calm factor of
+        # the calm-accel cost), in full games: the cap may be low and the
+        # mallet still walk. Counted in every slot.
+        idle_speed_weight=0.0,
+        # Share of stationary drills: a puck at rest in the forward strip
+        # with the opposite rail's bank requested, the mallet in v4/v5a's
+        # hover behind it and the hover as its previous action.
+        cross_bank_drill_fraction=0.0,
+        # Share of corner drills whose mallet starts anywhere in the workspace.
+        corner_far_start_fraction=0.0,
     ):
         if goals_only and (terminate_overload or receive_drill or productive_receive_drill or possession_followthrough):
             raise ValueError('goals-only training requires full games without auxiliary drill/overload terminations')
@@ -344,6 +387,28 @@ class NeuralTrainingEnv(ArrivalEnv):
         self._velocity_ring = np.zeros((REVERSAL_WINDOW_TICKS, n_envs, 2))
         self._velocity_head = 0
         self._reversal_clock = np.full(n_envs, np.inf)
+        for value in (dead_puck_weight, dead_puck_grace, guard_weight, guard_unresolved_weight,
+                      accel_effort_weight, idle_speed_weight):
+            if not np.isfinite(value) or value < 0:
+                raise ValueError("round-2 cost weights and the dead-puck grace must be finite and nonnegative")
+        if not np.isfinite(accel_effort_threshold) or accel_effort_threshold < 0:
+            raise ValueError("accel effort threshold must be finite and nonnegative")
+        if calm_reachable_scale is not None and (not np.isfinite(calm_reachable_scale) or calm_reachable_scale < 0):
+            raise ValueError("calm reachable scale must be finite and nonnegative")
+        if far_cap_max_speed is not None and (not np.isfinite(far_cap_max_speed) or far_cap_max_speed <= 0):
+            raise ValueError("far-cap mallet speed limit must be positive and finite")
+        for fraction in (cross_bank_drill_fraction, corner_far_start_fraction):
+            if not np.isfinite(fraction) or not 0 <= fraction <= 1:
+                raise ValueError("drill fractions must be in [0,1]")
+        self.dead_puck_weight, self.dead_puck_grace = dead_puck_weight, dead_puck_grace
+        self.calm_reachable_scale = calm_reachable_scale
+        self.guard_weight, self.guard_unresolved_weight = guard_weight, guard_unresolved_weight
+        self.far_cap_max_speed = far_cap_max_speed
+        self.accel_effort_weight, self.accel_effort_threshold = accel_effort_weight, accel_effort_threshold
+        self.idle_speed_weight = idle_speed_weight
+        self.cross_bank_drill_fraction = cross_bank_drill_fraction
+        self.corner_far_start_fraction = corner_far_start_fraction
+        self.dead_puck_clock = np.zeros(n_envs)
         self.stagger_games = bool(stagger_games)
         self._stagger_pending = np.ones(n_envs, bool)
         if not np.isfinite(left_bank_request_weight) or left_bank_request_weight <= 0:
@@ -1330,6 +1395,46 @@ class NeuralTrainingEnv(ArrivalEnv):
                             |(puck[selected,:2]>self.decoder.high-.04)).any(axis=1)
                     replay_fringe[selected]=exact&fringe
                 starting_requests[selected] = 1 + self.stationary_replay['request'][examples].argmax(1)
+            if self.cross_bank_drill_fraction:
+                # The open-table stall of v4 and v5a (2026-11-10): a puck at
+                # rest in the forward strip, the bank off the OPPOSITE rail
+                # requested, the mallet settled 0.2 m behind it re-issuing one
+                # full-length arrival through the puck at the cap floor.
+                # Reset states only: what ends the hover is the learner's.
+                cross = np.flatnonzero((kind == 0) & (rng.random(n) < self.cross_bank_drill_fraction))
+                k = len(cross)
+                radius = self.cfg.puck_radius + self.cfg.paddle_radius
+                right = rng.random(k) < .5
+                offset = rng.uniform(.05, .35, k)
+                puck[cross, 0] = self.cfg.width / 2 + np.where(right, offset, -offset)
+                puck[cross, 1] = rng.uniform(.60, self.decoder.high[1] + radius - .02, k)
+                puck[cross, 2:] = 0
+                # Along the unfolded bank off the far rail, as potential() aims it.
+                rail_x = np.where(right, self.cfg.puck_radius, self.cfg.width - self.cfg.puck_radius)
+                direction = np.column_stack((
+                    rail_x - puck[cross, 0] + self.cfg.wall_tangential / self.cfg.wall_restitution * (rail_x - self.cfg.width / 2),
+                    self.cfg.height - puck[cross, 1]))
+                direction /= np.linalg.norm(direction, axis=1, keepdims=True)
+                hover = rng.random(k) < .6
+                pose = puck[cross, :2] - rng.uniform(.15, .26, (k, 1)) * direction + rng.uniform(-.03, .03, (k, 2))
+                pose = np.clip(pose, self.decoder.low + .005, self.decoder.high - .005)
+                elsewhere = rng.uniform(self.decoder.low + .02, self.decoder.high - .02, (k, 2))
+                start = np.where(hover[:, None], pose, elsewhere)
+                overlap = np.linalg.norm(start - puck[cross, :2], axis=1) < radius + .02
+                start[overlap] = puck[cross[overlap], :2] - [0, .16]
+                paddle[cross] = start
+                span = self.decoder.high - self.decoder.low
+                held = np.zeros((k, 6))
+                held[:, :2] = np.clip(2 * (puck[cross, :2] + .05 * direction - self.decoder.low) / span - 1, -1, 1)
+                held[:, 2:4] = direction * rng.uniform(.8, 1., (k, 1))
+                held[:, 4] = rng.uniform(.88, .97, k)
+                held[:, 5] = rng.uniform(-.96, -.75, k)
+                replay_actions[cross] = np.where((hover & ~overlap)[:, None], held, np.nan)
+                replay_loads[cross] = np.nan
+                replay_fringe[cross] = False
+                # Mostly the cross-table bank; the rest keep a drawn request.
+                asked = rng.random(k) < .7
+                starting_requests[cross] = np.where(asked, np.where(right, 1, 2), 0)
             if self.edge_drill_fraction:
                 edge = (kind == 0) & (rng.random(n) < self.edge_drill_fraction)
                 k = int(edge.sum())
@@ -1378,6 +1483,13 @@ class NeuralTrainingEnv(ArrivalEnv):
                 distance=rng.uniform(.12,.22,len(ids_side))
                 paddle[ids_side,0]=puck[ids_side,0]+np.where(left[side_start],distance,-distance)
                 paddle[ids_side,1]=self.decoder.low[1]+.015
+                if self.corner_far_start_fraction:
+                    # Games and the fringe benchmark reach a corner puck from
+                    # anywhere; the two poses above are 0.12-0.22 m from it.
+                    away = np.flatnonzero(corner)[rng.random(k) < self.corner_far_start_fraction]
+                    paddle[away] = rng.uniform(self.decoder.low + .005, self.decoder.high - .005, (len(away), 2))
+                    close = np.linalg.norm(paddle[away] - puck[away, :2], axis=1) < self.cfg.puck_radius + self.cfg.paddle_radius + .005
+                    paddle[away[close]] = (self.decoder.low + self.decoder.high) / 2
                 replay_actions[corner]=np.nan;starting_requests[corner]=0
                 edge|=corner
             edge |= replay_fringe & np.isfinite(replay_actions[:,0])
@@ -1475,6 +1587,7 @@ class NeuralTrainingEnv(ArrivalEnv):
             self.people.restart(self._people_row[playing], strike=self.strike_drill[playing])
         self._velocity_ring[:, ids] = 0
         self._reversal_clock[ids] = np.inf
+        self.dead_puck_clock[ids] = 0
         for value in (
             self.touch_count,
             self.shot_count,
@@ -1611,7 +1724,9 @@ class NeuralTrainingEnv(ArrivalEnv):
         if action.shape != (self.n_envs, 6) or not np.isfinite(action).all():
             raise ValueError("expected finite [N,6] arrival actions")
         action = np.clip(action, -1, 1)
+        guarded = np.stack((self.guard_changed[0], self.guard_unresolved[0]))
         target, cap = self._decode(action)
+        guarded = np.stack((self.guard_changed[0], self.guard_unresolved[0])) - guarded
         b, e = self.base, self.engine
         launch = self.elapsed >= self._windup_release
         if launch.any():
@@ -1686,6 +1801,8 @@ class NeuralTrainingEnv(ArrivalEnv):
                    (local_puck[:, 1] <= self.decoder.high[1] - self.capture_depth_margin))
             )
             own_half = e.puck_y > 1 if side else e.puck_y < 1
+            if side == 0:
+                within_reach = own_half & reachable
             self.captured[side] &= (gap < 0.30) & own_half & reachable
             self.capture_paid[side, ~own_half] = False
             self._slow_cushion_touched[side, ~own_half] = False
@@ -1783,6 +1900,10 @@ class NeuralTrainingEnv(ArrivalEnv):
         fraction = cap / b._agent_dyn["max_accel"]
         activity = np.maximum(np.hypot(e.puck_vx, e.puck_vy), np.hypot(e.paddle_opp_vx, e.paddle_opp_vy))
         calm = np.clip(1 - activity / self.calm_speed, 0, 1) * np.where(e.puck_y < self.cfg.height / 2, self.calm_own_half_scale, 1)
+        if self.calm_reachable_scale is not None:
+            # A slow puck within reach is waiting to be struck: the table is
+            # not quiet, and the cap that strikes it is not an idle cap.
+            calm = np.where(within_reach, np.clip(1 - activity / self.calm_speed, 0, 1) * self.calm_reachable_scale, calm)
         self.calm_seconds += b.action_dt * calm
         self.calm_cap_seconds += b.action_dt * calm * fraction
         self.calm_high_cap_seconds += b.action_dt * calm * (fraction > 0.2)
@@ -1801,14 +1922,34 @@ class NeuralTrainingEnv(ArrivalEnv):
         over = realized > self.accel_duty_threshold
         far = e.puck_y > self.cfg.height / 2
         cap_excess = np.clip((cap - self.far_cap_threshold) / np.maximum(limit - self.far_cap_threshold, 1e-9), 0, 1)
+        # The cap asked for while still flying forward after a strike is the
+        # brake: charged, v5a asked for 42 instead of 58 m/s^2 there and left
+        # the stop to the motion guard at 70-100.
+        idle_cap = far if self.far_cap_max_speed is None else far & (
+            np.linalg.norm(old_velocity, axis=1) < self.far_cap_max_speed)
+        # Dead puck: see DEAD_PUCK_SPEED. A goal moves the puck; start again.
+        lying = within_reach & (speed < DEAD_PUCK_SPEED)
+        self.dead_puck_clock[lying] += b.action_dt
+        self.dead_puck_clock[~within_reach | (speed >= DEAD_PUCK_RELEASE) | ((gf + ga) > 0)] = 0
+        dead = lying & (self.dead_puck_clock > self.dead_puck_grace)
+        effort = np.maximum(realized ** 2 - self.accel_effort_threshold ** 2, 0) / limit ** 2
         motion = np.column_stack((
             b.action_dt * over, b.action_dt * over * np.minimum(realized / limit, 1),
             self._reversal_events(velocity), b.action_dt * far,
-            b.action_dt * (far & (cap > self.far_cap_threshold)), b.action_dt * far * cap_excess))
+            b.action_dt * (idle_cap & (cap > self.far_cap_threshold)), b.action_dt * idle_cap * cap_excess,
+            guarded[0], guarded[1], b.action_dt * effort,
+            b.action_dt * calm * np.linalg.norm(velocity, axis=1), b.action_dt * dead))
         self.motion_totals += motion
         if self.accel_duty_weight or self.reversal_weight or self.far_cap_weight:
             reward -= (self.accel_duty_weight * motion[:, 1] + self.reversal_weight * motion[:, 2]
                        + self.far_cap_weight * motion[:, 5])
+        if (self.guard_weight or self.guard_unresolved_weight or self.accel_effort_weight
+                or self.idle_speed_weight or self.dead_puck_weight):
+            reward -= (self.guard_weight * motion[:, 6] + self.guard_unresolved_weight * motion[:, 7]
+                       + self.accel_effort_weight * motion[:, 8] + self.dead_puck_weight * motion[:, 10]
+                       # Games only: a drill starts the mallet anywhere, and
+                       # walking to a guard post before the launch is its point.
+                       + self.idle_speed_weight * game * motion[:, 9])
         # Small action-change cost, not a cap on learned rapid responses.
         reward -= 0.002 * ((action - previous_action) ** 2).sum(axis=1)
         skill = self.kind != 3
@@ -1928,6 +2069,7 @@ class NeuralTrainingEnv(ArrivalEnv):
             peak_accel=self.peak_accel.copy(),
             edge_dwell_cost=edge_cost.copy(),
             motion=motion.astype(np.float32),
+            dead_puck_clock=np.where(lying, self.dead_puck_clock, 0).astype(np.float32),
         )
         return (
             obs,

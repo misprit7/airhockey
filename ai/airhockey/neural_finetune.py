@@ -212,6 +212,23 @@ def std_floor(log_std, floor):
     return torch.clamp_min(log_std, math.log(floor))
 
 
+def dead_puck_exploration_scale(log_std, dwelling, timing, effort):
+    """Training-only exploration where a puck has lain within reach.
+
+    v4 and v5a answer some resting pucks with one constant arrival: time at
+    its maximum (pre-tanh +2) and the cap at its floor (-1.7 to -1.9), learned
+    std 0.02-0.07. Under the 0.1 floor no sampled cap passed 20 m/s^2 there,
+    so the drill's and the game's stall costs carried no gradient. `dwelling`
+    is the environment's dead-puck clock past its start, stored with the
+    rollout; the floors are pre-tanh stds of the arrival-time and accel-cap
+    dimensions. Rollout and PPO likelihood alike; never at inference.
+    """
+    if dwelling is None or not (timing or effort):
+        return log_std
+    floor = log_std.new_tensor([0., 0., 0., 0., timing, effort]).clamp_min(1e-6).log()
+    return torch.where(dwelling[:, None], torch.maximum(log_std, floor), log_std)
+
+
 def _strip_prefix(model):
     for prefix in ("_orig_mod.", "module."):
         if model and all(k.startswith(prefix) for k in model):

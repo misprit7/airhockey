@@ -55,6 +55,25 @@ class MalletLift:
     `speed_shift` moves the lower gate. `nominal` is the pooled fit. The
     accel knee below ~40 m/s^2 is a physical prior, not a measurement: v4
     answered every 6-8 m/s shot at 97 m/s^2 or more.
+
+    MECHANISM PER EPISODE (opt-in, 2026-11-10). The braking term rests on one
+    session (9 of the 17 events; without it 5/38 braking vs 3/22 not), and
+    braking cannot be told from moving at the puck (24 of the 26 contacts
+    moving at it were also braking; 11/26 passed against 3/30 retreating).
+    v5a learned to accelerate into 6-8 m/s pucks, a regime with five table
+    contacts. `flat_probability` and `closing_probability` of the episodes
+    that lift replace the bracket above with another reading of the same
+    17 events, so no one way around the model pays in every episode:
+
+        flat      P = G * M * flat_rate            (a per-episode draw)
+        closing   P = G * M * (b0 + (p100 - b0) * clip((-u - still) / (closing_full - still), 0, 1))
+
+    and in both a mallet slower than `still_m_s` never lifts (0/30 on the
+    table at any puck speed), which the braking form only implies. Both
+    default to 0: the model above and its random stream, unchanged.
+    `far_body=False` keeps a robot-bodied FAR side from lifting: people
+    never do, and 39 of v5a's 42 goals against v4 in this sim went under
+    v4's mallet.
     """
     off_probability: float = 0.25
     p100: tuple[float, float] = (0.15, 0.95)
@@ -72,6 +91,12 @@ class MalletLift:
     accel_window_s: float = 0.020       # the controller's 50 Hz difference
     retention: tuple[float, float] = (0.45, 0.95)   # puck speed kept
     timeout_s: float = 0.15             # contact resumes even if still overlapped
+    flat_probability: float = 0.0
+    closing_probability: float = 0.0
+    flat_rate: tuple[float, float] = (0.08, 0.40)
+    closing_full: float = 3.0           # m/s at the puck for the full p100
+    still_m_s: float = 0.5
+    far_body: bool = True
 
 
 class BatchPhysicsEngine:
@@ -123,6 +148,9 @@ class BatchPhysicsEngine:
         # the lift state per body (0 agent, 1 opponent): the puck is under
         # the mallet, was overlapping last substep, seconds since a lift.
         self.lift_parameters = np.tile(np.array(MalletLift.nominal)[:, None], (1, n_envs))
+        # Per-episode mechanism (0 braking, 1 flat, 2 closing) and flat rate.
+        self.lift_mode = np.zeros(n_envs, dtype=np.int64)
+        self.lift_flat_rate = np.zeros(n_envs)
         self.lift_through = np.zeros((2, n_envs), dtype=bool)
         self.lift_age = np.full((2, n_envs), np.inf)
         # Cumulative since construction; never cleared by reset().
@@ -180,7 +208,7 @@ class BatchPhysicsEngine:
     def enable_mallet_lift(self, **overrides) -> None:
         """Opt into MalletLift for robot mallets. Call before reset()."""
         model = replace(MalletLift(), **overrides)
-        for name in ("p100", "b0", "m_ret", "k_hi", "retention"):
+        for name in ("p100", "b0", "m_ret", "k_hi", "retention", "flat_rate"):
             lo, hi = getattr(model, name)
             if not 0 <= lo <= hi <= 1:
                 raise ValueError(f"{name} must satisfy 0 <= low <= high <= 1")
@@ -188,7 +216,10 @@ class BatchPhysicsEngine:
         if (not 0 <= model.off_probability <= 1 or len(model.nominal) != 6
                 or not gate[0] < gate[1] <= gate[2] < gate[3]
                 or not model.a0[0] <= model.a0[1] < model.a_full
-                or min(model.central_m, model.accel_window_s, model.timeout_s) <= 0):
+                or min(model.central_m, model.accel_window_s, model.timeout_s) <= 0
+                or min(model.flat_probability, model.closing_probability) < 0
+                or model.flat_probability + model.closing_probability > 1
+                or not 0 <= model.still_m_s < model.closing_full):
             raise ValueError("invalid mallet lift model")
         self.mallet_lift = model
         self.lift_parameters[:] = np.array(model.nominal)[:, None]
@@ -260,6 +291,11 @@ class BatchPhysicsEngine:
                 draws[0] *= on
                 draws[2] *= on
                 self.lift_parameters[:, idx] = draws
+                if m.flat_probability or m.closing_probability:
+                    u = rng.random(n)
+                    self.lift_mode[idx] = np.where(u < m.flat_probability, 1, np.where(
+                        u < m.flat_probability + m.closing_probability, 2, 0))
+                    self.lift_flat_rate[idx] = rng.uniform(*m.flat_rate, size=n)
         if self.mallet_lift is not None:
             self.lift_through[:, idx] = False
             self.lift_age[:, idx] = np.inf
@@ -397,7 +433,7 @@ class BatchPhysicsEngine:
         through &= overlap & (timer <= model.timeout_s)
         first = colliding & ~self._in_contact[side] & ~through
         self._in_contact[side] = overlap
-        robot = first if side == 0 else first & self.opponent_robot
+        robot = first if side == 0 else first & self.opponent_robot & model.far_body
         p100, a0, b0, m_ret, k_hi, shift = self.lift_parameters
         candidate = robot & (p100 > 0)
         if candidate.any():
@@ -422,8 +458,14 @@ class BatchPhysicsEngine:
             miss = np.abs(dx[i] * wy - dy[i] * wx) / np.maximum(np.hypot(wx, wy), 1e-9)
             central = ((miss < model.central_m) & (dx[i] * wx + dy[i] * wy < 0)
                        & (dx[i] * ux + dy[i] * uy < 0))
-            p = (gate * np.where(along <= model.retreat_m_s, 1.0, m_ret[i])
-                 * (b0[i] + (p100[i] - b0[i]) * braking) * central)
+            rate = b0[i] + (p100[i] - b0[i]) * braking
+            if model.flat_probability or model.closing_probability:
+                mode = self.lift_mode[i]
+                closing = np.clip((-along - model.still_m_s) / (model.closing_full - model.still_m_s), 0, 1)
+                rate = np.where(mode == 1, self.lift_flat_rate[i],
+                                np.where(mode == 2, b0[i] + (p100[i] - b0[i]) * closing, rate))
+                rate = np.where((mode > 0) & (np.hypot(pad_vx[i], pad_vy[i]) < model.still_m_s), 0.0, rate)
+            p = gate * np.where(along <= model.retreat_m_s, 1.0, m_ret[i]) * rate * central
             rolled = p > 0
             fire = np.zeros(len(i), dtype=bool)
             fire[rolled] = self._rng.random(int(rolled.sum())) < p[rolled]

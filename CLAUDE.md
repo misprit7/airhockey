@@ -152,6 +152,18 @@ Robotic air hockey table that uses reinforcement learning trained in simulation,
       `ai/recipes/table-faithful-20261110/`. Tests:
       `tests/test_table_training.py`. Continue a run with `--resume` under
       a new run name: critic, optimiser, pool and teacher anneal carry over.
+      ROUND 2 (same day, after arm A = "v5a" was evaluated; opt-in too, arm
+      `--arm a2` of that recipe's launcher, not yet trained): a dead-puck
+      clock with a cost and wide time/cap exploration where a puck has lain
+      within reach (`--dead-puck-weight`, `--dead-puck-exploration`: v4 and
+      v5a hover behind some resting pucks for ever), a drill in that state
+      (`--cross-bank-drill-fraction`), corner drills from anywhere
+      (`--corner-far-start-fraction`), costs on motion-guard interventions
+      and on acceleration squared (`--guard-weight`, `--accel-effort-weight`),
+      the far cap charged only at rest (`--far-cap-max-speed`), and a
+      `MalletLift` whose mechanism is drawn per episode (braking / flat /
+      closing speed; `far_body`). Rates per slot class are logged as
+      `status["motion_by_slot"]`.
     - `run_names.py` - The `<major>.<minor>-<description>-<stage>` scheme,
       enforced by both trainers (see "Run names").
     - `perception.py` - The sim's tracker model: 6-frame slope estimator,

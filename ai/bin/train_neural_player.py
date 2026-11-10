@@ -18,7 +18,7 @@ import torch
 from airhockey.neural_player import NeuralPlayer, PhysicalHistory, RecoveryExplorationBias, log_probability, defensive_request_consistency, recovery_exploration_scale, recovery_exploration_window, thermal_effort_exploration_scale, backtrack_actor_step
 from airhockey.neural_finetune import (GUARD, MODE_NAMES, TEACHER_MASKS, adapt_learning_rate, complete_initialization,
                                        diagnostic_subset, initialization_model, load_teacher, masked_mean,
-                                       reference_slots, std_floor, teacher_mask, teacher_opponent_slots,
+                                       reference_slots, std_floor, dead_puck_exploration_scale, teacher_mask, teacher_opponent_slots,
                                        teacher_error, teacher_regression, teacher_weight)
 from airhockey.neural_training import MOTION_COLUMNS, NeuralTrainingEnv
 from airhockey.on_policy import advantages
@@ -299,6 +299,35 @@ def build_parser():
     p.add_argument("--far-cap-threshold", type=float, default=40.0, help="m/s^2")
     p.add_argument("--stagger-games", action="store_true",
                    help="Start each full-game slot at its own point of the --game-episode-seconds clock")
+    # Round 2 of the same recipe (after v5a). Every default is the trainer as it was.
+    p.add_argument("--dead-puck-weight", type=float, default=0,
+                   help="Cost per second a slow puck has lain within reach on the own half longer than --dead-puck-grace, every slot")
+    p.add_argument("--dead-puck-grace", type=float, default=1.0, help="s")
+    p.add_argument("--dead-puck-exploration", type=float, nargs=2, default=[0.0, 0.0], metavar=("TIME", "EFFORT"),
+                   help="Training-only pre-tanh std floors of the arrival-time and accel-cap dimensions where such a puck "
+                        "has lain longer than --dead-puck-exploration-start; rollout and PPO likelihood alike")
+    p.add_argument("--dead-puck-exploration-start", type=float, default=0.5, help="s")
+    p.add_argument("--dead-puck-exploration-hold", type=float, default=0.0,
+                   help="Tick-to-tick correlation of that noise (0 = independent): a strike is ten ticks of a short "
+                        "time and a raised cap, which independent draws do not produce")
+    p.add_argument("--calm-reachable-scale", type=float,
+                   help="Calm-accel scale while a slow puck is within reach on the own half; omitted = --calm-own-half-scale")
+    p.add_argument("--guard-weight", type=float, default=0,
+                   help="Cost per tick the motion guard replaced the learner's command")
+    p.add_argument("--guard-unresolved-weight", type=float, default=0,
+                   help="Cost per tick the guard predicted the workspace clamp even under a full brake")
+    p.add_argument("--far-cap-max-speed", type=float,
+                   help="Charge --far-cap-weight only while the mallet is slower than this, m/s (the brake after a strike is free)")
+    p.add_argument("--accel-effort-weight", type=float, default=0,
+                   help="Cost per second of (|dv/dt|^2 - --accel-effort-threshold^2) / --accel^2, realised tick to tick")
+    p.add_argument("--accel-effort-threshold", type=float, default=40.0, help="m/s^2")
+    p.add_argument("--idle-speed-weight", type=float, default=0,
+                   help="Cost per metre the mallet moves in full games, times the calm factor of --calm-accel-weight")
+    p.add_argument("--cross-bank-drill-fraction", type=float, default=0,
+                   help="Fraction of stationary drills: a resting puck in the forward strip, the opposite rail's bank "
+                        "requested, the mallet hovering behind it")
+    p.add_argument("--corner-far-start-fraction", type=float, default=0,
+                   help="Fraction of corner drills whose mallet starts anywhere in the workspace")
     return p
 
 
@@ -449,6 +478,17 @@ def environment_options(args, *, shot_conditioned):
         far_cap_weight=getattr(args, 'far_cap_weight', 0.0),
         far_cap_threshold=getattr(args, 'far_cap_threshold', 40.0),
         stagger_games=getattr(args, 'stagger_games', False),
+        dead_puck_weight=getattr(args, 'dead_puck_weight', 0.0),
+        dead_puck_grace=getattr(args, 'dead_puck_grace', 1.0),
+        calm_reachable_scale=getattr(args, 'calm_reachable_scale', None),
+        guard_weight=getattr(args, 'guard_weight', 0.0),
+        guard_unresolved_weight=getattr(args, 'guard_unresolved_weight', 0.0),
+        far_cap_max_speed=getattr(args, 'far_cap_max_speed', None),
+        accel_effort_weight=getattr(args, 'accel_effort_weight', 0.0),
+        accel_effort_threshold=getattr(args, 'accel_effort_threshold', 40.0),
+        idle_speed_weight=getattr(args, 'idle_speed_weight', 0.0),
+        cross_bank_drill_fraction=getattr(args, 'cross_bank_drill_fraction', 0.0),
+        corner_far_start_fraction=getattr(args, 'corner_far_start_fraction', 0.0),
         game_episode_seconds=args.game_episode_seconds,
         stationary_failure_penalty=args.stationary_failure_penalty,
         stationary_rest_fraction=args.stationary_rest_fraction,
@@ -554,6 +594,10 @@ def main():
         p.error("--actor-steps-min and --value-warmup-updates must be nonnegative")
     if not np.isfinite(args.std_floor) or not 0 <= args.std_floor <= 1.5:
         p.error("--std-floor must be finite and in [0,1.5]")
+    if (not np.isfinite(args.dead_puck_exploration).all() or min(args.dead_puck_exploration) < 0
+            or max(args.dead_puck_exploration) > 3 or not 0 <= args.dead_puck_exploration_hold < 1
+            or not np.isfinite(args.dead_puck_exploration_start) or args.dead_puck_exploration_start < 0):
+        p.error("--dead-puck-exploration takes two stds in [0,3], a start in seconds and a hold in [0,1)")
     if args.adaptive_lr and not (np.isfinite([args.lr_min, args.lr_max]).all()
                                  and 0 < args.lr_min <= args.lr <= args.lr_max):
         p.error("--adaptive-lr needs 0 < --lr-min <= --lr <= --lr-max")
@@ -728,6 +772,7 @@ def main():
         score_classes["human_proxy"] = proxy_slots
         score_classes["pool"] = score_classes["pool"] & ~proxy_slots
     game_scores = {name: dict(goals=0, conceded=0, seconds=0.) for name, rows in score_classes.items() if rows.any()}
+    people_rows = proxy_slots if proxy_slots is not None else np.zeros(args.n_envs, bool)
     # The actor's own input equals the teacher's when the layouts agree.
     teacher_shares_obs = (teacher is not None and teacher.history == net.history
                           and teacher.shot_conditioned == net.shot_conditioned)
@@ -874,6 +919,12 @@ def main():
         if (args.recovery_persistent_bias or args.edge_persistent_bias) else None)
     exploration_biases = torch.empty_like(raw_actions) if persistent_bias else None
     contacted = np.zeros(args.n_envs, dtype=bool)
+    # Where a puck has lain within reach (the env's clock): stored with the
+    # rollout so PPO scores each action under the std it was drawn with.
+    dead_explore = any(args.dead_puck_exploration)
+    dwelling = torch.zeros(args.n_envs, dtype=torch.bool, device=device)
+    dwell_masks = torch.zeros(shape, dtype=torch.bool, device=device) if dead_explore else None
+    held_noise = torch.zeros((args.n_envs, 2), device=device)
     old_logp, values, rewards, next_values = [
         torch.empty(shape, device=device) for _ in range(4)
     ]
@@ -921,6 +972,8 @@ def main():
     ):
         rollout_start = time.monotonic()
         motion = np.zeros(len(MOTION_COLUMNS))
+        motion_by_kind = np.zeros((5, len(MOTION_COLUMNS)))
+        slot_steps = np.zeros(5)
         lifts = np.zeros(2)
         for t in range(args.rollout):
             if not np.isfinite(obs).all():
@@ -936,13 +989,25 @@ def main():
                 recovery_mask = recovery_exploration_window(context, args.recovery_exploration_seconds, practice)
                 scale = recovery_exploration_scale(x, scale, args.recovery_exploration, args.recovery_exploration_load_aware, args.quiet_exploration, mean=mu, timing=args.recovery_explore_timing, practice_mask=recovery_mask)
                 scale = thermal_effort_exploration_scale(x, scale, args.hot_effort_exploration, practice_mask=practice)
+                if dead_explore:
+                    dwell_masks[t] = dwelling
+                    scale = dead_puck_exploration_scale(scale, dwelling, *args.dead_puck_exploration)
                 scale = std_floor(scale, args.std_floor)
                 sampling_mean = mu
                 if persistent_bias is not None:
                     bias = persistent_bias.sample(x, context, torch.as_tensor(contacted, device=device))
                     exploration_biases[t] = bias
                     sampling_mean = mu + bias
-                raw = sampling_mean + scale.exp() * torch.randn_like(mu)
+                noise = torch.randn_like(mu)
+                if dead_explore and args.dead_puck_exploration_hold:
+                    # Unit-variance AR(1) on the time and cap dimensions while
+                    # the puck lies there; each draw's marginal is the
+                    # Gaussian PPO scores it under.
+                    hold = args.dead_puck_exploration_hold
+                    held_noise = torch.where(dwelling[:, None], hold * held_noise + (1 - hold ** 2) ** .5 * noise[:, 4:],
+                                             noise[:, 4:])
+                    noise = torch.cat((noise[:, :4], held_noise), dim=-1)
+                raw = sampling_mean + scale.exp() * noise
                 lp = log_probability(raw, sampling_mean, scale)
             if (
                 not torch.isfinite(raw).all()
@@ -1042,6 +1107,9 @@ def main():
             if persistent_bias is not None:
                 contacted = np.asarray(info["contacts"]) > 0
             motion += info["motion"].sum(axis=0)
+            slots = np.where(people_rows, 4, info["kind"])
+            np.add.at(motion_by_kind, slots, info["motion"])
+            slot_steps += np.bincount(slots, minlength=5)
             if "lift_events" in info:
                 lifts += info["lift_events"].sum(), info["opponent_lift_events"].sum()
             own_history.append(obs)
@@ -1090,6 +1158,8 @@ def main():
                 )
                 history.append(row)
                 kind_history[int(row["kind"])].append(row)
+            if dead_explore:
+                dwelling = torch.as_tensor((info["dead_puck_clock"] > args.dead_puck_exploration_start) & ~done, device=device)
             if done.any():
                 if persistent_bias is not None:
                     persistent_bias.reset(done)
@@ -1114,6 +1184,7 @@ def main():
         context = critic_contexts.flatten(0, 1)
         ra = raw_actions.flatten(0, 1)
         offsets = exploration_biases.flatten(0, 1) if exploration_biases is not None else None
+        dwelt = dwell_masks.flatten() if dead_explore else None
         lp = old_logp.flatten()
         advantage = adv.flatten()
         advantage = (advantage - advantage.mean()) / (advantage.std() + 1e-8)
@@ -1150,6 +1221,8 @@ def main():
                 recovery_mask = recovery_exploration_window(context[ids], args.recovery_exploration_seconds, practice)
                 scale = recovery_exploration_scale(x[ids], scale, args.recovery_exploration, args.recovery_exploration_load_aware, args.quiet_exploration, mean=mu, timing=args.recovery_explore_timing, practice_mask=recovery_mask)
                 scale = thermal_effort_exploration_scale(x[ids], scale, args.hot_effort_exploration, practice_mask=practice)
+                if dead_explore:
+                    scale = dead_puck_exploration_scale(scale, dwelt[ids], *args.dead_puck_exploration)
                 scale = std_floor(scale, args.std_floor)
                 # Condition both PPO likelihoods on the same realized,
                 # parameter-independent exploration state. Do not resample it
@@ -1226,6 +1299,8 @@ def main():
                         new_scale = (net.log_std + net.noise(features)).clamp(-4, 0.5)
                         new_scale = recovery_exploration_scale(x[ids], new_scale, args.recovery_exploration, args.recovery_exploration_load_aware, args.quiet_exploration, mean=new_mean, timing=args.recovery_explore_timing, practice_mask=recovery_mask)
                         new_scale = thermal_effort_exploration_scale(x[ids], new_scale, args.hot_effort_exploration, practice_mask=practice)
+                        if dead_explore:
+                            new_scale = dead_puck_exploration_scale(new_scale, dwelt[ids], *args.dead_puck_exploration)
                         new_scale = std_floor(new_scale, args.std_floor)
                         new_mean = new_mean if offsets is None else new_mean + offsets[ids]
                         difference = log_probability(ra[ids], new_mean, new_scale) - lp[ids]
@@ -1247,6 +1322,8 @@ def main():
             final_window = recovery_exploration_window(context[subset], args.recovery_exploration_seconds, final_practice)
             final_scale = recovery_exploration_scale(x[subset], final_scale, args.recovery_exploration, args.recovery_exploration_load_aware, args.quiet_exploration, mean=final_mean, timing=args.recovery_explore_timing, practice_mask=final_window)
             final_scale = thermal_effort_exploration_scale(x[subset], final_scale, args.hot_effort_exploration, practice_mask=final_practice)
+            if dead_explore:
+                final_scale = dead_puck_exploration_scale(final_scale, dwelt[subset], *args.dead_puck_exploration)
             final_scale = std_floor(final_scale, args.std_floor)
             final_sampling = final_mean if offsets is None else final_mean + offsets[subset]
             difference = log_probability(ra[subset], final_sampling, final_scale) - lp[subset]
@@ -1359,7 +1436,32 @@ def main():
             far_cap_share=measured["far_cap_s"] / max(measured["far_half_s"], 1e-9),
             accel_duty_cost_per_s=args.accel_duty_weight * measured["accel_duty"] / seconds,
             reversal_cost_per_s=args.reversal_weight * measured["reversals"] / seconds,
-            far_cap_cost_per_s=args.far_cap_weight * measured["far_cap"] / seconds)
+            far_cap_cost_per_s=args.far_cap_weight * measured["far_cap"] / seconds,
+            guard_changed_per_minute=60 * measured["guard_changed"] / seconds,
+            guard_unresolved_per_minute=60 * measured["guard_unresolved"] / seconds,
+            guard_cost_per_s=(args.guard_weight * measured["guard_changed"]
+                              + args.guard_unresolved_weight * measured["guard_unresolved"]) / seconds,
+            accel_effort_cost_per_s=args.accel_effort_weight * measured["accel_effort"] / seconds,
+            idle_speed_cost_per_s=args.idle_speed_weight * float(motion_by_kind[3:, 9].sum()) / seconds,
+            dead_puck_share=measured["dead_puck_s"] / seconds,
+            dead_puck_cost_per_s=args.dead_puck_weight * measured["dead_puck_s"] / seconds)
+        # The same rates per slot class: the all-slot average stayed flat
+        # through v5a while its games against people got rougher.
+        status["motion_by_slot"] = {
+            name: dict(
+                seconds=0.02 * float(steps),
+                accel_duty_share=float(row[0]) / (0.02 * steps),
+                reversals_per_minute=60 * float(row[2]) / (0.02 * steps),
+                far_cap_share=float(row[4]) / max(float(row[3]), 1e-9),
+                guard_changed_per_minute=60 * float(row[6]) / (0.02 * steps),
+                guard_unresolved_per_minute=60 * float(row[7]) / (0.02 * steps),
+                accel_effort_per_s=float(row[8]) / (0.02 * steps),
+                idle_path_per_s=float(row[9]) / (0.02 * steps),
+                dead_puck_share=float(row[10]) / (0.02 * steps))
+            for name, row, steps in zip(("stationary", "receiving", "defense", "games", "people"),
+                                        motion_by_kind, slot_steps) if steps}
+        if dead_explore:
+            status["dead_puck_exploration_share"] = float(dwell_masks.float().mean())
         if fidelity:
             status["lift_events_per_minute"] = dict(zip(("own", "opponent"), (60 * lifts / seconds).tolist()))
         if args.adaptive_lr:

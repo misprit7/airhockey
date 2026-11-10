@@ -321,7 +321,7 @@ def test_motion_thresholds_and_the_own_half():
     action = np.zeros((4, 6), np.float32)
     action[:, 5] = 1.0
     _, _, _, _, info = env.step(action)
-    assert info["motion"][:, 3:].sum() == 0
+    assert info["motion"][:, 3:6].sum() == 0
     with pytest.raises(ValueError):
         NeuralTrainingEnv(2, reversal_weight=-1)
     with pytest.raises(ValueError):
@@ -378,7 +378,10 @@ def test_left_bank_requests_can_be_weighted():
 
 def test_new_options_at_their_defaults_are_the_same_environment():
     explicit = dict(human_proxy_share=0.0, defense_strike_fraction=0.0, left_bank_request_weight=1.0,
-                    accel_duty_weight=0.0, reversal_weight=0.0, far_cap_weight=0.0, stagger_games=False)
+                    accel_duty_weight=0.0, reversal_weight=0.0, far_cap_weight=0.0, stagger_games=False,
+                    dead_puck_weight=0.0, calm_reachable_scale=None, guard_weight=0.0, guard_unresolved_weight=0.0,
+                    far_cap_max_speed=None, accel_effort_weight=0.0, idle_speed_weight=0.0,
+                    cross_bank_drill_fraction=0.0, corner_far_start_fraction=0.0)
     a, b = NeuralTrainingEnv(24, **GAMES), NeuralTrainingEnv(24, **GAMES, **explicit)
     assert np.array_equal(a.reset(seed=4), b.reset(seed=4))
     for (obs_a, reward_a, info_a, _), (obs_b, reward_b, info_b, _) in zip(play(a, 60), play(b, 60)):
@@ -405,6 +408,174 @@ def test_a_share_of_workers_can_train_in_the_table_profile():
         env.close()
     with pytest.raises(ValueError):
         ParallelNeuralEnv(16, 2, worker_options=[{}], **options)
+
+
+# ------------------------------------------------- round 2 (after v5a)
+def rest_puck(env, x, y, steps, action=None, puck_speed=0.0):
+    """Hold a puck at (x, y) at a given speed while the mallet holds one arrival."""
+    e = env.engine
+    rewards, motions, clocks = [], [], []
+    action = np.zeros((env.n_envs, 6), np.float32) if action is None else action
+    for _ in range(steps):
+        e.puck_x[:], e.puck_y[:], e.puck_vx[:], e.puck_vy[:] = x, y, puck_speed, 0.0
+        _, reward, _, _, info = env.step(action)
+        rewards.append(reward.astype(np.float64))
+        motions.append(info["motion"].astype(np.float64))
+        clocks.append(info["dead_puck_clock"].copy())
+    return np.array(rewards), np.array(motions), np.array(clocks)
+
+
+COLUMN = {name: i for i, name in enumerate(MOTION_COLUMNS)}
+QUIET = dict(seed=2, accel=100.0, randomize=False, games=True, continuous_rallies=True, stage=5,
+             game_episode_seconds=900.0)
+
+
+def test_a_puck_lying_within_reach_is_charged_after_the_grace():
+    free, charged = NeuralTrainingEnv(2, **QUIET), NeuralTrainingEnv(2, **QUIET, dead_puck_weight=40.0, dead_puck_grace=1.0)
+    for env in (free, charged):
+        env.reset(seed=2)
+    a, counted, clock = rest_puck(free, 0.77, 0.80, 80)
+    b, again, _ = rest_puck(charged, 0.77, 0.80, 80)
+    dead = counted[..., COLUMN["dead_puck_s"]]
+    # 1.6 s lying there: nothing for the first second, then every tick.
+    assert np.array_equal(counted, again) and not dead[:48].any() and np.allclose(dead[52:], 0.02)
+    assert np.allclose(clock[-1], 1.6, atol=0.021) and np.allclose(a - b, 40.0 * dead, atol=1e-4)
+    # A nudge does not buy the grace back; a release, the far half or a puck out of reach does.
+    _, _, clock = rest_puck(charged, 0.77, 0.80, 5, puck_speed=0.6)
+    assert (clock[-1] == 0).all() and (charged.dead_puck_clock > 1.6).all()
+    _, nudged, _ = rest_puck(charged, 0.77, 0.80, 2)
+    assert (nudged[..., COLUMN["dead_puck_s"]] > 0).all()
+    for x, y, speed in ((0.77, 0.80, 1.2), (0.5, 1.4, 0.0), (0.5, 0.97, 0.0)):
+        rest_puck(charged, 0.77, 0.80, 60)
+        rest_puck(charged, x, y, 1, puck_speed=speed)
+        assert (charged.dead_puck_clock == 0).all()
+    charged.dead_puck_clock[:] = 5
+    charged.reset(mask=np.array([True, False]))
+    assert charged.dead_puck_clock.tolist() == [0, 5]
+    with pytest.raises(ValueError):
+        NeuralTrainingEnv(2, dead_puck_weight=-1)
+
+
+def test_a_puck_waiting_to_be_struck_is_not_a_quiet_table():
+    """Calm accel can be waived for a slow puck within reach, and only there."""
+    full = np.zeros((2, 6), np.float32)
+    full[:, 5] = 1.0                                   # the full cap, standing still
+    def cost(x, y, **options):
+        out = []
+        for weight in (0.0, 200.0):
+            env = NeuralTrainingEnv(2, **QUIET, calm_accel_weight=weight, calm_accel_power=1.0, **options)
+            env.reset(seed=2)
+            out.append(rest_puck(env, x, y, 10, action=full)[0][3:].sum())
+        return out[0] - out[1]
+    assert cost(0.6, 0.6) > 1 and cost(0.6, 0.6, calm_reachable_scale=0.0) == pytest.approx(0, abs=1e-4)
+    for x, y in ((0.6, 1.5), (0.6, 0.97)):             # the far half; the own half out of reach
+        assert cost(x, y, calm_reachable_scale=0.0) == pytest.approx(cost(x, y), abs=1e-4) and cost(x, y) > 1
+
+
+def sprint(env, steps=30):
+    """v5a after a set strike: flying at the front limit at the full cap,
+    then the cap dropped to its floor with 3 m/s still on."""
+    env.reset(seed=2)
+    e = env.engine
+    rewards, motions = [], []
+    for t in range(steps):
+        e.puck_x[:], e.puck_y[:], e.puck_vx[:], e.puck_vy[:] = 0.5, 1.6, 0.0, 0.0
+        action = np.zeros((env.n_envs, 6), np.float32)
+        action[:, 1] = action[:, 3] = 1.0
+        action[:, 4], action[:, 5] = -1.0, (1.0 if t < 6 else -1.0)
+        _, reward, _, _, info = env.step(action)
+        rewards.append(reward.astype(np.float64))
+        motions.append(info["motion"].astype(np.float64))
+    return np.array(rewards), np.array(motions)
+
+
+def test_guard_interventions_and_effort_are_counted_and_charged():
+    kw = dict(seed=2, accel=100.0, randomize=False)
+    free, counted = sprint(NeuralTrainingEnv(4, **kw))
+    column = {name: counted[..., i] for name, i in COLUMN.items()}
+    # The guard takes over once the stop no longer fits, and brakes for it.
+    assert (column["guard_changed"][4:10].sum(axis=0) >= 1).all() and not column["guard_changed"][:4].any()
+    assert column["guard_changed"].sum() > 0 and set(np.unique(column["guard_changed"])) <= {0.0, 1.0}
+    assert (column["guard_unresolved"] <= column["guard_changed"]).all()
+    # Quadratic above 40 m/s^2: a tick at the full cap is 0.02 * (1 - 0.16).
+    assert column["accel_effort"].max() == pytest.approx(0.02 * 0.84, rel=0.1)
+    assert ((column["accel_effort"] > 0) >= (column["accel_duty_s"] > 0)).all()
+    weights = dict(guard_weight=10.0, guard_unresolved_weight=50.0, accel_effort_weight=100.0)
+    charged, again = sprint(NeuralTrainingEnv(4, **kw, **weights))
+    cost = 10 * column["guard_changed"] + 50 * column["guard_unresolved"] + 100 * column["accel_effort"]
+    assert np.array_equal(again, counted) and np.allclose(free - charged, cost, atol=1e-4)
+    # The idle path: metres moved under the calm factor (puck and far mallet
+    # still); counted in every slot, charged in full games.
+    walked, _ = sprint(NeuralTrainingEnv(4, **kw, idle_speed_weight=20.0))
+    assert column["idle_path"].sum(axis=0).min() > 0.5 and np.allclose(free, walked, atol=1e-5)
+    game, path = sprint(NeuralTrainingEnv(4, **QUIET))
+    paid, _ = sprint(NeuralTrainingEnv(4, **QUIET, idle_speed_weight=20.0))
+    assert np.allclose(game - paid, 20 * path[..., COLUMN["idle_path"]], atol=1e-4) and (game - paid).sum() > 20
+
+
+def test_the_brake_after_a_strike_is_not_an_idle_cap():
+    kw = dict(seed=2, accel=100.0, randomize=False)
+    _, always = lunge(NeuralTrainingEnv(4, **kw), steps=40)
+    _, slow = lunge(NeuralTrainingEnv(4, **kw, far_cap_max_speed=1.0), steps=40)
+    cap, gated = always[..., COLUMN["far_cap_s"]], slow[..., COLUMN["far_cap_s"]]
+    # The same motion; charged only on ticks begun slower than 1 m/s.
+    assert np.array_equal(always[..., :4], slow[..., :4]) and (gated <= cap).all()
+    assert 0 < gated.sum() < 0.5 * cap.sum()
+    assert np.array_equal(slow[..., COLUMN["far_cap"]] > 0, gated > 0)
+
+
+def test_cross_bank_drills_start_in_the_hover_that_stalled():
+    env = NeuralTrainingEnv(400, **{**GAMES, "game_fraction": 0.0}, cross_bank_drill_fraction=1.0,
+                            stationary_rest_fraction=0.5)
+    env.reset(seed=4)
+    e, rows = env.engine, env.kind == 0
+    assert rows.sum() == 80
+    x, y, request = e.puck_x[rows], e.puck_y[rows], env.base._shot_type[rows]
+    assert (np.abs(x - 0.5) >= 0.05).all() and (np.abs(x - 0.5) <= 0.35).all() and (y >= 0.60).all()
+    assert (np.hypot(e.puck_vx, e.puck_vy)[rows] == 0).all()
+    # Mostly the bank off the far rail: left (1) from the right side, right (2) from the left.
+    cross = np.where(x > 0.5, 1, 2)
+    assert 0.6 < (request == cross).mean() < 0.95 and (request > 0).all()
+    # The hover: a full-length arrival through the puck at the cap floor, the mallet behind it.
+    held = env.last_action[rows]
+    hover = (held[:, 4] > 0.85) & (held[:, 5] < -0.7)
+    assert 0.4 < hover.mean() < 0.75
+    gap = np.hypot(e.paddle_agent_x[rows] - x, e.paddle_agent_y[rows] - y)
+    assert (gap > 0.09).all() and (gap[hover] < 0.32).all() and (e.paddle_agent_y[rows][hover] < y[hover]).all()
+    toward = np.sign(held[hover, 2]) == np.where(x[hover] > 0.5, -1, 1)
+    assert toward.all() and (held[hover, 3] > 0).all()
+    # Held as it is, the hover stays a hover: the puck is not touched.
+    for _ in range(50):
+        action = env.last_action.copy()
+        env.set_opponent_action(np.zeros((400, 6), np.float32))
+        env.step(action)
+    assert env.touch_count[0][rows][hover].mean() < 0.2 and (env.dead_puck_clock[rows][hover] > 0.9).mean() > 0.8
+
+
+def test_corner_drills_can_start_from_anywhere():
+    options = dict({**GAMES, "game_fraction": 0.0}, corner_drill_fraction=1.0)
+    near, far = NeuralTrainingEnv(400, **options), NeuralTrainingEnv(400, **options, corner_far_start_fraction=0.5)
+    near.reset(seed=4)
+    far.reset(seed=4)
+    rows = near.kind == 0
+    def gap(env):
+        e = env.engine
+        return np.hypot(e.paddle_agent_x - e.puck_x, e.paddle_agent_y - e.puck_y)[rows]
+    assert np.array_equal(near.engine.puck_x, far.engine.puck_x) and gap(near).max() < 0.30
+    moved = gap(far) != gap(near)
+    assert 0.35 < moved.mean() < 0.65 and gap(far)[moved].max() > 0.6 and gap(far).min() > 0.09
+
+
+def test_dead_puck_exploration_widens_time_and_cap_where_the_puck_lies():
+    from airhockey.neural_finetune import dead_puck_exploration_scale
+    log_std = torch.full((3, 6), float(np.log(0.05)))
+    dwelling = torch.tensor([True, False, True])
+    out = dead_puck_exploration_scale(log_std, dwelling, 1.0, 2.0).exp()
+    assert torch.allclose(out[0], torch.tensor([.05, .05, .05, .05, 1.0, 2.0])) and torch.allclose(out[1], log_std[1].exp())
+    wide = torch.full((3, 6), float(np.log(2.5)))
+    assert torch.equal(dead_puck_exploration_scale(wide, dwelling, 1.0, 2.0), wide)      # a floor, never a cap
+    assert dead_puck_exploration_scale(log_std, dwelling, 0.0, 0.0) is log_std
+    assert dead_puck_exploration_scale(log_std, None, 1.0, 2.0) is log_std
 
 
 # ----------------------------------------------------------------- trainer
@@ -438,6 +609,10 @@ def test_sim_profile_flags_become_environment_options():
     assert old["human_proxy_share"] == 0 and old["defense_strike_fraction"] == 0 and not old["stagger_games"]
     assert old["accel_duty_weight"] == old["reversal_weight"] == old["far_cap_weight"] == 0
     assert old["left_bank_request_weight"] == 1 and old["human_proxy_tiers"] == ("table",)
+    assert old["dead_puck_weight"] == old["guard_weight"] == old["accel_effort_weight"] == old["idle_speed_weight"] == 0
+    assert old["calm_reachable_scale"] is None and old["far_cap_max_speed"] is None
+    assert old["cross_bank_drill_fraction"] == old["corner_far_start_fraction"] == 0
+    assert parse().dead_puck_exploration == [0, 0] and parse().dead_puck_exploration_hold == 0
 
 
 def save_player(path, net, **fields):
@@ -490,8 +665,13 @@ def test_trainer_continues_a_run_with_every_table_option(tmp_path, monkeypatch):
     assert seeded[0]["value_warmup"] and seeded[0]["teacher_weight"] == pytest.approx(.5)
     assert set(seeded[-1]["motion"]) == {
         "accel_duty_share", "reversals_per_minute", "far_half_share", "far_cap_share",
-        "accel_duty_cost_per_s", "reversal_cost_per_s", "far_cap_cost_per_s"}
+        "accel_duty_cost_per_s", "reversal_cost_per_s", "far_cap_cost_per_s",
+        "guard_changed_per_minute", "guard_unresolved_per_minute", "guard_cost_per_s", "accel_effort_cost_per_s",
+        "idle_speed_cost_per_s", "dead_puck_share", "dead_puck_cost_per_s"}
     assert seeded[-1]["motion"]["accel_duty_cost_per_s"] == 0 and "lift_events_per_minute" not in seeded[-1]
+    assert seeded[-1]["motion"]["guard_cost_per_s"] == seeded[-1]["motion"]["dead_puck_cost_per_s"] == 0
+    assert set(seeded[-1]["motion_by_slot"]) == {"receiving", "defense", "games"}    # 16 a worker: no stationary slot
+    assert "dead_puck_exploration_share" not in seeded[-1]
     saved = torch.load(runs / "_first" / "agent.pt", weights_only=False)
 
     rows = train(
@@ -534,6 +714,27 @@ def test_trainer_continues_a_run_with_every_table_option(tmp_path, monkeypatch):
         "--workers", "1", "--n-envs", "16", "--sim-profile", "table-20261029",
         "--human-proxy-share", ".25", "--defense-strike-fraction", ".5", "--accel-duty-weight", "20")
     assert len(single) == 1 and all(np.isfinite(v) for v in single[0]["lift_events_per_minute"].values())
+
+    # Round 2: every flag at once, with a lift model of three mechanisms.
+    second = train(
+        "--run-name", "_round2", "--n-envs", "64", "--steps", "1024", "--resume", str(runs / "_first" / "agent.pt"),
+        "--sim-profile", "table-20261029", "--sim-profile-share", ".5",
+        "--sim-option", 'mallet_lift={"b0": [0.0, 0.3], "flat_probability": 0.25, "closing_probability": 0.25, "far_body": false}',
+        "--human-proxy-share", ".25", "--stationary-failure-penalty", "600",
+        "--dead-puck-weight", "40", "--dead-puck-exploration", "2", "2", "--dead-puck-exploration-start", "0",
+        "--dead-puck-exploration-hold", ".9", "--calm-accel-weight", "200", "--calm-accel-power", "1",
+        "--calm-reachable-scale", "0", "--cross-bank-drill-fraction", "1", "--corner-far-start-fraction", ".5",
+        "--corner-drill-fraction", ".2", "--guard-weight", "10", "--guard-unresolved-weight", "50",
+        "--far-cap-weight", "40", "--far-cap-max-speed", "1", "--accel-effort-weight", "100", "--idle-speed-weight", "20")
+    assert [r["update"] for r in second] == [1, 2]
+    for r in second:
+        assert all(np.isfinite(v) for v in r["motion"].values()) and np.isfinite(r["final_kl"])
+        assert set(r["motion_by_slot"]) == {"stationary", "receiving", "defense", "games", "people"}
+        assert all(np.isfinite(v) for slot in r["motion_by_slot"].values() for v in slot.values())
+        # Resting pucks from the first tick: the wide noise is in the rollout and PPO scores it finitely.
+        assert r["dead_puck_exploration_share"] > 0.01 and np.isfinite(r["kl"])
+    with pytest.raises(SystemExit):
+        train("--run-name", "_wide", "--steps", "128", "--dead-puck-exploration", "2", "5")
     assert json.loads((runs / "_single" / "run.json").read_text())["sim_profile"]["workers"] == [True]
     with pytest.raises(SystemExit):
         train("--run-name", "_tiers", "--steps", "128", "--human-proxy-share", ".25", "--human-proxy-tiers", "table,nobody")
@@ -550,6 +751,10 @@ def test_recipe_is_v4s_command_continued_with_the_table_options():
         cmd = recipe.argv(recipe.build_parser().parse_args(["--run-name", "_x", *argv]))
         return cmd, trainer.build_parser().parse_args(cmd[2:])
 
+    round2 = {"dead_puck_weight", "dead_puck_grace", "dead_puck_exploration", "dead_puck_exploration_start",
+              "dead_puck_exploration_hold", "calm_reachable_scale", "guard_weight", "guard_unresolved_weight",
+              "far_cap_max_speed", "accel_effort_weight", "accel_effort_threshold", "idle_speed_weight",
+              "cross_bank_drill_fraction", "corner_far_start_fraction"}
     cmd, args = parsed()
     # Continuation, and the pitfalls v4's record paid for.
     assert args.resume == Path(recipe.V4) and args.initialize_from is None and args.value_warmup_updates == 0
@@ -568,6 +773,10 @@ def test_recipe_is_v4s_command_continued_with_the_table_options():
                               "--left-bank", "1", "--accel-duty", "0", "--reversal", "0", "--far-cap", "0", "--shared-clock")
     defaults = trainer.build_parser().parse_args(["--run-name", "_x"])
     assert all(getattr(plain, key) == getattr(defaults, key) for key in new)
+    # Arm A carries none of round 2.
+    assert all(getattr(args, key) == getattr(defaults, key) for key in round2)
+    assert not any(flag.startswith(("--dead-puck", "--calm-reachable", "--guard", "--accel-effort", "--idle-speed",
+                                    "--cross-bank", "--corner-far")) for flag in cmd)
     assert not any(flag.startswith(("--sim-", "--human-proxy", "--defense-strike", "--left-bank", "--accel-duty",
                                     "--reversal", "--far-cap", "--stagger")) for flag in plain_cmd)
     record = REPO / "runs/teacher-calm-20261018-v4/run.json"
@@ -578,4 +787,37 @@ def test_recipe_is_v4s_command_continued_with_the_table_options():
         changed = {k for k in old if old[k] != mine[k]}
         assert changed == {"run_name", "evaluation_dir", "resume", "initialize_from", "opponent_reference", "minutes",
                            "seed", "value_warmup_updates", "width"}
-        assert set(mine) - set(old) == new
+        assert set(mine) - set(old) == new | round2
+
+
+def test_round2_arm_continues_v5a_with_its_evaluations_changes():
+    spec = importlib.util.spec_from_file_location("recipe_v5", REPO / "ai/recipes/table-faithful-20261110/finetune.py")
+    recipe = importlib.util.module_from_spec(spec)
+    spec.loader.exec_module(recipe)
+    trainer = load_trainer(REPO)
+    parse = lambda *argv: trainer.build_parser().parse_args(recipe.argv(recipe.parse(["--run-name", "_x", *argv]))[2:])
+    first, second = parse(), parse("--arm", "a2")
+    assert second.resume == Path(recipe.V5A) and second.initialize_from is None and second.value_warmup_updates == 0
+    # The stall: a cost from the first second, noise that can reach a strike, its own drill, no one-sided requests.
+    assert second.dead_puck_weight == 40 and second.dead_puck_exploration == [2, 2] and second.dead_puck_exploration_hold == 0.9
+    assert second.dead_puck_grace == second.dead_puck_exploration_start == 1     # the noise begins where the cost does
+    assert second.calm_reachable_scale == 0 and second.cross_bank_drill_fraction == 0.25 and second.left_bank_request_weight == 1
+    assert second.stationary_failure_penalty == 600 and second.possession_delay_weight == 30
+    # Roughness: the guard's brake charged, the far cap only at rest, effort quadratic, shot pay flat from 7 m/s.
+    assert (second.guard_weight, second.guard_unresolved_weight, second.far_cap_max_speed) == (10, 50, 1)
+    assert second.accel_effort_weight == 100 and second.idle_speed_weight == 20 and second.shot_speed_scale == 7
+    assert (second.accel_duty_weight, second.reversal_weight, second.far_cap_weight) == (20, 5, 40)
+    assert (second.corner_drill_fraction, second.edge_drill_fraction, second.corner_far_start_fraction) == (.2, .15, .5)
+    lift = trainer.sim_profile_options(second)["mallet_lift"]
+    assert lift == dict(b0=[0.0, 0.30], a0=[10, 90], flat_probability=0.25, closing_probability=0.25, far_body=False)
+    NeuralTrainingEnv(2, **trainer.sim_profile_options(second))
+    # Everything else is arm A's command.
+    changed = {k for k in vars(first) if getattr(first, k) != getattr(second, k)}
+    assert changed == {
+        "resume", "seed", "left_bank_request_weight", "shot_speed_scale", "sim_option", "corner_drill_fraction",
+        "edge_drill_fraction", "dead_puck_weight", "dead_puck_exploration", "dead_puck_exploration_start",
+        "dead_puck_exploration_hold",
+        "calm_reachable_scale", "cross_bank_drill_fraction", "corner_far_start_fraction", "guard_weight",
+        "guard_unresolved_weight", "far_cap_max_speed", "accel_effort_weight", "idle_speed_weight"}
+    # A typed flag still wins over the arm's default.
+    assert parse("--arm", "a2", "--dead-puck", "0", "--left-bank", "2").dead_puck_weight == 0
