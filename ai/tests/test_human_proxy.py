@@ -9,9 +9,11 @@ that adding it changed nothing for the existing far-side kinds and that the
 fast-defense benchmark's new flags default to its old fixtures.
 
 The table tiers' CUSHION is pinned here too: it stops a puck it saw coming
-only a reaction time late, gives with a shot it read from the puck's
-departure but still goes across no sooner than it reacts, and in the engine
-leaves the puck slow enough for a set shot inside its drawn caps.
+only a reaction time late and never chases a waiting point out of its reach,
+and in the engine leaves the puck slow enough for a set shot inside its drawn
+caps. The give with a shot it read (brace_probability, off in the tiers) is
+anticipated from the read alone: what it does inside a reaction time of the
+shot is the same whether the puck left or not.
 """
 from __future__ import annotations
 
@@ -238,8 +240,8 @@ def test_only_the_table_tiers_cushion():
     for tier in (TABLE, TABLE_PLUS):
         p = HumanProxy(2, tier, seed=1)
         assert p.cushioning and p.mode_names[CUSHION] == "cushion"
-        # Tuned to how often the people set up a 6-8 m/s arrival, not to stop them all.
-        assert 0 < max(chance for _, chance in tier.brace_probability) < 1
+        # Nothing is given with sooner than it is seen: the read-timed give is off.
+        assert tier.brace_probability is None and tier.chase_s is not None
     with pytest.raises(ValueError):
         HumanProxy(2, replace(CLUB, brace_probability=((np.inf, 1.0),)), seed=1)
 
@@ -262,6 +264,8 @@ def test_cushion_waits_in_the_way_and_gives_as_the_puck_arrives():
     assert abs(first * 0.02 - (0.15 + 0.02)) <= 0.021 and (p.cushion_attempts == 1).all()
     give = [r[4] for r in rows].index(True)
     assert give > first
+    # With the puck still a long way off it goes to its place at its ordinary pace, not flat out.
+    assert rows[first][3] == pytest.approx(p.approach_speed[0]) and p.approach_speed[0] < p.max_speed[0]
     # Until the give it stands on the puck's path, one contact distance behind the line.
     np.testing.assert_allclose(rows[give - 1][2], [0.45, 0.34 - p.contact], atol=1e-6)
     # The give: back along the path at the speed that leaves the puck dead, as it arrives.
@@ -272,8 +276,25 @@ def test_cushion_waits_in_the_way_and_gives_as_the_puck_arrives():
     assert 0.0 < remaining < matched / p.max_accel[0] + 0.06
 
 
-def _read_shot(read, ticks=12):
-    """The robot's mallet closes on a still puck (or not), which then leaves fast and wide; per-tick records."""
+def test_cushion_does_not_follow_the_puck_to_a_point_out_of_reach():
+    tier = replace(_CATCHER, cushion_contact_y_m=(0.34, 0.34))
+    p = HumanProxy(2, tier, seed=5)
+    rest = _view(2, puck=(0.30, 1.75))
+    p.reset(rest)
+    for _ in range(12):
+        p.act(rest)
+    inside = []
+    for k in range(26):
+        # Straight down x = 0.30, then (as off a touch) straight down the rail, where no mallet centre fits.
+        x = 0.30 if k < 14 else 0.045
+        p.act(_view(2, puck=(x, 1.75 - 2.0 * 0.02 * (k + 1)), vel=(0.0, -2.0), own=p.last_target.copy()))
+        if p.mode[0] == CUSHION:
+            inside.append(bool(((p.last_target >= p.low - 1e-9) & (p.last_target <= p.high + 1e-9)).all()))
+    assert len(inside) > 10 and all(inside)
+
+
+def _read_shot(read, shot=True, ticks=12):
+    """The robot's mallet closes on a still puck (or not), which then leaves fast and wide (or stays); per-tick records."""
     tier = replace(_CATCHER, brace_probability=((np.inf, 1.0),))
     p = HumanProxy(2, tier, seed=5)
     p.reset(_view(2, puck=(0.5, 1.6), rival=(0.5, 1.95)))
@@ -285,27 +306,45 @@ def _read_shot(read, ticks=12):
     stance = p.last_target.copy()
     rows = []
     for k in range(ticks):
-        puck = (0.5 - 1.5 * 0.02 * (k + 1), 1.6 - 6.8 * 0.02 * (k + 1))
-        p.act(_view(2, puck=puck, vel=(-1.5, -6.8), own=p.last_target.copy(), rival=(0.5, 1.75)))
-        rows.append((int(p.mode[0]), p.last_target[0].copy(), bool(p.cushion_give[0])))
+        puck, vel = (0.5, 1.6), (0.0, 0.0)
+        if shot:
+            puck, vel = (0.5 - 1.5 * 0.02 * (k + 1), 1.6 - 6.8 * 0.02 * (k + 1)), (-1.5, -6.8)
+        out = p.act(_view(2, puck=puck, vel=vel, own=p.last_target.copy(), rival=(0.5, 1.75)))
+        rows.append((int(p.mode[0]), p.last_target[0].copy(), bool(p.cushion_give[0]), out[2][0]))
     return p, stance, rows
 
 
-def test_brace_gives_with_a_read_shot_but_goes_across_no_sooner_than_it_reacts():
+def test_brace_is_timed_from_the_read_and_uses_nothing_of_the_shot_before_it_reacts():
     p, stance, rows = _read_shot(read=True)
     # While the robot has the puck it stands out from its goal for the room to give.
     assert stance[0, 1] == pytest.approx(max(p.guard_depth[0], p.brace_depth[0]))
     assert TABLE.brace_depth_m[0] <= p.brace_depth[0] <= TABLE.brace_depth_m[1]
     modes = [r[0] for r in rows]
-    # Braced on the second tick the puck is seen leaving: before a reaction time has passed.
+    # Braced when, at the rate it was closing (59 mm at 2 m/s), the robot's mallet has got to the puck.
     assert modes.index(CUSHION) == 1 and p.cushion_braced[0] and (p.braces == 1).all()
-    give = [r[2] for r in rows].index(True)
-    assert give * 0.02 < 0.15 and rows[give][1][1] < stance[0, 1] - 0.1
-    # It was struck wide of the read: the mallet does not follow it sideways until it has reacted.
     reacted = int(0.15 / 0.02)         # the view from a reaction ago first shows it moving on this tick
-    for mode, target, _ in rows[:reacted]:
+    # The same robot swing with the puck left where it was: until it has reacted, the very same commands.
+    q, _, still = _read_shot(read=True, shot=False, ticks=40)
+    assert (q.braces == 1).all()
+    for (mode, target, give, speed), other in zip(rows[:reacted], still):
+        assert (mode, give, speed) == (other[0], other[2], other[3])
+        np.testing.assert_array_equal(target, other[1])
+        # It was struck wide of the read: the mallet does not follow it sideways until it has reacted.
         assert target[0] == pytest.approx(stance[0, 0], abs=1e-9)
+    # The shot was faster than reckoned (6.8 against 3.6 m/s): the give waits for the view of it, a reaction
+    # time old, and then goes straight back at the speed matched to what that view shows.
+    give = [r[2] for r in rows].index(True)
+    assert give > reacted and rows[give][1][1] < stance[0, 1] - 0.1
+    room = min(stance[0, 1] - p.low[1], p.CUSHION_GIVE_M)
+    matched = min(6.8 * p.ASSUMED_RESTITUTION / (1 + p.ASSUMED_RESTITUTION), np.sqrt(p.max_accel[0] * room))
+    assert rows[give][3] >= matched * 0.99 and rows[give][3] <= p.max_speed[0]
     assert rows[-1][1][0] < stance[0, 0] - 0.02
+    # No puck came: it gives all the same, when the read said to, knows only a reaction time later, and
+    # does not give again while the puck stays with the robot.
+    gave = [r[2] and r[0] == CUSHION for r in still]
+    assert any(gave) and gave.index(True) > reacted and still[-1][0] == READY
+    ended = len(gave) - gave[::-1].index(True)
+    assert (ended - gave.index(True)) * 0.02 >= 0.15 - 0.021
     # Not read (the robot's mallet never closed on the puck): nothing before the reaction.
     q, stance, rows = _read_shot(read=False)
     assert CUSHION not in [r[0] for r in rows[:reacted]] and (q.braces == 0).all()

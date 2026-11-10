@@ -111,11 +111,13 @@ TARGETS = dict(
 # sent back (serves and end-rail rebounds apart), the share sent back with a set
 # shot, by the speed the puck arrived at (ROBOT_SHOT_BINS; n = 71/44/51/40/22
 # and, over all three 2026-10-19 sessions, 28/21/25/31/7): what the tiers'
-# cushion and brace probabilities are tuned to. Set shots per minute still
-# come out short of the people's under --sim-profile, because the sim's v4
-# sends over fewer slow pucks than the table's did (returned arrivals under
-# 2 m/s: 5.1 a minute on 2026-10-29, 2-3.5 here) and those are the ones a
-# person nearly always sets up.
+# CUSHION is read against. The panel matches it up to 6 m/s and falls short
+# above (0.05-0.12 at 6-8 m/s): such a shot is on the person within about
+# their reaction time, and the panel gives with nothing it has not yet seen.
+# Set shots per minute also come out short of the people's under
+# --sim-profile because the sim's v4 sends over fewer slow pucks than the
+# table's did (returned arrivals under 2 m/s: 5.1 a minute on 2026-10-29,
+# 2-3.5 here) and those are the ones a person nearly always sets up.
 ROBOT_SHOT_OUTCOMES = {      # both people pooled, n = 471, by the robot shot's line speed
     '0-2': dict(first_touch_return=0.12, controlled=0.87, goal=0.0, rebound=0.0),
     '2-4': dict(first_touch_return=0.56, controlled=0.31, goal=0.05, rebound=0.04),
