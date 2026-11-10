@@ -106,7 +106,11 @@ Robotic air hockey table that uses reinforcement learning trained in simulation,
       None for them (their draws are unchanged): a planned rail
       (`bank_x0_rail_fraction`), a VOLLEY -- a timed counter-swing at a
       moving puck (`volley_probability`), and a serve from rest after a
-      goal (`serve_x_m`, `serve_env`).
+      goal (`serve_x_m`, `serve_env`). Known gap: it stops a moving puck
+      about half as often as the people did, so it takes ~6 set shots a
+      minute against their 11-14 and returns more off a block
+      (`calibration.table.robot_shot_outcomes`, `moving_strike_share`
+      reported outside its range).
     - `table_fidelity.py` - OPT-IN table-faithful sim for the neural player
       (2026-11-10), from the 13 table sessions of teacher-calm v4:
       `table_fidelity("table-20261029")` returns the `NeuralTrainingEnv`
@@ -186,9 +190,11 @@ Robotic air hockey table that uses reinforcement learning trained in simulation,
       scored by `airhockey/playability.py`; `--reference` puts a second
       candidate beside it, `--from-table-log <stamp>...` (and
       `--reference-table-log`) scores real sessions with the same function.
-      Read-only on logs. On v4 the sim under the profile reproduces the
-      table's cap > 80 share (0.16 vs 0.13), reversals (39 vs 31 /min) and
-      rms accel (26 vs 25 m/s^2); back-edge dwell does not transfer.
+      Read-only on logs. A tick is the same thing in both: the table the
+      policy decided on, then the command it sent. On v4 the sim under the
+      profile reproduces the table's cap > 80 share (0.17 vs 0.13),
+      reversals (39 vs 30 /min) and rms accel (27 vs 25 m/s^2); back-edge
+      dwell does not transfer.
     - `eval_fast_defense.py` - First-attack defense benchmark; `--speed-min/
       --speed-max/--bank-fraction/--release-y-min/--release-y-max` re-tier
       it (defaults reproduce the original fixtures exactly)

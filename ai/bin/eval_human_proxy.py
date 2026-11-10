@@ -65,6 +65,7 @@ TIER_GROUPS = {'both': ('club', 'elite'), 'tables': ('table', 'table_plus')}
 ROUTE_NAMES = ('none', 'left_bank', 'right_bank', 'straight')   # env shot-route codes 0-3
 CROSSING_MIN_SPEED = 0.3       # along-table speed, as in the table analysis
 OUTCOME_WINDOW_S = 4.0
+TOUCH_GAP_S = 0.10             # contacts closer together than this are one touch
 
 # What people did against the production checkpoint on the real table, from
 # the run_policy replay logs of the live rail30-100-20261001-v1 sessions.
@@ -102,8 +103,20 @@ TARGETS = dict(
 # 2026-10-29; 3.1 on 2026-10-19 plus that evening's production session for the
 # set shots). A "set shot" is a strike on a puck at <= 1.5 m/s, the proxy's
 # STRIKE; an "active counter" is a swing (mallet > 2 m/s) at a faster puck,
-# its VOLLEY. Each entry is [measured, low, high]: the range a panel of this
-# tier is checked against (calibration.checks), wide where the count is small.
+# its VOLLEY; a "strike" is any crossing the person sent back, a puck off a
+# block included. Each entry is [measured, low, high]: the range a panel of
+# this tier is checked against (calibration.checks), wide where the count is
+# small. The other entries are for reading beside calibration.table. The
+# panel is known to sit outside moving_strike_share: it stops a moving puck
+# about half as often as the people did (robot_shot_outcomes, "controlled"),
+# so it takes fewer set shots a minute and returns more off a block.
+ROBOT_SHOT_OUTCOMES = {      # both people pooled, n = 471, by the robot shot's line speed
+    '0-2': dict(first_touch_return=0.12, controlled=0.87, goal=0.0, rebound=0.0),
+    '2-4': dict(first_touch_return=0.56, controlled=0.31, goal=0.05, rebound=0.04),
+    '4-6': dict(first_touch_return=0.49, controlled=0.21, goal=0.08, rebound=0.20),
+    '6-8': dict(first_touch_return=0.45, controlled=0.18, goal=0.20, rebound=0.11),
+    '8+': dict(first_touch_return=0.21, controlled=0.15, goal=0.29, rebound=0.14),
+}
 TABLE_TARGETS = dict(
     table=dict(
         sessions='2026-10-29 (20261029-18*)',
@@ -113,8 +126,12 @@ TABLE_TARGETS = dict(
         straight_set_shot_on_target=[0.38, 0.26, 0.50],
         set_shot_hold_p50_s=[0.72, 0.45, 1.10],
         active_counter_share_of_strikes=[0.125, 0.06, 0.20], active_counter_release_p50_m_s=[6.8, 5.2, 8.4],
+        moving_strike_share=[0.46, 0.34, 0.58],
         mallet_speed_p99_m_s=[4.61, 3.2, 6.0], mallet_speed_p999_m_s=[6.46, 5.0, 7.6],
-        set_shots_per_min=11.1, serve_share_of_set_shots=0.21,
+        set_shots_per_min=11.1, person_strikes_per_min=20.6, active_counters_per_min=2.6,
+        serve_share_of_set_shots=0.21, serve_to_strike_s=dict(p10=0.62, p50=1.77, p90=4.84),
+        crossing_line_speed_m_s=dict(p10=1.99, p50=5.43, p90=8.66, max=10.78),
+        robot_shot_outcomes_pooled=ROBOT_SHOT_OUTCOMES, active_counter_by_robot_shot_speed=(0.15, 0.30, 0.05, 0.0, 0.0),
         conceded='0 of 56 serves; 1/71 straight and 1/81 banked set shots, 3/73 moving strikes (>= 3 m/s)'),
     table_plus=dict(
         sessions='2026-10-19 (20261019-214911, -220855; set shots also -213539)',
@@ -124,12 +141,17 @@ TABLE_TARGETS = dict(
         straight_set_shot_on_target=[0.51, 0.38, 0.64],
         set_shot_hold_p50_s=[0.78, 0.45, 1.10],
         active_counter_share_of_strikes=[0.21, 0.12, 0.30], active_counter_release_p50_m_s=[5.75, 4.4, 7.2],
+        moving_strike_share=[0.44, 0.32, 0.56],
         mallet_speed_p99_m_s=[4.79, 3.3, 6.2], mallet_speed_p999_m_s=[6.54, 5.0, 8.1],
-        set_shots_per_min=13.9, serve_share_of_set_shots=0.35,
+        set_shots_per_min=13.9, person_strikes_per_min=25.1, active_counters_per_min=5.3,
+        serve_share_of_set_shots=0.35, serve_to_strike_s=dict(p10=0.84, p50=1.50, p90=2.41),
+        crossing_line_speed_m_s=dict(p10=2.76, p50=6.23, p90=9.23, max=11.13),
+        robot_shot_outcomes_pooled=ROBOT_SHOT_OUTCOMES, active_counter_by_robot_shot_speed=(0.15, 0.50, 0.30, 0.18, 0.05),
         conceded='5/34 straight set shots, 0/7 banked, 0/25 moving (>= 3 m/s); 5/26 at 6-8 m/s, 0/19 at 8+'),
 )
 SPEED_BINS = [(0, 3), (3, 4.5), (4.5, 6), (6, 8), (8, 100)]
 ROBOT_SPEED_BINS = [(0, 3), (3, 4.5), (4.5, 6), (6, 7), (7, 8), (8, 100)]
+ROBOT_SHOT_BINS = [(0, 2), (2, 4), (4, 6), (6, 8), (8, 100)]
 
 
 def bootstrap(values_for, values_against, *, seed, samples=2000):
@@ -243,6 +265,13 @@ class MatchTracker:
             self.last_speed[side, ids] = speed
             if side:
                 self.last_mode[ids] = proxy.mode[ids]
+                # The person's touches of a robot shot, one per TOUCH_GAP_S of contact.
+                for i in ids:
+                    c = self.open[int(i)]
+                    if c is not None and c['toward'] == 'proxy':
+                        at = float(self.e.time[i])
+                        c['person_touches'] += at - c['touched_at'] > TOUCH_GAP_S
+                        c['touched_at'] = at
             for j in np.flatnonzero(env.shot_count[side, ids] > before):
                 i = int(ids[j])
                 local_y = env.cfg.height - self.e.puck_y[i] if side else self.e.puck_y[i]
@@ -312,6 +341,9 @@ class MatchTracker:
         up = (self.prev_y <= 1.0) & (y > 1.0) & (e.puck_vy > CROSSING_MIN_SPEED)
         for i in np.flatnonzero(down | up):
             if self.open[i] is not None:
+                # How a robot shot came back: off the person's mallet in this mode, or untouched.
+                self.open[i]['returned_by'] = (self.proxy.mode_names[int(self.last_mode[i])]
+                                               if self.last_touch[i] == 1 else None)
                 self._resolve(i, 'returned', now[i])
             toward = 'robot' if down[i] else 'proxy'
             attacker = 1 if toward == 'robot' else 0
@@ -322,7 +354,8 @@ class MatchTracker:
                 attack=bool(self.last_touch[i] == attacker),
                 person_mode=self.proxy.mode_names[int(self.last_mode[i])] if toward == "robot" else None,
                 route=ROUTE_NAMES[int(self.last_route[attacker, i])] if self.last_touch[i] == attacker else 'none',
-                vx_sign=float(np.sign(e.puck_vx[i])), banked=False, defender_touched=False)
+                vx_sign=float(np.sign(e.puck_vx[i])), banked=False, defender_touched=False,
+                person_touches=0, touched_at=-np.inf)
         # Rail bank on the defender's half before the defender touches it.
         for i in range(n):
             c = self.open[i]
@@ -431,7 +464,35 @@ def play_tier(net, tier, *, games, seconds, seed, options, stochastic=False, rec
     return result
 
 
-def table_calibration(person, attacks, mallet, minutes, proxy):
+def robot_shot_outcomes(crossings):
+    """What became of each robot shot, by its line speed: the table analysis' four outcomes.
+
+    A first-touch return comes back off one touch of a mallet that was not
+    striking a set puck; controlled is kept, or touched again before it is
+    sent back; a rebound comes back off the end rail untouched.
+    """
+    def outcome(c):
+        if c['outcome'] in ('goal', 'kept>4s'):
+            return 'goal' if c['outcome'] == 'goal' else 'controlled'
+        if c['outcome'] != 'returned':
+            return None
+        if c['returned_by'] is None:
+            return 'rebound'
+        return 'first_touch_return' if c['person_touches'] == 1 and c['returned_by'] != 'strike' else 'controlled'
+    table = {}
+    for lo, hi in ROBOT_SHOT_BINS:
+        shots = [c for c in crossings if lo <= c['speed'] < hi and outcome(c) is not None]
+        found = [outcome(c) for c in shots]
+        table[f'{lo:g}-{hi:g}' if hi < 100 else f'{lo:g}+'] = dict(
+            n=len(found), **{name: round(found.count(name) / len(found), 3) if found else None
+                             for name in ('first_touch_return', 'controlled', 'goal', 'rebound')},
+            # Of all of them: sent back by a counter-swing (volley_probability's own terms).
+            active_counter=round(sum(c.get('returned_by') == 'volley' for c in shots) / len(shots), 3)
+            if shots else None)
+    return table
+
+
+def table_calibration(person, attacks, robot_crossings, mallet, minutes, proxy):
     """The panel's play in the terms of TABLE_TARGETS (the table tiers only)."""
     def share(flags):
         return float(np.mean(flags)) if len(flags) else None
@@ -449,7 +510,17 @@ def table_calibration(person, attacks, mallet, minutes, proxy):
         set_shots=len(sets), active_counters=len(volleys), serves=int(proxy.serves.sum()),
         volley_attempts=int(proxy.volley_attempts.sum()),
         set_shots_per_min=len(sets) / minutes,
+        # Every crossing the person sent back, as the table analysis counts
+        # strikes: set shots, counter-swings and pucks that came off a block.
+        person_strikes_per_min=len(attacks) / minutes,
+        active_counters_per_min=sum(c['person_mode'] == 'volley' for c in attacks) / minutes,
+        passive_returns_per_min=sum(c['person_mode'] not in ('strike', 'volley') for c in attacks) / minutes,
+        moving_strike_share=share([c['person_mode'] != 'strike' for c in attacks]),
         serve_share_of_set_shots=share([s['serve'] for s in sets]),
+        # The hold clock restarts when the puck is put down, so a serve's is the wait to its strike.
+        serve_to_strike_s=percentiles([s['hold_s'] for s in sets if s['serve'] and s['hold_s'] is not None
+                                       and np.isfinite(s['hold_s'])], (10, 50, 90)),
+        crossing_line_speed_m_s=percentiles([c['speed'] for c in attacks]),
         set_shot_line_speed_p50_m_s=q(line, 50), set_shot_line_speed_p90_m_s=q(line, 90),
         set_shot_line_speed_max_m_s=q(line, 100),
         set_shot_release_m_s=percentiles([s['speed'] for s in sets]),
@@ -457,12 +528,12 @@ def table_calibration(person, attacks, mallet, minutes, proxy):
         bank_x0_rail_share=share([c.get('first_rail') == 'x0' for c in banks]),
         straight_set_shot_on_target=share([s['aimed'] for s in sets if s['intended_route'] == 0]),
         set_shot_hold_p50_s=q(holds, 50), set_shot_hold_s=percentiles(holds, (10, 25, 50, 75, 90)),
-        active_counter_share_of_strikes=share([s['volley'] for s in sets + volleys]),
+        active_counter_share_of_strikes=share([c['person_mode'] == 'volley' for c in attacks]),
+        active_counter_share_of_swings=share([s['volley'] for s in sets + volleys]),
         active_counter_release_p50_m_s=q([s['speed'] for s in volleys], 50),
         active_counter_release_m_s=percentiles([s['speed'] for s in volleys]),
         active_counter_on_target=share([s['aimed'] for s in volleys]),
-        # Crossings off a block or a volley among those the person played.
-        moving_share_of_person_crossings=share([c['person_mode'] != 'strike' for c in attacks]),
+        robot_shot_outcomes=robot_shot_outcomes(robot_crossings),
         volley_crossing_conceded_rate=share([c['outcome'] == 'goal' for c in played if c['person_mode'] == 'volley']),
         set_shot_conceded_rate=share([c['outcome'] == 'goal' for c in struck]),
         set_shot_conceded_rate_by_speed=speed_bin_rates(struck, 'goal', SPEED_BINS),
@@ -558,7 +629,7 @@ def summarize(env, proxy, tracker, *, games, seconds, seed, tier):
         reference_production_against_people=targets['production_against_people'],
     )
     if tier in TABLE_TARGETS:
-        calibration['table'] = table_calibration(person, attacks, mallet, minutes, proxy)
+        calibration['table'] = table_calibration(person, attacks, robot_crossings, mallet, minutes, proxy)
         calibration['table_target'] = TABLE_TARGETS[tier]
     calibration['checks'] = calibration_checks(calibration, tier)
     share = total_f / max(1, total_f + total_a)

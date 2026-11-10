@@ -375,15 +375,128 @@ def test_sim_recorder_reads_one_trace_per_game():
     recorder = playability.SimRecorder(env)
     action = np.zeros((n, 6), np.float32)
     action[:, 0] = 0.5
+    dyn, e = env.base._agent_dyn, env.engine
+    before, sent = [], []
     for _ in range(30):
         command_env(env, proxy)
+        before.append([dyn["x"][1], dyn["y"][1], e.puck_x[1], e.puck_y[1]])
         env.step(action)
+        sent.append([dyn["command_x"][1], dyn["command_y"][1], dyn["command_accel"][1]])
         recorder()
     traces = recorder.traces()
     assert len(traces) == n and traces[0]["puck"].shape == (30, 2)
-    dyn = env.base._agent_dyn
-    np.testing.assert_allclose(traces[1]["mallet"][-1], playability.metres([dyn["x"][1], dyn["y"][1]]))
+    # A tick is what a ticks.csv row is: the table before the step, and that step's command.
+    before, sent = np.array(before), np.array(sent)
+    np.testing.assert_allclose(traces[1]["mallet"], playability.metres(before[:, :2]))
+    np.testing.assert_allclose(traces[1]["puck"], playability.metres(before[:, 2:]))
+    np.testing.assert_allclose(traces[1]["target"], playability.metres(sent[:, :2]))
+    np.testing.assert_allclose(traces[1]["cap"], sent[:, 2])
+    assert np.abs(np.diff(traces[1]["mallet"], axis=0)).max() > 0
     assert traces[0]["back_y"] == pytest.approx(env.decoder.low[1] * playability.SCALE[1])
     assert (traces[0]["cap"] > 0).all() and (traces[0]["cap"] <= dyn["max_accel"][0] + 1e-9).all()
     g = playability.gates([playability.measure(tr, initial_load=0.4, thermal_gain=1.3) for tr in traces])
     assert g["traces"] == n and g["policy_minutes"] == pytest.approx(n * 30 * 0.02 / 60)
+
+
+# ------------------------------------------------- the flag reaches the env
+class _Built(Exception):
+    pass
+
+
+class _StubNet(_StillRobot):
+    def to(self, device):
+        return self
+
+    def eval(self):
+        return self
+
+
+@pytest.mark.parametrize("spec", [None, "table-20261029", "table-20261029:contact,lift,sensing"])
+def test_every_evaluator_hands_the_profile_to_its_env(monkeypatch, spec):
+    sys.path.insert(0, str(BIN))
+    import eval_fast_defense
+    import eval_human_proxy
+    import eval_neural_fringe
+    import eval_neural_player
+    import eval_playability
+    import eval_slow_control
+    built = []
+
+    def env(*args, **kwargs):
+        built.append(kwargs)
+        raise _Built
+
+    modules = (eval_fast_defense, eval_human_proxy, eval_neural_fringe, eval_neural_player, eval_slow_control)
+    for module in modules + (eval_playability,):
+        monkeypatch.setattr(module, "load", lambda path: (_StubNet(), {}))
+        if hasattr(module, "checkpoint_environment"):
+            monkeypatch.setattr(module, "checkpoint_environment", lambda path: {})
+    for module in modules:
+        monkeypatch.setattr(module, "NeuralTrainingEnv", env)
+    monkeypatch.setattr(eval_human_proxy, "candidate_hash", lambda spec: "")
+    calls = (
+        lambda: eval_fast_defense.evaluate("x", count=4, sim_profile=spec),
+        lambda: eval_human_proxy.evaluate("x", tiers=("table",), games=2, seconds=1.0, sim_profile=spec),
+        lambda: eval_neural_fringe.evaluate("x", count=4, sim_profile=spec),
+        lambda: eval_neural_player.skills(_StubNet(), per_task=2, sim_profile=spec),
+        lambda: eval_neural_player.games(_StubNet(), seconds=1.0, n=2, sim_profile=spec),
+        lambda: eval_slow_control.evaluate("x", count=6, sim_profile=spec),
+        lambda: eval_playability.simulate("x", tier="table", games=2, seconds=1.0, seed=1, environment_from="x",
+                                          sim_profile=spec),
+    )
+    profile_keys = set(table_fidelity("table-20261029"))
+    for call in calls:
+        with pytest.raises(_Built):
+            call()
+        got = built.pop()
+        assert not built
+        assert {key: got[key] for key in profile_keys & set(got)} == profile_options(spec)
+    if spec is not None and ":" in spec:
+        assert "command_delay_range" not in profile_options(spec)
+
+
+def test_robot_shot_outcomes_are_the_table_analysis_four():
+    sys.path.insert(0, str(BIN))
+    import eval_human_proxy as hp
+
+    def shot(speed, outcome, touches=0, by=None):
+        return dict(speed=speed, outcome=outcome, person_touches=touches, returned_by=by)
+    shots = [shot(3.0, "returned", 1, "ready"), shot(3.5, "returned", 1, "volley"), shot(3.9, "returned", 2, "ready"),
+             shot(2.1, "returned", 1, "strike"), shot(2.5, "kept>4s", 1), shot(3.0, "goal"),
+             shot(3.0, "returned"), shot(3.0, "returned"), shot(3.3, "unfinished"), shot(3.3, "other"),
+             shot(7.0, "goal")]
+    table = hp.robot_shot_outcomes(shots)
+    assert list(table) == ["0-2", "2-4", "4-6", "6-8", "8+"]
+    assert table["2-4"] == dict(n=8, first_touch_return=0.25, controlled=0.375, goal=0.125, rebound=0.25,
+                                active_counter=0.125)
+    assert table["6-8"]["goal"] == 1.0 and table["0-2"] == dict(
+        n=0, first_touch_return=None, controlled=None, goal=None, rebound=None, active_counter=None)
+
+
+def test_table_calibration_counts_strikes_as_the_table_analysis_does():
+    sys.path.insert(0, str(BIN))
+    import eval_human_proxy as hp
+    net = _StillRobot()
+    result = hp.play_tier(net, "table_plus", games=4, seconds=20.0, seed=5, options={})
+    c = result["calibration"]
+    t = c["table"]
+    modes = c["attacks_by_person_mode"]
+    strikes = sum(m["n"] for m in modes.values())
+    # Every crossing the person sent back is a strike; a counter-swing's share is of all of them.
+    assert t["person_strikes_per_min"] == pytest.approx(strikes / (4 * 20 / 60))
+    if strikes:
+        assert t["active_counter_share_of_strikes"] == pytest.approx(modes["volley"]["n"] / strikes)
+        assert t["moving_strike_share"] == pytest.approx(1 - modes["strike"]["n"] / strikes)
+    assert t["passive_returns_per_min"] + t["active_counters_per_min"] + modes["strike"]["n"] / (4 * 20 / 60) \
+        == pytest.approx(t["person_strikes_per_min"])
+    assert {"moving_strike_share", "active_counter_share_of_strikes"} <= set(c["checks"])
+    assert set(t["robot_shot_outcomes"]) == set(hp.ROBOT_SHOT_OUTCOMES)
+
+
+def test_policy_minutes_count_a_late_tick_at_its_length():
+    tr = _trace(100)
+    # Ticks 40.. arrive 20 ms late once (a lost decision on the table), and 60-79 are paused.
+    tr["t"][40:] += 0.02
+    tr["policy"][60:80] = False
+    g = playability.gates([playability.measure(tr)])
+    assert g["policy_minutes"] == pytest.approx((80 * 0.02 + 0.02) / 60)

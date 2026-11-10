@@ -6,7 +6,7 @@ than 80 m/s^2 on 13% of its ticks, reversed at speed 32 times a minute and
 three times ended 220-400 mm from where it was commanded. These gates put
 numbers on that. Every one is computed from a TRACE -- what a 50 Hz log of a
 game holds, and nothing else -- so the same function scores a simulated game
-(sim_recorder, engine truth sampled once per tick) and a table session
+(SimRecorder, engine truth sampled once per tick) and a table session
 (table_trace, logs/run_policy/<stamp>.ticks.csv + .replay.jsonl). No hardware
 I/O: the table mode only reads logs.
 
@@ -28,6 +28,8 @@ Gates (gates()):
   far-half cap > 40, > 80   share of ticks with the puck on the far half
   all ticks cap > 80        share of all policy ticks
   accel duty > 60, rms      |dv/dt| of the profile between consecutive ticks
+  per minute                of policy time: each policy tick counts for the
+                            time to the next tick (20 ms nominal; under 50 ms)
   reversals / min           the profile's velocity reversed within 100 ms
                             (v . v_100ms_ago < 0) with at least 1.5 (3) m/s on
                             both sides; events 150 ms apart
@@ -43,6 +45,11 @@ Gates (gates()):
                             the level this play would settle at (the time-mean
                             current, which does not depend on session length)
   idle command change       target change per tick on idle ticks, mm
+
+Both sources are aligned the same way: a tick is the puck, rival and mallet
+the policy decided on and the command it then sent (SimRecorder samples the
+engine before each step; a ticks.csv row is the fix, the controller sample
+and the command of one loop pass).
 
 Known differences between the two sources, stated rather than hidden: the
 sim's puck and rival are engine truth while the table's are camera fixes
@@ -91,28 +98,40 @@ def table_metres(x_mm, y_mm):
 
 # ------------------------------------------------------------------ sources
 class SimRecorder:
-    """Collects one trace per game from a NeuralTrainingEnv; call after every step."""
+    """Collects one trace per game from a NeuralTrainingEnv.
+
+    Create it after the reset and call it after every step. A tick pairs the
+    command of a step with the table as it stood BEFORE that step, which is
+    what a ticks.csv row holds: the puck fix and the controller sample the
+    policy decided on, then the command it sent.
+    """
 
     def __init__(self, env):
         self.env = env
-        self.rows = []
+        self.states = [self._state()]
+        self.commands = []
+
+    def _state(self):
+        e, dyn = self.env.engine, self.env.base._agent_dyn
+        return np.column_stack((
+            e.puck_x, e.puck_y, e.puck_vx, e.puck_vy, np.hypot(e.paddle_opp_vx * SCALE[0], e.paddle_opp_vy * SCALE[1]),
+            dyn["x"], dyn["y"], dyn["vx"], dyn["vy"]))
 
     def __call__(self):
-        env = self.env
-        e, dyn = env.engine, env.base._agent_dyn
-        self.rows.append(np.column_stack((
-            e.puck_x, e.puck_y, e.puck_vx, e.puck_vy, np.hypot(e.paddle_opp_vx * SCALE[0], e.paddle_opp_vy * SCALE[1]),
-            dyn["command_accel"], dyn["command_x"], dyn["command_y"], dyn["x"], dyn["y"], dyn["vx"], dyn["vy"])))
+        dyn = self.env.base._agent_dyn
+        self.commands.append(np.column_stack((dyn["command_accel"], dyn["command_x"], dyn["command_y"])))
+        self.states.append(self._state())
 
     def traces(self):
-        data = np.stack(self.rows)                     # [T, N, 12]
-        ticks = len(data)
+        state = np.stack(self.states[:-1])             # [T, N, 9], before each step
+        command = np.stack(self.commands)              # [T, N, 3], the step's own
+        ticks = len(command)
         back = float(self.env.decoder.low[1] * SCALE[1])
-        return [dict(t=(np.arange(ticks) + 1) * TICK_S, policy=np.ones(ticks, bool),
-                     puck=metres(data[:, i, 0:2]), puck_v=metres(data[:, i, 2:4]), rival=data[:, i, 4],
-                     cap=data[:, i, 5], target=metres(data[:, i, 6:8]), mallet=metres(data[:, i, 8:10]),
-                     mallet_v=metres(data[:, i, 10:12]), back_y=back)
-                for i in range(data.shape[1])]
+        return [dict(t=np.arange(ticks) * TICK_S, policy=np.ones(ticks, bool),
+                     puck=metres(state[:, i, 0:2]), puck_v=metres(state[:, i, 2:4]), rival=state[:, i, 4],
+                     cap=command[:, i, 0], target=metres(command[:, i, 1:3]), mallet=metres(state[:, i, 5:7]),
+                     mallet_v=metres(state[:, i, 7:9]), back_y=back)
+                for i in range(command.shape[1])]
 
 
 def _column(rows, name):
@@ -285,8 +304,12 @@ def measure(trace, *, thermal_model=None, thermal_gain=1.0, initial_load=None):
         if np.isfinite(distance).any() and np.nanmin(distance) < CONTACT_RANGE_M:
             contact_speed.append(float(own_speed[i + int(np.nanargmin(distance))]))
     target_change = np.linalg.norm(trace["target"] - np.roll(trace["target"], 1, axis=0), axis=1) * 1000
+    # Time under the policy: a tick lasts until the next one (a late tick on the
+    # table is 40 ms, not 20), a pause or the end of the log closes at TICK_S.
+    until_next = np.append(np.diff(t), np.nan)
+    until_next = np.where((until_next > 0) & (until_next < 0.05), until_next, TICK_S)
     result = dict(
-        policy_seconds=float(policy.sum() * TICK_S), idle_cap=cap[idle], far_cap=cap[far], cap=cap[policy],
+        policy_seconds=float(until_next[policy].sum()), idle_cap=cap[idle], far_cap=cap[far], cap=cap[policy],
         accel=accel, reversals=reversals, incoming=int(crossing.sum()), excursion=excursion,
         contact_speed=contact_speed, peak_speed=peak_speed,
         back_edge_ticks=int((policy & (mallet[:, 1] < trace["back_y"] + BACK_EDGE_M)).sum()),

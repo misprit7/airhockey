@@ -157,11 +157,16 @@ ELITE = HumanTier(
 # max_speed from the mallet speed at set strikes (p50 4.5, p90 6.0, max 7.2);
 # aim noise solved from 38% of straight set shots on target; reaction from the
 # onset of mallet motion after a robot shot (p25-p90); guard depth and shadow
-# gain are the measured IQR and slope. The feint and volley tables, the aim
-# noise and the rail share are tuned until the panel's own play lands in the
-# measured ranges (eval_human_proxy TABLE_TARGETS), not fitted; trap,
-# anticipation, defence noise, lag and accel could not be isolated and are
-# the club values. A planned x = 0 bank falls back to another route when the
+# gain are the measured IQR and slope. The feint table, the aim noise and the
+# rail share are tuned until the panel's own play lands in the measured ranges
+# (eval_human_proxy TABLE_TARGETS), not fitted; trap, anticipation, defence
+# noise, lag and accel could not be isolated and are the club values.
+# volley_probability is the chance of TRYING: most tries at a fast puck are
+# dropped for want of time, so it is set well above the share of the robot's
+# shots the person sent back with a swing (0.15 / 0.30 / 0.05 / 0 by line
+# speed 0-2 / 2-4 / 4-6 / 6+) until the panel's own share per speed is about
+# that (calibration.table.robot_shot_outcomes: 0.1-0.3 / 0.25 / 0.04 / 0.01).
+# A planned x = 0 bank falls back to another route when the
 # mallet has no room behind the puck, and a wide straight shot banks off
 # either rail, so the measured 0.87 needs nearly every plan to be that rail.
 TABLE = HumanTier(
@@ -177,13 +182,17 @@ TABLE = HumanTier(
     guard_depth_m=(0.07, 0.22),
     shadow_gain=(0.05, 0.15),
     bank_x0_rail_fraction=0.95,
-    volley_probability=((2.0, 0.25), (4.0, 0.50), (6.0, 0.08), (np.inf, 0.0)),
+    volley_probability=((2.0, 0.30), (4.0, 0.60), (6.0, 0.50), (np.inf, 0.0)),
     volley_mallet_speed_m_s=(2.2, 5.2),
     volley_contact_y_m=(0.29, 0.55),
     serve_x_m=(0.39, 0.71),
 )
 # The stronger person of 2026-10-19: faster and straighter, better aim (48-54%
-# on target), quicker to react, and swings at pucks arriving at up to ~8 m/s.
+# on target), quicker to react, and swings at pucks arriving at up to ~8 m/s
+# (0.15 / 0.50 / 0.30 / 0.18 / 0.05 of the robot's shots by line speed 0-2 /
+# 2-4 / 4-6 / 6-8 / 8+). The proxy sets up at rest before it swings and only
+# starts on seeing the shot, so even trying every time it reaches about
+# 0.15 / 0.40 / 0.2-0.3 / 0.05-0.10 / 0.02: short above 6 m/s.
 TABLE_PLUS = HumanTier(
     "table_plus",
     max_speed_m_s=(6.5, 8.0),
@@ -199,7 +208,7 @@ TABLE_PLUS = HumanTier(
     approach_speed_m_s=(1.5, 2.5),
     anticipation=(0.4, 0.8),
     bank_x0_rail_fraction=0.70,
-    volley_probability=((2.0, 0.20), (4.0, 0.60), (6.0, 0.38), (8.0, 0.22), (np.inf, 0.06)),
+    volley_probability=((2.0, 0.40), (4.0, 0.65), (6.0, 1.0), (8.0, 1.0), (np.inf, 0.5)),
     volley_mallet_speed_m_s=(1.8, 3.8),
     volley_contact_y_m=(0.13, 0.50),
     serve_x_m=(0.39, 0.71),
