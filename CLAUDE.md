@@ -1,7 +1,7 @@
 # Air Hockey RL Project
 
 ## Overview
-Robotic air hockey table that uses reinforcement learning trained in simulation, then transferred to physical hardware. The robot is a built and running cable-driven parallel robot (CDPR): four ClearPath servos driven step/dir by a Teensy, a FLIR camera tracking the puck at 200 Hz, and TD-MPC2 policies trained in the sim and run through `ai/bin/play.sh`. The current state of the training work and the table candidate are at the top of `ai/RETRAIN.md`; the sim-to-real status is in `SIM2REAL.md`.
+Robotic air hockey table that uses reinforcement learning trained in simulation, then transferred to physical hardware. The robot is a built and running cable-driven parallel robot (CDPR): four ClearPath servos driven step/dir by a Teensy, a FLIR camera tracking the puck at 200 Hz, and TD-MPC2 policies trained in the sim and run through `ai/bin/play.sh`. The newest table candidate is the neural player `teacher-calm-20261018-v4`, with no table test recorded yet (`ai/RUNS.md`, `ai/recipes/expert-distill-20261018/README.md`). `ai/RETRAIN.md` is the TD-MPC2 record up to 2026-09-19. The sim-to-real and hardware status is in `SIM2REAL.md`.
 
 ## Approach
 1. **System identification**: Learn physical dynamics from real hardware (motor response, cable compliance, friction, latency)
@@ -50,6 +50,9 @@ Robotic air hockey table that uses reinforcement learning trained in simulation,
       unverified 800 counts/rev step input. Run from the web UI's Motion
       limits panel ("Run tracking test", Hardware ON; camera optional);
       samples + summary land in `logs/follow_test/<stamp>.{csv,json}`.
+      Since 2026-11-08 the drives' encoders are also read fast through the
+      master's `SAMPLE <seconds>` command (~72-105 Hz per motor). It yields
+      to the fault watchdog and pauses telemetry and health reads meanwhile.
       While it runs it OWNS the master socket — the UI's mouse path,
       limits and peak reset are gated until it finishes. Unit-tested
       against the firmware's profile body in virtual time.
@@ -165,7 +168,7 @@ Robotic air hockey table that uses reinforcement learning trained in simulation,
       validated), `--dry`; everything else passes to `run_policy.py`.
       Flags only, never environment variables.
   - `tests/` - Test suite. Run it with the SYSTEM python:
-    `PYTHONPATH=ai:vision/bin python3 -m pytest ai` (the venv's tensordict
+    `PYTHONPATH=ai:vision/bin:shared python3 -m pytest ai` (the venv's tensordict
     0.11 fails 5 TD-MPC2 tests; the system 0.13 passes).
     - `test_batch_physics.py` - Vectorized physics correctness tests
     - `test_validation.py` - Reward shaping equivalence and env consistency tests
@@ -236,12 +239,21 @@ Robotic air hockey table that uses reinforcement learning trained in simulation,
     motor stopped while the other three kept pulling. The Teensy has no
     feedback wire from the drives, so this is the only place it can live.
   - `bin/` - Standalone diagnostics: `test_motor`, `scan_motors`, `activate`,
-    `retract_test`, `calibrate` (passive encoder capture)
-  - `lib/clearpath.{h,cpp}` - Minimal ClearPath connect/enable/disable
+    `retract_test`, `check_limits`, `calibrate` (passive encoder capture)
+  - `bin/drive_gains.cpp` - Back up every drive's tuning (read-only, to a new
+    directory), then `scale` one of KV/KP/KI/KFA or `restore` a backup. Writes
+    need `--apply`, are computed from the backup so they cannot compound, are
+    refused on an enabled drive or a serial mismatch, and are read back.
+  - `drive_config/` - Those backups. `baseline-20261108/` is the original
+    auto-tune; `ki-x0.5-20261108/` is an intermediate step.
+  - `lib/clearpath.{h,cpp}` - Minimal ClearPath connect/enable/disable, plus
+    drive parameter read/write and config save
   - `third_party/sFoundation/` - Teknic sFoundation SDK (patched for Linux, .gitignored)
   - NOTE: the host-side CDPR *motion* controller (`lib/cdpr.*`, `cdpr_server`,
     `cdpr_test`) was removed 2026-08-01. Motion is step/dir via the Teensy;
     that code duplicated it and had drifted out of sync.
+- `hw/` - Physical design files: `stepper_breakout/` and `puck_led/` (KiCad),
+  `mallet/` (printable mallet, see Hardware)
 - `vision/` - Camera calibration and tracking (FLIR Blackfly S via Spinnaker)
   - `bin/` - `camera.py` (frame stream + back-projection helpers),
     `capture_intrinsics.py` (continuous, self-selecting ChArUco capture),
@@ -250,7 +262,7 @@ Robotic air hockey table that uses reinforcement learning trained in simulation,
     `measure_anchors.py` (motor anchors from retroreflectors on the spool
     axes — supersedes `measure_motors.py`, which fitted ellipses to the
     spool top faces at an assumed height), `measure_motors.py`,
-    `track_mallet.py` (mallet position at z=67mm),
+    `track_mallet.py` (mallet pose from its three markers, at the active paddle's heights),
     `calib_report.py`, `table_grid.py`, `gen_targets.py`, `snap.cpp`,
     `blobtrack.cpp` + `puck_stream.py` (200 Hz puck tracking — see below),
     `puck_markers.py` (the puck's four-corner marker square; pure geometry,
@@ -511,6 +523,24 @@ python ai/bin/eval_fast_defense.py expert --output logs/fd-human.json \
   clamping over set screws.
 - **Communication**: SC4-Hub (USB) -> sFoundation C++ API -> motors via proprietary serial
 - **Power**: 24-75V DC supply
+- **Drive gains (2026-11-08)**: the original auto-tune held a self-sustained
+  ~16 Hz oscillation on motors 1 and 3 with the 370 g paddle. All four drives
+  were left at KI x0.35 of baseline (1163/1706/2035/1393), which removed it
+  and cut median overshoot from 9.6 to 3.3 mm on that paddle. This has NOT been
+  tested on the standard paddle. Gains are non-volatile on the drive, and the
+  x0.35 state has no saved snapshot: recreate it with `drive_gains scale`.
+- **Paddles**: `standard` (170 g), `heavy` (370 g) and `printed` in
+  `shared/cdpr_geometry.py`. `printed` is `hw/mallet/bin/gen_printed_mallet.py`
+  and carries DESIGN values (98 g, markers 68.10/37.30 mm), not measurements.
+  It balances its centre of mass on the 30 mm spring plane and has four side
+  marker recesses, of which only two adjacent ones may be taped. The active
+  profile is `standard`.
+- **Mallet jumping**: unresolved and its cause not measured. A paddle tips at
+  about g*r/|cable height - COM height| regardless of mass, which is why the
+  printed mallet moves mass rather than adding it. No result is recorded yet.
+- **Pretension**: the master and web UI accept 0-6 mm (UI default 1.5). Slack
+  let cables come off the spools at 60 m/s²; 3 mm stopped that but idles
+  motors 0/2 at ~2.5 A, so step up toward 6 mm while watching heat.
 
 ## Commands (hardware)
 ```bash
@@ -553,6 +583,14 @@ python ai/bin/goalie_demo.py --dry-run          # goalie, commands nothing
 sw/build/activate                # ENTER toggles all four
 sw/build/cdpr_master             # TCP 8421 -> Teensy bridge; use ALONE
 sw/build/test_motor              # or: sw/build/test_motor /dev/ttyACM0
+
+# Drive tuning. Needs the SC-Hub alone: stop cdpr_master and activate first.
+sw/build/drive_gains sw/drive_config/<new-dir>                       # back up, read-only
+sw/build/drive_gains scale sw/drive_config/baseline-20261108 KI 0.35 # dry run; add --apply to write
+sw/build/drive_gains restore sw/drive_config/baseline-20261108       # dry run; add --apply to write
+
+# Printable mallet (pip install manifold3d trimesh numpy)
+python hw/mallet/bin/gen_printed_mallet.py --cable-z 30
 
 # Camera / calibration
 vision/build/snap shots 8 1 --exposure 1000 --gain 0

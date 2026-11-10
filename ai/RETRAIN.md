@@ -2,6 +2,11 @@
 > `ai/RUNS.md` is the registry. The "Run N" numbers below are the old
 > names (`runs/runN_selfplay`, kept as symlinks).
 
+> Newer work is not in this file. The neural player distilled from the physics
+> teacher replaced 3.11 as the candidate on 2026-10-18: see `ai/RUNS.md` and
+> `ai/recipes/expert-distill-20261018/README.md`. Hardware status is in
+> `SIM2REAL.md`.
+
 # Handoff -- where this stands (2026-09-19)
 
 Read this first. Everything after it is the run-by-run record (22 runs,

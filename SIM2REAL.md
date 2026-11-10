@@ -1,5 +1,27 @@
 # Sim-to-real: status and what's left
 
+## Update 2026-11-08 — drives, paddles and jumping
+
+Newest checkpoint: `teacher-calm-20261018-v4`, the calm-accel fine-tune made
+after `teacher-ppo-20261018-v2` jittered and tripped BusVoltageLow on the table
+on 2026-10-18. No table test of v4 is recorded.
+
+Hardware changed on 2026-11-08, none of it fed back into the simulator and no
+policy was retrained:
+
+- All four drives run at KI x0.35 of the auto-tune, set on a 370 g paddle to
+  stop a ~16 Hz oscillation. Untested on the standard paddle, which is the
+  active profile again. `sw/drive_config/baseline-20261108/` restores it.
+- Paddle profiles (`standard`, `heavy`, `printed`) select marker heights and
+  mass. `paddle_mass` is not read by the sim's collision code.
+- Slack let cables come off the spools at 60 m/s². Pretension of 3 mm stopped
+  it, at ~2.5 A idle on motors 0/2. The bound is now 6 mm. Training's sim has
+  no pretension model.
+- Mallet jumping at speed is unresolved and its cause has not been measured.
+  Added mass reduced it but brought post-move oscillation. A printed mallet
+  with its centre of mass on the spring plane (`hw/mallet/`) has been designed
+  and printed, with no result recorded.
+
 ## Update 2026-09-20 — replay-backed corrections
 
 The 11:36 session (`3.11`, 40 m/s²) identified puck/robot identity swaps and
