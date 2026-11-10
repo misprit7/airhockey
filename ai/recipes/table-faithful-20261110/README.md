@@ -425,17 +425,73 @@ the avoidable one: v4's rates would pay 3. If goals for in the people slots
 
 ### Gates for a2 (all in sim, before any table time)
 
-- Resting-puck grid (the diagnosis's `stall/grid.py`: pucks at rest over the
-  own half, three requests, struck within 3 s / stalled at 10 s) for a2, v5a
-  and v4. No evaluator in the repo places a puck at rest yet.
-- Zero own-half rest spells over 4 s in 128 proxy games per table tier.
-- Corner cells by request (`corner_diag.py`): at least 46/48 in each, in the
-  historical sim and in the profile.
+- `ai/bin/eval_resting_puck.py` (below), in the historical sim and in the
+  profile, with `--games 128`: no stall-map cell above 5%, every corner
+  cell at least 46/48, zero own-half rest spells over 4 s.
 - `eval_playability.py` as for arm A: accel duty, guard interventions and
   time at load >= 0.95 at or below v4's, goals for not below v5a's by more
   than its seed spread.
 - Lift: goals against under a braking-independent lift (`flat30`) not above
   v4's.
+
+### The resting-puck evaluator (2026-11-10)
+
+`ai/bin/eval_resting_puck.py` (library `ai/airhockey/resting_puck.py`, tests
+`ai/tests/test_resting_puck.py`) is the diagnosis's scratch scripts as one
+evaluator. Simulation only; about 8 minutes per candidate on two CPU threads.
+
+```bash
+python ai/bin/eval_resting_puck.py runs/<run>/agent.pt --reference runs/teacher-calm-20261018-v4/agent.pt
+python ai/bin/eval_resting_puck.py runs/<run>/agent.pt --reference runs/teacher-calm-20261018-v4/agent.pt \
+    --sim-profile table-20261029 --games 128 --record ai/recordings/<name>
+```
+
+- `stall`: a puck at rest on x 0.10-0.90, y 0.10-0.85 in steps of 0.05, for
+  the mallet at home and already beside the puck, under the left-bank,
+  right-bank and straight requests (1632 trials, 10 s, a `table` person at
+  the far end, load 0.45). Stalled = never above 1.5 after a touch and never
+  over the centre line. A cell is a zone (forward y 0.65-0.85, mid, back,
+  each left / centre / right; the rail columns; the corners) x a request;
+  cells under `--min-cell-n` 20 trials are printed and not gated.
+- `corner`: `corner_diag.py`, 8 cells x 48 mirror-paired corner pucks.
+- `games`: `--games` 32 x 60 s against `table` and `table_plus`; a rest spell
+  is the puck on the own half, slower than 0.05 and where the mallet's edge
+  can touch it, so a puck wedged in a back corner counts.
+
+It reproduces the scratch numbers: with the diagnosis's grid and seed
+(`--parts stall --seed 7 --ys 0.5,0.55,...,0.9`) every trial is identical
+(right-forward + left bank 64/70 v5a, 24/70 v4 in the profile); the corner
+cells are identical at the default seed; the rest spells are the ones in the
+diagnosis's 32-game traces. At the default seed 20261207:
+
+| | v5a historical | v4 historical | v5a profile | v4 profile |
+|---|---|---|---|---|
+| stalled, all 1632 trials | 7.8% | 5.0% | 9.2% | 7.5% |
+| forward strip (450) | 22.9% | 11.8% | 25.8% | 19.3% |
+| mid / back (540 / 426) | 0.4% / 0% | 0.2% / 0% | 0.9% / 0.7% | 0.7% / 0.2% |
+| rail columns (168) | 13.7% | 16.1% | 14.3% | 17.9% |
+| forward-right + left bank (70) | 61 = 87% [77-93] | 19 = 27% [18-39] | 64 = 91% [83-96] | 28 = 40% [29-52] |
+| forward-left + right bank (70) | 19 = 27% | 18 = 26% | 22 = 31% | 21 = 30% |
+| forward-right + straight (70) | 19 = 27% | 5 = 7% | 22 = 31% | 15 = 21% |
+| forward-left + straight (70) | 2 = 3% | 10 = 14% | 4 = 6% | 16 = 23% |
+| rail + straight (56) | 13 = 23% | 12 = 21% | 14 = 25% | 14 = 25% |
+| gated cells over 5% (of 21) | 5 | 7 | 6 | 8 |
+| corner cells, left none / L / R / S | 48 34 41 36 | 48 48 47 46 | 48 35 43 33 | 48 48 48 46 |
+| corner cells, right none / L / R / S | 47 34 41 25 | 48 48 48 48 | 44 34 46 33 | 48 48 48 48 |
+| rest spells >= 4 s, table / table_plus (32 games each) | 1 / 0 | 0 / 0 | 2 / 2 | 0 / 1 |
+| longest rest spell | 34.5 s, corner | 0.4 s | 55.0 s, corner | 42.8 s, corner |
+| gates stall / corner / games | FAIL / FAIL / FAIL | FAIL / PASS / PASS | FAIL / FAIL / FAIL | FAIL / PASS / FAIL |
+
+v4 does not pass the stall map either: the hover is a blind spot of both
+networks, worse in v5a on the right side under the left-bank request and
+under the straight request, and both leave a puck that touches a side rail
+in the forward strip. A stalled trial ends with the mallet 0.2-0.35 m behind
+the puck, untouched in 97-100% of them, at an accel cap of 5.6 m/s² (v5a;
+the floor is 5) or 8.5 (v4). Of the six rest spells over 4 s in these games,
+four are a puck wedged in a back corner at (0.04, 0.04) or (0.96, 0.04),
+v4's 42.8 s among them, although v4 touches 46-48 of 48 placed corner
+pucks; the other two are v5a's in the profile, 53.6 s in the forward-right
+strip under the left-bank request and 20.7 s at (0.82, 0.53).
 
 ### Smoke test of arm a2 (2026-11-10)
 
@@ -477,9 +533,8 @@ only difference is the added `motion` keys and `motion_by_slot`.
 
 - No ablation arm. Left-bank weight, far cap and the stall are attributed,
   not separated; arms B and C above were never run either.
-- The resting-puck gate is a scratch script, not an evaluator in `ai/bin`,
-  and the idle-motion gate of `airhockey/playability.py` still counts the
-  2 s after the robot's own contact (where v5a's extra idle motion is).
+- The idle-motion gate of `airhockey/playability.py` still counts the 2 s
+  after the robot's own contact (where v5a's extra idle motion is).
 - The lift mechanisms are readings of the same 17 events, not new
   measurements. The table data that would decide between them: 6-8 m/s
   contacts with the mallet not braking (23 so far) or accelerating into the

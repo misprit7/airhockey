@@ -221,6 +221,21 @@ Robotic air hockey table that uses reinforcement learning trained in simulation,
       profile reproduces the table's cap > 80 share (0.17 vs 0.13),
       reversals (39 vs 30 /min) and rms accel (27 vs 25 m/s^2); back-edge
       dwell does not transfer.
+    - `eval_resting_puck.py` - The RESTING-PUCK GATES (2026-11-10; the
+      table has no referee, so run them before any table session), library
+      part `airhockey/resting_puck.py`. Three parts (`--parts`): `stall`, a
+      puck placed at rest on a grid of the own half x mallet start (home /
+      beside) x shot request for 10 s, stalled = never struck above 1.5
+      and never left the half, rates by zone / request / cell with Wilson
+      CIs; `corner`, corner pucks touched per side x request (8 x 48);
+      `games`, rest spells >= 1 s / >= 4 s on a reachable own-half puck
+      against the `table` / `table_plus` people. PASS/FAIL lines against
+      `--max-cell-stall` 5%, `--min-corner-touched` 46, `--max-long-rest` 0
+      (`--strict` exits 1); `--reference`, `--sim-profile`, `--record` as
+      elsewhere. Neither v4 nor v5a passes `stall`: both hover beside a
+      puck in the forward strip (y 0.65-0.85) when the bank off the
+      opposite rail is requested (right side + left bank: v5a 87-91%, v4
+      27-40%). Tests: `tests/test_resting_puck.py`.
     - `eval_fast_defense.py` - First-attack defense benchmark; `--speed-min/
       --speed-max/--bank-fraction/--release-y-min/--release-y-max` re-tier
       it (defaults reproduce the original fixtures exactly)
@@ -271,6 +286,10 @@ Robotic air hockey table that uses reinforcement learning trained in simulation,
       pinned, planned rail, volley timing, serve), `--sim-profile`
       defaults and reporting, the lift tally, and the playability gates on
       scripted traces, including sim-trace vs table-log parity
+    - `test_resting_puck.py` - the resting-puck gates on two scripted
+      policies (one drives through the puck, one hovers beside it): zones
+      and cells, rest spells, corner mirror pairs, the evaluator's
+      pass/fail lines, JSON and replays
 - `shared/` - Geometry shared by every control path. **Canonical.**
   - `cdpr_geometry.h` - Table frame, motor anchors, spool, paddle attachment,
     and the cable-length model (tangency + wrap). Included by `fw/` and
@@ -583,6 +602,9 @@ python ai/bin/eval_human_proxy.py runs/teacher-calm-20261018-v4/agent.pt --tier 
 python ai/bin/eval_playability.py runs/teacher-calm-20261018-v4/agent.pt \
     --reference runs/rail30-100-20261001-v1/agent.pt --tier table --sim-profile table-20261029 \
     --from-table-log 20261029-182715 20261029-183722 --reference-table-log 20261019-213539
+# Resting-puck gates (stall map, corner pucks, rest spells in games); ~8 min per candidate on 2 CPU threads
+python ai/bin/eval_resting_puck.py runs/<run>/agent.pt --reference runs/teacher-calm-20261018-v4/agent.pt \
+    --sim-profile table-20261029
 # Fast defense at human speeds (defaults = the original 10-18 m/s fixtures)
 python ai/bin/eval_fast_defense.py expert --output logs/fd-human.json \
     --speed-min 3.7 --speed-max 10 --bank-fraction 0.5 --release-y-min 1.0
