@@ -8,6 +8,12 @@ Each candidate is a checkpoint path or an `expert[:k=v,...]` teacher spec.
 `--tier dev` uses development seeds; `--tier holdout` uses the reserved
 seeds (20261980-20261999 and 20262000+), larger cohorts, and is meant to be
 run once on finalists. Jobs run as separate 2-thread processes.
+
+`--sim-profile table-20261029` runs every benchmark in the table-faithful
+simulator (airhockey/table_fidelity.py) and the people benchmark against the
+table tiers as well; summary.json then records the profile and each row its
+lift events and the goals conceded through a lifted mallet. Without the flag
+the jobs, their command lines and the summary are the historical ones.
 """
 import argparse
 import json
@@ -31,7 +37,7 @@ TIERS = {
 }
 
 
-def jobs(candidate, tier, out, include):
+def jobs(candidate, tier, out, include, sim_profile=None):
     t = TIERS[tier]
     tag = candidate.replace("/", "_").replace(":", "_").replace(",", "_").replace("=", "-")
     base = out / tag
@@ -67,6 +73,11 @@ def jobs(candidate, tier, out, include):
         g, sec, s = t["proxy"]
         add("proxy", py + ["ai/bin/eval_human_proxy.py", candidate, "--tier", "both", "--games", str(g),
                             "--seconds", str(sec), "--seed", str(s)])
+        if sim_profile is not None:
+            add("proxy_tables", py + ["ai/bin/eval_human_proxy.py", candidate, "--tier", "tables", "--games", str(g),
+                                      "--seconds", str(sec), "--seed", str(s)])
+    if sim_profile is not None:
+        run = [(name, argv + ["--sim-profile", sim_profile], output) for name, argv, output in run]
     return run
 
 
@@ -89,6 +100,7 @@ def summarize(results):
             row[name] = f"FAILED ({code})"
             continue
         r = json.loads(output.read_text())
+        lift = r.get("lift") or r.get("selfplay", {}).get("lift") or r.get("skills", {}).get("lift")
         if name in ("defense", "immediate"):
             s = r["summary"]
             g = r["groups"]
@@ -122,6 +134,17 @@ def summarize(results):
                              peak_load=round(max(sp["peak_load"][me]), 3))
         elif name == "proxy":
             row[name] = r.get("summary", {k: v for k, v in r.items() if k in ("club", "elite")})
+        if "sim_profile" in r:
+            if name.startswith("proxy"):
+                row[name] = {t: dict(goals_for=v["goals_for"], goals_against=v["goals_against"],
+                                     goal_share=round(v["goal_share"], 3), peak_load=round(v["candidate_peak_load"], 3),
+                                     lift_events=v["lift"]["lift_events"],
+                                     conceded_through_lift=v["lift"]["goals_conceded_through_lift"])
+                             for t, v in r["tiers"].items()}
+            elif lift is not None and isinstance(row.get(name), dict):
+                row[name].update(lift_events=lift["lift_events"],
+                                 conceded_through_lift=lift.get("conceded_through_lift",
+                                                                lift["goals_conceded_through_lift"]))
         row[name + "_seconds"] = round(seconds)
     return row
 
@@ -133,14 +156,18 @@ def main():
     p.add_argument("--tier", choices=sorted(TIERS), default="dev")
     p.add_argument("--only", action="append", default=[], help="Subset of benchmarks, e.g. --only defense --only games")
     p.add_argument("--parallel", type=int, default=10)
+    p.add_argument("--sim-profile", help="table-fidelity profile for every benchmark, e.g. table-20261029 "
+                                         "(default: none, the historical simulator)")
     a = p.parse_args()
-    all_jobs = {c: jobs(c, a.tier, a.out, set(a.only)) for c in a.candidate}
+    all_jobs = {c: jobs(c, a.tier, a.out, set(a.only), a.sim_profile) for c in a.candidate}
     flat = [(c, j) for c, js in all_jobs.items() for j in js]
     with ThreadPoolExecutor(a.parallel) as pool:
         done = list(pool.map(lambda cj: (cj[0], execute(cj[1])), flat))
     table = {}
     for c in a.candidate:
         table[c] = summarize([r for cc, r in done if cc == c])
+        if a.sim_profile is not None:
+            table[c]["sim_profile"] = a.sim_profile
     a.out.mkdir(parents=True, exist_ok=True)
     (a.out / "summary.json").write_text(json.dumps(table, indent=2))
     print(json.dumps(table, indent=1))

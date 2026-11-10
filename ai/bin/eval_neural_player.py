@@ -18,6 +18,7 @@ from airhockey.policy_benchmark import (
     bank_defense_launches,
 )
 from airhockey.recorder import Recorder, FrameData
+from airhockey.table_fidelity import LiftTally, profile_options
 
 
 def load(path):
@@ -136,7 +137,9 @@ def skills(
     shot_request="random",
     report_sensing=False,
     recovery=False,
+    sim_profile=None,
 ):
+    fidelity = profile_options(sim_profile)
     torch.manual_seed(seed)
     from airhockey.physics import TableConfig
     fixture_config=TableConfig()
@@ -153,7 +156,7 @@ def skills(
         report_sensing=report_sensing,
         shot_conditioned=net.shot_conditioned or shot_request != "random",
         shot_request=shot_request,
-        **getattr(net,'environment_options',{}),
+        **{**getattr(net,'environment_options',{}), **fidelity},
     )
     env.cfg.max_puck_speed=max(env.cfg.max_puck_speed,defense_speed_range[1])
     if bank_defense:
@@ -282,9 +285,11 @@ def skills(
             )
 
     env.engine.contact_callback = contact
+    lifts = LiftTally(env)
     peak_accel = np.zeros(env.n_envs)
     for _ in range(301 if recovery else 201):
         obs, _, term, trunc, info = env.step(net.act(history.for_policy(net), stochastic=stochastic))
+        lifts.after_step(info["conceded"])
         obs = history.append(obs)
         choose = (trial_request == 0) & (env.base._shot_type != 0) & ~done
         trial_request[choose] = env.base._shot_type[choose]
@@ -373,6 +378,8 @@ def skills(
         random_paddle=random_defense,
         no_defender_goals=int(verified.sum()),
     )
+    if sim_profile is not None:
+        result["lift"] = lifts.report()
     if receiving_speed_range is not None:
         result["receiving"]["speed_range"] = list(receiving_speed_range)
     if recovery:
@@ -427,11 +434,13 @@ def games(
     report_sensing=False,
     continuous_rallies=False,
     opponent_shot_request=None,
+    sim_profile=None,
 ):
+    fidelity = profile_options(sim_profile)
     torch.manual_seed(seed)
     conditioned = net.shot_conditioned or (opponent_net is not None and opponent_net.shot_conditioned)
     env = NeuralTrainingEnv(n, stage=3, seed=seed, games=True,
-                            **getattr(net,'environment_options',{}),
+                            **{**getattr(net,'environment_options',{}), **fidelity},
                             report_sensing=report_sensing,
                             continuous_rallies=continuous_rallies,
                             shot_conditioned=conditioned or shot_request != "random", shot_request=shot_request)
@@ -530,6 +539,7 @@ def games(
     edge_dwell_seconds=np.zeros((2,n))
     corner_dwell_seconds=np.zeros((2,n))
     history = PhysicalHistory(max(net.history, opponent_net.history if opponent_net else 1))
+    lifts = LiftTally(env)
     start = time.monotonic()
     traces = []
     for tick in range(round(seconds / 0.02)):
@@ -554,6 +564,7 @@ def games(
         env.set_opponent_action(act[n:])
         previous_score = (int(env.engine.score_agent[0]), int(env.engine.score_opponent[0]))
         obs, reward, _, _, info = env.step(act[:n])
+        lifts.after_step(info["conceded"], info["goals"])
         peak_accel = max(peak_accel, float(info["peak_accel"].max()))
         e = env.engine
         if e.score_agent[0] != previous_score[0] or e.score_opponent[0] != previous_score[1]:
@@ -724,6 +735,9 @@ def games(
         shot_events=shot_events,
         turnover_events=turnover_events,
     )
+    if sim_profile is not None:
+        # Body 0 is the blue seat, the candidate's unless sides are swapped.
+        result["lift"] = lifts.report()
     result["shot_breakdown"] = {}
     for controlled, label in [(True, "after_control"), (False, "without_control")]:
         result["shot_breakdown"][label] = []
@@ -839,6 +853,7 @@ def main():
     p.add_argument("--skill-details", type=Path)
     p.add_argument("--receiving-min", type=float, default=6)
     p.add_argument("--receiving-max", type=float)
+    p.add_argument("--sim-profile", help="table-fidelity profile (airhockey/table_fidelity.py), e.g. table-20261029 or table-20261029:contact,lift; default none = the historical simulator")
     p.add_argument(
         "--ideal-sensing",
         action="store_true",
@@ -859,6 +874,11 @@ def main():
         destination=checkpoint_environment(args.environment_from)
         net=CoordinateReference(net,net.environment_options,destination)
         net.environment_options=destination
+    if args.sim_profile is not None:
+        try:
+            profile_options(args.sim_profile)
+        except ValueError as error:
+            p.error(str(error))
     if args.report_sensing is None:
         args.report_sensing = checkpoint_report_sensing(args.checkpoint, state)
     if args.continuous_rallies is None:
@@ -919,6 +939,8 @@ def main():
             ]
         },
     )
+    if args.sim_profile is not None:
+        result.update(sim_profile=args.sim_profile, sim_profile_options=profile_options(args.sim_profile))
     if not args.games_only:
         skill_options = dict(
             seed=args.seed,
@@ -938,6 +960,7 @@ def main():
             if args.receiving_max is not None
             else None,
             thermal_gain=args.thermal_gain,
+            sim_profile=args.sim_profile,
         )
         result["skills"] = skills(net, **skill_options, shot_request=args.shot_request)
         if args.request_suite:
@@ -970,6 +993,7 @@ def main():
             trace=args.output.with_suffix(".trace.npz") if args.record else None,
             continuous_rallies=args.continuous_rallies,
             opponent_shot_request=args.opponent_shot_request,
+            sim_profile=args.sim_profile,
         )
     args.output.parent.mkdir(parents=True, exist_ok=True)
     args.output.write_text(json.dumps(result, indent=2))

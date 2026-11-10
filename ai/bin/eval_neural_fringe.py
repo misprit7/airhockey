@@ -11,10 +11,12 @@ from airhockey.neural_training import NeuralTrainingEnv
 from airhockey.neural_setup import checkpoint_environment
 from airhockey.neural_coordinates import CoordinateReference
 from airhockey.skill_benchmark import Fixtures
+from airhockey.table_fidelity import LiftTally, profile_options
 from eval_neural_player import load
 
 
-def evaluate(path, count=256, seed=20261015, environment_from=None):
+def evaluate(path, count=256, seed=20261015, environment_from=None, sim_profile=None):
+    fidelity = profile_options(sim_profile)
     torch.set_num_threads(2)
     net, state = load(path)
     options = checkpoint_environment(environment_from) if environment_from else net.environment_options
@@ -22,7 +24,7 @@ def evaluate(path, count=256, seed=20261015, environment_from=None):
         net = CoordinateReference(net, net.environment_options, options)
     env = NeuralTrainingEnv(count, stage=5, game_fraction=0, report_sensing=True,
         shot_conditioned=net.shot_conditioned, possession_followthrough=True,
-        edge_recovery_weight=1, **options)
+        edge_recovery_weight=1, **{**options, **fidelity})
     rng = np.random.default_rng(seed)
     corner = np.arange(count) % 2 == 0
     right = np.arange(count) % 4 >= 2
@@ -49,8 +51,10 @@ def evaluate(path, count=256, seed=20261015, environment_from=None):
     history.reset(obs)
     done = np.zeros(count, bool)
     rows = [None]*count
+    lifts = LiftTally(env)
     for _ in range(605):
         obs, _, terminal, truncated, info = env.step(net.act(history.for_policy(net)))
+        lifts.after_step(info['conceded'] * ~done)
         history.append(obs)
         finished = ~done & (terminal | truncated)
         for i in np.flatnonzero(finished):
@@ -69,7 +73,8 @@ def evaluate(path, count=256, seed=20261015, environment_from=None):
         summary[name] = dict(trials=len(group), **{key:sum(row[key] for row in group)
             for key in ('touched', 'recovered', 'aimed', 'overload_seconds')},
             peak_load=max(row['peak_load'] for row in group))
-    return dict(checkpoint=str(path), step=state.get('step'), seed=seed,
+    profile = {} if sim_profile is None else dict(sim_profile=sim_profile, sim_profile_options=fidelity, lift=lifts.report())
+    return dict(**profile, checkpoint=str(path), step=state.get('step'), seed=seed,
         simulation_environment=options, initial_load=.5, thermal_gain=1.3,
         summary=summary, details=rows)
 
@@ -81,9 +86,10 @@ if __name__ == '__main__':
     p.add_argument('--trials', type=int, default=256)
     p.add_argument('--seed', type=int, default=20261015)
     p.add_argument('--environment-from', type=Path)
+    p.add_argument('--sim-profile', help="table-fidelity profile (airhockey/table_fidelity.py), e.g. table-20261029 or table-20261029:contact,lift; default none = the historical simulator")
     a=p.parse_args()
     if a.trials<4: p.error('at least four trials required')
-    result=evaluate(a.checkpoint,a.trials,a.seed,a.environment_from)
+    result=evaluate(a.checkpoint,a.trials,a.seed,a.environment_from,a.sim_profile)
     a.output.parent.mkdir(parents=True,exist_ok=True)
     temp=a.output.with_suffix('.tmp');temp.write_text(json.dumps(result,indent=2));temp.replace(a.output)
     print(json.dumps(result['summary'],indent=2))

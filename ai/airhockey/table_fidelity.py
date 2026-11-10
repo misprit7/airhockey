@@ -43,6 +43,11 @@ and the human proxy keeps the view it was calibrated on (the legacy tracker
 model, on ring columns of its own), because a person watches the table, not
 the camera. HumanProxy.ASSUMED_RESTITUTION therefore stays as it is.
 
+EVALUATORS take the profile as `--sim-profile <name>` (profile_options: a
+name, or `name:contact,lift` for some of its parts; absent = the historical
+sim), record it in their JSON and report LiftTally: pucks that went under each
+robot mallet, and the goals that followed within a second.
+
 NOT modelled: mallet follow lag as a separate compliant body (6-20 mm of
 deflection at 100 m/s^2), the 220-400 mm strike-and-return position losses,
 and the runner's goal watchdog pausing the policy.
@@ -51,6 +56,8 @@ and the runner's goal watchdog pausing the policy.
 from __future__ import annotations
 
 from typing import Any
+
+import numpy as np
 
 PROFILES = {
     "table-20261029": {
@@ -89,3 +96,59 @@ def table_fidelity(profile: str = DEFAULT_PROFILE, *, contact: bool = True,
         raise ValueError(f"not table-fidelity arguments: {sorted(unknown)}")
     options.update(overrides)
     return {key: value for key, value in options.items() if value is not None}
+
+
+PARTS = ("contact", "lift", "sensing", "actuator")
+
+
+def profile_options(spec: str | None) -> dict[str, Any]:
+    """An evaluator's --sim-profile value -> NeuralTrainingEnv keyword arguments.
+
+    None (the flag absent) is the historical simulator: no arguments. A
+    profile name is the whole profile; "name:contact,lift,sensing" keeps only
+    the named parts.
+    """
+    if spec is None:
+        return {}
+    name, _, wanted = str(spec).partition(":")
+    parts = [part for part in wanted.split(",") if part] if wanted else list(PARTS)
+    unknown = set(parts) - set(PARTS)
+    if unknown:
+        raise ValueError(f"not parts of a table profile: {sorted(unknown)}; known: {list(PARTS)}")
+    return table_fidelity(name, **{part: part in parts for part in PARTS})
+
+
+class LiftTally:
+    """Evaluator bookkeeping for mallet_lift, from engine truth. Never feeds a player.
+
+    Body 0 is the candidate's seat, 1 the far side's. A goal is "through a
+    lifted mallet" when it is scored on a body within WINDOW_S of a puck
+    passing under that body's mallet. Call after_step once per env step with
+    the goals of that step; with lift off everything stays zero.
+    """
+
+    WINDOW_S = 1.0
+
+    def __init__(self, env):
+        self.engine = getattr(env, "engine", env)
+        self.enabled = self.engine.mallet_lift is not None
+        self._seen = self.engine.lift_events.copy()
+        self.events = np.zeros_like(self._seen)
+        self.since = np.full(self._seen.shape, np.inf)
+        self.goals = np.zeros_like(self._seen)
+
+    def after_step(self, conceded, scored=None, dt=0.02):
+        new = self.engine.lift_events - self._seen
+        self._seen = self.engine.lift_events.copy()
+        self.events += new
+        self.since = np.where(new > 0, 0.0, self.since + dt)
+        self.goals[0] += (np.asarray(conceded) > 0) & (self.since[0] <= self.WINDOW_S)
+        if scored is not None:
+            self.goals[1] += (np.asarray(scored) > 0) & (self.since[1] <= self.WINDOW_S)
+        return new
+
+    def report(self):
+        return dict(enabled=bool(self.enabled), window_s=self.WINDOW_S,
+                    lift_events=int(self.events[0].sum()), opponent_lift_events=int(self.events[1].sum()),
+                    goals_conceded_through_lift=int(self.goals[0].sum()),
+                    goals_scored_through_opponent_lift=int(self.goals[1].sum()))

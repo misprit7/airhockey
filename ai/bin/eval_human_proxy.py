@@ -22,6 +22,18 @@ bootstrap 95% CI over games, with GF/min and GA/min. The report also gives the
 panel's own measured shots against the human TARGETS below, so a reader can
 see how human-like the opponent was in the very games being scored.
 
+`table` and `table_plus` are the two people who played
+runs/teacher-calm-20261018-v4 (2026-10-29 and 2026-10-19; TABLE_TARGETS): they
+also swing at moving pucks, bank off the robot's left rail and serve after a
+goal. `--tier tables` runs both.
+
+`--sim-profile table-20261029` plays the same games in the table-faithful sim
+(airhockey/table_fidelity.py: measured mallet contact, mallet lift, camera
+dropouts, command latency); the report then records the profile and, under
+`lift`, the pucks that went under the robot's mallet and the goals conceded
+that way. Without the flag the simulator and the report are the historical
+ones.
+
 The proxy never drives the robot and nothing here is a runtime controller.
 """
 import argparse
@@ -34,12 +46,13 @@ import numpy as np
 import torch
 
 from eval_neural_player import load, set_initial_load
-from airhockey.human_proxy import HumanProxy, STRIKE, command_env, MODE_NAMES
+from airhockey.human_proxy import HumanProxy, STRIKE, VOLLEY, command_env, serve_env
 from airhockey.neural_coordinates import CoordinateReference
 from airhockey.neural_player import PhysicalHistory
 from airhockey.neural_setup import checkpoint_environment
 from airhockey.neural_training import NeuralTrainingEnv
 from airhockey.recorder import FrameData, Recorder
+from airhockey.table_fidelity import LiftTally, profile_options
 
 BASE = Path('runs/rail30-100-20261001-v1/agent.pt')
 DT = 0.02
@@ -47,7 +60,8 @@ INITIAL_LOAD = 0.4
 THERMAL_GAIN = 1.3
 SHUTDOWN_LEVEL = 0.95          # the training shutdown; reported, not enforced
 PUCK_SPEED_CAP = 16.0          # the elite panel releases up to 14 m/s
-TIER_SEED = {'club': 101, 'elite': 202}
+TIER_SEED = {'club': 101, 'elite': 202, 'table': 303, 'table_plus': 404}
+TIER_GROUPS = {'both': ('club', 'elite'), 'tables': ('table', 'table_plus')}
 ROUTE_NAMES = ('none', 'left_bank', 'right_bank', 'straight')   # env shot-route codes 0-3
 CROSSING_MIN_SPEED = 0.3       # along-table speed, as in the table analysis
 OUTCOME_WINDOW_S = 4.0
@@ -82,6 +96,37 @@ TARGETS = dict(
         robot_crossing_scored_rate_by_speed={'0-3': 0.011, '3-4.5': 0.062, '4.5-6': 0.148, '6-7': 0.120,
                                              '7-8': 0.111},
         robot_crossing_speed_m_s=dict(p50=5.08, p90=6.92)),
+)
+# The two people who played runs/teacher-calm-20261018-v4, from its replay
+# logs with strikes separated from end-rail rebounds (13.9 unpaused minutes on
+# 2026-10-29; 3.1 on 2026-10-19 plus that evening's production session for the
+# set shots). A "set shot" is a strike on a puck at <= 1.5 m/s, the proxy's
+# STRIKE; an "active counter" is a swing (mallet > 2 m/s) at a faster puck,
+# its VOLLEY. Each entry is [measured, low, high]: the range a panel of this
+# tier is checked against (calibration.checks), wide where the count is small.
+TABLE_TARGETS = dict(
+    table=dict(
+        sessions='2026-10-29 (20261029-18*)',
+        set_shot_line_speed_p50_m_s=[7.00, 6.3, 7.7], set_shot_line_speed_p90_m_s=[9.16, 8.2, 10.1],
+        set_shot_line_speed_max_m_s=[10.78, 9.0, 12.0],
+        set_shot_bank_fraction=[0.46, 0.34, 0.58], bank_x0_rail_share=[0.87, 0.60, 0.97],
+        straight_set_shot_on_target=[0.38, 0.26, 0.50],
+        set_shot_hold_p50_s=[0.72, 0.45, 1.10],
+        active_counter_share_of_strikes=[0.125, 0.06, 0.20], active_counter_release_p50_m_s=[6.8, 5.2, 8.4],
+        mallet_speed_p99_m_s=[4.61, 3.2, 6.0], mallet_speed_p999_m_s=[6.46, 5.0, 7.6],
+        set_shots_per_min=11.1, serve_share_of_set_shots=0.21,
+        conceded='0 of 56 serves; 1/71 straight and 1/81 banked set shots, 3/73 moving strikes (>= 3 m/s)'),
+    table_plus=dict(
+        sessions='2026-10-19 (20261019-214911, -220855; set shots also -213539)',
+        set_shot_line_speed_p50_m_s=[7.68, 6.6, 8.5], set_shot_line_speed_p90_m_s=[9.68, 8.4, 10.6],
+        set_shot_line_speed_max_m_s=[11.13, 9.3, 12.0],
+        set_shot_bank_fraction=[0.27, 0.12, 0.38], bank_x0_rail_share=[0.69, 0.45, 0.92],
+        straight_set_shot_on_target=[0.51, 0.38, 0.64],
+        set_shot_hold_p50_s=[0.78, 0.45, 1.10],
+        active_counter_share_of_strikes=[0.21, 0.12, 0.30], active_counter_release_p50_m_s=[5.75, 4.4, 7.2],
+        mallet_speed_p99_m_s=[4.79, 3.3, 6.2], mallet_speed_p999_m_s=[6.54, 5.0, 8.1],
+        set_shots_per_min=13.9, serve_share_of_set_shots=0.35,
+        conceded='5/34 straight set shots, 0/7 banked, 0/25 moving (>= 3 m/s); 5/26 at 6-8 m/s, 0/19 at 8+'),
 )
 SPEED_BINS = [(0, 3), (3, 4.5), (4.5, 6), (6, 8), (8, 100)]
 ROBOT_SPEED_BINS = [(0, 3), (3, 4.5), (4.5, 6), (6, 7), (7, 8), (8, 100)]
@@ -124,6 +169,10 @@ def calibration_checks(c, tier):
     body = dict(
         reach_nearest_robot_goal_y_m=within(c['mallet_nearest_robot_goal_y_m'], c['reach_limit_y_m'] - 1e-6, 2.0),
         body_accel_over_drawn_cap=within(c['body_peak_accel_over_drawn_cap'], 0.0, 1.0 + 1e-6))
+    if tier in TABLE_TARGETS:
+        measured = c['table']
+        return dict(body, **{name: within(measured.get(name), target[1], target[2])
+                             for name, target in TABLE_TARGETS[tier].items() if isinstance(target, list)})
     if tier != 'club':
         intended = c['strike_intended_m_s'] or {}
         return dict(body, intended_release_p10_m_s=within(intended.get('p10'), 8.0, 14.0),
@@ -161,6 +210,8 @@ class MatchTracker:
         self.last_route = np.zeros((2, n), int)   # env route of each side's last contact
         self.last_speed = np.zeros((2, n))
         self.last_mode = np.zeros(n, int)        # the person's mode at its last touch
+        self.slow_since = np.full(n, np.nan)     # puck first slow on the person's half (hold time)
+        self.served = np.zeros(n, bool)
         self.shot_events = []
         self.crossings = []                       # resolved centre-line crossings
         self.open = [None] * n                    # the crossing still awaiting its outcome
@@ -198,6 +249,8 @@ class MatchTracker:
                 striking = bool(side and proxy.mode[i] == STRIKE)
                 self.shot_events.append(dict(
                     side=side, game=i, time=float(self.e.time[i]), speed=float(speed[j]),
+                    volley=bool(side and proxy.mode[i] == VOLLEY), serve=bool(side and self.served[i]),
+                    hold_s=float(self.e.time[i] - self.slow_since[i]) if striking else None,
                     route=ROUTE_NAMES[int(env.last_shot_route[side, i])],
                     aimed=bool(env.aimed_count[side, i] > aimed_before[j]), local_y=float(local_y),
                     strike=striking,
@@ -207,6 +260,8 @@ class MatchTracker:
                 if side and i < self.record_games:
                     self.events[i].append((float(self.e.time[i]),
                                            f"Person strikes: {ROUTE_NAMES[int(env.last_shot_route[1, i])]} {speed[j]:.1f} m/s"))
+                if side:
+                    self.served[i] = False
 
         env.engine.contact_callback = contact
         relaunch = env.base._relaunch
@@ -265,7 +320,7 @@ class MatchTracker:
                 game=int(i), time=float(now[i]), toward=toward, speed=speed,
                 angle_deg=float(np.degrees(np.arctan2(abs(e.puck_vx[i]), abs(e.puck_vy[i])))),
                 attack=bool(self.last_touch[i] == attacker),
-                person_mode=MODE_NAMES[int(self.last_mode[i])] if toward == "robot" else None,
+                person_mode=self.proxy.mode_names[int(self.last_mode[i])] if toward == "robot" else None,
                 route=ROUTE_NAMES[int(self.last_route[attacker, i])] if self.last_touch[i] == attacker else 'none',
                 vx_sign=float(np.sign(e.puck_vx[i])), banked=False, defender_touched=False)
         # Rail bank on the defender's half before the defender touches it.
@@ -280,6 +335,7 @@ class MatchTracker:
             sign = np.sign(e.puck_vx[i])
             if (on_defender_half and not c['defender_touched'] and sign != 0 and c['vx_sign'] != 0
                     and sign != c['vx_sign'] and abs(e.puck_vx[i]) > 0.2):
+                c.setdefault('first_rail', 'x0' if e.puck_x[i] < env.cfg.width / 2 else 'x1')
                 c['banked'] = True
             if sign != 0:
                 c['vx_sign'] = sign
@@ -287,6 +343,8 @@ class MatchTracker:
                 self._resolve(i, 'kept>4s', now[i])
         self.prev_y = y.copy()
         self.prev_score = (e.score_agent.copy(), e.score_opponent.copy())
+        slow = (y > 1.0) & (np.hypot(e.puck_vx, e.puck_vy) < 1.5)
+        self.slow_since = np.where(slow, np.where(np.isnan(self.slow_since), now, self.slow_since), np.nan)
         # The person's mallet at 50 Hz: speed and reach as the table saw them,
         # and the commanded body's acceleration against the cap it was drawn
         # (the centre-line clamp stops the mallet itself like a wall).
@@ -316,6 +374,14 @@ class MatchTracker:
                 opponent_x=float(e.paddle_opp_x[i]), opponent_y=float(e.paddle_opp_y[i]),
                 score_agent=int(e.score_agent[i]), score_opponent=int(e.score_opponent[i]),
                 shot_type_agent=int(env.base._shot_type[i]), rally_event=text))
+        return scored, conceded
+
+    def serve(self, goal):
+        """A serving tier's restart after the goals of this step (human_proxy.serve_env)."""
+        serve_env(self.env, self.proxy, goal)
+        self.served |= goal
+        self.prev_y = self.e.puck_y.copy()
+        self.slow_since[goal] = np.nan
 
     def finish(self):
         for i in range(self.n):
@@ -323,9 +389,12 @@ class MatchTracker:
 
 
 def play_tier(net, tier, *, games, seconds, seed, options, stochastic=False, record=None,
-              record_games=1, candidate=''):
+              record_games=1, candidate='', sim_profile=None, observe=None):
+    """One tier's games. `observe(env)` may return a callable run after every step
+    (evaluator-side instrumentation such as playability.SimRecorder)."""
     torch.manual_seed(seed)
-    env = NeuralTrainingEnv(games, stage=3, seed=seed, games=True, **options, report_sensing=True,
+    fidelity = profile_options(sim_profile)
+    env = NeuralTrainingEnv(games, stage=3, seed=seed, games=True, **{**options, **fidelity}, report_sensing=True,
                             continuous_rallies=True, shot_conditioned=net.shot_conditioned)
     env.cfg.max_puck_speed = max(env.cfg.max_puck_speed, PUCK_SPEED_CAP)
     obs = env.reset(seed=seed, opponent='human_proxy')
@@ -336,21 +405,68 @@ def play_tier(net, tier, *, games, seconds, seed, options, stochastic=False, rec
     command_env(env, proxy, reset=True)
     record_games = min(record_games, games) if record else 0
     tracker = MatchTracker(env, proxy, record_games)
+    lifts = LiftTally(env)
+    watch = observe(env) if observe is not None else None
     history = PhysicalHistory(net.history)
     start = time.monotonic()
     for tick in range(round(seconds / DT)):
         command_env(env, proxy)
         history.append(obs)
         obs, *_ = env.step(net.act(history.for_policy(net), stochastic=stochastic))
-        tracker.after_step(tick)
+        scored, conceded = tracker.after_step(tick)
+        lifts.after_step(conceded, scored, DT)
+        if watch is not None:
+            watch()
+        if proxy.tier.serve_x_m is not None:
+            tracker.serve((scored > 0) | (conceded > 0))
     tracker.finish()
     wall = time.monotonic() - start
     result = summarize(env, proxy, tracker, games=games, seconds=seconds, seed=seed, tier=tier)
     result['wall_seconds'] = round(wall, 1)
+    if sim_profile is not None:
+        result['lift'] = dict(lifts.report(), goals_against=result['goals_against'])
     if record:
         result['recordings'] = save_recordings(tracker, proxy, record, tier, candidate=candidate,
                                                seed=seed, options=options, env=env, seconds=seconds)
     return result
+
+
+def table_calibration(person, attacks, mallet, minutes, proxy):
+    """The panel's play in the terms of TABLE_TARGETS (the table tiers only)."""
+    def share(flags):
+        return float(np.mean(flags)) if len(flags) else None
+
+    def q(values, percent):
+        return float(np.percentile(values, percent)) if len(values) else None
+    sets = [s for s in person if s['strike']]
+    volleys = [s for s in person if s['volley']]
+    struck = [c for c in attacks if c['person_mode'] == 'strike']
+    line = [c['speed'] for c in struck]
+    banks = [c for c in struck if c['banked']]
+    played = [c for c in attacks if c['person_mode'] in ('strike', 'volley')]
+    holds = [s['hold_s'] for s in sets if not s['serve'] and s['hold_s'] is not None and np.isfinite(s['hold_s'])]
+    return dict(
+        set_shots=len(sets), active_counters=len(volleys), serves=int(proxy.serves.sum()),
+        volley_attempts=int(proxy.volley_attempts.sum()),
+        set_shots_per_min=len(sets) / minutes,
+        serve_share_of_set_shots=share([s['serve'] for s in sets]),
+        set_shot_line_speed_p50_m_s=q(line, 50), set_shot_line_speed_p90_m_s=q(line, 90),
+        set_shot_line_speed_max_m_s=q(line, 100),
+        set_shot_release_m_s=percentiles([s['speed'] for s in sets]),
+        set_shot_bank_fraction=share([c['banked'] for c in struck]),
+        bank_x0_rail_share=share([c.get('first_rail') == 'x0' for c in banks]),
+        straight_set_shot_on_target=share([s['aimed'] for s in sets if s['intended_route'] == 0]),
+        set_shot_hold_p50_s=q(holds, 50), set_shot_hold_s=percentiles(holds, (10, 25, 50, 75, 90)),
+        active_counter_share_of_strikes=share([s['volley'] for s in sets + volleys]),
+        active_counter_release_p50_m_s=q([s['speed'] for s in volleys], 50),
+        active_counter_release_m_s=percentiles([s['speed'] for s in volleys]),
+        active_counter_on_target=share([s['aimed'] for s in volleys]),
+        # Crossings off a block or a volley among those the person played.
+        moving_share_of_person_crossings=share([c['person_mode'] != 'strike' for c in attacks]),
+        volley_crossing_conceded_rate=share([c['outcome'] == 'goal' for c in played if c['person_mode'] == 'volley']),
+        set_shot_conceded_rate=share([c['outcome'] == 'goal' for c in struck]),
+        set_shot_conceded_rate_by_speed=speed_bin_rates(struck, 'goal', SPEED_BINS),
+        mallet_speed_p99_m_s=q(mallet, 99), mallet_speed_p999_m_s=q(mallet, 99.9))
 
 
 def summarize(env, proxy, tracker, *, games, seconds, seed, tier):
@@ -397,7 +513,7 @@ def summarize(env, proxy, tracker, *, games, seconds, seed, tier):
                                         angle_median_deg=float(np.median([c['angle_deg'] for c in attacks
                                                                           if c['person_mode'] == m]))
                                         if any(c['person_mode'] == m for c in attacks) else None)
-                                for m in MODE_NAMES},
+                                for m in proxy.mode_names},
         strike_attacks=dict(
             n=len(struck), speed_centre_line_m_s=percentiles([c['speed'] for c in struck]),
             bank_fraction=float(struck_bank.mean()) if len(struck) else None,
@@ -427,7 +543,7 @@ def summarize(env, proxy, tracker, *, games, seconds, seed, tier):
         body_peak_accel_over_drawn_cap=round(tracker.body_accel_over_cap, 4),
         mallet_nearest_robot_goal_y_m=round(tracker.mallet_y_min, 4),
         reach_limit_y_m=round(env.cfg.height / 2 + env.cfg.paddle_radius, 4),
-        mode_fraction=dict(zip(MODE_NAMES, (proxy.mode_ticks.sum(0) / max(1, proxy.mode_ticks.sum())).round(4).tolist())),
+        mode_fraction=dict(zip(proxy.mode_names, (proxy.mode_ticks.sum(0) / max(1, proxy.mode_ticks.sum())).round(4).tolist())),
         conceded_midline_speed_m_s=percentiles([g['midline_speed'] for g in conceded if 'midline_speed' in g]),
         conceded_midline_to_goal_s=percentiles([g['midline_to_goal_s'] for g in conceded if 'midline_to_goal_s' in g]),
         attack_conceded_rate=(sum(c['outcome'] == 'goal' for c in attacks) / len(attacks)) if attacks else None,
@@ -441,6 +557,9 @@ def summarize(env, proxy, tracker, *, games, seconds, seed, tier):
             [c for c in robot_crossings if not c['banked']], 'goal', ROBOT_SPEED_BINS),
         reference_production_against_people=targets['production_against_people'],
     )
+    if tier in TABLE_TARGETS:
+        calibration['table'] = table_calibration(person, attacks, mallet, minutes, proxy)
+        calibration['table_target'] = TABLE_TARGETS[tier]
     calibration['checks'] = calibration_checks(calibration, tier)
     share = total_f / max(1, total_f + total_a)
     intervals = bootstrap(gf, ga, seed=seed)
@@ -503,7 +622,8 @@ def candidate_hash(spec):
 
 
 def evaluate(candidate, *, tiers=('club', 'elite'), games=64, seconds=60.0, seed=20261018,
-             environment_from=BASE, device='cpu', stochastic=False, record=None, record_games=1):
+             environment_from=BASE, device='cpu', stochastic=False, record=None, record_games=1,
+             sim_profile=None):
     torch.set_num_threads(4)
     options = checkpoint_environment(environment_from)
     net, state = load(candidate)
@@ -517,10 +637,12 @@ def evaluate(candidate, *, tiers=('club', 'elite'), games=64, seconds=60.0, seed
         thermal_gain=THERMAL_GAIN, puck_speed_cap_m_s=PUCK_SPEED_CAP, stochastic=stochastic,
         proxy_source_sha256=hashlib.sha256(Path('ai/airhockey/human_proxy.py').read_bytes()).hexdigest(),
         tiers={})
+    if sim_profile is not None:
+        result.update(sim_profile=sim_profile, sim_profile_options=profile_options(sim_profile))
     for tier in tiers:
         result['tiers'][tier] = play_tier(net, tier, games=games, seconds=seconds, seed=seed, options=options,
                                           stochastic=stochastic, record=record, record_games=record_games,
-                                          candidate=candidate)
+                                          candidate=candidate, sim_profile=sim_profile)
     return result
 
 
@@ -540,13 +662,20 @@ def headline(result):
             calm_high=round(r.get('candidate_calm_high_cap_share', float('nan')), 3),
             person_attack_speed=c['attack_speed_centre_line_m_s'], person_bank_fraction=c['attack_bank_fraction'],
             wall_s=r['wall_seconds']))
+        if 'lift' in r:
+            rows[-1].update(sim_profile=result['sim_profile'], lift_events=r['lift']['lift_events'],
+                            conceded_through_lift=r['lift']['goals_conceded_through_lift'])
+        failed = [k for k, v in c['checks'].items() if v[2] is False]
+        if tier in TABLE_TARGETS:
+            rows[-1].update(calibration_outside=failed)
     return rows
 
 
 def main():
     p = argparse.ArgumentParser(description=__doc__, formatter_class=argparse.RawDescriptionHelpFormatter)
     p.add_argument('candidate', help="checkpoint path, or an 'expert' / 'expert:key=value,...' spec")
-    p.add_argument('--tier', choices=['club', 'elite', 'both'], default='both')
+    p.add_argument('--tier', choices=sorted(TIER_SEED) + sorted(TIER_GROUPS), default='both',
+                   help="'both' = club + elite (default); 'tables' = table + table_plus")
     p.add_argument('--games', type=int, default=64)
     p.add_argument('--seconds', type=float, default=60.0)
     p.add_argument('--seed', type=int, default=20261018, help='shared by all candidates (paired panel)')
@@ -558,15 +687,23 @@ def main():
     p.add_argument('--record-games', type=int, default=1, help='games per tier to record (default 1)')
     p.add_argument('--device', default='cpu')
     p.add_argument('--stochastic', action='store_true', help='sample the candidate policy instead of its mean')
+    p.add_argument('--sim-profile', help="table-fidelity profile, e.g. table-20261029 or table-20261029:contact,lift "
+                                         '(default: none, the historical simulator)')
     a = p.parse_args()
     if a.games < 2 or not np.isfinite(a.seconds) or a.seconds <= 0:
         p.error('--games must be at least 2 and --seconds positive')
-    tiers = ('club', 'elite') if a.tier == 'both' else (a.tier,)
+    tiers = TIER_GROUPS.get(a.tier, (a.tier,))
+    try:
+        profile_options(a.sim_profile)
+    except ValueError as error:
+        p.error(str(error))
     name = 'expert' if str(a.candidate).startswith('expert') else Path(a.candidate).parent.name
+    if a.sim_profile is not None:
+        name += '-' + a.sim_profile.replace(':', '-').replace(',', '-')
     output = a.output or Path('logs/human-proxy') / f'{name}-{a.seed}.json'
     result = evaluate(a.candidate, tiers=tiers, games=a.games, seconds=a.seconds, seed=a.seed,
                       environment_from=a.environment_from, device=a.device, stochastic=a.stochastic,
-                      record=a.record, record_games=a.record_games)
+                      record=a.record, record_games=a.record_games, sim_profile=a.sim_profile)
     output.parent.mkdir(parents=True, exist_ok=True)
     output.write_text(json.dumps(result, indent=2))
     print(json.dumps(dict(candidate=a.candidate, output=str(output), headline=headline(result))), flush=True)

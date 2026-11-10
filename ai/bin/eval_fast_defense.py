@@ -4,6 +4,11 @@
 Hidden release times/targets/routes, verified on-goal counterfactuals, and
 fixed seeds shared across candidates. A save ends the attack when contact
 reverses its goalward travel or stops it; subsequent possession earns nothing.
+
+--sim-profile <name> runs the same fixtures in the table-faithful simulator
+(airhockey/table_fidelity.py); the report then records the profile and, under
+`lift`, the pucks that went under the mallet and the attacks conceded that
+way. Absent, the simulator and the report are the historical ones.
 """
 import argparse
 import hashlib
@@ -21,6 +26,7 @@ from airhockey.neural_possession import goal_shot_velocity
 from airhockey.skill_benchmark import Fixtures
 from airhockey.shot_flight import PARAMETERS, open_goal_outcomes
 from airhockey.recorder import Recorder, FrameData
+from airhockey.table_fidelity import LiftTally, profile_options
 
 BASE = Path('runs/rail30-100-20261001-v1/agent.pt')
 
@@ -61,7 +67,8 @@ def attack_routes(rng, count, bank_fraction=BANK_FRACTION):
 def evaluate(checkpoint, *, count=768, seed=20261051, environment_from=BASE,
              immediate=False, record_prefix=None, device='cpu', heuristic=None,
              speed_range=SPEED_RANGE, bank_fraction=BANK_FRACTION,
-             release_y_range=RELEASE_Y_RANGE):
+             release_y_range=RELEASE_Y_RANGE, sim_profile=None):
+    fidelity = profile_options(sim_profile)
     speed_lo, speed_hi = map(float, speed_range)
     release_lo, release_hi = map(float, release_y_range)
     if not np.isfinite([speed_lo, speed_hi]).all() or not 0 < speed_lo <= speed_hi <= 25:
@@ -80,7 +87,7 @@ def evaluate(checkpoint, *, count=768, seed=20261051, environment_from=BASE,
         net = CoordinateReference(net, net.environment_options, options)
     net.to(device).eval()
     env = NeuralTrainingEnv(count, stage=2, seed=seed, report_sensing=True,
-        shot_conditioned=net.shot_conditioned, **options,
+        shot_conditioned=net.shot_conditioned, **{**options, **fidelity},
         defense_windup_lateral_speed=.4, defense_windup_bank_fraction=2/3)
     env.cfg.max_puck_speed = max(18., speed_hi)
     rng = np.random.default_rng(seed+31)
@@ -115,6 +122,7 @@ def evaluate(checkpoint, *, count=768, seed=20261051, environment_from=BASE,
     traces=[]
     finish_tick=np.full(count, 169, dtype=int)
     e=env.engine
+    lifts=LiftTally(env);lifted=done.copy()
     for tick in range(170):
         releasing=(env.elapsed>=env._windup_release)&~released
         if releasing.any():
@@ -130,6 +138,7 @@ def evaluate(checkpoint, *, count=768, seed=20261051, environment_from=BASE,
         active=~done
         touched |= active & (env.touch_count[0]>0) & released
         failed=active & (e.score_opponent>0)
+        lifted |= active & (lifts.after_step(failed)[0]>0)
         success=active & released & touched & ~failed & (
             (e.puck_vy>.05) | (np.hypot(e.puck_vx,e.puck_vy)<.3))
         saved |= success;conceded |= failed
@@ -179,7 +188,15 @@ def evaluate(checkpoint, *, count=768, seed=20261051, environment_from=BASE,
                     selection='first valid example of each outcome; not a random sample',seed=seed,trial=i,fps=50,
                     workspace_sim=env.base._ws,accel_cap_m_s2=options['accel']))
                 recordings.append('/?replay='+dest.name)
-    return dict(checkpoint=str(checkpoint) if not heuristic else heuristic,
+    profile={}
+    if sim_profile is not None:
+        # Per attack: the puck went under the mallet before the attack was resolved.
+        mask=valid&lifted
+        profile=dict(sim_profile=sim_profile,sim_profile_options=fidelity,
+            lift=dict(lifts.report(),attacks_with_lift=int(mask.sum()),
+                      conceded_through_lift=int((mask&conceded).sum()),conceded=int((valid&conceded).sum())))
+        for row,flag in zip(rows,lifted):row['lifted']=bool(flag)
+    return dict(**profile,checkpoint=str(checkpoint) if not heuristic else heuristic,
         heuristic=heuristic,sha256=hashlib.sha256(Path('ai/airhockey/defense_baselines.py' if heuristic else 'ai/airhockey/expert_player.py' if str(checkpoint).startswith('expert') else checkpoint).read_bytes()).hexdigest(),
         seed=seed,immediate=immediate,metric='First on-goal attack blocked; no reward for control or counterattack',
         scenario=dict(speed_range_m_s=[speed_lo,speed_hi],bank_fraction=float(bank_fraction),
@@ -201,12 +218,13 @@ if __name__=='__main__':
     p.add_argument('--release-y-min',type=float,default=RELEASE_Y_RANGE[0],
                    help='Nearest release point to the robot goal, sim m (default 1.08; centre line 1.0)')
     p.add_argument('--release-y-max',type=float,default=RELEASE_Y_RANGE[1],help='Deepest release point, sim m (default 1.45)')
+    p.add_argument('--sim-profile',help="table-fidelity profile (airhockey/table_fidelity.py), e.g. table-20261029 or table-20261029:contact,lift; default none = the historical simulator")
     a=p.parse_args()
     try:
         options=dict(speed_range=(a.speed_min,a.speed_max),bank_fraction=a.bank_fraction,
                      release_y_range=(a.release_y_min,a.release_y_max))
         r=evaluate(a.checkpoint,count=a.trials,seed=a.seed,immediate=a.immediate,record_prefix=a.record_prefix,
-                   device=a.device,heuristic=a.heuristic,**options)
+                   device=a.device,heuristic=a.heuristic,sim_profile=a.sim_profile,**options)
     except ValueError as error:
         p.error(str(error))
     a.output.parent.mkdir(parents=True,exist_ok=True);a.output.write_text(json.dumps(r,indent=2))

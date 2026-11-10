@@ -99,6 +99,14 @@ Robotic air hockey table that uses reinforcement learning trained in simulation,
       single side-rail banks, release speed calibrated to the people's
       attacks), feints, soft blocks, reads the robot's mallet. Tiers
       `club` and `elite` (8-14 m/s shots). Never a runtime controller.
+      Tiers `table` and `table_plus` (2026-11-10) are the two people who
+      played teacher-calm v4 on 10-29 and 10-19: set shots at the line p50
+      7.0 / 7.7 m/s, banks mostly off the robot's LEFT rail, and three
+      things the older tiers do not do, each behind a tier field that is
+      None for them (their draws are unchanged): a planned rail
+      (`bank_x0_rail_fraction`), a VOLLEY -- a timed counter-swing at a
+      moving puck (`volley_probability`), and a serve from rest after a
+      goal (`serve_x_m`, `serve_env`).
     - `table_fidelity.py` - OPT-IN table-faithful sim for the neural player
       (2026-11-10), from the 13 table sessions of teacher-calm v4:
       `table_fidelity("table-20261029")` returns the `NeuralTrainingEnv`
@@ -114,7 +122,18 @@ Robotic air hockey table that uses reinforcement learning trained in simulation,
       latency 9-19 ms with late ticks (`enable_command_jitter`). A
       robot-bodied far side gets all of it; the human proxy keeps its
       mallet, never lifts and keeps its own puck view. All off by default.
-      Tests: `tests/test_table_fidelity.py`.
+      Tests: `tests/test_table_fidelity.py`. Evaluators take it as
+      `--sim-profile table-20261029` (`profile_options`; `name:contact,lift`
+      for some parts; absent = the historical sim and report) and report
+      `LiftTally`: lift events and goals conceded within 1 s of one.
+    - `playability.py` - The PHYSICAL-PLAYABILITY GATES (2026-11-10), one
+      function for a simulated game and for a table session's
+      `ticks.csv` + `replay.jsonl`: idle accel cap, share of ticks asking
+      > 40 / > 80 m/s^2, realised accel duty and rms, velocity reversals
+      within 100 ms, forward lunge and mallet speed on incoming shots
+      >= 5 m/s, back-edge dwell, the load model replayed at tick rate,
+      idle command change. Definitions and the known sim/table
+      differences are in its docstring.
     - `run_names.py` - The `<major>.<minor>-<description>-<stage>` scheme,
       enforced by both trainers (see "Run names").
     - `perception.py` - The sim's tracker model: 6-frame slope estimator,
@@ -157,6 +176,19 @@ Robotic air hockey table that uses reinforcement learning trained in simulation,
       share with a bootstrap CI, GF/GA per minute, concessions by route, and
       the panel's own play checked against the table sessions with people
       (`calibration.checks`). `--record <dir>/<name>` writes web replays.
+      `--tier tables` plays the `table` / `table_plus` people (checked
+      against `TABLE_TARGETS`); `--sim-profile table-20261029` plays in the
+      table-faithful sim and adds `lift` to the report. The same flag is on
+      `eval_fast_defense.py`, `eval_neural_player.py`,
+      `eval_slow_control.py`, `eval_neural_fringe.py` and the suite
+      `ai/recipes/expert-distill-20261018/suite.py`.
+    - `eval_playability.py` - A candidate vs a proxy tier under a profile,
+      scored by `airhockey/playability.py`; `--reference` puts a second
+      candidate beside it, `--from-table-log <stamp>...` (and
+      `--reference-table-log`) scores real sessions with the same function.
+      Read-only on logs. On v4 the sim under the profile reproduces the
+      table's cap > 80 share (0.16 vs 0.13), reversals (39 vs 31 /min) and
+      rms accel (26 vs 25 m/s^2); back-edge dwell does not transfer.
     - `eval_fast_defense.py` - First-attack defense benchmark; `--speed-min/
       --speed-max/--bank-fraction/--release-y-min/--release-y-max` re-tier
       it (defaults reproduce the original fixtures exactly)
@@ -203,6 +235,10 @@ Robotic air hockey table that uses reinforcement learning trained in simulation,
       and drawn caps, camera-only input, reaction delay when defending but
       not for a planned strike, paired panels, untouched old kinds, the
       fast-defense defaults
+    - `test_table_evaluation.py` - the table tiers (older tiers' draws
+      pinned, planned rail, volley timing, serve), `--sim-profile`
+      defaults and reporting, the lift tally, and the playability gates on
+      scripted traces, including sim-trace vs table-log parity
 - `shared/` - Geometry shared by every control path. **Canonical.**
   - `cdpr_geometry.h` - Table frame, motor anchors, spool, paddle attachment,
     and the cable-length model (tangency + wrap). Included by `fw/` and
@@ -509,6 +545,12 @@ python ai/bin/eval_policy.py 3.11-shot-ramp-selfplay --iterations 6   # a checkp
 # Against people (sim): club + elite human-proxy panels, ~40 s CPU per tier
 python ai/bin/eval_human_proxy.py runs/rail30-100-20261001-v1/agent.pt
 python ai/bin/eval_human_proxy.py expert --tier club --record ai/recordings/expert
+# The two people who played v4, in the table-faithful sim (lift events reported)
+python ai/bin/eval_human_proxy.py runs/teacher-calm-20261018-v4/agent.pt --tier tables --sim-profile table-20261029
+# Playability gates: candidate | reference | the same gates from real sessions
+python ai/bin/eval_playability.py runs/teacher-calm-20261018-v4/agent.pt \
+    --reference runs/rail30-100-20261001-v1/agent.pt --tier table --sim-profile table-20261029 \
+    --from-table-log 20261029-182715 20261029-183722 --reference-table-log 20261019-213539
 # Fast defense at human speeds (defaults = the original 10-18 m/s fixtures)
 python ai/bin/eval_fast_defense.py expert --output logs/fd-human.json \
     --speed-min 3.7 --speed-max 10 --bank-fraction 0.5 --release-y-min 1.0
