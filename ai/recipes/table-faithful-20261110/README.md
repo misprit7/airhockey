@@ -39,7 +39,7 @@ streams, same numbers (checked, see "Smoke test").
 | `--sim-profile SPEC` | none | Training envs use a table profile: `table-20261029`, or `table-20261029:contact,lift,sensing` for some parts. Contact, lift, dropout and latency parameters are drawn per env per episode by the env. |
 | `--sim-option KEY=JSON` | none | Replace one keyword of the profile, e.g. `mallet_lift='{"off_probability": 0.1}'`; `null` removes it. Repeatable. |
 | `--sim-profile-share F` | 1.0 | Share of `--workers` whose envs use the profile (evenly spread); the rest stay historical. Needs at least two workers when below 1. |
-| `--human-proxy-share F` | 0 | Share of each worker's full-game slots played against a person (`airhockey/human_proxy.py` on the free far body). Taken from the snapshot pool's share; fixed references (id % 4 == 0) and the teacher keep theirs. Scores appear as `game_scores.human_proxy`. |
+| `--human-proxy-share F` | 0 | Share of each worker's full-game slots played against a person (`airhockey/human_proxy.py` on the free far body). Taken from the snapshot pool's share; fixed references (id % 4 == 0) and the teacher keep theirs. Goals count as in any game; the far side's shaping income (shot requests, captures, returns), which a game against a copy takes from the learner, is not charged for a person. Scores appear as `game_scores.human_proxy`. |
 | `--human-proxy-tiers LIST` | `table` | Comma-separated tiers; one is drawn per game together with a new person (speed, reaction, aim, shot plan). Table tiers also serve after goals, as on the table. |
 | `--defense-strike-fraction F` | 0 | Share of defense-drill slots where a person strikes a puck lying on the far half, instead of the scripted launch. The robot sees the mallet swing through the camera. Drill limit 6 s. |
 | `--defense-strike-speed LO HI` | 4 9 | Planned release speeds of those strikes, m/s (clipped to the tier's own range). |
@@ -106,7 +106,30 @@ lowers the chance of conceding by more than 19/600 = 3.2% in a game, or
 19/1300 = 1.5% in a drill. A save that needs the cap keeps it; a lunge at a
 shot going wide, or one a slower move would have covered, does not.
 
-What the habit costs: in the smoke run v4's own play paid 1.2 + 2.4 + 2.5 =
+Measured, v4 playing its own mean action in this recipe's mix (400 envs in
+the table profile, 40 s; cost per finished defense drill at 20 / 5 / 40):
+
+| defense drill | n | motion cost, mean / p90 / max | drill reward, mean |
+|---|---|---|---|
+| scripted launch, saved with the mallet under 0.5 m/s at contact | 459 | 0.7 / 1.2 / 16 | +217 |
+| scripted launch, saved with the mallet moving | 3119 | 1.3 / 2.5 / 21 | +226 |
+| scripted launch, conceded | 173 | 1.9 / 3.6 / 10 | -1043 |
+| struck by a person, saved, mallet under 0.5 m/s | 153 | 5.3 / 11.8 / 21 | +190 |
+| struck by a person, saved, mallet moving | 1457 | 6.4 / 12.8 / 35 | +224 |
+| struck by a person, conceded | 37 | 8.8 / 11.8 / 15 | -1060 |
+
+The dearest save of 5,200 cost 35; no save came within a factor of 17 of a
+goal in a game. A block standing still at contact is the cheapest outcome
+in both drills. The person's drills cost more because the far-cap term
+runs while they walk to the puck (v4 holds a cap above 40 through 15% of
+that time): the term is by the puck's half, not its speed, so a cap raised
+the moment the person swings is charged until the puck crosses, at most
+the 8 of the table above.
+
+What the habit costs: the mean action pays 0.7 + 1.6 + 1.1 = 3.3 per
+env-second over all slots (4.9 in games against the pool, 7.1 against
+people, 2.4 in drills); with the exploration noise of a rollout it is the
+smoke run's figure: in the smoke run v4's own play paid 1.2 + 2.4 + 2.5 =
 6.1 per env-second (accel duty share 7.7%, 29 reversals a minute, cap > 40
 on 27% of far-half time), about 370 a minute, 0.6 of a goal. That is a firm
 pull but below the goal flow (4.5 goals a minute against the people). If
@@ -192,7 +215,7 @@ Full-size, 2048 envs on 16 workers, from v4 into a throwaway `_smoke-` run
 | 3 min, arm A | |
 |---|---|
 | updates | 13 (3.4M steps) |
-| steps / s | 18.5k (rollout 10-14 s, update 1.3-2.4 s) |
+| steps / s | 18.5k (rollout 10-14 s, update 1.3-2.4 s); 17-20k in the 2.5 min rerun after the review fixes |
 | same launcher, every option off, 1.5 min | 21.3k (rollout ~10 s) |
 | new metrics | all present and finite in all 13 updates |
 | first update | `value_warmup` false, teacher weight 0.2, actor lr 5.06e-6, 256 actor steps |
@@ -209,6 +232,22 @@ recipe, `--resume` v4, CPU, 2 updates) was run on the code before and after
 the change, once with 256 envs on 4 workers and once with 128 envs in one
 process. All 29 pre-change metrics of both updates and the SHA-256 of the
 final weights are identical; the only difference is the added `motion` key.
+
+## Review fixes (2026-11-10, after the first commit)
+
+- Games against a person charged the learner the far side's shaping income
+  as if a copy were playing: the person's strikes scored against a shot
+  request nobody gave them, their traps as robot captures. Measured with
+  v4: 16 per env-second either way, a net +7.9 a second to the learner
+  (0.8 of a goal a minute it did nothing for), more than the motion costs
+  in the same slots. People games now pay goals and the learner's own
+  terms only.
+- `--workers 1 --sim-profile` raised a duplicate-keyword error (the contact
+  part replaces `paddle_tangential_range`); fixed and in the trainer test.
+- `--human-proxy-tiers` is checked when the command is parsed.
+- Flags-off identity rerun on exported trees of the commit before and
+  after: one update, CPU, 256 envs on 4 workers and 128 in one process; the
+  weights, the optimiser moments and the 29 earlier metrics are identical.
 
 ## Not done
 

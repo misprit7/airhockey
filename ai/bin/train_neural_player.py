@@ -572,6 +572,11 @@ def main():
         p.error("--human-proxy-share must be in [0,1]")
     if args.human_proxy_share and (args.stage < 3 or (args.n_envs // args.workers) % 4):
         p.error("--human-proxy-share needs full games (stage >= 3) and a multiple of four environments per worker")
+    if args.human_proxy_share or args.defense_strike_fraction:
+        from airhockey.human_proxy import TIERS
+        tiers = [tier for tier in args.human_proxy_tiers.split(",") if tier]
+        if not tiers or set(tiers) - set(TIERS):
+            p.error(f"--human-proxy-tiers takes a comma-separated list from {sorted(TIERS)}")
     torch.set_num_threads(args.torch_threads)
     device = torch.device("cuda" if torch.cuda.is_available() else "cpu") if args.device == "auto" else torch.device(args.device)
     if device.type == "cuda" and not torch.cuda.is_available():
@@ -687,7 +692,8 @@ def main():
             args.n_envs, args.workers, auto_reset=True, **options,
             **(dict(worker_options=[fidelity if chosen else {} for chosen in with_profile]) if fidelity else {}))
     else:
-        env = NeuralTrainingEnv(args.n_envs, **options, **fidelity)
+        # The profile replaces keywords the options already carry (contact).
+        env = NeuralTrainingEnv(args.n_envs, **{**options, **fidelity})
     ACTIVE_ENV = env
     own_history = PhysicalHistory(max(args.history, teacher.history if teacher else 1))
     opponent_history = PhysicalHistory(max([args.history, *[r.history for r in references],

@@ -166,6 +166,38 @@ def test_a_game_ending_brings_a_new_person_and_a_goal_a_serve():
     assert env.base._opp_policy_id[slot] == PROXY
 
 
+def test_a_persons_play_is_not_scored_as_a_robots():
+    """The far side's shaping income is taken from the learner in games
+    against a copy, never in games against a person; goals count in both."""
+    def rewards(income, goal=None):
+        env = NeuralTrainingEnv(24, **GAMES, human_proxy_share=0.5, human_proxy_tiers=("table", "club"),
+                                defense_strike_fraction=0.5)
+        env.reset(seed=4)
+        env.opponent_obs()
+        step = env.base.step
+
+        def stepped(action):
+            out = step(action)
+            env.reward_events[1] += income      # what a far-side shot or capture would have paid
+            if goal is not None:
+                env.engine.score_opponent[goal] += 1
+            return out
+        env.base.step = stepped
+        env.set_opponent_action(np.zeros((24, 6)))
+        return env, env.step(np.zeros((24, 6), np.float32))[1].astype(np.float64)
+
+    env, plain = rewards(0.0)
+    _, charged = rewards(7.0)
+    people, games = env._people_game, env.kind == 3
+    assert people.sum() == 4 and (games & ~people).sum() == 4 and env.strike_drill.any()
+    assert np.allclose((plain - charged)[games & ~people], 7.0, atol=1e-4)
+    assert np.array_equal(plain[people], charged[people])
+    assert np.array_equal(plain[~games], charged[~games])
+    slot = int(np.flatnonzero(people)[0])
+    _, conceded = rewards(7.0, goal=slot)
+    assert plain[slot] - conceded[slot] > 0.9 * env.game_goal_weight
+
+
 def test_strike_drills_are_released_by_a_person_in_the_band():
     env = NeuralTrainingEnv(
         40, **{**GAMES, "game_fraction": 0.0}, defense_strike_fraction=0.5, defense_strike_speed=(4.0, 9.0),
@@ -244,6 +276,37 @@ def test_motion_is_counted_always_and_charged_only_at_a_weight():
         cost = (weights.get("accel_duty_weight", 0) * counted[..., 1] + weights.get("reversal_weight", 0) * counted[..., 2]
                 + weights.get("far_cap_weight", 0) * counted[..., 5])
         assert cost.sum() > 0.5 and np.allclose(free - charged, cost, atol=1e-4)
+
+
+def test_motion_is_the_learners_own_body_never_the_far_sides():
+    """A far side thrashing at the full cap while the learner stands still costs nothing."""
+    def run(**weights):
+        env = NeuralTrainingEnv(8, stage=5, seed=3, accel=100.0, games=True, continuous_rallies=True,
+                                randomize=False, **weights)
+        env.reset(seed=3)
+        rng = np.random.default_rng(1)
+        rewards, motions, far = [], [], []
+        hold = np.zeros((8, 6), np.float32)
+        hold[:, 4], hold[:, 5] = -1.0, 1.0     # one fixed arrival point at the full cap
+        for t in range(60):
+            e, b = env.engine, env.base
+            e.puck_x[:], e.puck_y[:], e.puck_vx[:], e.puck_vy[:] = 0.06, 1.0, 0.0, 0.0
+            old = np.column_stack((b._opp_dyn["vx"], b._opp_dyn["vy"]))
+            thrash = rng.choice([-0.9, 0.9], (8, 6))
+            thrash[:, 5] = 1.0
+            env.set_opponent_action(thrash)
+            _, reward, _, _, info = env.step(hold)
+            far.append(np.linalg.norm(np.column_stack((b._opp_dyn["vx"], b._opp_dyn["vy"])) - old, axis=1) / 0.02)
+            rewards.append(reward.astype(np.float64))
+            motions.append(info["motion"].astype(np.float64))
+        return np.array(rewards), np.array(motions), np.array(far)
+
+    free, motion, far = run()
+    charged, again, _ = run(accel_duty_weight=20.0, reversal_weight=5.0)
+    settled = slice(20, None)
+    assert (far[settled] > 60).mean() > 0.2                         # the far body is over the threshold
+    assert np.array_equal(motion, again) and not motion[settled][..., :3].any()
+    assert np.allclose(free[settled], charged[settled], atol=1e-5)
 
 
 def test_motion_thresholds_and_the_own_half():
@@ -464,6 +527,17 @@ def test_trainer_continues_a_run_with_every_table_option(tmp_path, monkeypatch):
     assert meta["human_proxy"]["game_slots"] == 4 and meta["human_proxy"]["tiers"] == [
         "table", "table_plus", "club", "elite"]
     assert meta["teacher"]["opponent_slots"] == 4
+
+    # One process takes the whole profile, on top of the options it replaces.
+    single = train(
+        "--run-name", "_single", "--steps", "128", "--resume", str(runs / "_first" / "agent.pt"),
+        "--workers", "1", "--n-envs", "16", "--sim-profile", "table-20261029",
+        "--human-proxy-share", ".25", "--defense-strike-fraction", ".5", "--accel-duty-weight", "20")
+    assert len(single) == 1 and all(np.isfinite(v) for v in single[0]["lift_events_per_minute"].values())
+    assert json.loads((runs / "_single" / "run.json").read_text())["sim_profile"]["workers"] == [True]
+    with pytest.raises(SystemExit):
+        train("--run-name", "_tiers", "--steps", "128", "--human-proxy-share", ".25", "--human-proxy-tiers", "table,nobody")
+    assert not (runs / "_tiers").exists()
 
 
 def test_recipe_is_v4s_command_continued_with_the_table_options():

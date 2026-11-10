@@ -1753,7 +1753,14 @@ class NeuralTrainingEnv(ArrivalEnv):
         # outcomes are competitive in games; real goals remain the main prize.
         reward = np.where(game, self.game_goal_weight, self.skill_goal_weight) * gf
         reward -= np.where(game, self.game_goal_weight, self.skill_concede_weight) * ga
-        reward = reward + self.reward_events[0] - game * self.reward_events[1] - 0.005
+        far_income = game * self.reward_events[1]
+        if self.people is not None:
+            # The far side's shaping income is a robot's: shot requests, the
+            # robot's reach, its captures. A person has none of them, and
+            # their strikes judged against a request they never saw moved
+            # the learner's reward by 16 a second either way. Goals stand.
+            far_income[self._people_game & (b._opp_policy_id == _OPP_POLICY_MAP["human_proxy"])] = 0
+        reward = reward + self.reward_events[0] - far_income - 0.005
         reward -= 0.5 * passive
         reward += 0.5 * info["penalty"]
         reward += (25 - self.turnover_weight) * (self.turnovers[0] - previous_turnovers)
