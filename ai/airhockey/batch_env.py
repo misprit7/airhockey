@@ -704,7 +704,9 @@ class BatchAirHockeyEnv:
         log-uniformly per episode, that a command misses its tick and takes
         effect at the next one (0.1% of ticks on a clean day, 2.8% on a bad
         one). A robot-bodied far side gets the same delay and its own rolls.
-        Call before reset().
+        A delay takes effect at the nearest physics substep. Without
+        domain_randomize nothing is drawn: the delay stays command_delay_s
+        and the late chance the band's geometric mean. Call before reset().
         """
         if delay_range is not None:
             lo, hi = (float(v) for v in delay_range)
@@ -763,9 +765,11 @@ class BatchAirHockeyEnv:
         if n == 0:
             return
         rng = self._rng
-        if self._command_delay_range is not None:
+        # Without domain randomisation the latency stays at its nominal:
+        # command_delay_s, and the geometric mean of the late-tick band.
+        if self._command_delay_range is not None and self.domain_randomize:
             self._command_delay_env[mask] = rng.uniform(*self._command_delay_range, size=n)
-        if self._late_command_range is not None:
+        if self._late_command_range is not None and self.domain_randomize:
             lo, hi = np.log(self._late_command_range)
             self._late_command_p[mask] = np.exp(rng.uniform(lo, hi, size=n))
         if self._table_sensing is not None:
@@ -1161,8 +1165,12 @@ class BatchAirHockeyEnv:
             lifts = e.lift_events.copy()
         delay_agent = delay_opp = None
         if self._command_delay_env is not None or self._late_command_p is not None:
+            # A drawn delay takes effect at the NEAREST substep boundary;
+            # the `sub * dt < delay` test below rounds up, which is exact
+            # for command_delay_s but put the drawn band's mean 1.25 ms late.
             delay_agent = (np.full(self.n_envs, self.command_delay_s)
-                           if self._command_delay_env is None else self._command_delay_env)
+                           if self._command_delay_env is None
+                           else self._command_delay_env - 0.5 * self.sub_dt)
             delay_opp = delay_agent
             if self._late_command_p is not None:
                 late = self._rng.random((2, self.n_envs)) < self._late_command_p

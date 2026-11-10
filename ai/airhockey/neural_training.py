@@ -1269,6 +1269,7 @@ class NeuralTrainingEnv(ArrivalEnv):
                         getattr(b, "_prev_" + prefix + "_" + axis)[practice_ids] = value
                     if b._cam_active:
                         b._cam_ring[:, practice_ids, 4 + col] = value
+                b._sync_far_view(practice_ids)
         if self.practice_selfplay_fraction:
             practice_ids = ids[(ids >= round(self.n_envs * self.game_fraction)) & ~self.defense_windup[ids]]
             active = practice_ids[

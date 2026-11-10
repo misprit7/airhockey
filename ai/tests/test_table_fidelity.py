@@ -182,6 +182,62 @@ def test_no_lift_at_rest_off_speed_or_grazing(case):
     assert (e.puck_vy > 0).all() or case.get("offset")      # returned up the table
 
 
+def test_a_mallet_catching_its_own_shot_does_not_lift():
+    """The model is of pucks travelling AT the mallet. A mallet accelerating
+    through a puck that is leaving it meets every other condition (closing,
+    central, in the speed band, a_n along the puck's travel) and must not
+    pass over it."""
+    e = BatchPhysicsEngine(8)
+    e.enable_mallet_lift(nominal=(1.0, 10.0, 1.0, 1.0, 0.0, 0.0))
+    e.reset(np.random.default_rng(0))
+    n = e.n_envs
+    e.puck_x[:], e.puck_y[:] = 0.5, 0.70
+    e.puck_vx[:], e.puck_vy[:] = 0.0, 6.5                 # up the table, away
+    y, v = 0.70 - 0.12, 7.0
+    e.paddle_agent_x[:], e.paddle_agent_y[:] = 0.5, y
+    e.paddle_opp_x[:], e.paddle_opp_y[:] = 0.05, 1.9
+    touched = np.zeros(n, dtype=bool)
+    for _ in range(40):
+        v += 100.0 * DT
+        y += v * DT
+        e.update_paddle_agent(np.full(n, 0.5), np.full(n, y), DT)
+        e.update_paddle_opponent(np.full(n, 0.05), np.full(n, 1.9), DT)
+        before = e.puck_vy.copy()
+        e.step(DT)
+        touched |= e.puck_vy > before + 0.5
+    assert touched.all()                                   # it did catch the puck
+    assert e.lift_events.sum() == 0 and not e.lift_through.any()
+    assert (e.puck_y > e.paddle_agent_y).all()             # and the puck is still ahead
+
+
+def test_a_lifted_puck_gains_nothing_and_is_counted_once():
+    e = BatchPhysicsEngine(4000)
+    e.enable_mallet_lift()
+    e.reset(np.random.default_rng(3))
+    e.score_opponent[:] = 0
+    fastest = np.zeros(e.n_envs)
+    n = e.n_envs
+    e.puck_x[:], e.puck_y[:], e.puck_vx[:], e.puck_vy[:] = 0.5, 0.70, 0.0, -7.0
+    e.paddle_agent_x[:], e.paddle_agent_y[:] = 0.5, 0.38
+    e.paddle_opp_x[:], e.paddle_opp_y[:] = 0.05, 1.9
+    y, v = 0.38, 4.0
+    for _ in range(120):
+        v = max(v - 90.0 * DT, 0.0)
+        y += v * DT
+        e.update_paddle_agent(np.full(n, 0.5), np.full(n, y), DT)
+        e.update_paddle_opponent(np.full(n, 0.05), np.full(n, 1.9), DT)
+        e.step(DT)
+        live = (e.lift_events[0] > 0) & (e.score_opponent == 0)      # not yet re-served
+        fastest = np.maximum(fastest, np.where(live, np.hypot(e.puck_vx, e.puck_vy), 0.0))
+    lifted = e.lift_events[0] > 0
+    # Pooled fit at 90 m/s^2 of braking: 0.03 + 0.41 * (90 - 30) / 70 = 0.38.
+    assert 0.35 < lifted.mean() < 0.42
+    assert e.lift_events.max() == 1 and not e.lift_through.any()
+    assert fastest.max() < 0.95 * 7.0
+    # Under the mallet and out the far side: every one of these is a goal.
+    assert (e.score_opponent[lifted] == 1).all() and (e.score_opponent[~lifted] == 0).all()
+
+
 def test_only_a_robot_bodied_far_side_lifts():
     e = BatchPhysicsEngine(8)
     e.enable_mallet_lift(**CERTAIN)
@@ -340,6 +396,40 @@ def test_command_delay_is_drawn_per_episode_and_applied_per_env():
     assert np.allclose(dyn["command_x"], np.where(0.010 < delay, old, new))
     with pytest.raises(ValueError):
         env.enable_command_jitter(delay_range=(0.01, 0.02))
+
+
+def test_a_drawn_delay_lands_on_the_nearest_substep():
+    env = _robot_env(6)
+    env.enable_command_jitter(delay_range=(0.009, 0.019))
+    env.reset(seed=4)
+    env._command_delay_env[:] = [0.009, 0.011, 0.0115, 0.0135, 0.0185, 0.019]
+    deferred = np.zeros(6)
+    update = env._update_dynamics
+
+    def counted(dyn, *args, defer_command=False, **kwargs):
+        if dyn is env._agent_dyn:
+            deferred[:] += defer_command
+        return update(dyn, *args, defer_command=defer_command, **kwargs)
+
+    env._update_dynamics = counted
+    env.step(np.zeros((6, 3)))
+    assert np.allclose(deferred * env.sub_dt, [0.010, 0.010, 0.0125, 0.0125, 0.0175, 0.020])
+    # The assumed delay is on a boundary already, and lands where it did.
+    env._command_delay_env[:] = env.command_delay_s
+    deferred[:] = 0
+    env.step(np.zeros((6, 3)))
+    assert np.allclose(deferred * env.sub_dt, 0.015)
+
+
+def test_latency_stays_nominal_without_domain_randomisation():
+    env = BatchAirHockeyEnv(64, action_mode="profile_a", agent_dynamics="profile",
+                            opponent_dynamics="profile", opponent_body="robot",
+                            opponent_policy="external", **sensing_kwargs(True))
+    env.command_delay_s = 0.015
+    env.enable_command_jitter(delay_range=(0.009, 0.019), late_probability=(0.001, 0.028))
+    env.reset(seed=4)
+    assert (env._command_delay_env == 0.015).all()
+    assert np.allclose(env._late_command_p, np.sqrt(0.001 * 0.028))
 
 
 def test_a_late_command_takes_effect_a_tick_later():

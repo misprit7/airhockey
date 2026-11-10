@@ -414,10 +414,14 @@ class BatchPhysicsEngine:
             a_n = accel[:, 0] * ux + accel[:, 1] * uy
             along = pad_vx[i] * ux + pad_vy[i] * uy
             braking = np.clip((a_n - a0[i]) / (model.a_full - a0[i]), 0, 1)
-            # Central and closing, in the mallet's frame.
+            # Central and closing, in the mallet's frame, on a puck that is
+            # travelling AT the mallet: the fit is of incoming pucks, and
+            # the edge that lifts is the one facing along -d. A mallet that
+            # catches up with its own shot accelerates with that edge down.
             wx, wy = vx - pad_vx[i], vy - pad_vy[i]
             miss = np.abs(dx[i] * wy - dy[i] * wx) / np.maximum(np.hypot(wx, wy), 1e-9)
-            central = (miss < model.central_m) & (dx[i] * wx + dy[i] * wy < 0)
+            central = ((miss < model.central_m) & (dx[i] * wx + dy[i] * wy < 0)
+                       & (dx[i] * ux + dy[i] * uy < 0))
             p = (gate * np.where(along <= model.retreat_m_s, 1.0, m_ret[i])
                  * (b0[i] + (p100[i] - b0[i]) * braking) * central)
             rolled = p > 0
