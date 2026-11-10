@@ -252,7 +252,7 @@ def test_proxy_benchmark_under_the_profile_reports_it_and_the_table_checks():
     assert result["lift"]["enabled"] and result["lift"]["goals_against"] == result["goals_against"]
     assert result["lift"]["goals_conceded_through_lift"] <= result["goals_against"]
     c = result["calibration"]
-    assert set(c["mode_fraction"]) == {"ready", "approach", "hold", "strike", "volley"}
+    assert set(c["mode_fraction"]) == {"ready", "approach", "hold", "strike", "volley", "cushion"}
     targets = {k for k, v in hp.TABLE_TARGETS["table"].items() if isinstance(v, list)}
     assert targets <= set(c["checks"]) and targets <= set(c["table"])
     assert c["table"]["serves"] == result["goals_for"] + result["goals_against"]

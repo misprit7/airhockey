@@ -7,11 +7,17 @@ a shot only a reaction time late while a planned strike waits for nothing, and
 is the same panel of people for every candidate on a given seed. Also pins
 that adding it changed nothing for the existing far-side kinds and that the
 fast-defense benchmark's new flags default to its old fixtures.
+
+The table tiers' CUSHION is pinned here too: it stops a puck it saw coming
+only a reaction time late, gives with a shot it read from the puck's
+departure but still goes across no sooner than it reacts, and in the engine
+leaves the puck slow enough for a set shot inside its drawn caps.
 """
 from __future__ import annotations
 
 import inspect
 import sys
+from dataclasses import replace
 from pathlib import Path
 
 import numpy as np
@@ -19,8 +25,8 @@ import pytest
 
 from airhockey.batch_env import (_FREE_BODY_KINDS, _OPP_POLICY_MAP, OPP_HUMAN_PROXY,
                                  OPP_SNIPER, OPP_WEAK_GOALIE, BatchAirHockeyEnv)
-from airhockey.human_proxy import (APPROACH, CLUB, ELITE, READY, STRIKE, HumanProxy,
-                                   command_env, proxy_view, release_speeds)
+from airhockey.human_proxy import (APPROACH, CLUB, CUSHION, ELITE, READY, STRIKE, TABLE, TABLE_PLUS,
+                                   HumanProxy, command_env, proxy_view, release_speeds)
 from airhockey.neural_possession import goal_shot_velocity
 from airhockey.neural_training import NeuralTrainingEnv
 from airhockey.physics import TableConfig
@@ -41,10 +47,10 @@ def _game(n=8, seed=3, tier="club"):
     return env, proxy
 
 
-def _view(n, puck, vel=(0.0, 0.0), own=(0.5, 0.15), rival=(0.5, 1.8)):
+def _view(n, puck, vel=(0.0, 0.0), own=(0.5, 0.15), rival=(0.5, 1.8), rival_vel=(0.0, 0.0)):
     view = np.zeros((n, 12))
     view[:, 0:2], view[:, 2:4] = puck, vel
-    view[:, 4:6], view[:, 8:10] = own, rival
+    view[:, 4:6], view[:, 8:10], view[:, 10:12] = own, rival, rival_vel
     return view
 
 
@@ -217,6 +223,153 @@ def test_fast_defense_defaults_are_the_old_fixtures():
     assert (half == 0).sum() == 50 and (half == -1).sum() == 25 and (half == 1).sum() == 25
     with pytest.raises(ValueError):
         fd.attack_routes(np.random.default_rng(1), 10, 1.5)
+
+
+# ------------------------------------------------------------- cushion
+_CATCHER = replace(TABLE, volley_probability=((np.inf, 0.0),), reaction_s=(0.15, 0.15),
+                   defense_noise_deg=(0.0, 0.0))
+
+
+def test_only_the_table_tiers_cushion():
+    for tier in (CLUB, ELITE):
+        assert tier.cushion_probability is None and tier.brace_probability is None and tier.chase_s is None
+        p = HumanProxy(2, tier, seed=1)
+        assert not p.cushioning and p.mode_names == ("ready", "approach", "hold", "strike")
+    for tier in (TABLE, TABLE_PLUS):
+        p = HumanProxy(2, tier, seed=1)
+        assert p.cushioning and p.mode_names[CUSHION] == "cushion"
+        # Tuned to how often the people set up a 6-8 m/s arrival, not to stop them all.
+        assert 0 < max(chance for _, chance in tier.brace_probability) < 1
+    with pytest.raises(ValueError):
+        HumanProxy(2, replace(CLUB, brace_probability=((np.inf, 1.0),)), seed=1)
+
+
+def test_cushion_waits_in_the_way_and_gives_as_the_puck_arrives():
+    tier = replace(_CATCHER, brace_probability=None, cushion_contact_y_m=(0.34, 0.34))
+    p = HumanProxy(3, tier, seed=5)
+    rest = _view(3, puck=(0.45, 1.75))
+    p.reset(rest)
+    for _ in range(12):
+        p.act(rest)
+    speed, rows = 3.0, []
+    for k in range(26):
+        y = 1.75 - speed * 0.02 * (k + 1)
+        out = p.act(_view(3, puck=(0.45, y), vel=(0.0, -speed), own=p.last_target.copy()))
+        rows.append((int(p.mode[0]), y, p.last_target[0].copy(), out[2][0], bool(p.cushion_give[0])))
+    modes = [r[0] for r in rows]
+    first = modes.index(CUSHION)
+    # Seen a reaction time late, and decided on the second tick it is seen coming.
+    assert abs(first * 0.02 - (0.15 + 0.02)) <= 0.021 and (p.cushion_attempts == 1).all()
+    give = [r[4] for r in rows].index(True)
+    assert give > first
+    # Until the give it stands on the puck's path, one contact distance behind the line.
+    np.testing.assert_allclose(rows[give - 1][2], [0.45, 0.34 - p.contact], atol=1e-6)
+    # The give: back along the path at the speed that leaves the puck dead, as it arrives.
+    matched = speed * p.ASSUMED_RESTITUTION / (1 + p.ASSUMED_RESTITUTION)
+    assert rows[give][2][1] < rows[give - 1][2][1] - 0.1 and rows[give][2][0] == pytest.approx(0.45)
+    assert rows[give][3] == pytest.approx(matched, rel=0.05) and rows[give][3] <= p.max_speed[0]
+    remaining = (rows[give][1] - 0.34) / speed
+    assert 0.0 < remaining < matched / p.max_accel[0] + 0.06
+
+
+def _read_shot(read, ticks=12):
+    """The robot's mallet closes on a still puck (or not), which then leaves fast and wide; per-tick records."""
+    tier = replace(_CATCHER, brace_probability=((np.inf, 1.0),))
+    p = HumanProxy(2, tier, seed=5)
+    p.reset(_view(2, puck=(0.5, 1.6), rival=(0.5, 1.95)))
+    for _ in range(30):
+        p.act(_view(2, puck=(0.5, 1.6), own=p.last_target.copy(), rival=(0.5, 1.95)))
+    for k in range(5):
+        p.act(_view(2, puck=(0.5, 1.6), own=p.last_target.copy(), rival=(0.5, 1.95 - 0.04 * (k + 1)),
+                    rival_vel=(0.0, -2.0) if read else (0.0, 0.0)))
+    stance = p.last_target.copy()
+    rows = []
+    for k in range(ticks):
+        puck = (0.5 - 1.5 * 0.02 * (k + 1), 1.6 - 6.8 * 0.02 * (k + 1))
+        p.act(_view(2, puck=puck, vel=(-1.5, -6.8), own=p.last_target.copy(), rival=(0.5, 1.75)))
+        rows.append((int(p.mode[0]), p.last_target[0].copy(), bool(p.cushion_give[0])))
+    return p, stance, rows
+
+
+def test_brace_gives_with_a_read_shot_but_goes_across_no_sooner_than_it_reacts():
+    p, stance, rows = _read_shot(read=True)
+    # While the robot has the puck it stands out from its goal for the room to give.
+    assert stance[0, 1] == pytest.approx(max(p.guard_depth[0], p.brace_depth[0]))
+    assert TABLE.brace_depth_m[0] <= p.brace_depth[0] <= TABLE.brace_depth_m[1]
+    modes = [r[0] for r in rows]
+    # Braced on the second tick the puck is seen leaving: before a reaction time has passed.
+    assert modes.index(CUSHION) == 1 and p.cushion_braced[0] and (p.braces == 1).all()
+    give = [r[2] for r in rows].index(True)
+    assert give * 0.02 < 0.15 and rows[give][1][1] < stance[0, 1] - 0.1
+    # It was struck wide of the read: the mallet does not follow it sideways until it has reacted.
+    reacted = int(0.15 / 0.02)         # the view from a reaction ago first shows it moving on this tick
+    for mode, target, _ in rows[:reacted]:
+        assert target[0] == pytest.approx(stance[0, 0], abs=1e-9)
+    assert rows[-1][1][0] < stance[0, 0] - 0.02
+    # Not read (the robot's mallet never closed on the puck): nothing before the reaction.
+    q, stance, rows = _read_shot(read=False)
+    assert CUSHION not in [r[0] for r in rows[:reacted]] and (q.braces == 0).all()
+
+
+def _feed(tier, n=8, seed=3, ticks=110):
+    """Pucks sent at the person at 1.8-3.2 m/s in the engine; the proxy and its body's peak speed over cap."""
+    env = NeuralTrainingEnv(n, stage=3, seed=seed, games=True, report_sensing=True, continuous_rallies=True,
+                            shot_conditioned=True)
+    env.reset(seed=seed, opponent="human_proxy")
+    proxy = HumanProxy(n, tier, seed=seed + 1, config=env.cfg)
+    command_env(env, proxy, reset=True)
+    e, free = env.engine, env.base._opp_dyn_free
+    over = 0.0
+    for k in range(ticks):
+        if k < 25:
+            e.puck_x[:], e.puck_y[:] = np.linspace(0.3, 0.7, n), 0.95
+            e.puck_vx[:], e.puck_vy[:] = 0.0, 0.0
+        if k == 25:
+            e.puck_vy[:] = np.linspace(1.8, 3.2, n)
+        command_env(env, proxy)
+        env.step(np.zeros((n, 6), np.float32))
+        over = max(over, float((np.hypot(free["vx"], free["vy"]) / proxy.max_speed).max()))
+    return proxy, over
+
+
+def test_cushion_stops_a_moving_puck_in_the_engine_for_a_set_shot():
+    catcher, over = _feed(_CATCHER)
+    assert catcher.cushion_attempts.sum() >= 6 and catcher.cushions.sum() >= 4
+    assert catcher.mode_ticks[:, CUSHION].sum() > 0 and over <= 1 + 1e-6
+    # The same people without it block or leave these pucks: fewer are set up and struck in the time.
+    blocker, _ = _feed(replace(_CATCHER, cushion_probability=None, brace_probability=None, chase_s=None))
+    assert not blocker.cushioning and catcher.strikes.sum() >= 3 > blocker.strikes.sum()
+
+
+def test_a_slow_puck_drifting_out_is_struck_without_setting_up():
+    views = dict(puck=(0.5, 0.62), vel=(0.0, 1.0), own=(0.5, 0.40))
+    modes = {}
+    for name, tier in (("chase", replace(TABLE, feint_probability=1.0, feint_s=(2.0, 2.0))),
+                       ("patient", replace(TABLE, feint_probability=1.0, feint_s=(2.0, 2.0), chase_s=None))):
+        p = HumanProxy(1, tier, seed=2)
+        p.reset(_view(1, **views))
+        modes[name] = []
+        for _ in range(12):
+            p.act(_view(1, **views))
+            modes[name].append(int(p.mode[0]))
+    # 0.37 m from the line at 1 m/s: it is gone inside chase_s, and the mallet is already behind it.
+    assert STRIKE in modes["chase"] and STRIKE not in modes["patient"]
+
+
+def test_set_share_by_arrival_counts_what_the_person_sent_back():
+    sys.path.insert(0, str(BIN))
+    import eval_human_proxy as hp
+    crossings = ([dict(speed=1.0, outcome="returned", returned_by="strike")] * 3
+                 + [dict(speed=1.5, outcome="returned", returned_by="cushion"),
+                    dict(speed=1.2, outcome="returned", returned_by=None),       # off the end rail: not counted
+                    dict(speed=1.9, outcome="goal"),
+                    dict(speed=7.0, outcome="returned", returned_by="ready"),
+                    dict(speed=7.5, outcome="returned", returned_by="strike")])
+    table = hp.set_share_by_arrival(crossings, minutes=2.0)
+    assert table["0-2"] == dict(arrivals_per_min=3.0, returned_per_min=2.0, set_share=0.75)
+    assert table["6-8"]["set_share"] == 0.5 and table["4-6"]["set_share"] is None
+    for tier in ("table", "table_plus"):
+        assert len(hp.TABLE_TARGETS[tier]["set_share_by_arrival_speed"]) == len(hp.ROBOT_SHOT_BINS)
 
 
 class _StillRobot:

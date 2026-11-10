@@ -106,10 +106,16 @@ TARGETS = dict(
 # its VOLLEY; a "strike" is any crossing the person sent back, a puck off a
 # block included. Each entry is [measured, low, high]: the range a panel of
 # this tier is checked against (calibration.checks), wide where the count is
-# small. The other entries are for reading beside calibration.table. The
-# panel is known to sit outside moving_strike_share: it stops a moving puck
-# about half as often as the people did (robot_shot_outcomes, "controlled"),
-# so it takes fewer set shots a minute and returns more off a block.
+# small. The other entries are for reading beside calibration.table.
+# set_share_by_arrival_speed is, of the crossings toward the person that they
+# sent back (serves and end-rail rebounds apart), the share sent back with a set
+# shot, by the speed the puck arrived at (ROBOT_SHOT_BINS; n = 71/44/51/40/22
+# and, over all three 2026-10-19 sessions, 28/21/25/31/7): what the tiers'
+# cushion and brace probabilities are tuned to. Set shots per minute still
+# come out short of the people's under --sim-profile, because the sim's v4
+# sends over fewer slow pucks than the table's did (returned arrivals under
+# 2 m/s: 5.1 a minute on 2026-10-29, 2-3.5 here) and those are the ones a
+# person nearly always sets up.
 ROBOT_SHOT_OUTCOMES = {      # both people pooled, n = 471, by the robot shot's line speed
     '0-2': dict(first_touch_return=0.12, controlled=0.87, goal=0.0, rebound=0.0),
     '2-4': dict(first_touch_return=0.56, controlled=0.31, goal=0.05, rebound=0.04),
@@ -132,6 +138,7 @@ TABLE_TARGETS = dict(
         serve_share_of_set_shots=0.21, serve_to_strike_s=dict(p10=0.62, p50=1.77, p90=4.84),
         crossing_line_speed_m_s=dict(p10=1.99, p50=5.43, p90=8.66, max=10.78),
         robot_shot_outcomes_pooled=ROBOT_SHOT_OUTCOMES, active_counter_by_robot_shot_speed=(0.15, 0.30, 0.05, 0.0, 0.0),
+        set_share_by_arrival_speed=(0.83, 0.34, 0.24, 0.17, 0.18),
         conceded='0 of 56 serves; 1/71 straight and 1/81 banked set shots, 3/73 moving strikes (>= 3 m/s)'),
     table_plus=dict(
         sessions='2026-10-19 (20261019-214911, -220855; set shots also -213539)',
@@ -147,6 +154,7 @@ TABLE_TARGETS = dict(
         serve_share_of_set_shots=0.35, serve_to_strike_s=dict(p10=0.84, p50=1.50, p90=2.41),
         crossing_line_speed_m_s=dict(p10=2.76, p50=6.23, p90=9.23, max=11.13),
         robot_shot_outcomes_pooled=ROBOT_SHOT_OUTCOMES, active_counter_by_robot_shot_speed=(0.15, 0.50, 0.30, 0.18, 0.05),
+        set_share_by_arrival_speed=(1.0, 0.24, 0.24, 0.16, 0.14),
         conceded='5/34 straight set shots, 0/7 banked, 0/25 moving (>= 3 m/s); 5/26 at 6-8 m/s, 0/19 at 8+'),
 )
 SPEED_BINS = [(0, 3), (3, 4.5), (4.5, 6), (6, 8), (8, 100)]
@@ -492,7 +500,19 @@ def robot_shot_outcomes(crossings):
     return table
 
 
-def table_calibration(person, attacks, robot_crossings, mallet, minutes, proxy):
+def set_share_by_arrival(crossings, minutes):
+    """Of the crossings toward the person that they sent back, the share sent back with a set shot, by arrival speed."""
+    table = {}
+    for lo, hi in ROBOT_SHOT_BINS:
+        arrived = [c for c in crossings if lo <= c['speed'] < hi]
+        sent = [c for c in arrived if c['outcome'] == 'returned' and c['returned_by'] is not None]
+        table[f'{lo:g}-{hi:g}' if hi < 100 else f'{lo:g}+'] = dict(
+            arrivals_per_min=round(len(arrived) / minutes, 3), returned_per_min=round(len(sent) / minutes, 3),
+            set_share=round(sum(c['returned_by'] == 'strike' for c in sent) / len(sent), 3) if sent else None)
+    return table
+
+
+def table_calibration(person, attacks, robot_crossings, arrivals, mallet, minutes, proxy):
     """The panel's play in the terms of TABLE_TARGETS (the table tiers only)."""
     def share(flags):
         return float(np.mean(flags)) if len(flags) else None
@@ -509,6 +529,9 @@ def table_calibration(person, attacks, robot_crossings, mallet, minutes, proxy):
     return dict(
         set_shots=len(sets), active_counters=len(volleys), serves=int(proxy.serves.sum()),
         volley_attempts=int(proxy.volley_attempts.sum()),
+        # Tries to stop a moving puck, those timed from a read, and the ones that left it slow.
+        **{name: int(getattr(proxy, name).sum()) if proxy.cushioning else 0
+           for name in ('cushion_attempts', 'braces', 'cushions')},
         set_shots_per_min=len(sets) / minutes,
         # Every crossing the person sent back, as the table analysis counts
         # strikes: set shots, counter-swings and pucks that came off a block.
@@ -534,6 +557,7 @@ def table_calibration(person, attacks, robot_crossings, mallet, minutes, proxy):
         active_counter_release_m_s=percentiles([s['speed'] for s in volleys]),
         active_counter_on_target=share([s['aimed'] for s in volleys]),
         robot_shot_outcomes=robot_shot_outcomes(robot_crossings),
+        set_share_by_arrival_speed=set_share_by_arrival(arrivals, minutes),
         volley_crossing_conceded_rate=share([c['outcome'] == 'goal' for c in played if c['person_mode'] == 'volley']),
         set_shot_conceded_rate=share([c['outcome'] == 'goal' for c in struck]),
         set_shot_conceded_rate_by_speed=speed_bin_rates(struck, 'goal', SPEED_BINS),
@@ -629,7 +653,8 @@ def summarize(env, proxy, tracker, *, games, seconds, seed, tier):
         reference_production_against_people=targets['production_against_people'],
     )
     if tier in TABLE_TARGETS:
-        calibration['table'] = table_calibration(person, attacks, robot_crossings, mallet, minutes, proxy)
+        arrivals = [c for c in tracker.crossings if c['toward'] == 'proxy']
+        calibration['table'] = table_calibration(person, attacks, robot_crossings, arrivals, mallet, minutes, proxy)
         calibration['table_target'] = TABLE_TARGETS[tier]
     calibration['checks'] = calibration_checks(calibration, tier)
     share = total_f / max(1, total_f + total_a)

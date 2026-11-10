@@ -56,6 +56,31 @@ is None for the older tiers, whose behaviour and random draws are unchanged:
   serve     serve_x_m / serve_y_m: after a goal the person puts the puck down
             at rest on their half and strikes it (serve_env; the evaluator
             calls it, the env's own restart is a slow puck from the centre).
+  CUSHION   cushion_probability: stopping a moving puck to set it up. The
+            mallet goes into the path of a puck seen coming (the
+            reaction-delayed view, any puck, not only a goal-bound one), on
+            a line with room behind it, and as the puck arrives gives along
+            its path at the speed that leaves it dead off a mallet of
+            ASSUMED_RESTITUTION. brace_probability is the same give for a
+            shot that was READ: the person stands further out while the
+            robot has the puck, and the give (straight back, never the
+            sideways move, which still waits for the reaction) is timed from
+            the puck as it leaves the robot's mallet. A 6-8 m/s shot is on
+            the person 0.16-0.22 s after it is struck, about their reaction
+            time, so without the read no give can start in time; the people
+            kept 14-18% of those. chase_s: a slow puck drifting back out is
+            struck at once instead of being set up for.
+
+Why the table tiers have CUSHION (2026-11-10): without it a stiff block sent
+a 6-8 m/s puck back at ~5 m/s (the free body returns 0.6-0.95 of it), wide
+pucks were left to come off the end rail, and the soft block needed a
+goal-bound puck, a mallet already in place and room it did not have at guard
+depth: it happened on under 3% of blocks at 4+ m/s. Of the robot's shots the
+panel sent back, a set strike followed 0.57-0.67 / 0.09-0.10 / 0.07-0.13 /
+0.05 / 0.04-0.07 by arrival speed 0-2 / 2-4 / 4-6 / 6-8 / 8+ m/s, against the
+people's 0.83-1.0 / 0.24-0.34 / 0.24 / 0.16-0.17 / 0.14-0.18
+(eval_human_proxy TABLE_TARGETS set_share_by_arrival_speed, which the
+probabilities below are tuned to and not beyond).
 """
 from __future__ import annotations
 
@@ -69,8 +94,10 @@ from airhockey.puck_prediction import incoming_crossings
 
 READY, APPROACH, HOLD, STRIKE = 0, 1, 2, 3
 MODE_NAMES = ("ready", "approach", "hold", "strike")
-# A tier with volley_probability has a fifth mode (HumanProxy.mode_names).
+# A tier with volley_probability has a fifth mode (HumanProxy.mode_names), one
+# with cushion_probability a sixth.
 VOLLEY = 4
+CUSHION = 5
 # Route codes: 0 straight, -1 bank off the x = 0 rail ("left" from the robot,
 # the env's shot route 1), +1 bank off the x = width rail ("right", route 2).
 ROUTES = (0, -1, 1)
@@ -133,6 +160,23 @@ class HumanTier:
     serve_x_m: tuple | None = None
     serve_y_m: tuple = (1.23, 1.62)
     serve_wait_s: tuple = (0.2, 4.0)
+    # ((seen puck speed upper edge m/s, probability), ...): the chance of
+    # trying to STOP a puck first seen coming, when it is not swung at.
+    cushion_probability: tuple | None = None
+    # Where it would like to take the puck, distance from its own goal line.
+    cushion_contact_y_m: tuple = (0.18, 0.42)
+    # ((puck speed upper edge m/s, probability), ...): the chance, settled
+    # as the puck goes over to the robot, of giving with a shot that was READ
+    # before it left the robot's mallet, timed from the puck's departure.
+    # Needs cushion_probability.
+    brace_probability: tuple | None = None
+    # Where it stands while the robot has the puck and it means to give: at
+    # least this far from its own goal line, for the room behind the mallet.
+    brace_depth_m: tuple = (0.22, 0.30)
+    # A slow puck that would drift back over the centre line within this long
+    # is gone after at full speed and struck as soon as the mallet is behind
+    # it, with no set-up and no feint.
+    chase_s: float | None = None
 
 
 CLUB = HumanTier("club")
@@ -169,6 +213,10 @@ ELITE = HumanTier(
 # A planned x = 0 bank falls back to another route when the
 # mallet has no room behind the puck, and a wide straight shot banks off
 # either rail, so the measured 0.87 needs nearly every plan to be that rail.
+# cushion_probability is 1: what it does not swing at it tries to stop, and
+# how often that works by speed is the body's doing. brace_probability is set
+# so a set strike follows about as many 6-8 m/s arrivals as the people's did
+# (0.17 and 0.16; a clean stop comes of about a third of the gives).
 TABLE = HumanTier(
     "table",
     max_speed_m_s=(6.0, 7.5),
@@ -186,6 +234,9 @@ TABLE = HumanTier(
     volley_mallet_speed_m_s=(2.2, 5.2),
     volley_contact_y_m=(0.29, 0.55),
     serve_x_m=(0.39, 0.71),
+    cushion_probability=((np.inf, 1.0),),
+    brace_probability=((4.0, 0.0), (np.inf, 0.6)),
+    chase_s=1.0,
 )
 # The stronger person of 2026-10-19: faster and straighter, better aim (48-54%
 # on target), quicker to react, and swings at pucks arriving at up to ~8 m/s
@@ -212,6 +263,9 @@ TABLE_PLUS = HumanTier(
     volley_mallet_speed_m_s=(1.8, 3.8),
     volley_contact_y_m=(0.13, 0.50),
     serve_x_m=(0.39, 0.71),
+    cushion_probability=((np.inf, 1.0),),
+    brace_probability=((4.0, 0.0), (np.inf, 0.5)),
+    chase_s=1.0,
 )
 TIERS = {tier.name: tier for tier in (CLUB, ELITE, TABLE, TABLE_PLUS)}
 
@@ -285,6 +339,15 @@ class HumanProxy:
     VOLLEY_MARGIN_S = 0.04
     VOLLEY_AIM_NOISE = 1.5
     VOLLEY_OVERTIME_S = 0.15
+    # CUSHION: candidate lines to take the puck on, the room behind the
+    # mallet a give needs at least, how far it gives at most, how much sooner
+    # than its ramp to speed the give starts, and how long after the give
+    # (or the forecast arrival) it goes on before the puck counts as dealt with.
+    CUSHION_LINES = np.round(np.arange(0.10, 0.5001, 0.04), 2)
+    CUSHION_MIN_ROOM_M = 0.03
+    CUSHION_GIVE_M = 0.22
+    CUSHION_LEAD_S = 0.015
+    CUSHION_SETTLE_S = 0.16
     SERVES = 64
 
     def __init__(self, n, tier="club", *, seed=0, config=None, dt=ACTION_DT):
@@ -303,7 +366,11 @@ class HumanProxy:
         self._history_len = int(np.ceil(max(self.tier.reaction_s) / self.dt)) + 3
         self.rng = None
         self.volleying = self.tier.volley_probability is not None
-        self.mode_names = MODE_NAMES + ("volley",) if self.volleying else MODE_NAMES
+        self.cushioning = self.tier.cushion_probability is not None
+        if self.tier.brace_probability is not None and not self.cushioning:
+            raise ValueError("brace_probability needs cushion_probability")
+        self.mode_names = MODE_NAMES + (("volley", "cushion") if self.cushioning
+                                        else ("volley",) if self.volleying else ())
 
     # ------------------------------------------------------------ episode
     def reset(self, view):
@@ -373,8 +440,26 @@ class HumanProxy:
         self.traps = np.zeros(n, dtype=int)
         self.strikes = np.zeros(n, dtype=int)
         self.mode_ticks = np.zeros((n, len(self.mode_names)), dtype=int)
-        if self.volleying:
+        if self.volleying or self.cushioning:
             self._seen_incoming = np.zeros(n, dtype=int)
+        if self.cushioning:
+            self.brace_depth = u(t.brace_depth_m)
+            self.cushion_want = np.zeros(n, bool)
+            self.cushion_braced = np.zeros(n, bool)
+            self.brace_roll = np.ones(n)
+            self.was_away = np.zeros(n, bool)
+            self._now_incoming = np.zeros(n, dtype=int)
+            self.braces = np.zeros(n, dtype=int)
+            self.cushion_y = np.full(n, float(np.mean(t.cushion_contact_y_m)))
+            self.cushion_line = np.zeros(n, dtype=int)
+            self.cushion_eta = np.zeros(n)
+            self.cushion_give = np.zeros(n, bool)
+            self.cushion_point = view[:, 4:6].copy()
+            self.cushion_direction = np.tile([0.0, -1.0], (n, 1))
+            self.cushion_speed = np.zeros(n)
+            self.cushion_attempts = np.zeros(n, dtype=int)
+            self.cushions = np.zeros(n, dtype=int)
+        if self.volleying:
             self.volley_y = np.full(n, float(np.mean(t.volley_contact_y_m)))
             self.volley_speed = np.minimum(np.full(n, float(np.mean(t.volley_mallet_speed_m_s))), self.max_speed)
             self.volley_eta = np.zeros(n)
@@ -544,6 +629,42 @@ class HumanProxy:
                               speed / self.max_accel + (windup - ramp) / speed)
         return feasible, arrival - self.reaction, normal, contact, setup, direction, swing_time
 
+    def _cushion_plan(self, seen_puck, seen_vel, own):
+        """Where the mallet can be in the seen puck's way with room to give, per candidate line.
+
+        Forecast from the seen (delayed, noisy) puck with the nominal rails.
+        On each line the mallet waits one contact distance further along the
+        puck's path, and gives along it at the speed that would leave the
+        puck dead off a mallet of ASSUMED_RESTITUTION, less if the room
+        behind it or its arm does not allow that. Returns [N, lines] arrays:
+        feasible, time to contact from now, waiting point, direction, speed.
+        """
+        lines = self.CUSHION_LINES
+        forecast = incoming_crossings(np.column_stack((seen_puck, seen_vel)), lines,
+                                      config=self.cfg, max_seconds=self.THREAT_HORIZON_S)
+        x, arrival = forecast[..., 0], forecast[..., 1]
+        ok = np.isfinite(x) & np.isfinite(arrival)
+        vel = np.where(ok[..., None], forecast[..., 2:4], [0.0, -1.0])
+        direction = _unit(vel)
+        point = np.stack((np.where(ok, x, self.width / 2), np.broadcast_to(lines, x.shape)), axis=-1)
+        point = point + self.contact * direction
+        room = np.minimum(self._room(point, direction), self.CUSHION_GIVE_M)
+        matched = _norm(vel)[..., 0] * self.ASSUMED_RESTITUTION / (1 + self.ASSUMED_RESTITUTION)
+        speed = np.minimum(np.minimum(matched, self.max_speed[:, None]), np.sqrt(self.max_accel[:, None] * room))
+        # Minimum time to the waiting point, coming to rest there.
+        distance = np.hypot(*np.moveaxis(point - own[:, None, :], -1, 0))
+        top, accel = self.max_speed[:, None], self.max_accel[:, None]
+        reach = np.where(distance < top**2 / accel, 2 * np.sqrt(distance / accel), distance / top + top / accel)
+        eta = np.where(ok, arrival, np.inf) - self.reaction[:, None]
+        feasible = ok & (room >= self.CUSHION_MIN_ROOM_M) & (reach < eta)
+        return feasible, eta, point, direction, speed
+
+    @staticmethod
+    def _by_speed(table, speed):
+        """Look a ((upper speed edge, value), ...) tier table up per env."""
+        edges, values = (np.asarray(v, float) for v in zip(*table))
+        return values[np.minimum(np.searchsorted(edges, speed, side="right"), len(values) - 1)]
+
     def _clear_direction(self, puck, own):
         """Fan direction nearest straight up-table that has wind-up room, and that room."""
         toward_centre = np.where(puck[:, 0] < self.width / 2, 1.0, -1.0)
@@ -603,10 +724,22 @@ class HumanProxy:
         self.read_age = np.where(read_ok, 0.0, self.read_age + self.dt)
         held = self.read_age < self.reaction + 0.05
         shadow_x = np.where(held, shadow_x + self.anticipation * (self.read_x - shadow_x), shadow_x)
+        stance = self.guard_depth
+        if t.brace_probability is not None:
+            # Whether it will give with the robot's next shot is settled as
+            # the puck goes over to the robot (one fixed draw a tick), and
+            # with it where it stands while the puck is there.
+            draw = self.rng.random(n)
+            away = puck[:, 1] > half
+            self.brace_roll = np.where(away & ~self.was_away, draw, self.brace_roll)
+            self.was_away = away
+            ready = self.brace_roll < max(chance for _, chance in t.brace_probability)
+            stance = np.where(away & ready, np.maximum(stance, self.brace_depth), stance)
         guard = np.column_stack((np.where(threat, block_x, shadow_x),
-                                 np.where(threat, block_y, self.guard_depth)))
+                                 np.where(threat, block_y, stance)))
         # Out of position (after a strike, say), a person hurries back.
         hurry = held | (np.hypot(*(own - guard).T) > self.RECOVER_DISTANCE_M)
+        block_line_x = guard[:, 0]
         guard_speed = np.where(threat, self.max_speed,
                                np.where(hurry, self.approach_speed, np.minimum(t.idle_speed_m_s, self.max_speed)))
         guard_accel = np.where(threat, self.max_accel, np.minimum(t.idle_accel_m_s2, self.max_accel))
@@ -702,9 +835,14 @@ class HumanProxy:
         settled = np.hypot(*own_vel.T) < self.SETTLE_SPEED_M_S
         at_setup = (np.hypot(*(own - setup).T) < self.SETUP_TOLERANCE_M) & settled
         impatient = ((self.half_time > self.PATIENCE_S) | (self.timer > self.APPROACH_TIMEOUT_S)) & behind
+        leaving = np.zeros(n, bool)
+        if t.chase_s is not None:
+            leaving = (vel[:, 1] > 0.2) & (half - puck[:, 1] < vel[:, 1] * t.chase_s)
+            impatient = impatient | (leaving & behind)
         go = (mode == APPROACH) & ~abort & ((at_setup & (feint <= 0)) | impatient | desperate)
         hold = (mode == APPROACH) & ~abort & at_setup & (feint > 0) & ~go
-        release_hold = (mode == HOLD) & ~abort & ((self.timer >= feint) | (self.half_time > self.PATIENCE_S))
+        release_hold = (mode == HOLD) & ~abort & ((self.timer >= feint) | (self.half_time > self.PATIENCE_S)
+                                                  | leaving)
         along = (vel * self.strike_direction).sum(-1)
         hit = (mode == STRIKE) & (along > 1.0) & (vel[:, 1] > 0.5)
         give_up = (mode == STRIKE) & ~hit & ((self.timer > self.STRIKE_TIMEOUT_S) | ~on_half)
@@ -716,9 +854,8 @@ class HumanProxy:
         new_mode[hold] = HOLD
         new_mode[strike] = STRIKE
         new_mode[done] = READY
-        if self.volleying:
-            # Three fixed draws a tick, used or not, as for the soft block.
-            draws = self.rng.random((3, n))
+        begin = np.zeros(n, bool)
+        if self.volleying or self.cushioning:
             # Once per incoming puck, when it is first seen coming: a person
             # sets up on seeing the robot's strike, before the puck is over
             # the line (their mallet starts 0.06-0.22 s after that contact).
@@ -727,6 +864,9 @@ class HumanProxy:
             incoming_seen = seen[:, 3] < -0.8
             fresh_puck = incoming_seen & (self._seen_incoming == 1)
             self._seen_incoming = np.where(incoming_seen, self._seen_incoming + 1, 0)
+        if self.volleying:
+            # Three fixed draws a tick, used or not, as for the soft block.
+            draws = self.rng.random((3, n))
             edges, chance = (np.asarray(v, float) for v in zip(*t.volley_probability))
             chance = chance[np.minimum(np.searchsorted(edges, np.hypot(*seen[:, 2:4].T), side="right"),
                                        len(chance) - 1)]
@@ -761,6 +901,67 @@ class HumanProxy:
             self.volleys += v_hit
             hit = hit | v_hit
             done = done | v_hit | v_over
+        if self.cushioning:
+            # Two fixed draws a tick. The try is decided when the puck is
+            # first seen coming and stands while it is; it starts as soon as
+            # the person is free and a line can be reached in time.
+            draws = self.rng.random((2, n))
+            chance = self._by_speed(t.cushion_probability, np.hypot(*seen[:, 2:4].T))
+            self.cushion_want = np.where(fresh_puck, draws[0] < chance, self.cushion_want & incoming_seen)
+            lo, hi = t.cushion_contact_y_m
+            self.cushion_y[fresh_puck] = (lo + (hi - lo) * draws[1])[fresh_puck]
+            cushioning = mode == CUSHION
+            c_feasible, c_eta, c_point, c_direction, c_speed = self._cushion_plan(seen[:, :2], seen_vel, own)
+            # The reachable line nearest the one it would like.
+            preference = np.abs(self.CUSHION_LINES[None, :] - self.cushion_y[:, None]) + 10.0 * ~c_feasible
+            c_begin = (self.cushion_want & (mode == READY) & ~start & ~begin & c_feasible.any(axis=1))
+            self.cushion_line[c_begin] = preference.argmin(axis=1)[c_begin]
+            # A shot it READ: the give is timed from the puck as it leaves the
+            # robot's mallet (the second tick of it, as above), from where the
+            # read put the mallet, without waiting for a reaction.
+            now_incoming = vel[:, 1] < -0.8
+            fresh_now = now_incoming & (self._now_incoming == 1)
+            self._now_incoming = np.where(now_incoming, self._now_incoming + 1, 0)
+            back = np.tile([0.0, -1.0], (n, 1))
+            b_room = np.minimum(self._room(own, back), self.CUSHION_GIVE_M)
+            b_speed = np.minimum(np.minimum(-vel[:, 1] * self.ASSUMED_RESTITUTION / (1 + self.ASSUMED_RESTITUTION),
+                                            self.max_speed), np.sqrt(self.max_accel * b_room))
+            b_eta = (puck[:, 1] - own[:, 1] - self.contact) / np.maximum(-vel[:, 1], 1e-6)
+            brace = np.zeros(n, bool)
+            if t.brace_probability is not None:
+                brace = (fresh_now & held & (mode == READY) & ~start & ~begin & ~c_begin
+                         & (self.brace_roll < self._by_speed(t.brace_probability, speed_now))
+                         & (b_room >= self.CUSHION_MIN_ROOM_M) & (b_eta > 0))
+            self.cushion_braced = np.where(brace | c_begin, brace, self.cushion_braced)
+            self.cushion_give[c_begin | brace] = False
+            line = self.cushion_line
+            # While it can still see the puck coming, the plan follows it;
+            # the give runs on the last one.
+            waiting = (c_begin | brace | cushioning) & ~self.cushion_give
+            b_track = waiting & self.cushion_braced & now_incoming
+            c_track = waiting & ~self.cushion_braced & np.isfinite(c_eta[idx, line])
+            self.cushion_eta = np.where(c_track, c_eta[idx, line],
+                                        np.where(b_track, b_eta, self.cushion_eta - self.dt))
+            self.cushion_point[c_track] = c_point[idx, line][c_track]
+            self.cushion_direction[c_track] = c_direction[idx, line][c_track]
+            self.cushion_speed[c_track] = c_speed[idx, line][c_track]
+            self.cushion_point[brace] = own[brace]
+            self.cushion_direction[b_track] = back[b_track]
+            self.cushion_speed[b_track] = b_speed[b_track]
+            c_begin = c_begin | brace
+            self.braces += brace
+            give_now = ((c_begin | cushioning) & ~self.cushion_give
+                        & (self.cushion_eta <= self.cushion_speed / self.max_accel + self.CUSHION_LEAD_S))
+            self.cushion_give |= give_now
+            self.timer[give_now] = 0.0
+            # Dealt with: the puck (as it is now) no longer coming, or the give run out.
+            c_done = cushioning & self.cushion_give & ((vel[:, 1] > -0.8) | (self.timer > self.CUSHION_SETTLE_S))
+            c_over = cushioning & ~self.cushion_give & (self.cushion_eta < -self.VOLLEY_OVERTIME_S)
+            new_mode[c_begin] = CUSHION
+            new_mode[c_done | c_over] = READY
+            self.cushion_want[c_begin] = False
+            self.cushion_attempts += c_begin
+            self.cushions += c_done & (speed_now < t.strike_max_puck_speed) & on_half
         self.cooldown[done] = self.COOLDOWN_S
         self.plan_index[done] += 1
         self.strikes += hit & (mode == STRIKE)
@@ -780,8 +981,10 @@ class HumanProxy:
         striking = new_mode == STRIKE
         target = np.where(approaching[:, None], approach_target,
                           np.where(striking[:, None], strike_target, guard))
-        speed = np.where(approaching, self.approach_speed, np.where(striking, speed_n, guard_speed))
-        accel = np.where(approaching, 0.6 * self.max_accel, np.where(striking, self.max_accel, guard_accel))
+        speed = np.where(approaching, np.where(leaving, self.max_speed, self.approach_speed),
+                         np.where(striking, speed_n, guard_speed))
+        accel = np.where(approaching, np.where(leaving, 1.0, 0.6) * self.max_accel,
+                         np.where(striking, self.max_accel, guard_accel))
         if self.volleying:
             # Wait at the wind-up point, then through the contact point at the drawn speed.
             now_volley = new_mode == VOLLEY
@@ -792,6 +995,24 @@ class HumanProxy:
             target = np.where(now_volley[:, None], v_target, target)
             speed = np.where(now_volley, np.where(swing, self.volley_speed, self.max_speed), speed)
             accel = np.where(now_volley, self.max_accel, accel)
+        if self.cushioning:
+            # Wait in the puck's way, then give along its path at the matched speed.
+            now_cushion = new_mode == CUSHION
+            give = self.cushion_give
+            c_room = np.minimum(self._room(self.cushion_point, self.cushion_direction), self.CUSHION_GIVE_M)
+            c_target = np.where(give[:, None], self.cushion_point + c_room[:, None] * self.cushion_direction,
+                                self.cushion_point)
+            c_speed = np.maximum(self.cushion_speed, 0.2)
+            # A braced mallet gives straight back and still goes across to
+            # the block it reacts to: capped so the give itself is at speed.
+            braced = self.cushion_braced
+            c_target[:, 0] = np.where(braced, block_line_x, c_target[:, 0])
+            away = c_target - own
+            c_speed = np.where(braced, np.minimum(c_speed * np.hypot(*away.T) / np.maximum(np.abs(away[:, 1]), 1e-3),
+                                                  self.max_speed), c_speed)
+            target = np.where(now_cushion[:, None], c_target, target)
+            speed = np.where(now_cushion, np.where(give, c_speed, self.max_speed), speed)
+            accel = np.where(now_cushion, self.max_accel, accel)
         self.last_target = target
         return self.commands_table(target, speed, accel)
 
