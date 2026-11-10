@@ -4,7 +4,8 @@
 
 Newest checkpoint: `teacher-calm-20261018-v4`, the calm-accel fine-tune made
 after `teacher-ppo-20261018-v2` jittered and tripped BusVoltageLow on the table
-on 2026-10-18. No table test of v4 is recorded.
+on 2026-10-18. v4 has run live in 13 sessions from 2026-10-19 to 2026-11-08
+(`logs/run_policy/`). No assessment of those sessions is written up.
 
 Hardware changed on 2026-11-08, none of it fed back into the simulator and no
 policy was retrained:
@@ -20,7 +21,8 @@ policy was retrained:
 - Mallet jumping at speed is unresolved and its cause has not been measured.
   Added mass reduced it but brought post-move oscillation. A printed mallet
   with its centre of mass on the spring plane (`hw/mallet/`) has been designed
-  and printed, with no result recorded.
+  and printed. On 2026-11-08 v4 played briefly live under the `printed`, `heavy`
+  and `standard` profiles in turn. Those logs have not been analysed.
 
 ## Update 2026-09-20 — replay-backed corrections
 

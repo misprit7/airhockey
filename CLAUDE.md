@@ -1,7 +1,7 @@
 # Air Hockey RL Project
 
 ## Overview
-Robotic air hockey table that uses reinforcement learning trained in simulation, then transferred to physical hardware. The robot is a built and running cable-driven parallel robot (CDPR): four ClearPath servos driven step/dir by a Teensy, a FLIR camera tracking the puck at 200 Hz, and TD-MPC2 policies trained in the sim and run through `ai/bin/play.sh`. The newest table candidate is the neural player `teacher-calm-20261018-v4`, with no table test recorded yet (`ai/RUNS.md`, `ai/recipes/expert-distill-20261018/README.md`). `ai/RETRAIN.md` is the TD-MPC2 record up to 2026-09-19. The sim-to-real and hardware status is in `SIM2REAL.md`.
+Robotic air hockey table that uses reinforcement learning trained in simulation, then transferred to physical hardware. The robot is a built and running cable-driven parallel robot (CDPR): four ClearPath servos driven step/dir by a Teensy, a FLIR camera tracking the puck at 200 Hz, and TD-MPC2 policies trained in the sim and run through `ai/bin/play.sh`. The newest table candidate is the neural player `teacher-calm-20261018-v4`, which has run live on the table in 13 sessions from 2026-10-19 to 2026-11-08 (`logs/run_policy/`), with no written assessment yet (`ai/RUNS.md`, `ai/recipes/expert-distill-20261018/README.md`). `ai/RETRAIN.md` is the TD-MPC2 record up to 2026-09-19. The sim-to-real and hardware status is in `SIM2REAL.md`.
 
 ## Approach
 1. **System identification**: Learn physical dynamics from real hardware (motor response, cable compliance, friction, latency)
@@ -537,7 +537,7 @@ python ai/bin/eval_fast_defense.py expert --output logs/fd-human.json \
   profile is `standard`.
 - **Mallet jumping**: unresolved and its cause not measured. A paddle tips at
   about g*r/|cable height - COM height| regardless of mass, which is why the
-  printed mallet moves mass rather than adding it. No result is recorded yet.
+  printed mallet moves mass rather than adding it. It played live for a few minutes on 2026-11-08 (`logs/run_policy/20261108-1606*` and `-1608*`), and no assessment is written up.
 - **Pretension**: the master and web UI accept 0-6 mm (UI default 1.5). Slack
   let cables come off the spools at 60 m/s²; 3 mm stopped that but idles
   motors 0/2 at ~2.5 A, so step up toward 6 mm while watching heat.
