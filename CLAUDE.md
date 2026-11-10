@@ -138,6 +138,20 @@ Robotic air hockey table that uses reinforcement learning trained in simulation,
       >= 5 m/s, back-edge dwell, the load model replayed at tick rate,
       idle command change. Definitions and the known sim/table
       differences are in its docstring.
+    - `training_proxies.py` - TRAINING-ONLY people at the far end
+      (2026-11-10): `ProxyPanel` runs `HumanProxy` in a share of a
+      `NeuralTrainingEnv`'s full-game slots (`human_proxy_share`, a tier
+      from `human_proxy_tiers` and a new person per game) and in a share of
+      its defense drills (`defense_strike_fraction`: a person strikes a
+      puck on the far half at 4-9 m/s). With the trainer's other opt-in
+      v5 flags -- `--sim-profile` (+ `--sim-option`, `--sim-profile-share`
+      per worker), the physical-motion costs (`--accel-duty-weight`,
+      `--reversal-weight`, `--far-cap-weight`; rates always logged in
+      `status["motion"]`), `--stagger-games`, `--left-bank-request-weight`
+      -- the record and the recommended command are in
+      `ai/recipes/table-faithful-20261110/`. Tests:
+      `tests/test_table_training.py`. Continue a run with `--resume` under
+      a new run name: critic, optimiser, pool and teacher anneal carry over.
     - `run_names.py` - The `<major>.<minor>-<description>-<stage>` scheme,
       enforced by both trainers (see "Run names").
     - `perception.py` - The sim's tracker model: 6-frame slope estimator,

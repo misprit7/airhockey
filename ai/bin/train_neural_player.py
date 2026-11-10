@@ -20,7 +20,7 @@ from airhockey.neural_finetune import (GUARD, MODE_NAMES, TEACHER_MASKS, adapt_l
                                        diagnostic_subset, initialization_model, load_teacher, masked_mean,
                                        reference_slots, std_floor, teacher_mask, teacher_opponent_slots,
                                        teacher_error, teacher_regression, teacher_weight)
-from airhockey.neural_training import NeuralTrainingEnv
+from airhockey.neural_training import MOTION_COLUMNS, NeuralTrainingEnv
 from airhockey.on_policy import advantages
 from airhockey.thermal import DEFAULT_MODEL
 
@@ -264,7 +264,73 @@ def build_parser():
                    help="Per-episode paddle normal restitution range, e.g. 0.40 0.65 (table contacts: 0.47-0.59)")
     p.add_argument("--paddle-tangential-range", type=float, nargs=2, metavar=("LOW", "HIGH"),
                    help="Per-episode paddle tangential retention range, e.g. 0.76 0.84; omitted = frictionless")
+    # Opt-in table-faithful fine-tuning (ai/recipes/table-faithful-20261110).
+    # Every default below is the trainer as it was.
+    p.add_argument("--sim-profile",
+                   help="Train in a named table profile (airhockey/table_fidelity.py): 'table-20261029', or "
+                        "'table-20261029:contact,lift,sensing' for some of its parts; per-env draws every episode")
+    p.add_argument("--sim-option", action="append", default=[], metavar="KEY=JSON",
+                   help="Replace one keyword of the profile, e.g. mallet_lift='{\"off_probability\": 0.1}' or "
+                        "command_delay_range='[0.009, 0.019]'; null removes it. Repeatable")
+    p.add_argument("--sim-profile-share", type=float, default=1.0,
+                   help="Fraction of --workers whose environments use --sim-profile; the rest keep the historical sim")
+    p.add_argument("--human-proxy-share", type=float, default=0,
+                   help="Fraction of each worker's full-game slots whose far side is a person (airhockey/human_proxy.py), "
+                        "taken from the snapshot pool's share, never a fixed-reference slot (id %% 4 == 0)")
+    p.add_argument("--human-proxy-tiers", default="table",
+                   help="Comma-separated tiers, e.g. table,table_plus,club,elite; one drawn per game with a new person")
+    p.add_argument("--defense-strike-fraction", type=float, default=0,
+                   help="Fraction of defense-drill slots where a person (--human-proxy-tiers) strikes a puck on the far half")
+    p.add_argument("--defense-strike-speed", type=float, nargs=2, default=[4.0, 9.0], metavar=("LOW", "HIGH"),
+                   help="Planned release speed band of those strikes, m/s")
+    p.add_argument("--defense-strike-moving-fraction", type=float, default=0,
+                   help="Fraction of those drills whose puck is still rolling to the person from the centre line")
+    p.add_argument("--left-bank-request-weight", type=float, default=1.0,
+                   help="Relative weight of left-bank requests under --shot-request random (right and straight are 1)")
+    p.add_argument("--accel-duty-weight", type=float, default=0,
+                   help="Cost per second with the realised tick-to-tick |dv/dt| above --accel-duty-threshold, scaled by |dv/dt| / --accel")
+    p.add_argument("--accel-duty-threshold", type=float, default=60.0, help="m/s^2")
+    p.add_argument("--reversal-weight", type=float, default=0,
+                   help="Cost per velocity reversal within 100 ms with --reversal-speed on both sides")
+    p.add_argument("--reversal-speed", type=float, default=1.5, help="m/s")
+    p.add_argument("--far-cap-weight", type=float, default=0,
+                   help="Cost per second of commanded accel cap above --far-cap-threshold while the puck is on the far half, "
+                        "scaled by the excess as a fraction of the room up to --accel")
+    p.add_argument("--far-cap-threshold", type=float, default=40.0, help="m/s^2")
+    p.add_argument("--stagger-games", action="store_true",
+                   help="Start each full-game slot at its own point of the --game-episode-seconds clock")
     return p
+
+
+def sim_profile_options(args):
+    """NeuralTrainingEnv keyword arguments of --sim-profile and --sim-option."""
+    from airhockey.table_fidelity import PROFILES, profile_options
+    spec, overrides = getattr(args, "sim_profile", None), getattr(args, "sim_option", None) or []
+    if spec is None:
+        if overrides:
+            raise ValueError("--sim-option needs --sim-profile")
+        return {}
+    options = profile_options(spec)
+    known = {key for part in PROFILES[str(spec).partition(":")[0]].values() for key in part}
+    for item in overrides:
+        key, separator, value = item.partition("=")
+        if not separator or key not in known:
+            raise ValueError(f"--sim-option takes KEY=JSON with KEY from {sorted(known)}; got {item!r}")
+        value = json.loads(value)
+        if value is None:
+            options.pop(key, None)
+        else:
+            options[key] = value
+    return options
+
+
+def profile_workers(workers, share):
+    """Which workers train in the table profile: an evenly spread share."""
+    count = int(round(share * workers))
+    chosen = np.zeros(workers, bool)
+    if count:
+        chosen[(np.arange(count) * workers) // count] = True
+    return chosen
 
 
 def environment_options(args, *, shot_conditioned):
@@ -370,6 +436,19 @@ def environment_options(args, *, shot_conditioned):
         calm_speed=getattr(args, 'calm_speed', 1.5),
         calm_own_half_scale=getattr(args, 'calm_own_half_scale', 0.25),
         calm_accel_power=getattr(args, 'calm_accel_power', 2.0),
+        human_proxy_share=getattr(args, 'human_proxy_share', 0.0),
+        human_proxy_tiers=tuple(t for t in getattr(args, 'human_proxy_tiers', 'table').split(',') if t),
+        defense_strike_fraction=getattr(args, 'defense_strike_fraction', 0.0),
+        defense_strike_speed=tuple(getattr(args, 'defense_strike_speed', (4.0, 9.0))),
+        defense_strike_moving_fraction=getattr(args, 'defense_strike_moving_fraction', 0.0),
+        left_bank_request_weight=getattr(args, 'left_bank_request_weight', 1.0),
+        accel_duty_weight=getattr(args, 'accel_duty_weight', 0.0),
+        accel_duty_threshold=getattr(args, 'accel_duty_threshold', 60.0),
+        reversal_weight=getattr(args, 'reversal_weight', 0.0),
+        reversal_speed=getattr(args, 'reversal_speed', 1.5),
+        far_cap_weight=getattr(args, 'far_cap_weight', 0.0),
+        far_cap_threshold=getattr(args, 'far_cap_threshold', 40.0),
+        stagger_games=getattr(args, 'stagger_games', False),
         game_episode_seconds=args.game_episode_seconds,
         stationary_failure_penalty=args.stationary_failure_penalty,
         stationary_rest_fraction=args.stationary_rest_fraction,
@@ -427,7 +506,8 @@ def main():
                 args.terminate_overload or args.skill_reference or args.skill_replay or
                 args.skill_reference_weight or args.skill_replay_weight or args.defense_request_consistency or
                 args.opponent_checkpoint or args.opponent_reference or
-                args.teacher_weight or args.teacher_weight_final or args.teacher_opponent_fraction):
+                args.teacher_weight or args.teacher_weight_final or args.teacher_opponent_fraction or
+                args.human_proxy_share or args.defense_strike_fraction):
             p.error('--goals-only excludes auxiliary drills/losses, overload terminations and fixed external opponents')
         args.stage, args.game_fraction, args.continuous_rallies = 5, 1., True
     if not np.isfinite(args.recovery_persistent_bias) or not 0 <= args.recovery_persistent_bias <= 3:
@@ -477,6 +557,21 @@ def main():
     if args.adaptive_lr and not (np.isfinite([args.lr_min, args.lr_max]).all()
                                  and 0 < args.lr_min <= args.lr <= args.lr_max):
         p.error("--adaptive-lr needs 0 < --lr-min <= --lr <= --lr-max")
+    try:
+        fidelity = sim_profile_options(args)
+    except ValueError as error:
+        p.error(str(error))
+    if not np.isfinite(args.sim_profile_share) or not 0 < args.sim_profile_share <= 1:
+        p.error("--sim-profile-share must be in (0,1]")
+    with_profile = profile_workers(args.workers, args.sim_profile_share) if fidelity else np.zeros(args.workers, bool)
+    if fidelity and args.sim_profile_share < 1 and (args.workers < 2 or not with_profile.any()):
+        p.error("--sim-profile-share below 1 is a share of --workers: it needs at least two, and one with the profile")
+    if fidelity and "paddle_tangential_range" in fidelity and args.paddle_tangential_range is not None:
+        p.error("--paddle-tangential-range and the profile's contact part both set the tangential retention")
+    if not np.isfinite(args.human_proxy_share) or not 0 <= args.human_proxy_share <= 1:
+        p.error("--human-proxy-share must be in [0,1]")
+    if args.human_proxy_share and (args.stage < 3 or (args.n_envs // args.workers) % 4):
+        p.error("--human-proxy-share needs full games (stage >= 3) and a multiple of four environments per worker")
     torch.set_num_threads(args.torch_threads)
     device = torch.device("cuda" if torch.cuda.is_available() else "cpu") if args.device == "auto" else torch.device(args.device)
     if device.type == "cuda" and not torch.cuda.is_available():
@@ -588,9 +683,11 @@ def main():
 
         # Workers reset finished environments right after the step that ended
         # them: identical streams, one pipe round trip per step instead of two.
-        env = ParallelNeuralEnv(args.n_envs, args.workers, auto_reset=True, **options)
+        env = ParallelNeuralEnv(
+            args.n_envs, args.workers, auto_reset=True, **options,
+            **(dict(worker_options=[fidelity if chosen else {} for chosen in with_profile]) if fidelity else {}))
     else:
-        env = NeuralTrainingEnv(args.n_envs, **options)
+        env = NeuralTrainingEnv(args.n_envs, **options, **fidelity)
     ACTIVE_ENV = env
     own_history = PhysicalHistory(max(args.history, teacher.history if teacher else 1))
     opponent_history = PhysicalHistory(max([args.history, *[r.history for r in references],
@@ -600,9 +697,20 @@ def main():
     opponent_history.reset(env.opponent_obs())
     game_slots = np.asarray(env.critic_context())[:, 3] > .5
     reserved_slots = reference_slots(args.n_envs, references)
+    proxy_slots = None
+    if args.human_proxy_share:
+        from airhockey.training_proxies import human_proxy_slots
+        # The rule each worker's environment applied to its own slots.
+        count = args.n_envs // args.workers
+        proxy_slots = np.concatenate([human_proxy_slots(count, int(games.sum()), args.human_proxy_share)
+                                      for games in game_slots.reshape(args.workers, count)])
+        if not proxy_slots.any():
+            raise ValueError("no full-game slot for a human proxy; check --game-fraction and --human-proxy-share")
     teacher_slots = None
     if teacher_opponent is not None:
-        teacher_slots = teacher_opponent_slots(game_slots, args.teacher_opponent_fraction, reserved_slots)
+        teacher_slots = teacher_opponent_slots(
+            game_slots, args.teacher_opponent_fraction,
+            reserved_slots if proxy_slots is None else reserved_slots | proxy_slots)
         if not teacher_slots.any():
             raise ValueError("no full-game slot for the teacher opponent; check --game-fraction")
     # Game outcomes by far-side player, cumulative over the run.
@@ -610,6 +718,9 @@ def main():
     if teacher_slots is not None:
         score_classes["teacher"] = teacher_slots
         score_classes["pool"] = score_classes["pool"] & ~teacher_slots
+    if proxy_slots is not None:
+        score_classes["human_proxy"] = proxy_slots
+        score_classes["pool"] = score_classes["pool"] & ~proxy_slots
     game_scores = {name: dict(goals=0, conceded=0, seconds=0.) for name, rows in score_classes.items() if rows.any()}
     # The actor's own input equals the teacher's when the layouts agree.
     teacher_shares_obs = (teacher is not None and teacher.history == net.history
@@ -665,6 +776,16 @@ def main():
             game_slots=int(game_slots.sum()),
             opponent_slot_rule="evenly spread over full-game slots with id % 4 != 0; id % 4 == 0 stays with fixed references",
         )
+    if fidelity:
+        meta["sim_profile"] = dict(spec=args.sim_profile, options=fidelity, share=args.sim_profile_share,
+                                   workers=with_profile.tolist() if args.workers > 1 else [True])
+    if proxy_slots is not None or args.defense_strike_fraction:
+        meta["human_proxy"] = dict(
+            training_only=True, runtime_controller=False, tiers=args.human_proxy_tiers.split(","),
+            game_share=args.human_proxy_share, game_slots=int(proxy_slots.sum()) if proxy_slots is not None else 0,
+            slot_rule="evenly spread over each worker's full-game slots with id % 4 != 0; a tier and a new person per game",
+            defense_strike_fraction=args.defense_strike_fraction, defense_strike_speed=list(args.defense_strike_speed),
+            defense_strike_moving_fraction=args.defense_strike_moving_fraction)
     meta["optimization"] = dict(
         actor_steps_min=args.actor_steps_min, adaptive_lr=args.adaptive_lr,
         lr_bounds=[args.lr_min, args.lr_max] if args.adaptive_lr else None,
@@ -687,6 +808,9 @@ def main():
         ROOT / "ai/airhockey/batch_physics.py",
         ROOT / "ai/airhockey/neural_vector.py",
         ROOT / "ai/airhockey/neural_finetune.py",
+        *([ROOT / "ai/airhockey/table_fidelity.py"] if fidelity else []),
+        *([ROOT / "ai/airhockey/training_proxies.py", ROOT / "ai/airhockey/human_proxy.py"]
+          if proxy_slots is not None or args.defense_strike_fraction else []),
         *([ROOT / "ai/airhockey/expert_player.py", ROOT / "ai/airhockey/puck_prediction.py"]
           if teacher is not None else []),
         ROOT / "ai/airhockey/on_policy.py",
@@ -790,6 +914,8 @@ def main():
         and time.monotonic() - started < args.minutes * 60
     ):
         rollout_start = time.monotonic()
+        motion = np.zeros(len(MOTION_COLUMNS))
+        lifts = np.zeros(2)
         for t in range(args.rollout):
             if not np.isfinite(obs).all():
                 np.savez_compressed(run / "nonfinite_observation.npz", observation=obs)
@@ -909,6 +1035,9 @@ def main():
                         game_scores[name]["seconds"] += 0.02 * int(rows.sum())
             if persistent_bias is not None:
                 contacted = np.asarray(info["contacts"]) > 0
+            motion += info["motion"].sum(axis=0)
+            if "lift_events" in info:
+                lifts += info["lift_events"].sum(), info["opponent_lift_events"].sum()
             own_history.append(obs)
             obs = own_history.for_policy(net)
             opponent_history.append(env.opponent_obs())
@@ -1213,6 +1342,20 @@ def main():
             planned_actor_steps=planned_steps,
             value_warmup=warming,
         )
+        # Physical-motion rates of this rollout over every slot, and what the
+        # costs took from the reward per environment-second.
+        seconds = 0.02 * args.rollout * args.n_envs
+        measured = dict(zip(MOTION_COLUMNS, motion.tolist()))
+        status["motion"] = dict(
+            accel_duty_share=measured["accel_duty_s"] / seconds,
+            reversals_per_minute=60 * measured["reversals"] / seconds,
+            far_half_share=measured["far_half_s"] / seconds,
+            far_cap_share=measured["far_cap_s"] / max(measured["far_half_s"], 1e-9),
+            accel_duty_cost_per_s=args.accel_duty_weight * measured["accel_duty"] / seconds,
+            reversal_cost_per_s=args.reversal_weight * measured["reversals"] / seconds,
+            far_cap_cost_per_s=args.far_cap_weight * measured["far_cap"] / seconds)
+        if fidelity:
+            status["lift_events_per_minute"] = dict(zip(("own", "opponent"), (60 * lifts / seconds).tolist()))
         if args.adaptive_lr:
             status["next_actor_lr"] = optimizer.param_groups[0]["lr"]
         if teacher is not None:

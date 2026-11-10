@@ -388,6 +388,28 @@ class HumanProxy:
         return self.commands_table(self.last_target, np.minimum(t.idle_speed_m_s, self.max_speed),
                                    np.minimum(t.idle_accel_m_s2, self.max_accel))
 
+    def restart(self, rows, view, seed):
+        """A new person and a new game for `rows` only (training panels).
+
+        Exactly a fresh HumanProxy(len(rows), tier, seed=seed).reset(view) in
+        those rows; the other games go on, and the tick-to-tick rolls stay on
+        this panel's generator. `view` is the [len(rows), >=12] view of the
+        restarting games. Returns the fresh commands and time constants for
+        the rows. reset() must have been called once.
+        """
+        rows = np.asarray(rows, dtype=int)
+        fresh = HumanProxy(len(rows), self.tier, seed=seed, config=self.cfg, dt=self.dt)
+        command = fresh.reset(view)
+        for name, value in vars(fresh).items():
+            mine = getattr(self, name)
+            if not isinstance(value, np.ndarray):
+                continue
+            if name == "_hist":
+                mine[:, rows] = value       # every slot of a fresh ring is the view
+            elif mine.shape[:1] == (self.n,) and value.shape == (len(rows), *mine.shape[1:]):
+                mine[rows] = value
+        return command, fresh.time_constant
+
     def commands_table(self, target_local, speed, accel):
         """Local-frame target clipped to its reach -> (x, y, speed, accel) in the table frame."""
         x = np.clip(target_local[:, 0], self.low[0], self.high[0])

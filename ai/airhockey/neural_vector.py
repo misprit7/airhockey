@@ -69,15 +69,22 @@ class ParallelNeuralEnv:
     worker's result without another round trip. Observations, rewards and
     random streams are identical either way.
     ``step_async``/``step_wait`` let the caller work while the workers step.
+    ``worker_options`` (one dict per worker, default none) adds or replaces
+    keyword arguments for that worker's environment only, e.g. a table
+    profile on a share of the workers. Step info a worker's environment does
+    not report is then filled with zeros.
     """
 
     # Process entry point. Subclasses with a different message protocol
     # supply their own and override reset/step (airhockey.distillation).
     worker = staticmethod(_worker)
 
-    def __init__(self, n_envs, workers, auto_reset=False, **options):
+    def __init__(self, n_envs, workers, auto_reset=False, worker_options=None, **options):
         if n_envs % workers:
             raise ValueError("environment count must divide evenly across workers")
+        if worker_options is not None and len(worker_options) != workers:
+            raise ValueError("one option dict per worker")
+        self._mixed = worker_options is not None
         self.n_envs, self.workers = n_envs, workers
         self.auto_reset = bool(auto_reset)
         context = mp.get_context("spawn")
@@ -85,6 +92,8 @@ class ParallelNeuralEnv:
         for i in range(workers):
             parent, child = context.Pipe()
             config = dict(options, seed=options.get("seed", 0) + i * 100003)
+            if worker_options is not None:
+                config.update(worker_options[i])
             process = context.Process(
                 target=self.worker, args=(child, n_envs // workers, config), daemon=True
             )
@@ -155,7 +164,13 @@ class ParallelNeuralEnv:
             raise RuntimeError("no step in flight")
         self._stepping = False
         result = self.receive()
-        info = {k: np.concatenate([r[4][k] for r in result]) for k in result[0][4]}
+        if self._mixed:
+            count = self.n_envs // self.workers
+            shapes = {k: v for r in result for k, v in r[4].items()}
+            info = {k: np.concatenate([r[4][k] if k in r[4] else np.zeros((count, *v.shape[1:]), v.dtype)
+                                       for r in result]) for k, v in shapes.items()}
+        else:
+            info = {k: np.concatenate([r[4][k] for r in result]) for k in result[0][4]}
         self._opponent_obs = np.concatenate([r[5] for r in result])
         self._critic_context = info["critic_context"]
         out = tuple(np.concatenate([r[j] for r in result]) for j in range(4))

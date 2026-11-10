@@ -12,6 +12,20 @@ from airhockey.rewards import shot_matches_type
 from airhockey.skill_benchmark import Fixtures
 from airhockey.thermal import DEFAULT_MODEL
 
+# info["motion"] columns, per env for the step just taken (always reported;
+# the costs are charged only at a nonzero weight):
+#   accel_duty_s   seconds with the realised |dv/dt| above accel_duty_threshold
+#   accel_duty     the same, each second scaled by |dv/dt| / the machine's cap
+#   reversals      velocity reversed within 100 ms at reversal_speed (0 or 1)
+#   far_half_s     seconds with the puck on the far half
+#   far_cap_s      of those, seconds with the commanded cap above far_cap_threshold
+#   far_cap        the same, each second scaled by the cap's excess over the
+#                  threshold as a fraction of the room up to the machine's cap
+MOTION_COLUMNS = ("accel_duty_s", "accel_duty", "reversals", "far_half_s", "far_cap_s", "far_cap")
+REVERSAL_WINDOW_TICKS = 5      # 100 ms, as airhockey.playability counts them
+REVERSAL_GAP_S = 0.15
+STRIKE_DRILL_SECONDS = 6       # a person takes up to ~4 s to get to a puck and strike it
+
 
 class NeuralTrainingEnv(ArrivalEnv):
     obs_dim = 42
@@ -142,6 +156,28 @@ class NeuralTrainingEnv(ArrivalEnv):
         table_sensing=None,
         command_delay_range=None,
         late_command_probability=None,
+        # Opt-in table-faithful training (ai/recipes/table-faithful-20261110).
+        # People at the far end: this share of full-game slots, a tier and a
+        # new person drawn per game (airhockey.training_proxies).
+        human_proxy_share=0.0,
+        human_proxy_tiers=("table",),
+        # Share of defense-drill slots where such a person strikes a puck
+        # lying (or, for the moving share, arriving) on the far half, at
+        # planned release speeds drawn from the band.
+        defense_strike_fraction=0.0,
+        defense_strike_speed=(4.0, 9.0),
+        defense_strike_moving_fraction=0.0,
+        # Relative weight of left-bank requests under shot_request="random".
+        left_bank_request_weight=1.0,
+        # Physical-motion costs; see MOTION_COLUMNS for what each one charges.
+        accel_duty_weight=0.0,
+        accel_duty_threshold=60.0,
+        reversal_weight=0.0,
+        reversal_speed=1.5,
+        far_cap_weight=0.0,
+        far_cap_threshold=40.0,
+        # Start every game slot at its own point of the game clock.
+        stagger_games=False,
     ):
         if goals_only and (terminate_overload or receive_drill or productive_receive_drill or possession_followthrough):
             raise ValueError('goals-only training requires full games without auxiliary drill/overload terminations')
@@ -295,6 +331,44 @@ class NeuralTrainingEnv(ArrivalEnv):
         self.calm_seconds = np.zeros(n_envs)
         self.calm_cap_seconds = np.zeros(n_envs)
         self.calm_high_cap_seconds = np.zeros(n_envs)
+        if (not np.isfinite([accel_duty_weight, reversal_weight, far_cap_weight, reversal_speed]).all()
+                or min(accel_duty_weight, reversal_weight, far_cap_weight) < 0 or reversal_speed <= 0):
+            raise ValueError("motion cost weights must be finite and nonnegative, the reversal speed positive")
+        if not np.isfinite([accel_duty_threshold, far_cap_threshold]).all() or min(accel_duty_threshold, far_cap_threshold) <= 0:
+            raise ValueError("motion cost thresholds must be finite and positive")
+        self.accel_duty_weight, self.accel_duty_threshold = accel_duty_weight, accel_duty_threshold
+        self.reversal_weight, self.reversal_speed = reversal_weight, reversal_speed
+        self.far_cap_weight, self.far_cap_threshold = far_cap_weight, far_cap_threshold
+        # Cumulative like calm_seconds: never cleared by reset.
+        self.motion_totals = np.zeros((n_envs, len(MOTION_COLUMNS)))
+        self._velocity_ring = np.zeros((REVERSAL_WINDOW_TICKS, n_envs, 2))
+        self._velocity_head = 0
+        self._reversal_clock = np.full(n_envs, np.inf)
+        self.stagger_games = bool(stagger_games)
+        self._stagger_pending = np.ones(n_envs, bool)
+        if not np.isfinite(left_bank_request_weight) or left_bank_request_weight <= 0:
+            raise ValueError("left-bank request weight must be positive and finite")
+        if left_bank_request_weight != 1 and shot_request != "random":
+            raise ValueError("left-bank request weight needs shot_request='random'")
+        for fraction in (human_proxy_share, defense_strike_fraction, defense_strike_moving_fraction):
+            if not np.isfinite(fraction) or not 0 <= fraction <= 1:
+                raise ValueError("human proxy and strike-drill shares must be in [0,1]")
+        self.human_proxy_share = human_proxy_share
+        self.human_proxy_tiers = tuple(human_proxy_tiers)
+        self.defense_strike_fraction = defense_strike_fraction
+        self.defense_strike_speed = tuple(float(v) for v in defense_strike_speed)
+        self.defense_strike_moving_fraction = defense_strike_moving_fraction
+        self.strike_drill = np.zeros(n_envs, bool)
+        # Built at the first reset, when the slot layout is known.
+        self.people = None
+        self._people_seed = seed
+        self._people_wanted = bool(human_proxy_share or defense_strike_fraction)
+        self._people_rows = np.zeros(0, dtype=int)
+        self._stagger_rng = np.random.default_rng([int(seed) % 2**32, 20261111])
+        self._people_row = np.full(n_envs, -1)
+        self._people_game = np.zeros(n_envs, bool)
+        self._strike_slot = np.zeros(n_envs, bool)
+        self._far_view_cache = None
         self.game_episode_seconds = game_episode_seconds
         self.recovery_drill = np.zeros(n_envs, bool)
         if continuous_rallies:
@@ -450,6 +524,10 @@ class NeuralTrainingEnv(ArrivalEnv):
             [0, 1/3, 1/3, 1/3] if shot_request == "random"
             else np.eye(4)[("none", "left", "right", "straight").index(shot_request)]
         )
+        if left_bank_request_weight != 1:
+            # Both seats' requests: a robot-bodied far side is a copy, and its
+            # route 1 is the same x = 0 rail, the one people bank off.
+            self.base._shot_type_p[:] = np.array([0, left_bank_request_weight, 1, 1]) / (left_bank_request_weight + 2)
         if self.fixed_opponent_style_fraction:
             self.base._shot_type_p_opp = np.tile(self.base._shot_type_p, (n_envs, 1))
         self.base.max_score = 1000000
@@ -828,6 +906,105 @@ class NeuralTrainingEnv(ArrivalEnv):
         self.slow_possession_losses[side] += lost
         return lost
 
+    def _setup_people(self):
+        """Lay out the human-proxy slots once the game slots are known."""
+        from airhockey.training_proxies import ProxyPanel, human_proxy_slots, spread_slots
+        ids = np.arange(self.n_envs)
+        game_count = round(self.n_envs * self.game_fraction)
+        self._people_game = human_proxy_slots(self.n_envs, game_count, self.human_proxy_share)
+        defense = ids >= game_count
+        if self.receive_drill:
+            defense &= ids % 10 >= 9
+        elif self.fixed_practice_roles or self.productive_receive_drill:
+            defense &= ids % 20 >= round(20 * (1 - self.practice_defense_fraction))
+        self._strike_slot[spread_slots(np.flatnonzero(defense), self.defense_strike_fraction)] = True
+        rows = np.flatnonzero(self._people_game | self._strike_slot)
+        if not len(rows):
+            raise ValueError("no slot for a human proxy; check the game fraction and the shares")
+        self._people_rows = rows
+        self._people_row[rows] = np.arange(len(rows))
+        self.people = ProxyPanel(len(rows), self.human_proxy_tiers, seed=self._people_seed,
+                                 config=self.cfg, strike_speed=self.defense_strike_speed)
+
+    def _far_view(self):
+        # base.opponent_obs() differences the far mallet between calls: one
+        # call per tick, shared by the people and by opponent_obs().
+        if self._far_view_cache is None:
+            self._far_view_cache = self.base.opponent_obs()
+        return self._far_view_cache
+
+    def opponent_obs(self):
+        if self.people is None:
+            return super().opponent_obs()
+        return self._features(self._far_view(), True)
+
+    def _begin_strike_drills(self, ids, rng):
+        """Defense drill released by a person: the puck where they play it
+        from, their mallet on its station. Reset states only; the strike is
+        HumanProxy's, seen by the robot through the camera like any other."""
+        b, e, cfg = self.base, self.engine, self.cfg
+        k = len(ids)
+        self.strike_drill[ids] = True
+        self.defense_windup[ids] = False
+        self._windup_release[ids] = np.inf
+        b._opp_policy_id[ids] = _OPP_POLICY_MAP["human_proxy"]
+        b._opp_free[ids] = True
+        e.puck_x[ids] = rng.uniform(.25, .75, k)
+        e.puck_y[ids] = rng.uniform(1.20, 1.65, k)
+        e.puck_vx[ids] = e.puck_vy[ids] = 0
+        if self.defense_strike_moving_fraction:
+            # Still rolling in from the centre line: people strike these too.
+            moving = ids[rng.random(k) < self.defense_strike_moving_fraction]
+            e.puck_y[moving] = rng.uniform(1.05, 1.25, len(moving))
+            e.puck_vx[moving] = rng.uniform(-.5, .5, len(moving))
+            e.puck_vy[moving] = rng.uniform(1.0, 3.0, len(moving))
+        e.paddle_opp_x[ids] = b._proxy_target_x[ids] = cfg.width / 2
+        e.paddle_opp_y[ids] = b._proxy_target_y[ids] = cfg.height - b.PROXY_STATION_Y
+        b._proxy_speed[ids], b._proxy_accel[ids] = b.PROXY_IDLE_SPEED, b.PROXY_IDLE_ACCEL
+        for axis in ("x", "y"):
+            value = getattr(e, "paddle_opp_" + axis)[ids]
+            for dyn in (b._opp_dyn, b._opp_dyn_free):
+                dyn[axis][ids] = value
+                dyn["command_" + axis][ids] = value
+                dyn["v" + axis][ids] = 0
+            for prefix in ("opp", "own_opp"):
+                getattr(b, "_prev_" + prefix + "_" + axis)[ids] = value
+        if b._perception is not None:
+            b._perception.reset(e.puck_x, e.puck_y, ids)
+        if b._cam_active:
+            for col, name in enumerate(("puck_x", "puck_y", "puck_vx", "puck_vy", "paddle_opp_x", "paddle_opp_y")):
+                b._cam_ring[:, ids, col] = getattr(e, name)[ids]
+            b._cam_ring[:, ids, 8] = 0
+            b._sync_far_view(ids)
+
+    def _command_people(self):
+        """This tick's command of every person, from the far side's view."""
+        b, rows = self.base, self._people_rows
+        command, began, lag = self.people.command(self._far_view()[rows, :12])
+        playing = b._opp_policy_id[rows] == _OPP_POLICY_MAP["human_proxy"]
+        values = [v.copy() for v in (b._proxy_target_x, b._proxy_target_y, b._proxy_speed, b._proxy_accel)]
+        for value, new in zip(values, command):
+            value[rows[playing]] = new[playing]
+        constant = None
+        if len(began):
+            constant = b._opp_dyn_free["time_constant"].copy()
+            constant[rows[began]] = lag
+        b.set_human_proxy_command(*values, time_constant=constant)
+
+    def _reversal_events(self, velocity):
+        """Velocity reversed within 100 ms with reversal_speed on both sides;
+        events at least 150 ms apart (airhockey.playability's count)."""
+        past = self._velocity_ring[self._velocity_head]
+        self._reversal_clock += self.base.action_dt
+        event = (((velocity * past).sum(axis=1) < 0)
+                 & (np.linalg.norm(velocity, axis=1) >= self.reversal_speed)
+                 & (np.linalg.norm(past, axis=1) >= self.reversal_speed)
+                 & (self._reversal_clock > REVERSAL_GAP_S))
+        self._reversal_clock[event] = 0
+        self._velocity_ring[self._velocity_head] = velocity
+        self._velocity_head = (self._velocity_head + 1) % REVERSAL_WINDOW_TICKS
+        return event
+
     def potential(self):
         e = self.engine
         puck = np.column_stack((e.puck_x, e.puck_y))
@@ -946,6 +1123,9 @@ class NeuralTrainingEnv(ArrivalEnv):
         replay_fringe = np.zeros(n, bool)
         edge = np.zeros(n, bool)
         self.game_fraction = 1.0 if self.games else (self.game_fraction_override if self.game_fraction_override is not None else (0 if self.stage < 3 else 0.5))
+        if self._people_wanted and self.people is None:
+            self._setup_people()
+        drills = fixtures is None
         if fixtures is None:
             kind = rng.choice(
                 3,
@@ -1215,6 +1395,8 @@ class NeuralTrainingEnv(ArrivalEnv):
             game_mask[game_ids] = True
             # Base reset initializes real game serves and synchronizes histories.
             self.base._opp_policy_id[game_ids] = _OPP_POLICY_MAP[opponent or "external"]
+            if self.people is not None and opponent is None:
+                self.base._opp_policy_id[game_ids[self._people_game[game_ids]]] = _OPP_POLICY_MAP["human_proxy"]
             self.base.reset(mask=game_mask)
             self.task[game_ids] = 3
             self.kind[game_ids] = 3
@@ -1276,6 +1458,23 @@ class NeuralTrainingEnv(ArrivalEnv):
                 rng.random(len(practice_ids)) < self.practice_selfplay_fraction
             ]
             self.base._opp_policy_id[active] = _OPP_POLICY_MAP["external"]
+        if self.stagger_games:
+            # 900 s games started together end together, in one rollout and at
+            # one thermal phase. The first game of each slot starts part-way
+            # through its clock (its own stream); later ones run full length.
+            first = ids[self._stagger_pending[ids] & (self.kind[ids] == 3)]
+            self.elapsed[first] = self._stagger_rng.uniform(0, self.game_episode_seconds, len(first))
+            self._stagger_pending[ids] = False
+        if self.people is not None:
+            self.strike_drill[ids] = False
+            strike = ids[self._strike_slot[ids] & (self.kind[ids] == 2)] if drills else ids[:0]
+            if len(strike):
+                self._begin_strike_drills(strike, rng)
+            playing = ids[(self._people_row[ids] >= 0)
+                          & (self.base._opp_policy_id[ids] == _OPP_POLICY_MAP["human_proxy"])]
+            self.people.restart(self._people_row[playing], strike=self.strike_drill[playing])
+        self._velocity_ring[:, ids] = 0
+        self._reversal_clock[ids] = np.inf
         for value in (
             self.touch_count,
             self.shot_count,
@@ -1390,6 +1589,13 @@ class NeuralTrainingEnv(ArrivalEnv):
             obs[~mask] = self._last_observation[~mask]
         self._last_observation = obs.copy()
         self._potential = self.potential()
+        if self.people is not None:
+            # Other games keep the view of this tick they were already given.
+            fresh = self.base.opponent_obs()
+            if self._far_view_cache is None:
+                self._far_view_cache = fresh
+            else:
+                self._far_view_cache[mask] = fresh[mask]
         return obs
 
     def defensive_depth_cost(self):
@@ -1436,9 +1642,21 @@ class NeuralTrainingEnv(ArrivalEnv):
         previous_turnovers = self.turnovers[0].copy()
         old_own = e.puck_y < 1
         b.referee_active_mask = self.kind == 3
+        if self.people is not None:
+            self._command_people()
+        old_velocity = np.column_stack((b._agent_dyn["vx"], b._agent_dyn["vy"]))
         raw, _, _, _, info = b.step(np.column_stack((low, accel)))
         self.elapsed += b.action_dt
         gf, ga = e.score_agent - scores, e.score_opponent - conceded
+        if self.people is not None:
+            self._far_view_cache = None
+            # After a goal a serving tier's person puts the puck down at rest
+            # on their half (human_proxy.serve_env), as on the table.
+            rows = self._people_rows
+            served, x, y = self.people.serve(((gf + ga) > 0)[rows] & self._people_game[rows]
+                                             & (b._opp_policy_id[rows] == _OPP_POLICY_MAP["human_proxy"]))
+            e.puck_x[rows[served]], e.puck_y[rows[served]] = x, y
+            e.puck_vx[rows[served]] = e.puck_vy[rows[served]] = 0
         if self.recovery_get_ahead_bonus:
             self.reward_events[0] += self.recovery_get_ahead_bonus * self._recovery_approach_event()
         speed = np.hypot(e.puck_vx, e.puck_vy)
@@ -1565,10 +1783,31 @@ class NeuralTrainingEnv(ArrivalEnv):
         # (1) keeps pulling an idle 13-17 m/s^2 guard down to production's 5.
         excess = fraction ** 2 if self.calm_accel_power == 2 else np.maximum(fraction - 0.05, 0)
         reward -= self.calm_accel_weight * b.action_dt * calm * excess
+        # What the table's mallet and drives pay for and the sim's do not
+        # (v4, 2026-10/11: cap > 80 m/s^2 on 13% of ticks, 32 reversals a
+        # minute, pucks under a mallet braking from a sprint). Counted every
+        # step; charged at a nonzero weight. Per tick, as the table logs and
+        # airhockey.playability measure them.
+        limit = b._agent_dyn["max_accel"]
+        velocity = np.column_stack((b._agent_dyn["vx"], b._agent_dyn["vy"]))
+        realized = np.linalg.norm(velocity - old_velocity, axis=1) / b.action_dt
+        over = realized > self.accel_duty_threshold
+        far = e.puck_y > self.cfg.height / 2
+        cap_excess = np.clip((cap - self.far_cap_threshold) / np.maximum(limit - self.far_cap_threshold, 1e-9), 0, 1)
+        motion = np.column_stack((
+            b.action_dt * over, b.action_dt * over * np.minimum(realized / limit, 1),
+            self._reversal_events(velocity), b.action_dt * far,
+            b.action_dt * (far & (cap > self.far_cap_threshold)), b.action_dt * far * cap_excess))
+        self.motion_totals += motion
+        if self.accel_duty_weight or self.reversal_weight or self.far_cap_weight:
+            reward -= (self.accel_duty_weight * motion[:, 1] + self.reversal_weight * motion[:, 2]
+                       + self.far_cap_weight * motion[:, 5])
         # Small action-change cost, not a cap on learned rapid responses.
         reward -= 0.002 * ((action - previous_action) ** 2).sum(axis=1)
         skill = self.kind != 3
         skill_seconds = np.where(self.edge_drill, 12, 6 if self.possession_followthrough else 4)
+        if self.people is not None:
+            skill_seconds = np.where(self.strike_drill, STRIKE_DRILL_SECONDS, skill_seconds)
         terminal = skill & (((gf + ga) > 0) | (self.elapsed >= skill_seconds))
         reward[terminal & (gf == 0)] -= 2
         # Expiring without attempting an aimed shot must not be cheaper than
@@ -1681,6 +1920,7 @@ class NeuralTrainingEnv(ArrivalEnv):
             overload_seconds=self.overload_seconds[0].copy(),
             peak_accel=self.peak_accel.copy(),
             edge_dwell_cost=edge_cost.copy(),
+            motion=motion.astype(np.float32),
         )
         return (
             obs,
