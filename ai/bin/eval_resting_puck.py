@@ -14,14 +14,17 @@ airhockey/resting_puck.py; simulation only):
 
   stall   a puck placed at rest on a grid of the own half x mallet start
           (home / beside) x shot request, 10 s each. Stalled = never struck
-          above 1.5 and never left the half. Rates by zone, request and
-          cell (zone x request) with 95% Wilson intervals.
-          PASS: no cell of at least --min-cell-n trials above --max-cell-stall.
+          above 1.5 and never left the half. No referee in these trials: a
+          puck left out of reach lies there and is stalled. Rates by zone,
+          request and cell (zone x request) with 95% Wilson intervals.
+          PASS: no cell of at least --min-cell-n trials above --max-cell-stall
+          (cells with a puck placed out of reach are shown, not gated).
   corner  corner pucks by side x request, 8 cells x 48 mirror-paired trials.
           PASS: every cell touched at least --min-corner-touched times.
   games   games against the table people (table, table_plus): spells of the
           puck at rest on the own half within reach, >= 1 s and >= 4 s, as
-          count and seconds per game-minute.
+          count and seconds per game-minute. Own-half pucks at rest OUT of
+          reach (the benchmark's referee takes them after 8 s) are reported.
           PASS: at most --max-long-rest spells of 4 s or more.
 
 The candidate is a checkpoint or an `expert...` spec. `--sim-profile` as in
@@ -95,7 +98,10 @@ def play_games(net, options, candidate, *, tiers, games, seconds, seed, sim_prof
         game = proxy_benchmark.play_tier(net, tier, games=games, seconds=seconds, seed=seed, options=options,
                                          candidate=candidate, sim_profile=sim_profile, observe=observe)
         spells = watches[0].spells(rest_speed)
+        stranded = [s['seconds'] for s in watches[0].spells(rest_speed, out_of_reach=True) if s['seconds'] >= 1.0]
         result[tier] = dict(resting_puck.rest_report(spells, games=games, seconds=seconds),
+                            out_of_reach=dict(count=len(stranded), seconds=round(sum(stranded), 2),
+                                              longest_s=max(stranded, default=0.0)),
                             goals_for=game['goals_for'], goals_against=game['goals_against'],
                             # eval_human_proxy's own stall measure: slow, reachable and > 4 s on the side.
                             reachable_stall_seconds=game['reachable_stall_seconds'])
@@ -188,7 +194,7 @@ def format_report(columns):
         for group, prefix in (('by_start', 'start '), ('by_request', 'request '), ('by_zone', 'zone ')):
             rows += [(prefix + k, [_cell(c['stall'][group][k]) for c in columns]) for k in first[group]]
         table(f"STALL MAP ({first['trials']} trials, {first['seconds']:g} s)  stalled/n rate [95% CI]", rows)
-        table('cells (zone-side / request; * = cross-bank; ~ = too few trials to gate)',
+        table('cells (zone-side / request; * = cross-bank; ~ = not gated: too few trials or placed out of reach)',
               [(('*' if cell['cross_bank'] else '~' if not cell['gated'] else ' ') + cell['cell'],
                 [_cell(c['stall']['cells'][i]) for c in columns]) for i, cell in enumerate(first['cells'])])
         for c in columns:
@@ -196,6 +202,8 @@ def format_report(columns):
             lines.append(resting_puck.format_map(c['stall']))
             if 'stalled_trials' in c['stall']:
                 s = c['stall']['stalled_trials']
+                if s.get('out_of_reach_share'):
+                    lines.append(f"  stalled trials: {s['out_of_reach_share']:.0%} ended with the puck out of reach")
                 lines.append(f"  stalled trials: touched the puck {s['touched_share']:.0%}; accel cap p50 "
                              f"{s['final_accel_cap_p50']} m/s^2 at the end, {s['peak_accel_cap_p50']} at its peak; "
                              f"mallet minus puck at the end {s['mallet_minus_puck_mean']}")
@@ -216,6 +224,9 @@ def format_report(columns):
                 rows.append((f'{tier}: rest spells {name}',
                              [f"{c['games'][tier][key]['count']} ({c['games'][tier][key]['per_game_minute']:.2f}/min, "
                               f"{c['games'][tier][key]['seconds_per_game_minute']:.2f} s/min)" for c in columns]))
+            rows.append((f'{tier}: out of reach >= 1 s', [
+                f"{c['games'][tier]['out_of_reach']['count']} ({c['games'][tier]['out_of_reach']['seconds']:.1f} s)"
+                for c in columns]))
             rows.append((f'{tier}: longest spell', [
                 (lambda s: f"{s[0]['seconds']:.1f} s at ({s[0]['puck'][0]:.2f},{s[0]['puck'][1]:.2f}) {s[0]['zone']}"
                  if s else '-')(c['games'][tier]['longest']) for c in columns]))

@@ -452,17 +452,31 @@ python ai/bin/eval_resting_puck.py runs/<run>/agent.pt --reference runs/teacher-
   the far end, load 0.45). Stalled = never above 1.5 after a touch and never
   over the centre line. A cell is a zone (forward y 0.65-0.85, mid, back,
   each left / centre / right; the rail columns; the corners) x a request;
-  cells under `--min-cell-n` 20 trials are printed and not gated.
+  cells under `--min-cell-n` 20 trials are printed and not gated. The
+  benchmark env's referee (a dead puck out of everyone's reach is relaunched
+  from the centre line after 8 s) is off in these trials: with it on, every
+  puck placed at y 0.90, 3 mm past the mallet's reach, read as "crossed" at
+  8.02 s without the robot doing anything, and a puck nudged out of reach
+  would have too. Such a puck is now stalled, `out_of_reach_share` counts
+  them, and cells with a puck placed out of reach are not gated.
 - `corner`: `corner_diag.py`, 8 cells x 48 mirror-paired corner pucks.
 - `games`: `--games` 32 x 60 s against `table` and `table_plus`; a rest spell
   is the puck on the own half, slower than 0.05 and where the mallet's edge
-  can touch it, so a puck wedged in a back corner counts.
+  can touch it, so a puck wedged in a back corner counts. The games keep
+  the referee; own-half pucks at rest out of reach for 1 s or more are
+  reported per tier (`out_of_reach`; none for v5a or v4), not gated.
 
 It reproduces the scratch numbers: with the diagnosis's grid and seed
-(`--parts stall --seed 7 --ys 0.5,0.55,...,0.9`) every trial is identical
-(right-forward + left bank 64/70 v5a, 24/70 v4 in the profile); the corner
-cells are identical at the default seed; the rest spells are the ones in the
-diagnosis's 32-game traces. At the default seed 20261207:
+(`--parts stall --seed 7 --ys 0.5,0.55,...,0.9`) and the referee still on,
+every trial was identical (right-forward + left bank 64/70 v5a, 24/70 v4 in
+the profile). With the referee off the y 0.90 row is 102/102 stalled instead
+of 102 "crossed", and the relaunches' random draws no longer shift the other
+trials after 8 s: the same cell reads 64/70 and 26/70. The corner cells are
+identical at the default seed; the rest spells are the ones in the
+diagnosis's 32-game traces. The table below (default grid, to y 0.85) had no
+relaunch in it and is unchanged by the referee; a second seed (4242, profile)
+gives the same picture: right-forward + left bank 64/70 v5a and 28/70 v4,
+corner cells v5a 28-48, v4 47-48. At the default seed 20261207:
 
 | | v5a historical | v4 historical | v5a profile | v4 profile |
 |---|---|---|---|---|

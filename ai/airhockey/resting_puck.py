@@ -10,7 +10,13 @@ Three measurements, all simulation only, used by `ai/bin/eval_resting_puck.py`:
     rallies, report sensing, thermal gain 1.3, load 0.45). A trial is STRUCK
     once the puck moves faster than 1.5 after the mallet has touched it,
     CROSSED once it is over the centre line, and STALLED if neither happens
-    in the 10 s. `stall_report` groups trials into zones:
+    in the 10 s. The sim's referee is OFF in these trials: the benchmark env
+    takes a dead puck nobody can reach after 8 s and relaunches it from the
+    centre line, which read as CROSSED for a puck the robot never touched
+    (every y 0.90 trial) and would for one nudged out of reach. Such a puck
+    now lies there and is STALLED; `out_of_reach_share` counts them, and a
+    cell holding a puck PLACED out of reach is shown, not gated.
+    `stall_report` groups trials into zones:
 
         forward / mid / back   y 0.65-0.85 / 0.35-0.60 / below 0.35, each
                                split left (x < 0.5), centre (x = 0.5), right
@@ -30,6 +36,9 @@ Three measurements, all simulation only, used by `ai/bin/eval_resting_puck.py`:
     the robot's half, slower than 0.05 and within the mallet's reach (the
     mallet's edge can touch it: a puck wedged in a back corner counts). Each
     spell carries where it lay, by the stall map's zones, and the request.
+    A puck at rest on the own half OUT of reach is not a rest spell (the
+    games keep the benchmark's referee, which relaunches it after 8 s); those
+    are reported beside them as `out_of_reach`, not gated.
 
 Positions and speeds are in sim units (the table is 1 x 2; a unit is about a
 metre). Every random draw comes from the seed, so a candidate and a reference
@@ -103,6 +112,13 @@ def stall_conditions(xs, ys, starts, requests):
             np.array([c[2] for c in rows], int), np.array([c[3] == "beside" for c in rows]))
 
 
+def within_reach(env, puck):
+    """Can the robot's mallet touch a puck here? The env referee's own test."""
+    puck = np.asarray(puck, float)
+    low, high = env.decoder.low + .001, env.decoder.high - .001
+    return np.linalg.norm(puck - np.clip(puck, low, high), axis=1) < env.cfg.puck_radius + env.cfg.paddle_radius - 1e-5
+
+
 def _place(env, puck, mallet):
     """Put the puck (at rest) and the robot's mallet (at rest) down in every env."""
     b, e = env.base, env.engine
@@ -139,6 +155,8 @@ def stall_map(net, options, *, seed, sim_profile=None, xs=DEFAULT_XS, ys=DEFAULT
                             report_sensing=True, continuous_rallies=True, shot_conditioned=net.shot_conditioned)
     env.reset(seed=seed, opponent="human_proxy")
     b, e = env.base, env.engine
+    # No referee, as on the table: a dead puck out of reach is not relaunched.
+    b.stuck_relaunch_filter = lambda: np.zeros(n, bool)
     for model in env.loads:
         model.gain[:] = thermal_gain
     env.loads[0].h[:] = load ** 2
@@ -195,8 +213,9 @@ def stall_map(net, options, *, seed, sim_profile=None, xs=DEFAULT_XS, ys=DEFAULT
             frames.append(frame_state(env))
     raw = dict(px=px, py=py, req=req, beside=beside, t_strike=t_strike, t_cross=t_cross, t_touch=t_touch,
                strike_speed=strike_speed, peak_cap=peak_cap, final_cap=np.array(dyn["command_accel"], float),
-               seconds=seconds, load=load,
+               seconds=seconds, load=load, placed_in_reach=within_reach(env, puck),
                final=np.column_stack((e.puck_x, e.puck_y, e.paddle_agent_x, e.paddle_agent_y)))
+    raw["final_in_reach"] = within_reach(env, raw["final"][:, :2])
     if keep_frames:
         raw["frames"] = np.stack(frames)      # [T + 1, N, columns]
     return raw
@@ -227,10 +246,11 @@ def stall_report(raw, *, min_cell_n=20):
     stall = stalled(raw)
     zone, side = zones(px, py)
     everything = np.ones(len(px), bool)
+    placed = np.asarray(raw.get("placed_in_reach", everything), bool)
     report = dict(
         trials=len(px), seconds=float(raw["seconds"]), load=float(raw["load"]),
         definition=f"never faster than {STRIKE_SPEED} after a touch and never over the centre line",
-        overall=share(everything, stall),
+        overall=share(everything, stall), placed_out_of_reach=int((~placed).sum()),
         struck=int((~np.isnan(raw["t_strike"])).sum()),
         crossed_without_strike=int((np.isnan(raw["t_strike"]) & ~np.isnan(raw["t_cross"])).sum()),
         by_start={name: share(beside == flag, stall) for name, flag in (("home", False), ("beside", True))
@@ -247,7 +267,7 @@ def stall_report(raw, *, min_cell_n=20):
                 cell = dict(cell=f"{z}{'-' + s if s else ''} / {REQUEST_NAMES[r]}", zone=z, side=s,
                             request=REQUEST_NAMES[r],
                             cross_bank=(s, int(r)) in (("right", 1), ("left", 2)), **share(mask, stall))
-                cell["gated"] = cell["n"] >= min_cell_n
+                cell["gated"] = cell["n"] >= min_cell_n and bool(placed[mask].all())
                 cells.append(cell)
     report["cells"] = cells
     report["cross_bank"] = {c["cell"]: {k: c[k] for k in ("n", "stalled", "rate", "ci95")}
@@ -262,6 +282,9 @@ def stall_report(raw, *, min_cell_n=20):
         final = raw["final"][stall]
         report["stalled_trials"] = dict(
             touched_share=round(float((~np.isnan(raw["t_touch"][stall])).mean()), 3),
+            # Left where the mallet cannot touch it (placed there, or nudged there).
+            out_of_reach_share=round(float((~np.asarray(raw["final_in_reach"])[stall]).mean()), 3)
+            if "final_in_reach" in raw else None,
             peak_accel_cap_p50=round(float(np.median(raw["peak_cap"][stall])), 1),
             final_accel_cap_p50=round(float(np.median(raw["final_cap"][stall])), 1),
             mallet_minus_puck_mean=np.round((final[:, 2:] - final[:, :2]).mean(0), 3).tolist())
@@ -339,12 +362,13 @@ def corner_recovery(net, options, *, seed, sim_profile=None, count=384, ticks=60
 
 
 # ------------------------------------------------------ rest spells in games
-def rest_spells(puck, speed, low, high, reach, *, half, rest_speed=REST_SPEED, dt=DT):
+def rest_spells(puck, speed, low, high, reach, *, half, rest_speed=REST_SPEED, dt=DT, out_of_reach=False):
     """Spells of one game as (first tick, seconds): the puck on the own half
-    (y < half), slower than rest_speed and within `reach` of the workspace box."""
+    (y < half), slower than rest_speed and within `reach` of the workspace box
+    (`out_of_reach`: beyond it instead)."""
     puck = np.asarray(puck, float)
     off = np.linalg.norm(puck - np.clip(puck, low, high), axis=1)
-    resting = (puck[:, 1] < half) & (np.asarray(speed) < rest_speed) & (off <= reach)
+    resting = (puck[:, 1] < half) & (np.asarray(speed) < rest_speed) & ((off <= reach) != out_of_reach)
     edges = np.flatnonzero(np.diff(np.r_[False, resting, False].astype(int)))
     return [(int(a), round(float((b - a) * dt), 2)) for a, b in zip(edges[0::2], edges[1::2])]
 
@@ -360,7 +384,7 @@ class RestWatch:
     def __call__(self):
         self.frames.append(frame_state(self.env))
 
-    def spells(self, rest_speed=REST_SPEED):
+    def spells(self, rest_speed=REST_SPEED, out_of_reach=False):
         env = self.env
         frames = np.stack(self.frames)
         out = []
@@ -368,7 +392,8 @@ class RestWatch:
             f = frames[:, game]
             for first, seconds in rest_spells(f[:, 0:2], np.hypot(f[:, 2], f[:, 3]), env.decoder.low,
                                               env.decoder.high, env.cfg.puck_radius + env.cfg.paddle_radius,
-                                              half=env.cfg.height / 2, rest_speed=rest_speed):
+                                              half=env.cfg.height / 2, rest_speed=rest_speed,
+                                              out_of_reach=out_of_reach):
                 zone, side = zones(f[first, 0:1], f[first, 1:2])
                 out.append(dict(game=game, start_s=round(first * DT, 2), seconds=seconds,
                                 puck=[round(float(v), 3) for v in f[first, 0:2]],

@@ -226,7 +226,8 @@ Robotic air hockey table that uses reinforcement learning trained in simulation,
       part `airhockey/resting_puck.py`. Three parts (`--parts`): `stall`, a
       puck placed at rest on a grid of the own half x mallet start (home /
       beside) x shot request for 10 s, stalled = never struck above 1.5
-      and never left the half, rates by zone / request / cell with Wilson
+      and never left the half (no referee in these trials: a puck left out
+      of reach is stalled), rates by zone / request / cell with Wilson
       CIs; `corner`, corner pucks touched per side x request (8 x 48);
       `games`, rest spells >= 1 s / >= 4 s on a reachable own-half puck
       against the `table` / `table_plus` people. PASS/FAIL lines against

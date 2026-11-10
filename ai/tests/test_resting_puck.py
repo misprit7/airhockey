@@ -97,6 +97,7 @@ def test_rest_spells_need_slow_own_half_and_reach():
     puck[250:] = [0.5, 0.95]                 # own half but past the mallet's reach
     spells = rp.rest_spells(puck, speed, low, high, 0.091, half=1.0)
     assert spells == [(0, 1.0), (60, 1.8), (200, 1.0)]
+    assert rp.rest_spells(puck, speed, low, high, 0.091, half=1.0, out_of_reach=True) == [(250, 1.0)]
     report = rp.rest_report([dict(game=0, seconds=s) for s in (0.4, 1.0, 4.5, 6.0)], games=2, seconds=60.0)
     assert report["spells_ge_1s"] == dict(count=3, per_game_minute=1.5, seconds_per_game_minute=5.75)
     assert report["spells_ge_4s"]["count"] == 2 and report["longest"][0]["seconds"] == 6.0
@@ -115,6 +116,24 @@ def test_striker_clears_the_grid_and_the_hoverer_stalls_everywhere():
     report = rp.stall_report(hover, min_cell_n=4)
     assert report["overall"]["rate"] == 1.0 and report["by_start"]["beside"]["stalled"] == 8
     assert report["stalled_trials"]["touched_share"] == 0 and report["stalled_trials"]["final_accel_cap_p50"] <= 6
+
+
+def test_stall_trials_have_no_referee_and_repeat_per_seed():
+    # A puck nobody can reach: the benchmark env's referee would relaunch it from the
+    # centre line after 8 s, which is not the robot getting it off its half.
+    grid = dict(xs=(0.3, 0.7), ys=(0.75, 0.95), requests=(1,), starts=("home",), seconds=9.0)
+    raw = rp.stall_map(Striker(), {}, seed=3, **grid)
+    far = raw["py"] > 0.9
+    assert (~raw["placed_in_reach"][far]).all() and raw["placed_in_reach"][~far].all()
+    assert rp.stalled(raw)[far].all() and not rp.stalled(raw)[~far].any()
+    assert np.allclose(raw["final"][far, :2], np.column_stack((raw["px"], raw["py"]))[far], atol=1e-3)
+    report = rp.stall_report(raw, min_cell_n=1)
+    assert report["placed_out_of_reach"] == 2 and report["stalled_trials"]["out_of_reach_share"] == 1.0
+    gated = {c["zone"]: c["gated"] for c in report["cells"]}
+    assert gated == dict(forward=True, front_edge=False)
+    assert report["worst_cell"]["stalled"] == 0
+    again = rp.stall_map(Striker(), {}, seed=3, **grid)
+    assert all(np.array_equal(raw[k], again[k], equal_nan=True) for k in ("t_strike", "t_cross", "t_touch", "final"))
 
 
 def test_corner_pucks_are_mirror_pairs_by_request():
