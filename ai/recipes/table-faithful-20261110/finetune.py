@@ -28,6 +28,7 @@ default is arm A; README.md "Round 2" has the reasons and the numbers.
 Simulation only; nothing here touches the table.
 """
 import argparse
+import shlex
 import subprocess
 import sys
 from pathlib import Path
@@ -202,7 +203,7 @@ def main():
     a = parse()
     cmd = argv(a)
     if a.print:
-        print(" ".join(cmd))
+        print(shlex.join(cmd))
         return
     log = ROOT / "logs" / f"{a.run_name}.log"
     with open(log, "w") as fh:

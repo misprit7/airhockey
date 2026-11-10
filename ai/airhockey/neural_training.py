@@ -31,9 +31,10 @@ from airhockey.thermal import DEFAULT_MODEL
 #                     dead_puck_grace (the open-table stall)
 MOTION_COLUMNS = ("accel_duty_s", "accel_duty", "reversals", "far_half_s", "far_cap_s", "far_cap",
                   "guard_changed", "guard_unresolved", "accel_effort", "idle_path", "dead_puck_s")
-# The dead-puck clock runs while the puck is on the own half, within reach and
-# slower than DEAD_PUCK_SPEED; only a release above DEAD_PUCK_RELEASE (or the
-# puck leaving reach) clears it, so a nudge every second does not.
+# The dead-puck clock starts when the puck is on the own half, within reach and
+# slower than DEAD_PUCK_SPEED, and then runs until a release above
+# DEAD_PUCK_RELEASE (or the puck leaves reach, or a goal): a nudge neither
+# clears nor pauses it.
 DEAD_PUCK_SPEED = 0.3
 DEAD_PUCK_RELEASE = 1.0
 REVERSAL_WINDOW_TICKS = 5      # 100 ms, as airhockey.playability counts them
@@ -1928,10 +1929,15 @@ class NeuralTrainingEnv(ArrivalEnv):
         idle_cap = far if self.far_cap_max_speed is None else far & (
             np.linalg.norm(old_velocity, axis=1) < self.far_cap_max_speed)
         # Dead puck: see DEAD_PUCK_SPEED. A goal moves the puck; start again.
+        # Once it has lain, the clock (and past the grace, the cost) runs on
+        # through a tap: a puck sent drifting at 0.4 m/s is no more in play
+        # than one at rest, and pausing there made the tap the cheapest way
+        # out of the cost.
         lying = within_reach & (speed < DEAD_PUCK_SPEED)
-        self.dead_puck_clock[lying] += b.action_dt
         self.dead_puck_clock[~within_reach | (speed >= DEAD_PUCK_RELEASE) | ((gf + ga) > 0)] = 0
-        dead = lying & (self.dead_puck_clock > self.dead_puck_grace)
+        waiting = within_reach & (speed < DEAD_PUCK_RELEASE) & ((gf + ga) == 0) & (lying | (self.dead_puck_clock > 0))
+        self.dead_puck_clock[waiting] += b.action_dt
+        dead = waiting & (self.dead_puck_clock > self.dead_puck_grace)
         effort = np.maximum(realized ** 2 - self.accel_effort_threshold ** 2, 0) / limit ** 2
         motion = np.column_stack((
             b.action_dt * over, b.action_dt * over * np.minimum(realized / limit, 1),
@@ -2069,7 +2075,7 @@ class NeuralTrainingEnv(ArrivalEnv):
             peak_accel=self.peak_accel.copy(),
             edge_dwell_cost=edge_cost.copy(),
             motion=motion.astype(np.float32),
-            dead_puck_clock=np.where(lying, self.dead_puck_clock, 0).astype(np.float32),
+            dead_puck_clock=self.dead_puck_clock.astype(np.float32),
         )
         return (
             obs,

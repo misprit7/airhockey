@@ -300,7 +300,7 @@ an ablation.
 
 | flag | default | what it does |
 |---|---|---|
-| `--dead-puck-weight W`, `--dead-puck-grace S` | 0, 1.0 | Cost per second a puck has lain within the mallet's reach on the own half, slower than 0.3 m/s, for longer than S. Every slot kind. The clock is cleared by a release above 1 m/s, the puck leaving reach or a goal, not by a nudge. |
+| `--dead-puck-weight W`, `--dead-puck-grace S` | 0, 1.0 | Cost per second since a puck came to lie (under 0.3 m/s) within the mallet's reach on the own half, past the first S. Every slot kind. Clock and cost stop at a release above 1 m/s, the puck leaving reach or a goal; a tap that leaves it drifting under 1 m/s neither clears nor pauses them (it paused the cost as first written, which made the tap the cheapest way out). |
 | `--dead-puck-exploration TIME EFFORT`, `-start S`, `-hold R` | 0 0, 0.5, 0 | Pre-tanh std floors of the arrival-time and accel-cap dimensions where that clock is past S, in the rollout and in PPO's likelihood alike (the mask is stored with the rollout). `-hold` makes that noise an AR(1) with unit variance: a strike is about ten ticks of a short time AND a raised cap, and at the hover's equilibrium a raised cap alone asks for no acceleration. |
 | `--calm-reachable-scale X` | none | Calm-accel scale while a slow puck is within reach on the own half (otherwise `--calm-own-half-scale`, 0.25). 0 = a puck waiting to be struck is not a quiet table. |
 | `--cross-bank-drill-fraction F` | 0 | Share of stationary drills in the stall's own state: puck at rest at y 0.60-0.88 and 0.05-0.35 m off the centre line, the opposite rail's bank requested in 70%, and in 60% the mallet in the hover pose with the hover as its previous action. |

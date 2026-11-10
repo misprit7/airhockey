@@ -440,15 +440,18 @@ def test_a_puck_lying_within_reach_is_charged_after_the_grace():
     # 1.6 s lying there: nothing for the first second, then every tick.
     assert np.array_equal(counted, again) and not dead[:48].any() and np.allclose(dead[52:], 0.02)
     assert np.allclose(clock[-1], 1.6, atol=0.021) and np.allclose(a - b, 40.0 * dead, atol=1e-4)
-    # A nudge does not buy the grace back; a release, the far half or a puck out of reach does.
-    _, _, clock = rest_puck(charged, 0.77, 0.80, 5, puck_speed=0.6)
-    assert (clock[-1] == 0).all() and (charged.dead_puck_clock > 1.6).all()
+    # A nudge neither buys the grace back nor pauses the cost; a release, the far half or a puck
+    # out of reach does. A slow puck that has not lain yet is not on the clock.
+    c, nudged, clock = rest_puck(charged, 0.77, 0.80, 5, puck_speed=0.6)
+    assert (clock[-1] > 1.6).all() and np.allclose(nudged[..., COLUMN["dead_puck_s"]], 0.02)
     _, nudged, _ = rest_puck(charged, 0.77, 0.80, 2)
     assert (nudged[..., COLUMN["dead_puck_s"]] > 0).all()
     for x, y, speed in ((0.77, 0.80, 1.2), (0.5, 1.4, 0.0), (0.5, 0.97, 0.0)):
         rest_puck(charged, 0.77, 0.80, 60)
         rest_puck(charged, x, y, 1, puck_speed=speed)
         assert (charged.dead_puck_clock == 0).all()
+    _, arriving, _ = rest_puck(charged, 0.77, 0.80, 80, puck_speed=0.6)
+    assert (charged.dead_puck_clock == 0).all() and not arriving[..., COLUMN["dead_puck_s"]].any()
     charged.dead_puck_clock[:] = 5
     charged.reset(mask=np.array([True, False]))
     assert charged.dead_puck_clock.tolist() == [0, 5]
