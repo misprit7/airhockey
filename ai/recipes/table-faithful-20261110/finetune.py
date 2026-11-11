@@ -36,6 +36,19 @@ README.md "Round 3".
     PYTHONPATH=ai python3 ai/recipes/table-faithful-20261110/finetune.py \
         --arm a3 --run-name _neural-table-faithful-20261110-a3 --minutes 150
 
+ROUND 4 (`--arm a4`): arm a3's options, continued from a3 itself, with what
+its evaluation still held against a table trial: the walk back after a shot
+at a raised cap (the far cap's speed gate now ends 0.25 s after the contact,
+threshold 20), the dither beside a puck it does not strike (the cap charged
+once a puck has lain 2.5 s, the teacher's cap label only up to then and not
+at the front edge, where the teacher itself hovers), the resting pucks no
+drill covered (front edge of reach, forward side rails, which also move from
+v4's anchor to the teacher's) and the slow puck sent into its own back corner
+(an entry cost and a back-rail drill). README.md "Round 4".
+
+    PYTHONPATH=ai python3 ai/recipes/table-faithful-20261110/finetune.py \
+        --arm a4 --run-name _neural-table-faithful-20261110-a4 --minutes 150
+
 Simulation only; nothing here touches the table.
 """
 import argparse
@@ -49,6 +62,7 @@ PRODUCTION = "runs/rail30-100-20261001-v1/agent.pt"
 V4 = "runs/teacher-calm-20261018-v4/agent.pt"
 V5A = "runs/_neural-table-faithful-20261110-a/agent.pt"
 A2 = "runs/_neural-table-faithful-20261110-a2/agent.pt"
+A3 = "runs/_neural-table-faithful-20261110-a3/agent.pt"
 # Arm a3's anchor weights (README "Round 3" has the smoke run they were read from).
 TEACHER_RESTING, REFERENCE_RAIL = 1.0, 1.0
 # The teacher anchor copies the accel cap only: README "Round 3 review".
@@ -67,6 +81,12 @@ ARMS = {
 # Round 3: a2's options and the two anchors; --resume picks a, a2 or v4.
 ARMS["a3"] = dict(ARMS["a2"], resume=A2, seed=20261113, teacher_resting=TEACHER_RESTING, reference_rail=REFERENCE_RAIL,
                   teacher_resting_dims=TEACHER_RESTING_DIMS, anchor_space="pre-squash")
+# Round 4: a3's options from a3, plus the fixes of README "Round 4" (numbers and reasons there).
+ARMS["a4"] = dict(ARMS["a3"], resume=A3, seed=20261115,
+                  far_cap_brake=0.25, far_cap_threshold=20.0,
+                  dead_puck_cap=100.0, dead_puck_cap_grace=2.5, teacher_resting_end=2.5,
+                  reach_edge_drill=0.2, anchor_side_rail_open_y=0.55, anchor_front_margin=0.06,
+                  back_rail_drill=0.05, own_corner=300.0)
 
 
 def argv(a):
@@ -167,6 +187,24 @@ def argv(a):
         cmd += ["--skill-reference", a.skill_reference, "--skill-reference-rail-weight", str(a.reference_rail)]
     if a.teacher_resting or a.reference_rail:
         cmd += ["--anchor-space", a.anchor_space] + (["--anchor-kl-exempt"] if a.anchor_kl_exempt else [])
+    # Round 4: each absent at its earlier-arm default.
+    if a.far_cap and a.far_cap_threshold != 40:
+        cmd += ["--far-cap-threshold", str(a.far_cap_threshold)]
+    if a.far_cap_brake is not None and a.far_cap_max_speed is not None and a.far_cap:
+        cmd += ["--far-cap-brake-seconds", str(a.far_cap_brake)]
+    if a.dead_puck_cap:
+        cmd += ["--dead-puck-cap-weight", str(a.dead_puck_cap), "--dead-puck-cap-grace", str(a.dead_puck_cap_grace)]
+    if a.teacher_resting and a.teacher_resting_end is not None:
+        cmd += ["--teacher-resting-end", str(a.teacher_resting_end)]
+    if a.teacher_resting or a.reference_rail:
+        for flag, value in (("--anchor-side-rail-open-y", a.anchor_side_rail_open_y),
+                            ("--anchor-front-margin", a.anchor_front_margin)):
+            if value is not None:
+                cmd += [flag, str(value)]
+    for flag, value in (("--reach-edge-drill-fraction", a.reach_edge_drill),
+                        ("--back-rail-drill-fraction", a.back_rail_drill), ("--own-corner-weight", a.own_corner)):
+        if value:
+            cmd += [flag, str(value)]
     return cmd
 
 
@@ -224,6 +262,23 @@ def build_parser():
     p.add_argument("--anchor-space", choices=["squashed", "pre-squash"], default="squashed")
     p.add_argument("--anchor-kl-exempt", action=argparse.BooleanOptionalAction, default=False,
                    help="Keep anchored samples out of the KL that limits the actor step")
+    # Round 4. Defaults are the earlier arms; --arm a4 sets them.
+    p.add_argument("--far-cap-threshold", type=float, default=40.0, help="Cap above which the far-cap cost runs, m/s^2")
+    p.add_argument("--far-cap-brake", type=float,
+                   help="s after its own contact in which a fast mallet stays free of the far cap (default: always free)")
+    p.add_argument("--dead-puck-cap", type=float, default=0.0,
+                   help="Cost per second of cap fraction above the floor once a puck has lain past --dead-puck-cap-grace")
+    p.add_argument("--dead-puck-cap-grace", type=float, default=2.5)
+    p.add_argument("--teacher-resting-end", type=float, help="s the puck has lain after which the teacher anchor stops")
+    p.add_argument("--reach-edge-drill", type=float, default=0.0,
+                   help="Share of stationary drills at the front edge of reach or on a forward side rail")
+    p.add_argument("--back-rail-drill", type=float, default=0.0, help="Share of stationary drills on the back rail")
+    p.add_argument("--own-corner", type=float, default=0.0,
+                   help="Cost per slow puck the learner sends to lie in a back-corner pocket")
+    p.add_argument("--anchor-side-rail-open-y", type=float,
+                   help="Side-rail pucks forward of this y get the teacher anchor instead of the reference's")
+    p.add_argument("--anchor-front-margin", type=float,
+                   help="No anchor on pucks lying further than this past the mallet's forward limit, m")
     p.add_argument("--n-envs", type=int, default=2048, help="128 per worker keeps the slot layout")
     p.add_argument("--workers", type=int, default=16)
     p.add_argument("--device", default="cuda")

@@ -381,12 +381,16 @@ def test_new_options_at_their_defaults_are_the_same_environment():
                     accel_duty_weight=0.0, reversal_weight=0.0, far_cap_weight=0.0, stagger_games=False,
                     dead_puck_weight=0.0, calm_reachable_scale=None, guard_weight=0.0, guard_unresolved_weight=0.0,
                     far_cap_max_speed=None, accel_effort_weight=0.0, idle_speed_weight=0.0,
-                    cross_bank_drill_fraction=0.0, corner_far_start_fraction=0.0)
+                    cross_bank_drill_fraction=0.0, corner_far_start_fraction=0.0,
+                    far_cap_brake_seconds=None, dead_puck_cap_weight=0.0, reach_edge_drill_fraction=0.0,
+                    back_rail_drill_fraction=0.0, own_corner_weight=0.0, anchor_side_rail_open_y=None,
+                    anchor_front_margin=None)
     a, b = NeuralTrainingEnv(24, **GAMES), NeuralTrainingEnv(24, **GAMES, **explicit)
     assert np.array_equal(a.reset(seed=4), b.reset(seed=4))
     for (obs_a, reward_a, info_a, _), (obs_b, reward_b, info_b, _) in zip(play(a, 60), play(b, 60)):
         assert np.array_equal(obs_a, obs_b) and np.array_equal(reward_a, reward_b)
         assert np.array_equal(info_a["motion"], info_b["motion"])
+        assert np.array_equal(info_a["anchor_zone"], info_b["anchor_zone"])
     assert a.people is None and not a.strike_drill.any()
 
 
@@ -615,6 +619,212 @@ def test_anchor_zone_is_the_open_table_or_the_rail_strip_where_a_puck_lies():
     assert rows.any() and (info["anchor_zone"][rows] == ANCHOR_RAIL).all() and drills.edge_drill[rows].all()
     # Bookkeeping only: the environment is the same one.
     assert info["anchor_zone"].dtype == np.int8
+
+
+# ------------------------------------------- round 4: what a3 still did
+def test_only_the_stop_after_its_own_strike_is_free_of_the_far_cap():
+    """Round 2 freed every fast tick; the walk back to guard is charged again."""
+    kw = dict(seed=2, accel=100.0, randomize=False, far_cap_weight=40.0, far_cap_max_speed=1.0)
+
+    def walk(contact_at=None, **options):
+        env = NeuralTrainingEnv(4, **kw, **options)
+        env.reset(seed=2)
+        e, rewards, motions, fast = env.engine, [], [], []
+        for t in range(40):
+            e.puck_x[:], e.puck_y[:], e.puck_vx[:], e.puck_vy[:] = 0.5, 1.6, 0.0, 0.0
+            if t == contact_at:
+                env.contact_clock[0] = env.elapsed          # its own strike, this tick
+            action = np.zeros((4, 6), np.float32)
+            action[:, 1] = 0.9 if (t // 8) % 2 == 0 else -0.9
+            action[:, 4], action[:, 5] = -1.0, 1.0
+            fast.append(np.hypot(env.base._agent_dyn["vx"], env.base._agent_dyn["vy"]) >= 1.0)
+            _, reward, _, _, info = env.step(action)
+            rewards.append(reward.astype(np.float64))
+            motions.append(info["motion"].astype(np.float64))
+        return np.array(rewards), np.array(motions)[..., COLUMN["far_cap_s"]], np.array(fast)
+
+    free, gated, fast = walk()
+    _, never, _ = walk(far_cap_brake_seconds=0.25)
+    paid, after, _ = walk(contact_at=10, far_cap_brake_seconds=0.25)
+    # The speed gate alone: no fast tick is charged. With the window and no contact: every tick is.
+    assert fast.mean() > 0.5 and not gated[fast].any() and np.allclose(gated[~fast], 0.02)
+    assert np.allclose(never, 0.02)
+    # A contact at tick 10 frees the fast ticks of the next 0.25 s, and only those.
+    window = np.zeros(40, bool)
+    window[10:22] = True
+    assert not after[window[:, None] & fast].any() and np.allclose(after[~(window[:, None] & fast)], 0.02)
+    assert (window[:, None] & fast).sum() >= 4 * 8
+    assert np.allclose(free - paid, 40.0 * 0.02 * (after - gated) / 0.02, atol=1e-4) and (free - paid).sum() > 1
+    with pytest.raises(ValueError):
+        NeuralTrainingEnv(2, far_cap_brake_seconds=0.25)             # needs the speed gate
+
+
+def test_a_cap_held_up_beside_a_lying_puck_is_charged_after_the_strikes_time():
+    full = np.zeros((2, 6), np.float32)
+    full[:, 5] = 1.0
+    floor = np.zeros((2, 6), np.float32)
+    floor[:, 5] = -1.0
+    def lie(action, steps=200, **options):
+        env = NeuralTrainingEnv(2, **QUIET, **options)
+        env.reset(seed=2)
+        return rest_puck(env, 0.77, 0.80, steps, action=action)
+    a, counted, clock = lie(full)
+    b, again, _ = lie(full, dead_puck_cap_weight=100.0, dead_puck_cap_grace=2.5)
+    cap = counted[..., COLUMN["dead_puck_cap"]]
+    # Nothing for the first 2.5 s (the run into a strike), then 0.95 of the cap's range every tick: 95 a second.
+    late = clock[:, 0] > 2.49
+    assert np.array_equal(counted, again) and 70 < late.sum() < 80
+    assert not cap[~late].any() and np.allclose(cap[late], 0.02 * 0.95, atol=1e-6)
+    assert np.allclose(a - b, 100.0 * cap, atol=1e-4) and (a - b)[late].sum(axis=0) == pytest.approx(late.sum() * 1.9, rel=1e-3)
+    # The cap at its floor beside the same puck costs nothing; nor does any cap once the puck is released.
+    _, calm, _ = lie(floor, dead_puck_cap_weight=100.0)
+    assert not calm[..., COLUMN["dead_puck_cap"]].any()
+    env = NeuralTrainingEnv(2, **QUIET, dead_puck_cap_weight=100.0)
+    env.reset(seed=2)
+    rest_puck(env, 0.77, 0.80, 200, action=full)
+    _, gone, _ = rest_puck(env, 0.77, 0.80, 5, action=full, puck_speed=1.2)
+    assert not gone[..., COLUMN["dead_puck_cap"]].any()
+    with pytest.raises(ValueError):
+        NeuralTrainingEnv(2, dead_puck_cap_weight=-1)
+
+
+def test_reach_edge_drills_put_the_puck_where_no_other_drill_did():
+    options = dict({**GAMES, "game_fraction": 0.0})
+    env = NeuralTrainingEnv(600, **options, reach_edge_drill_fraction=1.0)
+    plain = NeuralTrainingEnv(600, **options)
+    env.reset(seed=4)
+    plain.reset(seed=4)
+    e, rows = env.engine, env.kind == 0
+    low, high = env.decoder.low, env.decoder.high
+    radius = env.cfg.puck_radius + env.cfg.paddle_radius
+    x, y = e.puck_x[rows], e.puck_y[rows]
+    # The stationary drill as it was stops 20 mm short of the front edge of reach and 90 mm off the rails.
+    assert plain.engine.puck_y[rows].max() < high[1] + radius - 0.02 + 1e-9
+    assert plain.engine.puck_x[rows].min() > 0.16
+    front = y > high[1] + radius - 0.05 - 1e-9
+    side = ~front
+    assert 0.45 < front.mean() < 0.75 and rows.sum() == 120
+    # Front: the last 50 mm of reach across the whole width, still touchable.
+    assert (y[front] < high[1] + radius - 0.003).all() and x[front].min() < 0.15 and x[front].max() > 0.85
+    # Side: against either rail, in the strip the mallet's centre cannot get outside of, forward of y 0.58.
+    assert ((x[side] < low[0] + 0.015) | (x[side] > high[0] - 0.015)).all() and (y[side] >= 0.58).all()
+    assert (x[side] < 0.5).any() and (x[side] > 0.5).any()
+    assert (np.hypot(e.puck_vx, e.puck_vy)[rows] == 0).all() and not env.edge_drill[rows].any()
+    gap = np.hypot(e.paddle_agent_x - e.puck_x, e.paddle_agent_y - e.puck_y)[rows]
+    assert gap.min() > radius and (gap < 0.40).mean() > 0.35 and (gap > 0.45).mean() > 0.1
+    # The other slots are the ones they were.
+    assert np.array_equal(env.kind, plain.kind) and np.array_equal(e.puck_y[env.kind == 2], plain.engine.puck_y[plain.kind == 2])
+    # Every one of them is within the mallet's reach and on the dead-puck clock.
+    env.set_opponent_action(np.zeros((600, 6), np.float32))
+    for _ in range(3):
+        info = env.step(env.last_action.copy())[4]
+    assert (info["dead_puck_clock"][rows] > 0.03).mean() > 0.95
+    with pytest.raises(ValueError):
+        NeuralTrainingEnv(2, reach_edge_drill_fraction=1.5)
+
+
+def test_forward_side_rail_pucks_are_the_teachers_and_front_edge_pucks_nobodys():
+    from airhockey.neural_training import ANCHOR_NONE, ANCHOR_OPEN, ANCHOR_RAIL
+    from airhockey.neural_finetune import ATTACK, resting_teacher_mask
+
+    def zone(env, x, y):
+        e, info = env.engine, None
+        for _ in range(3):
+            e.puck_x[:], e.puck_y[:], e.puck_vx[:], e.puck_vy[:] = x, y, 0.0, 0.0
+            info = env.step(np.zeros((2, 6), np.float32))[4]
+        return info["anchor_zone"].tolist()
+
+    old, new = NeuralTrainingEnv(2, **QUIET), NeuralTrainingEnv(2, **QUIET, anchor_side_rail_open_y=0.55,
+                                                                anchor_front_margin=0.06)
+    old.reset(seed=2)
+    new.reset(seed=2)
+    front = new.decoder.high[1]
+    # The left rail forward of y 0.55 (v4 leaves 16 of 30 there, the teacher none): the reference's, now the teacher's.
+    for x in (0.075, 0.925):
+        assert zone(old, x, 0.72) == [ANCHOR_RAIL] * 2 and zone(new, x, 0.72) == [ANCHOR_OPEN] * 2
+        assert zone(old, x, 0.40) == zone(new, x, 0.40) == [ANCHOR_RAIL] * 2
+    # Past the forward limit by more than 60 mm the teacher hovers at 90 m/s^2: no label.
+    assert zone(old, 0.5, front + 0.07) == [ANCHOR_OPEN] * 2 and zone(new, 0.5, front + 0.07) == [ANCHOR_NONE] * 2
+    assert zone(new, 0.075, front + 0.07) == [ANCHOR_NONE] * 2
+    assert zone(new, 0.5, front + 0.05) == zone(new, 0.5, 0.6) == [ANCHOR_OPEN] * 2
+    assert zone(new, 0.5, 0.05) == [ANCHOR_RAIL] * 2 and zone(new, 0.05, 0.05) == [ANCHOR_RAIL] * 2
+    # The teacher's cap is a strike's: its window on the clock can close.
+    zones = torch.tensor([1, 1, 1, 2, 1])
+    clock = torch.tensor([0.5, 1.5, 3.0, 1.5, 1.5])
+    modes = torch.tensor([ATTACK, ATTACK, ATTACK, ATTACK, ATTACK + 1])
+    assert resting_teacher_mask(zones, clock, modes, 1.0).tolist() == [False, True, True, False, False]
+    assert resting_teacher_mask(zones, clock, modes, 1.0, 2.5).tolist() == [False, True, False, False, False]
+
+
+def test_a_slow_puck_sent_into_its_own_back_corner_is_counted_once():
+    env = NeuralTrainingEnv(2, **QUIET)
+    charged = NeuralTrainingEnv(2, **QUIET, own_corner_weight=300.0)
+    column = COLUMN["own_corner"]
+
+    def run(env, path, touched=True):
+        env.reset(seed=2)
+        e, rewards, events = env.engine, [], []
+        for x, y, speed in path:
+            e.puck_x[:], e.puck_y[:], e.puck_vx[:], e.puck_vy[:] = x, y, -speed, 0.0
+            env.own_touched[:] = touched
+            _, reward, _, _, info = env.step(np.zeros((2, 6), np.float32))
+            env.own_touched[:] = touched
+            rewards.append(reward.astype(np.float64))
+            events.append(info["motion"][:, column].astype(np.float64))
+        return np.array(rewards), np.array(events)
+
+    # Dribbled along the back rail at 0.5 m/s into the pocket, where it stops.
+    dribble = [(0.30, 0.045, 0.5)] * 3 + [(0.06, 0.045, 0.5)] * 2 + [(0.045, 0.045, 0.0)] * 10
+    free, events = run(env, dribble)
+    paid, again = run(charged, dribble)
+    assert np.array_equal(events, again) and events.sum(axis=0).tolist() == [1, 1] and events[5].tolist() == [1, 1]
+    assert np.allclose(free - paid, 300.0 * events, atol=1e-3)
+    # Not the learner's doing, or fast enough to bounce back out, or only passing through: nothing.
+    assert not run(env, dribble, touched=False)[1].any()
+    assert not run(env, [(0.30, 0.045, 3.0)] * 3 + [(0.06, 0.045, 3.0)] * 2 + [(0.045, 0.045, 0.0)] * 10)[1].any()
+    assert not run(env, [(0.30, 0.045, 0.5)] * 3 + [(0.06, 0.045, 0.5)] * 2 + [(0.30, 0.30, 0.5)] * 5)[1].any()
+    # Lying on the rail short of the pocket: nothing. Nor in a corner / edge drill slot, whose puck starts there.
+    assert not run(env, [(0.30, 0.045, 0.0)] * 10)[1].any()
+    env.reset(seed=2)
+    env.edge_drill[:] = [True, False]
+    e = env.engine
+    for x, y, speed in dribble:
+        e.puck_x[:], e.puck_y[:], e.puck_vx[:], e.puck_vy[:] = x, y, -speed, 0.0
+        env.own_touched[:] = True
+        events = env.step(np.zeros((2, 6), np.float32))[4]["motion"][:, column]
+        env.edge_drill[:] = [True, False]
+        if events.any():
+            assert events.tolist() == [0, 1]
+    assert env._pocket_counted.tolist() == [False, True]
+    # A puck a corner drill put in the pocket, touched there by the mallet: nothing either.
+    corner = NeuralTrainingEnv(200, **{**GAMES, "game_fraction": 0.0}, corner_drill_fraction=1.0, own_corner_weight=300.0)
+    corner.reset(seed=4)
+    rows = corner.kind == 0
+    assert corner._pocket_inside[rows].mean() > 0.3 and not corner._pocket_owned.any()
+    corner.set_opponent_action(np.zeros((200, 6), np.float32))
+    x, y = corner.engine.puck_x.copy(), corner.engine.puck_y.copy()
+    for _ in range(5):
+        corner.engine.puck_x[rows], corner.engine.puck_y[rows] = x[rows], y[rows]
+        corner.engine.puck_vx[rows] = corner.engine.puck_vy[rows] = 0
+        corner.own_touched[:] = True
+        info = corner.step(np.zeros((200, 6), np.float32))[4]
+        assert not info["motion"][rows & corner._pocket_inside, column].any()
+    with pytest.raises(ValueError):
+        NeuralTrainingEnv(2, own_corner_weight=-1)
+
+
+def test_back_rail_drills_start_before_the_corner():
+    options = dict({**GAMES, "game_fraction": 0.0})
+    env = NeuralTrainingEnv(600, **options, back_rail_drill_fraction=1.0)
+    env.reset(seed=4)
+    e, rows = env.engine, env.kind == 0
+    low, high = env.decoder.low, env.decoder.high
+    x, y, speed = e.puck_x[rows], e.puck_y[rows], np.hypot(e.puck_vx, e.puck_vy)[rows]
+    assert (x > low[0] + 0.02).all() and (x < high[0] - 0.02).all() and (y < low[1] + 0.021).all()
+    assert not env._in_corner_pocket()[rows].any() and not env.edge_drill[rows].any()
+    assert 0.3 < (speed > 0).mean() < 0.7 and speed.max() <= 0.8 and (e.puck_vy[rows] == 0).all()
+    gap = np.hypot(e.paddle_agent_x - e.puck_x, e.paddle_agent_y - e.puck_y)[rows]
+    assert gap.min() > env.cfg.puck_radius + env.cfg.paddle_radius
 
 
 def test_anchor_errors_keep_a_gradient_where_the_hover_is_saturated():
@@ -866,6 +1076,30 @@ def test_trainer_continues_a_run_with_every_table_option(tmp_path, monkeypatch):
         # another untrained network: its error starts near zero and only has to stay finite.)
         assert np.mean([r["anchors"]["teacher_resting"][key + "_final"] < r["anchors"]["teacher_resting"][key + "_initial"]
                         for r in third]) > 0.6
+    # Round 4: every flag at once on top of round 3's; its rates appear, per slot too, and only then.
+    fourth = train("--run-name", "_round4", "--resume", str(runs / "_first" / "agent.pt"), *drills,
+                   "--teacher-resting-weight", "1", "--teacher-resting-start", ".2", "--teacher-resting-end", "2.5",
+                   "--teacher-resting-dims", "cap", "--skill-reference-rail-weight", "1", "--anchor-space", "pre-squash",
+                   "--anchor-side-rail-open-y", ".55", "--anchor-front-margin", ".06",
+                   "--far-cap-weight", "40", "--far-cap-threshold", "20", "--far-cap-max-speed", "1",
+                   "--far-cap-brake-seconds", ".25", "--dead-puck-cap-weight", "100", "--dead-puck-cap-grace", ".5",
+                   "--reach-edge-drill-fraction", ".5", "--back-rail-drill-fraction", ".2", "--own-corner-weight", "300")
+    added = {"dead_puck_cap_cost_per_s", "own_corner_per_minute", "own_corner_cost_per_s"}
+    for r in fourth:
+        assert added <= set(r["motion"]) and all(np.isfinite(v) for v in r["motion"].values())
+        for slot in r["motion_by_slot"].values():
+            assert added | {"far_cap_cost_per_s", "dead_puck_cost_per_s"} <= set(slot) and np.isfinite(list(slot.values())).all()
+        assert np.isfinite(r["final_kl"]) and np.isfinite(r["anchors"]["teacher_resting"]["loss"])
+    # Pucks lie at the edge of reach from the first tick, under whatever cap the untrained network asks for.
+    assert max(r["motion_by_slot"]["stationary"]["dead_puck_cap_cost_per_s"] for r in fourth) > 0
+    assert all(not (added & set(r["motion"])) and "far_cap_cost_per_s" not in r["motion_by_slot"]["stationary"]
+               for r in third)
+    meta = json.loads((runs / "_round4" / "run.json").read_text())
+    assert meta["anchors"]["teacher_resting"]["end_s"] == 2.5 and meta["anchors"]["teacher_resting"]["front_margin"] == .06
+    for bad in (["--teacher-resting-end", "2"], ["--far-cap-brake-seconds", ".25"],
+                ["--teacher-resting-weight", "1", "--teacher-resting-start", "1", "--teacher-resting-end", ".5"]):
+        with pytest.raises(SystemExit):
+            train("--run-name", "_bad4", "--steps", "128", *bad)
     meta = json.loads((runs / "_round3-pre-squash" / "run.json").read_text())
     assert meta["anchors"]["space"] == "pre-squash" and meta["anchors"]["training_only"]
     assert meta["anchors"]["reference_rail"]["reference"].endswith("_anchor/agent.pt")
@@ -897,6 +1131,9 @@ def test_recipe_is_v4s_command_continued_with_the_table_options():
               "cross_bank_drill_fraction", "corner_far_start_fraction"}
     round3 = {"teacher_resting_weight", "teacher_resting_start", "teacher_resting_dims", "skill_reference_rail_weight",
               "anchor_space", "anchor_kl_exempt"}
+    round4 = {"far_cap_brake_seconds", "dead_puck_cap_weight", "dead_puck_cap_grace", "reach_edge_drill_fraction",
+              "back_rail_drill_fraction", "own_corner_weight", "anchor_side_rail_open_y", "anchor_front_margin",
+              "teacher_resting_end"}
     cmd, args = parsed()
     # Continuation, and the pitfalls v4's record paid for.
     assert args.resume == Path(recipe.V4) and args.initialize_from is None and args.value_warmup_updates == 0
@@ -931,7 +1168,7 @@ def test_recipe_is_v4s_command_continued_with_the_table_options():
         changed = {k for k in old if old[k] != mine[k]}
         assert changed == {"run_name", "evaluation_dir", "resume", "initialize_from", "opponent_reference", "minutes",
                            "seed", "value_warmup_updates", "width"}
-        assert set(mine) - set(old) == new | round2 | round3
+        assert set(mine) - set(old) == new | round2 | round3 | round4
 
 
 def test_round2_arm_continues_v5a_with_its_evaluations_changes():
@@ -998,3 +1235,44 @@ def test_round3_arm_is_a2_with_the_two_anchors():
     off = parse("--arm", "a3", "--teacher-resting", "0", "--reference-rail", "0")
     assert off.skill_reference is None and off.anchor_space == "squashed" and off.teacher_resting_weight == 0
     assert off.teacher_resting_dims == "all"
+
+
+def test_round4_arm_is_a3_continued_with_what_its_evaluation_held_against_it():
+    spec = importlib.util.spec_from_file_location("recipe_v5", REPO / "ai/recipes/table-faithful-20261110/finetune.py")
+    recipe = importlib.util.module_from_spec(spec)
+    spec.loader.exec_module(recipe)
+    trainer = load_trainer(REPO)
+    command = lambda *argv: recipe.argv(recipe.parse(["--run-name", "_x", *argv]))
+    parse = lambda *argv: trainer.build_parser().parse_args(command(*argv)[2:])
+    third, fourth = parse("--arm", "a3"), parse("--arm", "a4")
+    # Arm a3's own command has none of it.
+    new_flags = ("--far-cap-threshold", "--far-cap-brake-seconds", "--dead-puck-cap", "--teacher-resting-end",
+                 "--anchor-side-rail-open-y", "--anchor-front-margin", "--reach-edge-drill", "--back-rail-drill",
+                 "--own-corner")
+    assert not any(flag.startswith(new_flags) for flag in command("--arm", "a3"))
+    # Continues a3 itself, critic and all; the starting point is still a flag.
+    assert fourth.resume == Path(recipe.A3) and fourth.initialize_from is None and fourth.value_warmup_updates == 0
+    assert parse("--arm", "a4", "--resume", recipe.V4).resume == Path(recipe.V4)
+    # After its own shot: fast ticks are free for a quarter second after the contact, the cap charged from 20.
+    assert (fourth.far_cap_weight, fourth.far_cap_max_speed, fourth.far_cap_brake_seconds) == (40, 1, 0.25)
+    assert fourth.far_cap_threshold == 20 and third.far_cap_threshold == 40
+    # Beside a lying puck: the run into the strike stays free (calm scale 0, anchor from 1 s), the cap is charged
+    # from 2.5 s, where the teacher's cap label ends too.
+    assert fourth.calm_reachable_scale == 0 and fourth.teacher_resting_start == 1
+    assert fourth.dead_puck_cap_weight == 100 and fourth.dead_puck_cap_grace == fourth.teacher_resting_end == 2.5
+    # Coverage: the front edge and forward side rails drilled; those rails the teacher's, the front edge nobody's.
+    assert fourth.reach_edge_drill_fraction == 0.2 and fourth.anchor_side_rail_open_y == 0.55
+    assert fourth.anchor_front_margin == 0.06
+    # The back corner: an entry cost of half a goal and a small drill on the rail that leads there.
+    assert fourth.own_corner_weight == 300 == fourth.game_goal_weight / 2 and fourth.back_rail_drill_fraction == 0.05
+    changed = {k for k in vars(third) if getattr(third, k) != getattr(fourth, k)}
+    assert changed == {"resume", "seed", "far_cap_threshold", "far_cap_brake_seconds", "dead_puck_cap_weight",
+                       "teacher_resting_end", "reach_edge_drill_fraction", "anchor_side_rail_open_y",
+                       "anchor_front_margin", "back_rail_drill_fraction", "own_corner_weight"}
+    # A typed flag still wins; the environment takes the arm's options.
+    off = parse("--arm", "a4", "--dead-puck-cap", "0", "--own-corner", "0")
+    assert off.dead_puck_cap_weight == 0 and off.own_corner_weight == 0
+    NeuralTrainingEnv(2, far_cap_weight=fourth.far_cap_weight, far_cap_max_speed=fourth.far_cap_max_speed,
+                      far_cap_brake_seconds=fourth.far_cap_brake_seconds, dead_puck_cap_weight=fourth.dead_puck_cap_weight,
+                      reach_edge_drill_fraction=fourth.reach_edge_drill_fraction,
+                      anchor_side_rail_open_y=fourth.anchor_side_rail_open_y, anchor_front_margin=fourth.anchor_front_margin)

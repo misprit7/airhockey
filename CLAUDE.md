@@ -173,6 +173,19 @@ Robotic air hockey table that uses reinforcement learning trained in simulation,
       `MalletLift` whose mechanism is drawn per episode (braking / flat /
       closing speed; `far_body`). Rates per slot class are logged as
       `status["motion_by_slot"]`.
+      ROUND 4 (same day, after a3 was evaluated; arm `--arm a4`, opt-in,
+      not yet trained): the far cap's speed gate ends 0.25 s after the
+      learner's own contact (`--far-cap-brake-seconds`: a3 walked back from
+      its shots at a raised cap), the cap is charged once a puck has lain
+      2.5 s (`--dead-puck-cap-weight`; `--teacher-resting-end` stops the
+      teacher's cap label there), drills at the front edge of reach and on
+      the forward side rails (`--reach-edge-drill-fraction`) and on the back
+      rail (`--back-rail-drill-fraction`), a cost per slow puck the learner
+      sends to lie in a back-corner pocket (`--own-corner-weight`), and two
+      anchor-zone limits (`--anchor-side-rail-open-y`: v4 leaves forward
+      left-rail pucks, the teacher's cap strikes them;
+      `--anchor-front-margin`: the teacher itself hovers behind front-edge
+      pucks at 90 m/s^2 and stalled on 67% of them).
     - `run_names.py` - The `<major>.<minor>-<description>-<stage>` scheme,
       enforced by both trainers (see "Run names").
     - `perception.py` - The sim's tracker model: 6-frame slope estimator,

@@ -351,6 +351,29 @@ def build_parser():
                         "requested, the mallet hovering behind it")
     p.add_argument("--corner-far-start-fraction", type=float, default=0,
                    help="Fraction of corner drills whose mallet starts anywhere in the workspace")
+    # Round 4 (2026-11-10, after a3). All opt-in; absent = the trainer as it was.
+    p.add_argument("--far-cap-brake-seconds", type=float,
+                   help="With --far-cap-max-speed: a fast mallet is free of the far-cap cost only within this many seconds "
+                        "of its own last puck contact (the stop after a strike); the walk back to guard is charged")
+    p.add_argument("--dead-puck-cap-weight", type=float, default=0,
+                   help="Cost per second of the accel-cap fraction above the 5%% floor while a puck has lain within reach "
+                        "longer than --dead-puck-cap-grace: a raised cap beside a puck that is not being struck")
+    p.add_argument("--dead-puck-cap-grace", type=float, default=2.5, help="s on the dead-puck clock")
+    p.add_argument("--reach-edge-drill-fraction", type=float, default=0,
+                   help="Fraction of stationary drills with the puck at rest in the last 50 mm of forward reach "
+                        "(whole width) or against a side rail forward of y 0.58")
+    p.add_argument("--back-rail-drill-fraction", type=float, default=0,
+                   help="Fraction of stationary drills with a slow puck on the back rail between the corners")
+    p.add_argument("--own-corner-weight", type=float, default=0,
+                   help="Cost, once per entry, when a puck the learner touched goes into a back-corner pocket under 2 m/s "
+                        "and comes to lie there")
+    p.add_argument("--anchor-side-rail-open-y", type=float,
+                   help="A puck lying in a side-rail strip forward of this y gets the teacher anchor "
+                        "(--teacher-resting-weight), not the reference's (--skill-reference-rail-weight)")
+    p.add_argument("--anchor-front-margin", type=float,
+                   help="A puck lying further than this (m) past the mallet's forward limit gets no anchor")
+    p.add_argument("--teacher-resting-end", type=float,
+                   help="s on the dead-puck clock after which the teacher anchor no longer applies (default: no end)")
     return p
 
 
@@ -512,6 +535,14 @@ def environment_options(args, *, shot_conditioned):
         idle_speed_weight=getattr(args, 'idle_speed_weight', 0.0),
         cross_bank_drill_fraction=getattr(args, 'cross_bank_drill_fraction', 0.0),
         corner_far_start_fraction=getattr(args, 'corner_far_start_fraction', 0.0),
+        far_cap_brake_seconds=getattr(args, 'far_cap_brake_seconds', None),
+        dead_puck_cap_weight=getattr(args, 'dead_puck_cap_weight', 0.0),
+        dead_puck_cap_grace=getattr(args, 'dead_puck_cap_grace', 2.5),
+        reach_edge_drill_fraction=getattr(args, 'reach_edge_drill_fraction', 0.0),
+        back_rail_drill_fraction=getattr(args, 'back_rail_drill_fraction', 0.0),
+        own_corner_weight=getattr(args, 'own_corner_weight', 0.0),
+        anchor_side_rail_open_y=getattr(args, 'anchor_side_rail_open_y', None),
+        anchor_front_margin=getattr(args, 'anchor_front_margin', None),
         game_episode_seconds=args.game_episode_seconds,
         stationary_failure_penalty=args.stationary_failure_penalty,
         stationary_rest_fraction=args.stationary_rest_fraction,
@@ -620,6 +651,11 @@ def main():
         p.error("--skill-reference-rail-weight needs --skill-reference")
     if args.teacher_resting_dims != "all" and not args.teacher_resting_weight:
         p.error("--teacher-resting-dims needs --teacher-resting-weight")
+    if args.teacher_resting_end is not None and (not args.teacher_resting_weight
+                                                 or not args.teacher_resting_end > args.teacher_resting_start):
+        p.error("--teacher-resting-end needs --teacher-resting-weight and must be after --teacher-resting-start")
+    if args.far_cap_brake_seconds is not None and args.far_cap_max_speed is None:
+        p.error("--far-cap-brake-seconds needs --far-cap-max-speed")
     if args.anchor_kl_exempt and not (args.teacher_resting_weight or args.skill_reference_rail_weight):
         p.error("--anchor-kl-exempt needs an anchor weight")
     if args.teacher_opponent_fraction and args.stage < 3:
@@ -866,6 +902,10 @@ def main():
             training_only=True, runtime_controller=False, space=args.anchor_space, kl_exempt=args.anchor_kl_exempt,
             teacher_resting=dict(weight=args.teacher_resting_weight, start_s=args.teacher_resting_start,
                                  dims=args.teacher_resting_dims,
+                                 **({} if args.teacher_resting_end is None else dict(end_s=args.teacher_resting_end)),
+                                 **({} if args.anchor_side_rail_open_y is None
+                                    else dict(side_rail_open_y=args.anchor_side_rail_open_y)),
+                                 **({} if args.anchor_front_margin is None else dict(front_margin=args.anchor_front_margin)),
                                  states="dead-puck clock past start, puck outside the rail strip, not a corner/edge "
                                         "drill slot, teacher attacking; labelled on the learner's own rollout states"),
             reference_rail=dict(weight=args.skill_reference_rail_weight,
@@ -1279,7 +1319,7 @@ def main():
             anchors["teacher_resting"] = dict(
                 weight=args.teacher_resting_weight, target=teacher_targets, dims=ANCHOR_DIMS[args.teacher_resting_dims],
                 mask=resting_teacher_mask(anchor_zones.flatten(), anchor_clocks.flatten(), teacher_modes.flatten(),
-                                          args.teacher_resting_start))
+                                          args.teacher_resting_start, args.teacher_resting_end))
         if args.skill_reference_rail_weight:
             anchors["reference_rail"] = dict(weight=args.skill_reference_rail_weight, target=None, dims=None,
                                              mask=rail_reference_mask(anchor_zones.flatten()))
@@ -1603,6 +1643,15 @@ def main():
             idle_speed_cost_per_s=args.idle_speed_weight * float(motion_by_kind[3:, 9].sum()) / seconds,
             dead_puck_share=measured["dead_puck_s"] / seconds,
             dead_puck_cost_per_s=args.dead_puck_weight * measured["dead_puck_s"] / seconds)
+        # Round 4: keys only when one of its options is on, so an earlier
+        # arm's status is the one it always wrote.
+        round4 = bool(args.dead_puck_cap_weight or args.own_corner_weight or args.far_cap_brake_seconds is not None
+                      or args.reach_edge_drill_fraction or args.back_rail_drill_fraction)
+        if round4:
+            status["motion"].update(
+                dead_puck_cap_cost_per_s=args.dead_puck_cap_weight * measured["dead_puck_cap"] / seconds,
+                own_corner_per_minute=60 * measured["own_corner"] / seconds,
+                own_corner_cost_per_s=args.own_corner_weight * measured["own_corner"] / seconds)
         # The same rates per slot class: the all-slot average stayed flat
         # through v5a while its games against people got rougher.
         status["motion_by_slot"] = {
@@ -1615,7 +1664,13 @@ def main():
                 guard_unresolved_per_minute=60 * float(row[7]) / (0.02 * steps),
                 accel_effort_per_s=float(row[8]) / (0.02 * steps),
                 idle_path_per_s=float(row[9]) / (0.02 * steps),
-                dead_puck_share=float(row[10]) / (0.02 * steps))
+                dead_puck_share=float(row[10]) / (0.02 * steps),
+                **(dict(far_cap_cost_per_s=args.far_cap_weight * float(row[5]) / (0.02 * steps),
+                        dead_puck_cost_per_s=args.dead_puck_weight * float(row[10]) / (0.02 * steps),
+                        dead_puck_cap_cost_per_s=args.dead_puck_cap_weight * float(row[11]) / (0.02 * steps),
+                        own_corner_per_minute=60 * float(row[12]) / (0.02 * steps),
+                        own_corner_cost_per_s=args.own_corner_weight * float(row[12]) / (0.02 * steps))
+                   if round4 else {}))
             for name, row, steps in zip(SLOT_NAMES,
                                         motion_by_kind, slot_steps) if steps}
         if dead_explore:

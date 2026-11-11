@@ -197,15 +197,19 @@ def anchor_mean(values, mask, min_count=16):
     return (values * mask).sum() / mask.sum().clamp_min(min_count)
 
 
-def resting_teacher_mask(zone, clock, modes, start):
+def resting_teacher_mask(zone, clock, modes, start, end=None):
     """Open-table resting pucks the teacher would strike.
 
     `zone` and `clock` are the environment's anchor zone and dead-puck clock
     for the state the actor saw (neural_training.ANCHOR_OPEN = 1); `modes` the
     teacher's own. Only where the teacher attacks: its guard over a puck it
     will not go for (too far forward, or hot beside a wall) is the stall.
+    `end` (s on the clock) closes the window: the label is a strike's cap, and
+    a puck still lying long after one should have happened is a state where
+    the label did not strike it.
     """
-    return (zone == 1) & (clock > start) & (modes == ATTACK)
+    mask = (zone == 1) & (clock > start) & (modes == ATTACK)
+    return mask if end is None else mask & (clock <= end)
 
 
 def rail_reference_mask(zone):

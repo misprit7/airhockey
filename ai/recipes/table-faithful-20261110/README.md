@@ -7,7 +7,9 @@ below exist only in training. Arm A below was run on 2026-11-10 (150 min,
 evaluation is in `logs/table-faithful-20261110/eval-a/`; what it found and
 the second arm that answers it are under "Round 2". Arm a2 was started the
 same day and was still training when "Round 3" at the end was written: arm
-a3, a2 plus two imitation anchors on resting pucks, which has not been run.
+a3, a2 plus two imitation anchors on resting pucks. Arm a3 has since been run
+and evaluated (`logs/table-faithful-20261110/eval-a3/`); "Round 4" is arm a4,
+from a3, for the three things that still keep it off the table. Not run.
 
 ## Why
 
@@ -908,3 +910,295 @@ a2's, and the things listed above. If goals for fall, halve
   instead of attack, carries no label.
 - The zone test uses the true puck position at 15 mm from the mallet-centre
   box; the margin was not tuned.
+
+## Round 4: arm a4, from a3 (2026-11-10)
+
+Simulation only, one network, nothing added to the runtime: two cost terms, a
+narrower free pass on an existing one, two drills, and which training-only
+label a lying puck gets. Arm a4 has not been trained; everything below is
+measurement on a3, v4 and the teacher, unit tests and a three-update smoke run.
+
+### What a3's evaluation still held against a table trial
+
+a3 (`runs/_neural-table-faithful-20261110-a3/agent.pt`, 821M steps) is
+stronger than v4 against the table people, gentler on blocks, heat and guard
+interventions, and strikes most resting pucks. Three things are worse than or
+equal to v4 (`logs/table-faithful-20261110/eval-a3/`):
+
+1. **After its own shot the cap stays up.** 0.2-0.5 s after the puck leaves:
+   cap > 40 m/s² on 55% of ticks (v4 16%), realised rms 39 against 23 m/s²;
+   cap > 20 with the puck away 12.2 against 8.4 s a minute; reversals at
+   1.5 m/s 49.5 against 38.1 a minute.
+2. **Beside a puck it does not strike it dithers** at a cap p50 of 43 m/s²
+   (v4 hovers at 8-14).
+3. **Resting pucks still left**: the front edge of reach (58%), the left
+   rail (18 of 30), and about one game in 64 a slow puck dribbled into its
+   own back corner.
+
+### Coverage, measured before anything was built
+
+`resting_puck.stall_map` in the profile, seed 20261207, on a shifted grid: x
+0.075-0.925 in steps of 0.05, y 0.125, 0.325, 0.525, 0.625-0.825 in steps of
+0.05, 0.86, 0.875, 0.89; both starts, three requests, 1188 trials, the same
+ones for a3, v4 and the teacher (`expert`), with the env's own
+`info["anchor_zone"]` and dead-puck clock recorded per tick. Every puck was
+placed within reach (reach ends at y 0.897; the mallet's forward limit is
+0.806). Stalled trials:
+
+| | n | a3 | v4 | teacher |
+|---|---|---|---|---|
+| front edge, y 0.86 | 108 | 34 | 57 | 31 |
+| front edge, y 0.875 | 108 | 60 | 89 | 78 |
+| front edge, y 0.89 | 108 | 97 | 108 | 108 |
+| front edge, all three rows | 324 | 191 = 59% | 254 | 217 = 67% |
+| left rail, x 0.075, y 0.625-0.825 | 30 | 19 | 16 | 0 |
+| right rail, x 0.925, same y | 30 | 3 | 7 | 0 |
+| x 0.125, same y | 30 | 3 | 16 | 7 (all under the right-bank request) |
+| open forward table, x 0.175-0.825, same y | 420 | 0 | 67 | 0 |
+
+**(a) The front edge.**
+- The dead-puck clock's reach test covers it (it is the referee's own, to
+  0.897), so the cost of round 2 and its noise run there.
+- No drill does. The stationary drill and the cross-bank drill both stop at
+  the forward limit + 91 mm - 20 mm = y 0.877, and the stationary drill's x
+  is 0.17-0.83. y 0.877-0.897 was never a reset state; 0.86-0.877 is the top
+  17 mm of a 0.7 m range.
+- Its zone is ANCHOR_OPEN (82% of a3's stalled front ticks; the rest are the
+  two rail columns), so it gets the teacher's cap. **The teacher does not
+  strike these pucks**: it stalls on 67% of them, standing 0.15 m behind the
+  puck in attack mode at 90 m/s² for the whole trial. Its label there is a
+  raised cap in a state it has no strike from. a3 in its own stalled front
+  trials: mallet 0.45-0.83 m from the puck (median y 0.24), never touching,
+  cap p50 56 m/s², above 40 on 63% of ticks and above 80 on 43%. That is the
+  dither of finding 2, and where it comes from. (An attribution from the zone
+  and the label, not an ablation.)
+- It is physically easy. 2048 placed pucks per row, random arrivals re-drawn
+  every 0.24 s with the target on the forward limit within 0.15 m of the
+  puck's x, 6 s: the puck crossed the centre line in 100% / 100% / 99.5% /
+  87% of trials at y 0.86 / 0.875 / 0.89 / 0.895, and was struck above
+  1.5 m/s in 64% / 45% / 11% / 0.2%. At y 0.89 the mallet has 7 mm of
+  overlap to stop in, so a strike in the gate's sense is nearly out of
+  reach and a push over the line (which the gate accepts) nearly always
+  works.
+
+**(b) The left rail.**
+- Its zone is ANCHOR_RAIL on 100% of ticks: the puck's centre is within
+  15 mm of the mallet-centre box's side edge (x < 0.095), so round 3 handed
+  it to v4's anchor. v4 itself leaves 16 of 30 there; the teacher none.
+- The edge drill's y range ends at the forward limit - 50 mm = 0.756, and an
+  edge-drill slot is v4's for all its steps.
+- a3 with the teacher's label executed where such a puck has lain past 1 s
+  (side strip, y > 0.55; the grid's two rail columns, 60 trials): left rail
+  stalled 19 -> **2 with the cap alone**, 1 with time and cap, 0 with all
+  six; right rail 2 -> 2 / 1 / 0. Strike speed p50 5.6-5.9 m/s in all. The
+  teacher attacks on every one of those ticks. So the same cap-only anchor
+  that fixed the open table fixes this strip, if the strip is the teacher's.
+
+**(c) The back corner.**
+- A wedged puck is freeable in the sim, rarely by chance. 512 pucks touching
+  both rails at (0.041, 0.041), random arrivals for 12 s (half of them aimed
+  into the corner region): touched in 60%, moved more than 5 mm in 22%, got
+  more than 200 mm out in 5.1%. Starting 20-50 mm off one rail: 12-33%.
+- Training already charges it heavily: a reachable resting puck is never
+  relaunched in a training game (`continuous_rallies` relaunches only pucks
+  out of both mallets' reach), so the dead-puck cost, the possession delay
+  and, at load 0.95, the 12,000 shutdown all apply. What is missing is not
+  size. The penalty arrives seconds after the dribble that caused it, and no
+  drill starts on the back rail between the corners (corner drills: within
+  15 mm of the box's corner; edge drills: the side fringes).
+
+### What the trainer gained (all opt-in, defaults unchanged)
+
+| flag | default | what it does |
+|---|---|---|
+| `--far-cap-brake-seconds S` | none | With `--far-cap-max-speed`: a tick begun at or above that mallet speed is free of the far-cap cost only within S of the learner's last puck contact. None = round 2's rule (free at any time). |
+| `--dead-puck-cap-weight W`, `--dead-puck-cap-grace S` | 0, 2.5 | Cost per second of the cap fraction above the 5% floor while the dead-puck clock is past S. The cap at its floor costs nothing. |
+| `--teacher-resting-end S` | none | The teacher anchor applies only while the clock is between `--teacher-resting-start` and S. |
+| `--anchor-side-rail-open-y Y` | none | `info["anchor_zone"]`: a puck lying in a side-rail strip forward of Y is ANCHOR_OPEN (the teacher's), not ANCHOR_RAIL (the reference's). Also in an edge-drill slot. |
+| `--anchor-front-margin M` | none | A puck lying more than M past the mallet's forward limit is ANCHOR_NONE. |
+| `--reach-edge-drill-fraction F` | 0 | Share of stationary drills with the puck at rest in the last 50 mm of forward reach across the whole width (60%), or against a side rail at y 0.58 to there (40%). Half the mallets start within 0.3 m of the puck, behind or beside it. An ordinary stationary slot: 6 s, the dead-puck clock, no reference anchor. |
+| `--back-rail-drill-fraction F` | 0 | Share of stationary drills with a puck on the back rail between the corners, at rest or sliding along the rail at up to 0.8 m/s. |
+| `--own-corner-weight W` | 0 | Cost, once per entry, when a puck the learner touched goes into a back-corner pocket (centre behind the mallet-centre box's back edge and outside a side edge) slower than 2 m/s and comes to lie there. Not in a corner / edge drill slot, whose puck starts there. |
+
+Two motion columns were appended (`dead_puck_cap`, `own_corner`; the eleven
+earlier ones keep their places). `status.json` gains
+`motion.dead_puck_cap_cost_per_s`, `motion.own_corner_per_minute`,
+`motion.own_corner_cost_per_s` and, per slot class in `motion_by_slot`, those
+three plus `far_cap_cost_per_s` and `dead_puck_cost_per_s`, only when a round-4
+option is on: an earlier arm's status has the keys it always had.
+
+### Arm a4
+
+```bash
+PYTHONPATH=ai python3 ai/recipes/table-faithful-20261110/finetune.py \
+    --arm a4 --run-name _neural-table-faithful-20261110-a4 --minutes 150 --print   # inspect
+PYTHONPATH=ai python3 ai/recipes/table-faithful-20261110/finetune.py \
+    --arm a4 --run-name _neural-table-faithful-20261110-a4 --minutes 150
+```
+
+Arm a3's command (`ARMS["a4"]`; a typed flag still wins) with:
+
+```
+--resume runs/_neural-table-faithful-20261110-a3/agent.pt   (a launcher flag)     --seed 20261115
+--far-cap-brake-seconds 0.25 --far-cap-threshold 20          (was: no window, 40)
+--dead-puck-cap-weight 100 --dead-puck-cap-grace 2.5 --teacher-resting-end 2.5
+--anchor-side-rail-open-y 0.55 --anchor-front-margin 0.06
+--reach-edge-drill-fraction 0.2
+--back-rail-drill-fraction 0.05 --own-corner-weight 300
+```
+
+Why each:
+
+- **The walk back (finding 1).** Round 2 made every tick begun above 1 m/s
+  free of the far cap so that asking for the brake after a strike costs
+  nothing; a walk back to guard at 3 m/s is above 1 m/s too. The window keeps
+  the stop free and nothing else: from 5 m/s the stop takes 0.08 s at
+  60 m/s², the puck is over the line within 0.1 s of the contact, and a3's
+  excess is at 0.2-1.0 s. A lunge at an incoming shot is before the contact
+  and is charged as in arm A (at most the 8 of its table). The threshold
+  goes from 40 to 20 because the gate that fails is cap > 20 with the puck
+  away, and at 40 a walk back at 39 m/s² is free. Of the changes here this
+  is the one with the least evidence behind its number.
+- **The dither (finding 2).** `--calm-reachable-scale 0` stays: the run into
+  a strike is free. A strike on a resting puck starts at a median 0.3 s and
+  by about 1 s at p99, and the teacher's cap label begins at 1 s, so by 2.5 s
+  on the clock a strike that was going to happen has. From there the cap is
+  charged, and the label that says "90" stops, so the two do not pull against
+  each other on the same sample. The network cannot see the clock (16 frames
+  are 0.32 s): what it can learn is that a raised cap that does not turn
+  into a strike is paid for a second and a half later. The wide time/cap
+  noise of round 2 keeps running past 2.5 s, so in the rollout part of this
+  cost is the noise's own (see the smoke run).
+- **The front edge (3a).** The drill puts the state in the rollout; half its
+  mallets start close enough that the push is a short move. The teacher's
+  cap is dropped more than 60 mm past the forward limit (y > 0.866): at 0.86
+  the teacher stalls on 29%, at 0.875 on 72%. Dead-puck cost, noise and the
+  600 at 6 s are what is left there, as in round 2; this is the part of a4
+  that rests on reward and exploration alone, which is what round 2 found
+  wanting on the open table.
+- **The left rail (3b).** Forward of y 0.55 the side strips become the
+  teacher's (cap only, as on the open table); below it v4 strikes them (0
+  stalls at y 0.525 and under on this grid) and keeps them, with the corners.
+  The drill's side part covers y 0.58-0.847, the edge drill's own range ends
+  at 0.756.
+- **The back corner (3c).** 300 at the moment the puck comes to lie in the
+  pocket, half a goal, for the dribble that put it there; a fast puck (it
+  bounces out) or one the learner did not touch is free. 5% of stationary
+  drills start on the back rail. Nothing was added for getting a wedged puck
+  out: v4, whose corner play is the anchor, hovers over one for 42.8 s too.
+
+Per 128-env worker the stationary slots (20 of 128) become about: corner 20%,
+edge 12%, reach edge 13%, cross-bank 13%, back rail 3.4%, the rest uniform or
+replayed.
+
+### What the new terms cost, against the goal flow
+
+Goals pay 600; against people the flow is about 50 a second (5 a minute).
+
+| | rate | a case |
+|---|---|---|
+| far cap, threshold 20 | 40/s x (cap - 20) / 80: 10/s at 40, 20/s at 60, 40/s at 100 | 0.5 s of walk back at 60 m/s²: 10. The stop within 0.25 s of the contact: 0. A cap of 100 for 0.2 s before an incoming shot crosses: 8, as in arm A's table. A guard held at 30 through the puck's whole time away: 5/s. |
+| dead-puck cap | 100/s x (cap fraction - 0.05) | a3's dither at 43 m/s²: 38/s, on top of the 40/s dead-puck cost. v4's hover at 8-14: 3-9/s. A strike begun after 2.5 s, 0.3 s at the full cap: 28, against up to 160 of shaping, the goal and the end of the 40/s. Before 2.5 s: 0. |
+| own corner | 300 per puck | half a goal, once; a save deflected slowly into the pocket pays it too and is still 300 better than the goal in a game. |
+
+A set strike costs what it did in round 2 (14): none of the three charges a
+tick of it. The all-out save's 64 already counted the far cap at its worst
+(8), which the lower threshold does not change.
+
+### Smoke test of arm a4 (2026-11-10)
+
+`--arm a4 --n-envs 512 --workers 4 --device cpu --steps 196608` from a3 into a
+throwaway `_smoke-a4` run (run, log and evaluation directory deleted). Three
+updates, everything finite.
+
+| | update 1 | 2 | 3 |
+|---|---|---|---|
+| explained variance | 0.63 | 0.92 | 0.96 |
+| final KL (target 0.02), actor steps | 0.014, 64 | 0.009, 64 | 0.020, 64 |
+| actor lr | 5.06e-6 | 5.06e-6 | 7.59e-6 |
+| KL outside the anchors, games / people | 0.015 / 0.019 | 0.010 / 0.010 | 0.020 / 0.019 |
+| far-cap cost per env-second, all slots | 3.1 | 3.2 | 3.1 |
+| the same: stationary / receiving / defense / games / people | 2.0 / 0.03 / 5.2 / 3.9 / 4.7 | 1.8 / 0.03 / 5.4 / 4.0 / 5.2 | 1.6 / 0.03 / 5.3 / 4.2 / 4.4 |
+| far-half time with the cap above 20 and charged | 0.45 | 0.41 | 0.41 |
+| dead-puck cap cost per env-second, all slots | 0.06 | 1.7 | 1.8 |
+| the same: stationary / games / people | 0.4 / 0 / 0 | 10.7 / 0 / 0 | 11.5 / 0 / 0.15 |
+| dead-puck cost: stationary / games / people | 10.3 / 0.07 / 0.28 | 15.6 / 0.12 / 0.43 | 18.7 / 0.07 / 1.1 |
+| stationary slots: time with a puck lying past 1 s | 0.26 | 0.39 | 0.47 |
+| own-corner events (in 1,310 env-seconds an update) | 1, a people game | 1, a defense drill | 0 |
+| teacher anchor: samples, pre-squash error before -> after | 141, 0.057 -> 0.050 | 167, 0.060 -> 0.052 | 162, 0.098 -> 0.083 |
+| rail anchor: samples, error | 6720, 0.006 | 7434, 0.009 | 7824, 0.008 |
+| games vs people, cumulative | 7-1 | 20-2 | 34-2 (6.0 for, 0.36 against a minute) |
+
+Read from it:
+
+- **The far cap is now the largest of the round's terms in play**: 4-5 a
+  second in games and against people, 5.3 in defense drills, a tenth of the
+  goal flow, where arm a2's gated version took 1.2 over all slots. That is
+  the intended pull (cap > 20 on 41-45% of the charged far-half time is the
+  thing to bring down), and it is also the first weight to halve
+  (`--far-cap 20`) if goals against people or the defense drills' block rate
+  fall. Over all slots the exploring policy pays about 20 a second for every
+  motion and dead-puck term together (arm a2's smoke: 17-20).
+- **The dead-puck cap is paid in the stationary slots only**, 11 a second
+  there once the 6 s and 12 s drills fill the rollout, next to 16-19 of the
+  dead-puck cost itself. Part of it is the round-2 noise drawing caps at
+  random where a puck has lain past 1 s, whatever the mean; the mean's share
+  is what the policy can remove.
+- **The anchors start near zero** (a3 was trained on them; the teacher's
+  samples are now 0.2% of steps with the window and the front margin), and
+  the policy change outside them is at the target from the first update.
+- Two own-corner events in three updates are too few to say anything about a
+  rate.
+
+Flags off is still the trainer from before: arm a3's own command for one
+update (CPU, 256 envs on two workers, `--resume` a3), run from an exported
+tree of the commit before and from this tree. Weights, optimiser state, RNG
+state and every metric but the wall-clock ones are identical; the saved
+`args` gain the new option names. The printed commands of arms a, a2 and a3
+are byte-identical.
+
+### Gates for a4
+
+As for a2 and a3 (`eval_resting_puck.py`, `eval_playability.py`,
+`eval_human_proxy.py --tier tables`, all with `--sim-profile table-20261029`),
+plus the shifted stall grid that shows the front edge and the rails:
+
+```bash
+python ai/bin/eval_resting_puck.py runs/_neural-table-faithful-20261110-a4/agent.pt \
+    --reference runs/_neural-table-faithful-20261110-a3/agent.pt --sim-profile table-20261029 --parts stall \
+    --xs 0.075,0.125,0.175,0.225,0.275,0.325,0.375,0.425,0.475,0.525,0.575,0.625,0.675,0.725,0.775,0.825,0.875,0.925 \
+    --ys 0.125,0.325,0.525,0.625,0.675,0.725,0.775,0.825,0.86,0.875,0.89
+```
+
+and from the a3 evaluation's own measures: cap > 40 at 0.2-0.5 s after its own
+shot and cap > 20 with the puck away at or below v4's (16%, 8.4 s a minute),
+the cap beside a stalled puck at v4's (p50 under 15), goals for not below
+a3's.
+
+### Not done in round 4, and what is not known
+
+- No real run. Whether 150 minutes move any of the three findings is
+  untested; the smoke run shows only that the terms are finite, sized as
+  intended and leave the KL at its target.
+- The task's premise that the teacher strikes front-edge pucks did not hold
+  on this grid (67% stalled), so a4 has no label source there. If the front
+  edge does not move, the next step is a label that does strike it (a
+  scripted push from the forward limit as a training-only anchor), not a
+  larger cost.
+- The left-rail fix was shown by executing the teacher's cap in a3's own
+  trials (19 -> 2 of 30), not by training.
+- The far-cap threshold of 20 and the 0.25 s window are set from the brake's
+  arithmetic and a3's timing, not from a run. Their effect on defense
+  (a low cap held until the shot is on its way) is not measured.
+- The cap charge past 2.5 s and the end of the teacher's label there could
+  bring back a calm hover (v4's behaviour: quiet, but still a puck left
+  lying) in states where the strike is not found. That is the lesser
+  failure of the two on a table without a referee only in that it does not
+  heat or shake the machine.
+- The corner cost charges a slow block deflection that dies in the pocket
+  (one of the smoke run's two events). Fast pucks and untouched ones are
+  free; nothing separates a dribble from a slow deflection.
+- A wedged corner puck is still not struck out by anything here; the 5% of
+  random sequences that free one were not turned into a drill or a label.
+- Small reversals (49.5 against 38.1 a minute) have no new term; the
+  reversal cost of arm A is unchanged.
