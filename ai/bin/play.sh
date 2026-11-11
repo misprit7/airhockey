@@ -34,6 +34,8 @@ POLICY=tdmpc2:latest
 MASTER_ARGS=()
 LIVE=1
 ARGS=()
+CPUS=""
+RT=1
 while [ $# -gt 0 ]; do
     case "$1" in
         --dry) LIVE=0; shift ;;
@@ -43,9 +45,35 @@ while [ $# -gt 0 ]; do
         --tension=*) MASTER_ARGS+=(--tension "${1#--tension=}"); shift ;;
         --load-hz) MASTER_ARGS+=(--load-hz "$2"); shift 2 ;;
         --load-hz=*) MASTER_ARGS+=(--load-hz "${1#--load-hz=}"); shift ;;
+        --cpus) CPUS=$2; shift 2 ;;
+        --cpus=*) CPUS=${1#--cpus=}; shift ;;
+        --no-realtime) RT=0; shift ;;
         *) ARGS+=("$1"); shift ;;
     esac
 done
+# Scheduling: the master, the runner and the camera tracker it spawns run at
+# realtime priority (SCHED_FIFO 40) when the account is allowed to ask for it,
+# so other jobs on this machine cannot make a policy tick wait in line. No
+# core is reserved: everything else keeps all cores and is only preempted
+# while the table has work. --cpus <list> also pins them (e.g. 14,15,30,31);
+# --no-realtime turns the priority off. Needs a one-time, root-owned
+#   /etc/security/limits.d/99-airhockey.conf:  <user>  -  rtprio  50
+# and a fresh login; without it this prints a warning and runs as before.
+SCHED=()
+if [ "$RT" = 1 ]; then
+    if chrt -f 40 true 2>/dev/null; then
+        SCHED+=(chrt -f 40)
+    else
+        echo "WARNING: realtime priority not permitted (ulimit -r is $(ulimit -r)); other jobs on"
+        echo "         this machine can delay the policy loop. See the note in ai/bin/play.sh."
+    fi
+fi
+if [ -n "$CPUS" ]; then
+    taskset -c "$CPUS" true || { echo "bad --cpus list: $CPUS"; exit 1; }
+    SCHED+=(taskset -c "$CPUS")
+fi
+[ ${#SCHED[@]} -gt 0 ] && echo "scheduling: ${SCHED[*]}"
+
 # Caps: run_policy reads the selected checkpoint's training limits from run.json
 # (12000 mm/s, 60000 mm/s^2 for 3.12; legacy runs fall back to 40000 mm/s^2)
 # so the table runs what the policy trained on; --gentle or --speed/--accel
@@ -103,7 +131,7 @@ PY
     # cleanup then sends the master's FIRST signal to de-energize normally.
     # Previously both received Ctrl-C, and cleanup's second SIGINT could force
     # the master out halfway through disabling the drives.
-    setsid sw/build/cdpr_master "${MASTER_ARGS[@]}" > /dev/null &
+    setsid "${SCHED[@]}" sw/build/cdpr_master "${MASTER_ARGS[@]}" > /dev/null &
     MASTER_PID=$!
     for _ in $(seq 1 100); do
         python3 - <<'PY' 2>/dev/null && break
@@ -115,7 +143,7 @@ PY
         sleep 0.2
     done
     # The runner takes over the port and Ctrl-C from here.
-    python3 ai/bin/run_policy.py --live --opponent --policy "$POLICY" "${ARGS[@]}"
+    "${SCHED[@]}" python3 ai/bin/run_policy.py --live --opponent --policy "$POLICY" "${ARGS[@]}"
 else
-    python3 ai/bin/run_policy.py --opponent --policy "$POLICY" "${ARGS[@]}"
+    "${SCHED[@]}" python3 ai/bin/run_policy.py --opponent --policy "$POLICY" "${ARGS[@]}"
 fi
