@@ -1202,3 +1202,208 @@ a3's.
   random sequences that free one were not turned into a drill or a label.
 - Small reversals (49.5 against 38.1 a minute) have no new term; the
   reversal cost of arm A is unchanged.
+
+## Free shot requests: who picks the route (2026-11-10)
+
+Until now the network executed a route and never chose one: every possession
+carried an explicit request (left bank / right bank / straight), drawn
+uniformly in training (`batch_env._draw_shot_types`) and on the table
+(`--shot-type mix`). The all-zero input ("none") exists in the encoding and
+the reward (`route_ok = (requested == 0) | matched`) but had probability 0,
+apart from the ticks before a game's first entry with the puck on the far
+half. Three pieces, all opt-in, the defaults unchanged (a fixed-seed rollout
+of 48 slots x 600 steps, two option sets, hashes equal against the commit
+before: observations of both seats, rewards, requests).
+
+### Training: `--free-request-share P`
+
+In that share of the LEARNER's possessions the request is none. Then any
+aimed, on-target shot earns the request bonus a matched one earns
+(`--shot-request-weight` x the speed term), whatever its route; nothing is a
+wrong route (no quarter scaling, no `--wrong-shot-penalty`); the rest of the
+reward is the same code. The other 1 - P keep explicit requests in the old
+proportions (`--left-bank-request-weight` included), so every route stays
+trained. The far seat is never left free: it may be an older pool snapshot
+that has not seen "none" with the puck on its side. A `--shot-setup-fraction`
+start under a free request is laid out for a drawn route and stays free.
+
+`status["routes"]` (only with the option on) has, for `free` and `requested`
+shots of the learner in that rollout: `shots`, `unresolved`, `share` by
+route, `aimed_rate` and `goal_rate` per route (a goal goes to the learner's
+last shot unless the far side touched the puck after it), and
+`entropy_bits` of the route mix (1.585 = even thirds, 0 = one route).
+All slot kinds are counted, drills too.
+
+Arm a4 now carries `--free-request-share 0.5` (launcher `--free-request`;
+`--free-request 0` gives the round-4 arm as it was written up above).
+
+### The governor and the route it reads back (`airhockey/shot_selector.py`)
+
+`ShotSelector("auto")` is asked once per possession (the puck entering the
+robot's half) and answers none unless variety is at risk: over the last 30
+completed robot shots, by REALISED route, a route under 15% is requested
+explicitly (the most starved first), else a route over 60% gets the less
+used of the other two requested, else none. Before 9 shots are in the window
+it answers none. In every state a uniform explicit request is drawn 15% of
+the time, so the requested skills stay in use. It controls the request, not
+the shot: against a network that ignores requests it asks for the missing
+route every possession and `stats()` reports the honoured share.
+
+Simulated shooters, 3000 possessions each, three seeds
+(`tests/test_shot_selector.py`):
+
+| shooter when free (honours a request) | free possessions | realised L / R / S | worst 60-shot stretch |
+|---|---|---|---|
+| always straight | 55-56% | 20 / 20 / 61 | banks >= 15% each, straight <= 65% |
+| never left (right / straight evenly) | 72-74% | 17 / 42 / 41 | left >= 13%, any route <= 62% |
+| even thirds | 82-85% | 33 / 33 / 33 | every route 18-52% |
+| always straight, ignores requests | 0.2-0.3% | 0 / 0 / 100 | nothing it can do; honoured share 0 |
+
+`RouteClassifier` reads the realised route from what the actor itself is
+given each tick (puck fix, 30 ms slope velocity, own mallet; robot-local
+metres), so the same code runs in the evaluator, on the table and on a
+session's ticks.csv. A shot starts when the puck's forward speed jumps above
+1 m/s on the own half with the mallet at it and not ahead of it. The route
+is the reward's definition: a side-rail bounce seen before the centre line
+decides it, otherwise the state at the line is traced to the far goal line
+through `rewards.predict_shot` (straight = no rail, else the first rail). The
+person cannot reach over the line, so their touch never enters. Not counted:
+the puck lost for more than 0.2 s in flight, stopped or turned back before
+the line, or never arriving.
+
+How reliable, measured:
+
+- In sim against the env's own route of the same shot (a3 / v4, the runs
+  below, both tiers, all three request modes): a3 96-98% of 1627-2051
+  resolved shots per tier, v4 92-95% of 1371-1570; resolved shots are
+  92-99% of the robot's attacking crossings of the line, and 1-25 per tier
+  were dropped. Most disagreements are a bank by the env's launch-time
+  trace read as straight at the line.
+- On the table, `python ai/bin/shot_route_replay.py 20261110-203214
+  20261029-182715` (a3, 6.3 min; v4, 5.9 min): 134 and 106 shots detected,
+  133 and 103 resolved (131 fast upward crossings of the line in a3's
+  ticks). Against the 200 Hz puck track of the replay file (which rail the
+  puck actually reached before the far end), where the track gets that far:
+  100 of 105 (95%) and 80 of 85 (94%) agree. The other 29 and 19 shots
+  cannot be checked this way (the person took the puck first); the
+  classifier called most of them straight. So the realised route is used as
+  it is; the fallback (count the request where the route is undetermined,
+  `count_requested_when_unclassified`) exists and is off.
+- The same replay shows what the table does with requests: a3 made the
+  requested route on 63% of its classified shots (left 37/48, right 20/40,
+  straight 27/45) and v4 on 71% (32/39, 18/34, 23/30), against 93% and
+  80-82% in the sim below. Blocks that send the puck back count as shots
+  here as they do in the env.
+
+### Zero-shot: a3 and v4 with no request (they were never trained on it)
+
+`eval_human_proxy.py <ckpt> --tier tables --sim-profile table-20261029
+--shot-request random|free|auto`, 64 x 60 s per tier, seed 20261018 (one
+seed; a second pass of all twelve gave the same scores). Reports:
+`logs/human-proxy/shot-request-20261110/`. Mix =
+share of routed shots left / right / straight; on target and goals are per
+shot of that route.
+
+| | request | tier | goals | GF / GA per min | shots | on target | mix L/R/S | on target by route | goals per shot by route | stall s |
+|---|---|---|---|---|---|---|---|---|---|---|
+| a3 | random | table | 389-7 | 6.08 / 0.11 | 1565 | 89% | 35/32/33 | 88/89/90% | 25/33/15% | 44 |
+| a3 | random | table_plus | 368-11 | 5.75 / 0.17 | 1652 | 88% | 35/32/33 | 88/87/91% | 19/28/20% | 53 |
+| a3 | free | table | 59-1 | 0.92 / 0.02 | 2032 | 3.5% | 3/90/7 | 13/1/30% | 3/2/10% | 93 |
+| a3 | free | table_plus | 60-3 | 0.94 / 0.05 | 1976 | 3.7% | 3/91/6 | 20/1/32% | 3/3/8% | 54 |
+| a3 | auto | table | 208-5 | 3.25 / 0.08 | 1856 | 38% | 21/61/18 | 85/10/79% | 24/5/14% | 84 |
+| a3 | auto | table_plus | 189-8 | 2.95 / 0.12 | 1886 | 38% | 20/60/19 | 84/9/81% | 20/4/16% | 43 |
+| v4 | random | table | 292-25 | 4.56 / 0.39 | 1275 | 76% | 38/29/33 | 73/73/83% | 21/31/13% | 143 |
+| v4 | random | table_plus | 282-31 | 4.41 / 0.48 | 1375 | 70% | 35/28/37 | 69/65/76% | 19/25/16% | 148 |
+| v4 | free | table | 68-11 | 1.06 / 0.17 | 1309 | 7% | 10/81/9 | 22/3/29% | 12/3/11% | 209 |
+| v4 | free | table_plus | 52-16 | 0.81 / 0.25 | 1403 | 6% | 9/83/8 | 23/2/30% | 8/2/12% | 99 |
+| v4 | auto | table | 155-23 | 2.42 / 0.36 | 1322 | 32% | 22/60/18 | 68/9/69% | 24/6/14% | 155 |
+| v4 | auto | table_plus | 127-32 | 1.98 / 0.50 | 1371 | 29% | 22/60/18 | 59/10/60% | 17/5/14% | 87 |
+
+What it says:
+
+- **Free requests are not usable on a3 or v4.** With no request both send
+  80-90% of their shots toward the right rail and 1-3% of those are on
+  target: a sixth of the goals. It is one failure, the same in both
+  checkpoints, not a choice of route. Concessions do not rise (they fall
+  with the goals: fewer restarts), reachable-puck stall time is mixed (a3
+  table 44 -> 93 s of 64 min, table_plus unchanged; v4 143 -> 209 and
+  148 -> 99), and v4 on `table` ran 17 s at the load limit where it has
+  none under `random`.
+- **`auto` on these checkpoints holds the mix inside its band and costs
+  half the goals.** 61-71% of possessions were left free, and the free ones
+  are the broken shot (a3: 91% right, 2% on target); the governor's explicit
+  requests are as good as under `random` (on target 87-93%, honoured 93-95%;
+  v4 66-87%, 86-87%). It keeps the right bank at its 60% ceiling, which is
+  where the mix sits. So the governor does what it promises and that is not
+  enough when the free shot itself is bad: **keep `--shot-type mix` for a3
+  and v4.** `free` and `auto` are for a checkpoint trained with a free share,
+  and both print as a DEVIATION otherwise.
+- Under `random` the bank off the right rail scores most per shot in this
+  sim (28-33% against 15-20% straight) at the same on-target rate. If that
+  holds in training, the free half of a4 should drift right, and the
+  entropy in `status["routes"]` is the number to watch; the governor's
+  ceiling is what bounds it on the table.
+
+### Table
+
+```bash
+bash ai/bin/play.sh --policy neural:<run> --shot-type auto     # free, with the variety governor
+bash ai/bin/play.sh --policy neural:<run> --shot-type free     # no request at all
+#   --shot-window 30 --shot-floor 0.15 --shot-ceiling 0.60 --shot-min-shots 9 --shot-explore 0.15
+python ai/bin/run_policy.py --check-policy --policy neural:<run> --shot-type auto   # offline: prints the alignment line
+python ai/bin/shot_route_replay.py <stamp> --governor          # a session's requests, routes and the window
+```
+
+Default stays `mix`. The runner prints a `sim/real alignment: shot request
+...` line with what the checkpoint trained with (`free_request_share` in its
+run.json) and marks `free` / `auto` a DEVIATION for a run without one, as a
+fixed route always was. Each tick logs `shot_request` and, on the tick a
+robot shot resolves, `shot_route` (or why it was dropped); the session ends
+with a `[shots]` line of the selector's counts. Sessions before this have the
+request in the last three values of `neural_obs`, which is what the replay
+tool reads.
+
+### Smoke test of arm a4 with the free share
+
+`--arm a4 --n-envs 384 --workers 3 --device cpu --steps 98304` from a3 into a
+throwaway `_smoke-free-a4` run (run, log and evaluation directory deleted).
+Two updates, every status value finite, `free_request_share` 0.5 in its
+run.json.
+
+| | update 1 | 2 |
+|---|---|---|
+| explained variance | 0.70 | 0.78 |
+| final KL (target 0.02), actor steps | 0.014, 48 | 0.012, 48 |
+| free shots: n, unresolved | 339, 4 | 330, 11 |
+| free mix L / R / S, entropy | 15 / 75 / 10%, 1.05 bits | 17 / 74 / 9%, 1.06 bits |
+| free aimed rate L / R / S | 33 / 9 / 29% | 29 / 8 / 26% |
+| free goals per shot L / R / S | 0 / 2.0 / 0% | 0 / 0.4 / 0% |
+| requested shots: n, mix, entropy | 331, 35 / 32 / 33%, 1.58 bits | 351, 32 / 33 / 35%, 1.58 bits |
+| requested aimed rate L / R / S | 67 / 71 / 77% | 69 / 64 / 82% |
+| requested goals per shot L / R / S | 7 / 5 / 11% | 7 / 10 / 12% |
+
+About half the learner's shots are free and they start where the zero-shot
+evaluation found them: three quarters toward the right rail, a tenth of
+those aimed. Two updates show the log, not a trend. (The rates are over all
+slots with exploration noise, so they are below the evaluation's.)
+
+### Not done, and what is not known
+
+- No training run. Whether a network trained with a free share picks routes
+  by scoring chance, or collapses onto one, is not known; the zero-shot
+  numbers say only where a3 starts from (the free half of a4's possessions
+  begins at 1-3% on target).
+- Arm a4 now changes two things at once from a3: round 4's fixes and the
+  free share. If its evaluation moves, the two are not separated; `--arm a4
+  --free-request 0` is the arm without it.
+- Under a free request the bonus pays an AIMED shot of any route, not a
+  goal. The routes are about equally easy to aim (88-90% under requests),
+  so the tilt between them comes from goals and conversion; nothing rewards
+  variety in training. Variety is the governor's job at run time.
+- `auto` has not been on the table. The classifier was checked on two
+  logged sessions, not live; its numbers on mallet-pinned pucks at a rail
+  are worse (a scripted striker in the tests agreed with the env on 75%).
+- Only `eval_human_proxy.py` takes `--shot-request`; the other evaluators
+  still draw explicit requests.
+- The governor's numbers (30 / 15% / 60% / 9 / 15%) are chosen, not tuned
+  against play.

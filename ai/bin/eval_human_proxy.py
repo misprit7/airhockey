@@ -34,6 +34,15 @@ dropouts, command latency); the report then records the profile and, under
 that way. Without the flag the simulator and the report are the historical
 ones.
 
+`--shot-request` says who picks the candidate's route: `random` (default, as
+trained: a uniform explicit request each time the puck enters its half),
+`free` (no request) or `auto` (airhockey/shot_selector.py's governor: free
+unless a route leaves its share band). Every report has `candidate_routes`
+(shots by request and route, on-target and goals per route, the mix's
+entropy) and, for a shot-conditioned candidate, `shot_request` (the requests
+given and how often the route read back from the candidate's own observation
+agreed with the env's).
+
 The proxy never drives the robot and nothing here is a runtime controller.
 """
 import argparse
@@ -52,6 +61,7 @@ from airhockey.neural_player import PhysicalHistory
 from airhockey.neural_setup import checkpoint_environment
 from airhockey.neural_training import NeuralTrainingEnv
 from airhockey.recorder import FrameData, Recorder
+from airhockey.shot_selector import DEFAULTS as SELECTOR_DEFAULTS, RouteClassifier, ShotSelector
 from airhockey.table_fidelity import LiftTally, profile_options
 
 BASE = Path('runs/rail30-100-20261001-v1/agent.pt')
@@ -63,6 +73,8 @@ PUCK_SPEED_CAP = 16.0          # the elite panel releases up to 14 m/s
 TIER_SEED = {'club': 101, 'elite': 202, 'table': 303, 'table_plus': 404}
 TIER_GROUPS = {'both': ('club', 'elite'), 'tables': ('table', 'table_plus')}
 ROUTE_NAMES = ('none', 'left_bank', 'right_bank', 'straight')   # env shot-route codes 0-3
+REQUEST_NAMES = ('free', 'left_bank', 'right_bank', 'straight')  # the request a shot was made under
+REQUEST_MODES = ('random', 'free', 'auto')
 CROSSING_MIN_SPEED = 0.3       # along-table speed, as in the table analysis
 OUTCOME_WINDOW_S = 4.0
 TOUCH_GAP_S = 0.10             # contacts closer together than this are one touch
@@ -291,6 +303,7 @@ class MatchTracker:
                     volley=bool(side and proxy.mode[i] == VOLLEY), serve=bool(side and self.served[i]),
                     hold_s=float(self.e.time[i] - self.slow_since[i]) if striking else None,
                     route=ROUTE_NAMES[int(env.last_shot_route[side, i])],
+                    request=REQUEST_NAMES[int(env.last_shot_request[side, i])],
                     aimed=bool(env.aimed_count[side, i] > aimed_before[j]), local_y=float(local_y),
                     strike=striking,
                     intended_speed=float(proxy.plan_speed[i, proxy.plan_index[i] % proxy.PLANS])
@@ -431,15 +444,146 @@ class MatchTracker:
             self._resolve(i, 'unfinished', float(self.e.time[i]))
 
 
+class RequestGovernor:
+    """`--shot-request free | auto`: the candidate's request comes from a
+    `shot_selector.ShotSelector` per game instead of the env's uniform draw,
+    at the same moment (the puck entering the robot's half). The realised
+    route is read back by `RouteClassifier` from the candidate's own
+    observation, as on the table, never from engine truth; `report()` says
+    how often that reading agreed with the env's route of the same shot."""
+
+    def __init__(self, env, mode, seed, selector_options=None):
+        self.env, self.mode = env, mode
+        n = env.n_envs
+        self.selectors = [ShotSelector(mode, seed=seed + 7919 * i, **(selector_options or {})) for i in range(n)]
+        self.classifiers = [RouteClassifier(width=env.cfg.width, height=env.cfg.height,
+                                            puck_radius=env.cfg.puck_radius, paddle_radius=env.cfg.paddle_radius)
+                            for _ in range(n)]
+        self.confusion = np.zeros((4, 4), int)      # [env route, classified route]
+        self.how = {}
+        self.tick = 0
+        if mode != 'random':
+            draw = env.base._draw_shot_types
+
+            def governed(mask, agent):
+                if not agent:
+                    return draw(mask, agent)
+                for i in np.flatnonzero(mask):
+                    env.base._shot_type[i] = self.selectors[i].request()
+            env.base._draw_shot_types = governed
+
+    def after_step(self, obs):
+        """`obs` is the candidate's newest frame: puck, puck velocity / 6, own mallet."""
+        self.tick += 1
+        t = self.tick * DT
+        for i, classifier in enumerate(self.classifiers):
+            row = obs[i]
+            shot = classifier.update(t, row[0:2], row[2:4] * 6, row[4:6])
+            if shot is None:
+                continue
+            self.how[shot['how']] = self.how.get(shot['how'], 0) + 1
+            # The env's route of the robot's last contact: a second touch re-routes the shot for both.
+            self.confusion[int(self.env.last_shot_route[0, i]), shot['route']] += 1
+            if shot['how'] in ('bounce', 'traced'):
+                self.selectors[i].record(shot['route'], int(self.env.base._shot_type[i]))
+
+    def report(self, robot_crossings):
+        decided = self.confusion[:, 1:]
+        stats = [s.stats() for s in self.selectors]
+        requests = np.sum([[s['requests'][k] for k in ('none', 'left', 'right', 'straight')] for s in stats], axis=0)
+        reasons = {k: int(sum(s['reasons'][k] for s in stats)) for k in stats[0]['reasons']}
+        shots = np.sum([s.shots for s in self.selectors], axis=0)
+        explicit = shots[1:, 1:]
+        return dict(
+            mode=self.mode,
+            selector=dict(window=self.selectors[0].window, floor=self.selectors[0].floor,
+                          ceiling=self.selectors[0].ceiling, min_shots=self.selectors[0].min_shots,
+                          explore=self.selectors[0].explore) if self.mode == 'auto' else None,
+            possessions=int(requests.sum()),
+            requests=dict(zip(REQUEST_NAMES, requests.tolist())),
+            free_share=float(requests[0] / max(requests.sum(), 1)),
+            request_reasons=reasons,
+            honoured_share_classified=float(np.trace(explicit) / explicit.sum()) if explicit.sum() else None,
+            classifier=dict(
+                resolved=int(decided.sum()), dropped=int(self.confusion[:, 0].sum()), how=self.how,
+                robot_crossings=robot_crossings,
+                agrees_with_env_route=float(np.trace(decided[1:]) / decided[1:].sum()) if decided[1:].sum() else None,
+                confusion_env_route_by_classified=self.confusion.tolist()))
+
+
+def route_summary(shots, goals, crossings):
+    """The candidate's shots by the request they were made under and the
+    route the env gave them (the reward's definition, from the launch).
+
+    Per route: shots, share of the routed shots, on-target rate, goals (a
+    robot goal goes to the robot's last shot in the OUTCOME_WINDOW_S before it) and
+    goals per shot; crossings of the centre line and goals per crossing.
+    `entropy_bits` is of the route mix (1.585 = even thirds, 0 = one route).
+    """
+    scored = set()
+    by_game = {}
+    for k, s in enumerate(shots):
+        by_game.setdefault(s['game'], []).append((s['time'], k))
+    for g in goals:
+        if g['by'] != 'robot':
+            continue
+        before = [k for t, k in by_game.get(g['game'], []) if g['time'] - OUTCOME_WINDOW_S <= t <= g['time']]
+        if before:
+            scored.add(before[-1])
+
+    def block(rows):
+        routed = [(k, s) for k, s in rows if s['route'] != 'none']
+        table = {}
+        for name in ROUTE_NAMES[1:]:
+            mine = [(k, s) for k, s in routed if s['route'] == name]
+            n = len(mine)
+            table[name] = dict(
+                shots=n, share=round(n / len(routed), 4) if routed else None,
+                on_target_rate=round(sum(s['aimed'] for _, s in mine) / n, 4) if n else None,
+                goals=sum(k in scored for k, _ in mine),
+                goal_rate=round(sum(k in scored for k, _ in mine) / n, 4) if n else None,
+                mean_speed_m_s=round(float(np.mean([s['speed'] for _, s in mine])), 3) if n else None)
+        share = np.array([table[name]['shots'] for name in ROUTE_NAMES[1:]], float)
+        share = share / share.sum() if share.sum() else share
+        positive = share[share > 0]
+        return dict(shots=len(rows), unresolved=len(rows) - len(routed), routes=table,
+                    goals=sum(k in scored for k, _ in rows),
+                    entropy_bits=round(float(-(positive * np.log2(positive)).sum()), 4) if len(positive) else None)
+    rows = list(enumerate(shots))
+    result = dict(all=block(rows), free=block([r for r in rows if r[1]['request'] == 'free']),
+                  requested=block([r for r in rows if r[1]['request'] != 'free']))
+    explicit = [s for _, s in rows if s['request'] != 'free' and s['route'] != 'none']
+    result['requested']['honoured_share'] = (round(sum(s['route'] == s['request'] for s in explicit) / len(explicit), 4)
+                                             if explicit else None)
+    result['requested']['by_request'] = {
+        name: dict(shots=sum(s['request'] == name for s in explicit),
+                   honoured=sum(s['request'] == name and s['route'] == name for s in explicit))
+        for name in ROUTE_NAMES[1:]}
+    result['crossings'] = {
+        name: dict(n=sum(c['route'] == name for c in crossings),
+                   goal_rate=round(sum(c['route'] == name and c['outcome'] == 'goal' for c in crossings)
+                                   / max(sum(c['route'] == name for c in crossings), 1), 4))
+        for name in ROUTE_NAMES[1:]}
+    return result
+
+
 def play_tier(net, tier, *, games, seconds, seed, options, stochastic=False, record=None,
-              record_games=1, candidate='', sim_profile=None, observe=None):
+              record_games=1, candidate='', sim_profile=None, observe=None, shot_request='random',
+              selector_options=None):
     """One tier's games. `observe(env)` may return a callable run after every step
-    (evaluator-side instrumentation such as playability.SimRecorder)."""
+    (evaluator-side instrumentation such as playability.SimRecorder).
+    `shot_request`: 'random' (the env's uniform draw per possession, as
+    trained), 'free' (never a request) or 'auto' (shot_selector's governor)."""
+    if shot_request not in REQUEST_MODES:
+        raise ValueError(f'shot_request must be one of {REQUEST_MODES}')
+    if shot_request != 'random' and not net.shot_conditioned:
+        raise ValueError('a shot-request mode needs a shot-conditioned candidate')
     torch.manual_seed(seed)
     fidelity = profile_options(sim_profile)
     env = NeuralTrainingEnv(games, stage=3, seed=seed, games=True, **{**options, **fidelity}, report_sensing=True,
                             continuous_rallies=True, shot_conditioned=net.shot_conditioned)
     env.cfg.max_puck_speed = max(env.cfg.max_puck_speed, PUCK_SPEED_CAP)
+    governor = RequestGovernor(env, shot_request, seed, selector_options) if net.shot_conditioned else None
     obs = env.reset(seed=seed, opponent='human_proxy')
     for model in env.loads:
         model.gain[:] = THERMAL_GAIN
@@ -457,6 +601,8 @@ def play_tier(net, tier, *, games, seconds, seed, options, stochastic=False, rec
         history.append(obs)
         obs, *_ = env.step(net.act(history.for_policy(net), stochastic=stochastic))
         scored, conceded = tracker.after_step(tick)
+        if governor is not None:
+            governor.after_step(obs)
         lifts.after_step(conceded, scored, DT)
         if watch is not None:
             watch()
@@ -466,6 +612,8 @@ def play_tier(net, tier, *, games, seconds, seed, options, stochastic=False, rec
     wall = time.monotonic() - start
     result = summarize(env, proxy, tracker, games=games, seconds=seconds, seed=seed, tier=tier)
     result['wall_seconds'] = round(wall, 1)
+    if governor is not None:
+        result['shot_request'] = governor.report(result['calibration']['robot_crossings'])
     if sim_profile is not None:
         result['lift'] = dict(lifts.report(), goals_against=result['goals_against'])
     if record:
@@ -668,6 +816,7 @@ def summarize(env, proxy, tracker, *, games, seconds, seed, tier):
         goals_for_per_min=total_f / minutes, goals_against_per_min=total_a / minutes,
         ci95_per_game=intervals,
         candidate_shots=int(env.shot_count[0].sum()), candidate_shots_on_target=int(env.aimed_count[0].sum()),
+        candidate_routes=route_summary(shots, tracker.goals, robot_crossings),
         candidate_on_target_fraction=float(env.aimed_count[0].sum() / max(1, env.shot_count[0].sum())),
         candidate_mean_shot_speed=float(env.shot_speed_sum[0].sum() / max(1, env.shot_count[0].sum())),
         candidate_shot_speed_m_s=percentiles([s['speed'] for s in shots]),
@@ -721,7 +870,7 @@ def candidate_hash(spec):
 
 def evaluate(candidate, *, tiers=('club', 'elite'), games=64, seconds=60.0, seed=20261018,
              environment_from=BASE, device='cpu', stochastic=False, record=None, record_games=1,
-             sim_profile=None):
+             sim_profile=None, shot_request='random', selector_options=None):
     torch.set_num_threads(4)
     options = checkpoint_environment(environment_from)
     net, state = load(candidate)
@@ -737,10 +886,13 @@ def evaluate(candidate, *, tiers=('club', 'elite'), games=64, seconds=60.0, seed
         tiers={})
     if sim_profile is not None:
         result.update(sim_profile=sim_profile, sim_profile_options=profile_options(sim_profile))
+    if shot_request != 'random':
+        result.update(shot_request=shot_request)
     for tier in tiers:
         result['tiers'][tier] = play_tier(net, tier, games=games, seconds=seconds, seed=seed, options=options,
                                           stochastic=stochastic, record=record, record_games=record_games,
-                                          candidate=candidate, sim_profile=sim_profile)
+                                          candidate=candidate, sim_profile=sim_profile,
+                                          shot_request=shot_request, selector_options=selector_options)
     return result
 
 
@@ -760,6 +912,13 @@ def headline(result):
             calm_high=round(r.get('candidate_calm_high_cap_share', float('nan')), 3),
             person_attack_speed=c['attack_speed_centre_line_m_s'], person_bank_fraction=c['attack_bank_fraction'],
             wall_s=r['wall_seconds']))
+        routes = r['candidate_routes']['all']
+        rows[-1].update(route_share={k: v['share'] for k, v in routes['routes'].items()},
+                        route_goal_rate={k: v['goal_rate'] for k, v in routes['routes'].items()},
+                        route_entropy_bits=routes['entropy_bits'])
+        if 'shot_request' in result:
+            rows[-1].update(shot_request=result['shot_request'], free_share=round(r['shot_request']['free_share'], 3),
+                            classifier_agreement=r['shot_request']['classifier']['agrees_with_env_route'])
         if 'lift' in r:
             rows[-1].update(sim_profile=result['sim_profile'], lift_events=r['lift']['lift_events'],
                             conceded_through_lift=r['lift']['goals_conceded_through_lift'])
@@ -787,6 +946,16 @@ def main():
     p.add_argument('--stochastic', action='store_true', help='sample the candidate policy instead of its mean')
     p.add_argument('--sim-profile', help="table-fidelity profile, e.g. table-20261029 or table-20261029:contact,lift "
                                          '(default: none, the historical simulator)')
+    p.add_argument('--shot-request', choices=REQUEST_MODES, default='random',
+                   help="who picks the candidate's route: random = a uniform explicit request per possession (as "
+                        "trained, the default); free = no request, the network's own choice; auto = free under "
+                        'the variety governor (airhockey/shot_selector.py). The report gains candidate_routes '
+                        '(always) and shot_request (the governor and the route classifier)')
+    for flag, kind, key in (('--selector-window', int, 'window'), ('--selector-floor', float, 'floor'),
+                            ('--selector-ceiling', float, 'ceiling'), ('--selector-min-shots', int, 'min_shots'),
+                            ('--selector-explore', float, 'explore')):
+        p.add_argument(flag, type=kind, default=SELECTOR_DEFAULTS[key],
+                       help=f'--shot-request auto: governor {key} (default {SELECTOR_DEFAULTS[key]})')
     a = p.parse_args()
     if a.games < 2 or not np.isfinite(a.seconds) or a.seconds <= 0:
         p.error('--games must be at least 2 and --seconds positive')
@@ -798,10 +967,15 @@ def main():
     name = 'expert' if str(a.candidate).startswith('expert') else Path(a.candidate).parent.name
     if a.sim_profile is not None:
         name += '-' + a.sim_profile.replace(':', '-').replace(',', '-')
+    if a.shot_request != 'random':
+        name += '-request-' + a.shot_request
+    selector_options = ({key: getattr(a, 'selector_' + key) for key in SELECTOR_DEFAULTS}
+                        if a.shot_request == 'auto' else None)
     output = a.output or Path('logs/human-proxy') / f'{name}-{a.seed}.json'
     result = evaluate(a.candidate, tiers=tiers, games=a.games, seconds=a.seconds, seed=a.seed,
                       environment_from=a.environment_from, device=a.device, stochastic=a.stochastic,
-                      record=a.record, record_games=a.record_games, sim_profile=a.sim_profile)
+                      record=a.record, record_games=a.record_games, sim_profile=a.sim_profile,
+                      shot_request=a.shot_request, selector_options=selector_options)
     output.parent.mkdir(parents=True, exist_ok=True)
     output.write_text(json.dumps(result, indent=2))
     print(json.dumps(dict(candidate=a.candidate, output=str(output), headline=headline(result))), flush=True)

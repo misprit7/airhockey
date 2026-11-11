@@ -918,6 +918,29 @@ def _load_tdmpc2(name: str, caps: Caps, plan_iters: int, device: str | None,
     return policy
 
 
+def neural_request_alignment(policy) -> str:
+    """The neural player's shot-request line of the sim/real alignment.
+
+    Training gave every possession an explicit request unless the run used
+    `--free-request-share` (read from its run.json). A fixed request is a
+    DEVIATION as it always was; `free` and `auto` are one for a checkpoint
+    that never trained without a request -- the all-zero input is then out
+    of distribution with the puck on the robot's side.
+    """
+    mode, share = policy.shot_mode, policy.free_request_share
+    trained = (f"explicit {1 - share:.0%} / free {share:.0%} of possessions" if share
+               else "explicit, drawn per possession")
+    value = dict(mix="mix (uniform explicit per possession)", free="free (no request, the network's choice)").get(
+        mode, f"fixed {mode}")
+    if mode == "auto":
+        s = policy.selector
+        value = (f"auto (free; explicit under {s.floor:.0%} / over {s.ceiling:.0%} of last {s.window} shots, "
+                 f"from {s.min_shots}; {s.explore:.0%} explicit anyway)")
+    same = mode == "mix" or (mode in ("free", "auto") and share > 0)
+    return (f"  sim/real alignment: shot request {value}; trained: {trained}"
+            + ("" if same else "  <-- DEVIATION"))
+
+
 def alignment_report(policy, caps: Caps, plan_iters: int, shot_mode: str,
                      cmd_hz: float, puck_timeout: float = DEFAULT_PUCK_TIMEOUT_S) -> str:
     """Sim vs table, line by line, before the first live command.
@@ -976,7 +999,7 @@ def alignment_report(policy, caps: Caps, plan_iters: int, shot_mode: str,
 def load_policy(spec: str, caps: Caps, plan_iters: int | None = None,
                 device: str | None = None, shot_mode: str = "mix",
                 cmd_hz: float = ACTION_HZ, puck_timeout: float = DEFAULT_PUCK_TIMEOUT_S,
-                ckpt: str | Path | None = None):
+                ckpt: str | Path | None = None, selector_options: dict | None = None):
     """Turn a --policy string into a callable(obs) -> Command or 4-tuple.
 
         heuristic:<name>   a bot from ai/airhockey/heuristics.py
@@ -999,13 +1022,14 @@ def load_policy(spec: str, caps: Caps, plan_iters: int | None = None,
         if not math.isclose(cmd_hz, 50.0):
             raise ValueError("neural arrival policies require --cmd-hz 50")
         policy = NeuralPolicy(ckpt or name, caps.speed_max, caps.accel_max,
-                              shot_mode=shot_mode, device=device)
+                              shot_mode=shot_mode, device=device, selector_options=selector_options)
         ms = policy.warm_up()
         print(f"neural checkpoint: {policy.ckpt}")
         print(f"single neural actor, {policy.net.obs_dim} inputs / 6 arrival outputs; "
               f"50 Hz; decoder + guard: {ms:.2f} ms median")
         print(f"session caps: {caps.speed_max / 1000:g} m/s, "
-              f"{caps.accel_max / 1000:g} m/s^2; shot request: {shot_mode}")
+              f"{caps.accel_max / 1000:g} m/s^2")
+        print(neural_request_alignment(policy))
         print("RMS: fresh drive telemetry with persistent model fallback for missing channels")
         return policy
     if kind == "sac":
@@ -1147,6 +1171,10 @@ TICK_COLUMNS = [
     "limits_speed", "limits_accel",
     "track_ms", "io_ms", "policy_ms",
     "neural_obs", "neural_action", "neural_load_fresh", "neural_state_source", "neural_state_age_ms",
+    # The request the actor was given this tick (none / left / right /
+    # straight) and, on the tick a robot shot resolves, its realised route
+    # (shot_selector.RouteClassifier: route or the reason it was dropped).
+    "shot_request", "shot_route",
 ]
 
 
@@ -1542,7 +1570,8 @@ def run(args) -> int:
                          shot_mode=getattr(args, "shot_type", "none"),
                          cmd_hz=float(getattr(args, "cmd_hz", ACTION_HZ)),
                          puck_timeout=float(getattr(args, "puck_timeout", DEFAULT_PUCK_TIMEOUT_S)),
-                         ckpt=getattr(args, "resolved_checkpoint", None))
+                         ckpt=getattr(args, "resolved_checkpoint", None),
+                         selector_options=selector_options(args))
 
     from airhockey.camera_handoff import release_preview_camera
     try:
@@ -1882,6 +1911,9 @@ def run(args) -> int:
                 # A full disk must not prevent the existing braking path.
                 pass
         _shutdown(client, args, prev)
+        if hasattr(policy, "selector"):
+            import json  # noqa: PLC0415
+            print(f"[shots] {json.dumps(policy.selector.stats())}")
         if slog is not None:
             print(f"[log] {slog.n_rows} ticks -> {slog.ticks_path}")
             slog.close()
@@ -1935,9 +1967,24 @@ def _tick_row(t, report: ReportBuilder, lag, watchdog, policy, asked: Action,
         row["neural_load_fresh"] = "|".join(str(int(v)) for v in policy.loads.fresh.ravel())
         row["neural_state_source"] = getattr(policy, "state_source", "")
         row["neural_state_age_ms"] = 1000 * getattr(policy, "state_age", 0.0)
+        row.update(_shot_columns(policy))
     if obs is not None:
         for k, v in enumerate(obs[:17]):
             row[f"obs{k}"] = float(v)
+    return row
+
+
+def _shot_columns(policy) -> dict:
+    """The request the neural actor was given this tick and, when one of
+    the robot's shots has just resolved, its realised route or why it was
+    dropped (shot_selector.RouteClassifier)."""
+    if not hasattr(policy, "selector"):
+        return {}
+    from airhockey.shot_selector import ROUTE_NAMES   # noqa: PLC0415
+    row = {"shot_request": ROUTE_NAMES[policy.shot]}
+    shot = policy.last_shot
+    if shot is not None:
+        row["shot_route"] = ROUTE_NAMES[shot["route"]] if shot["route"] else shot["how"]
     return row
 
 
@@ -2052,6 +2099,13 @@ def _shutdown(client, args, prev):
               "Ctrl-C cdpr_master.")
 
 
+def selector_options(args) -> dict:
+    """--shot-type auto's governor flags as ShotSelector keywords (defaults when absent)."""
+    from airhockey.shot_selector import DEFAULTS   # noqa: PLC0415
+    return {key: getattr(args, "shot_" + key, None) if getattr(args, "shot_" + key, None) is not None else value
+            for key, value in DEFAULTS.items()}
+
+
 def session_caps(args) -> Caps:
     floor = Caps.accel_min
     if args.policy.startswith("neural:"):
@@ -2124,11 +2178,25 @@ def main() -> int:
                          f"{1000.0 / ACTION_HZ:.0f} ms tick). 0 = the policy "
                          "prior alone (~0.1 ms, CPU) -- a DEVIATION")
     ap.add_argument("--shot-type", default="mix",
-                    choices=["none", "left", "right", "straight", "mix"],
+                    choices=["none", "left", "right", "straight", "mix", "free", "auto"],
                     help="learned policies: the shot the policy is asked for "
                          "(TD inputs 18:21; neural current request). Default mix = a fresh draw "
                          "each time the puck enters the robot's half, as in "
-                         "training; a fixed request is a DEVIATION")
+                         "training; a fixed request is a DEVIATION. neural only: free = no "
+                         "request, the network picks the route; auto = free, with an explicit "
+                         "request whenever a route's share of the last shots leaves the band "
+                         "(airhockey/shot_selector.py). Both are DEVIATIONS for a checkpoint "
+                         "not trained with --free-request-share")
+    ap.add_argument("--shot-window", type=int, default=None,
+                    help="--shot-type auto: completed robot shots the governor looks back over (default 30)")
+    ap.add_argument("--shot-floor", type=float, default=None,
+                    help="--shot-type auto: a route under this share of the window is requested (default 0.15)")
+    ap.add_argument("--shot-ceiling", type=float, default=None,
+                    help="--shot-type auto: a route over this share has another requested (default 0.60)")
+    ap.add_argument("--shot-min-shots", type=int, default=None,
+                    help="--shot-type auto: shots in the window before the band applies (default 9)")
+    ap.add_argument("--shot-explore", type=float, default=None,
+                    help="--shot-type auto: probability of a uniform explicit request anyway (default 0.15)")
     ap.add_argument("--device", default=None,
                     help="torch device (neural defaults to cpu; tdmpc2: cpu for the "
                          "prior, cuda for planning when available)")
@@ -2193,6 +2261,8 @@ def main() -> int:
                          "one row per tick). See SessionLog.")
     ap.add_argument("--no-log", action="store_true", help="write no session log")
     args = ap.parse_args()
+    if args.shot_type in ("free", "auto") and not args.policy.startswith("neural:"):
+        ap.error("--shot-type free / auto apply to neural: policies only")
     if args.no_log:
         args.log_dir = None
 
@@ -2214,7 +2284,8 @@ def main() -> int:
     if args.check_policy:
         load_policy(args.policy, session_caps(args),
                     args.plan, args.device, args.shot_type, args.cmd_hz,
-                    args.puck_timeout, getattr(args, "resolved_checkpoint", None))
+                    args.puck_timeout, getattr(args, "resolved_checkpoint", None),
+                    selector_options(args))
         return 0
     if args.gentle:
         print(f"--gentle: caps held to {args.speed:.0f} mm/s, "

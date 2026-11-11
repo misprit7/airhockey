@@ -65,6 +65,34 @@ REVERSAL_GAP_S = 0.15
 STRIKE_DRILL_SECONDS = 6       # a person takes up to ~4 s to get to a puck and strike it
 
 
+def route_report(events):
+    """Route mix of the learner's shots from summed `info["route_events"]`.
+
+    `events` is [free / requested] x [unresolved, left, right, straight] x
+    [shots, aimed, goals]. Shares are over shots whose route resolved; the
+    entropy is of that mix in bits (log2 3 = 1.585 when even, 0 when one
+    route takes every shot). Rates are per shot of the route; None with none.
+    """
+    events = np.asarray(events, float)
+    report = {}
+    for name, block in zip(("free", "requested"), events):
+        shots = block[1:, 0]
+        total = shots.sum()
+        share = shots / total if total else np.zeros(3)
+        positive = share[share > 0]
+        report[name] = dict(
+            shots=int(block[:, 0].sum()), unresolved=int(block[0, 0]),
+            share=dict(zip(ROUTE_KEYS, share.tolist())),
+            aimed_rate={k: (float(a / n) if n else None) for k, n, a in zip(ROUTE_KEYS, shots, block[1:, 1])},
+            goal_rate={k: (float(g / n) if n else None) for k, n, g in zip(ROUTE_KEYS, shots, block[1:, 2])},
+            goals=int(block[:, 2].sum()),
+            entropy_bits=float(-(positive * np.log2(positive)).sum()) if total else None)
+    return report
+
+
+ROUTE_KEYS = ("left", "right", "straight")
+
+
 class NeuralTrainingEnv(ArrivalEnv):
     obs_dim = 42
     action_dim = 6
@@ -207,6 +235,9 @@ class NeuralTrainingEnv(ArrivalEnv):
         defense_strike_moving_fraction=0.0,
         # Relative weight of left-bank requests under shot_request="random".
         left_bank_request_weight=1.0,
+        # Share of the learner's possessions with NO request (all-zero
+        # input): any aimed route earns the request bonus, none is wrong.
+        free_request_share=0.0,
         # Physical-motion costs; see MOTION_COLUMNS for what each one charges.
         accel_duty_weight=0.0,
         accel_duty_threshold=60.0,
@@ -496,6 +527,11 @@ class NeuralTrainingEnv(ArrivalEnv):
             raise ValueError("left-bank request weight must be positive and finite")
         if left_bank_request_weight != 1 and shot_request != "random":
             raise ValueError("left-bank request weight needs shot_request='random'")
+        if not np.isfinite(free_request_share) or not 0 <= free_request_share <= 1:
+            raise ValueError("free request share must be in [0,1]")
+        if free_request_share and (shot_request != "random" or not shot_conditioned):
+            raise ValueError("free requests need a shot-conditioned player and shot_request='random'")
+        self.free_request_share = float(free_request_share)
         for fraction in (human_proxy_share, defense_strike_fraction, defense_strike_moving_fraction):
             if not np.isfinite(fraction) or not 0 <= fraction <= 1:
                 raise ValueError("human proxy and strike-drill shares must be in [0,1]")
@@ -674,8 +710,14 @@ class NeuralTrainingEnv(ArrivalEnv):
             # Both seats' requests: a robot-bodied far side is a copy, and its
             # route 1 is the same x = 0 rail, the one people bank off.
             self.base._shot_type_p[:] = np.array([0, left_bank_request_weight, 1, 1]) / (left_bank_request_weight + 2)
-        if self.fixed_opponent_style_fraction:
-            self.base._shot_type_p_opp = np.tile(self.base._shot_type_p, (n_envs, 1))
+        # The far seat (a copy or a pool snapshot) keeps explicit requests:
+        # older snapshots never saw "none" with the puck on their side.
+        self._explicit_request_p = self.base._shot_type_p.copy()
+        if self.free_request_share:
+            self.base._shot_type_p[:] = np.concatenate((
+                [self.free_request_share], (1 - self.free_request_share) * self._explicit_request_p[1:]))
+        if self.fixed_opponent_style_fraction or self.free_request_share:
+            self.base._shot_type_p_opp = np.tile(self._explicit_request_p, (n_envs, 1))
         self.base.max_score = 1000000
         self.base.max_episode_time = 1000000
         self.kind = np.zeros(n_envs, int)
@@ -690,6 +732,11 @@ class NeuralTrainingEnv(ArrivalEnv):
         self.aimed_route_counts = np.zeros_like(self.shot_route_counts)
         self.last_shot_route = np.zeros((2, n_envs), int)
         self.last_shot_request = np.zeros((2, n_envs), int)
+        # The learner's shots of THIS step, for the trainer's route log:
+        # [free / requested] x [unresolved, left, right, straight] x
+        # [shots, aimed, goals]. A goal goes to the shot it followed.
+        self.route_events = np.zeros((n_envs, 2, 4, 3), np.int16)
+        self._scoring_shot = np.full((n_envs, 2), -1)
         self.shot_speed_sum = np.zeros((2, n_envs))
         self.shot_speed_histogram = np.zeros((2, n_envs, 5), int)
         self.target_histogram = np.zeros((2, n_envs, 3), int)
@@ -907,6 +954,13 @@ class NeuralTrainingEnv(ArrivalEnv):
         self.last_shot_request[side, ids] = requested
         np.add.at(self.shot_route_counts[side], (ids[shot], requested[shot], route[shot]), 1)
         np.add.at(self.aimed_route_counts[side], (ids[shot & aimed], requested[shot & aimed], route[shot & aimed]), 1)
+        if side == 0:
+            explicit = (requested != 0).astype(int)
+            np.add.at(self.route_events, (ids[shot], explicit[shot], route[shot], 0), 1)
+            np.add.at(self.route_events, (ids[shot & aimed], explicit[shot & aimed], route[shot & aimed], 1), 1)
+            self._scoring_shot[ids[shot]] = np.column_stack((explicit, route))[shot]
+        else:
+            self._scoring_shot[ids] = -1
         # After initial contact training, every point within the goal mouth
         # receives equal accuracy shaping. No permanent center-shot preference.
         error = abs(crossing - 0.5)
@@ -945,7 +999,10 @@ class NeuralTrainingEnv(ArrivalEnv):
         route_scale = np.where(route_ok, 1.0, 0.25) if self.shot_conditioned else 1.0
         if self.shot_conditioned:
             reward = np.minimum(reward, 0) + route_scale * np.maximum(reward, 0)
-            reward += self.shot_request_weight * aimed * matched * np.minimum(speed / self.shot_speed_scale, 1) ** self.shot_power_exponent
+            # A free possession (no request): any aimed route earns what a
+            # matched one does, so the choice is left to what scores.
+            honoured = matched | ((requested == 0) & bool(self.free_request_share))
+            reward += self.shot_request_weight * aimed * honoured * np.minimum(speed / self.shot_speed_scale, 1) ** self.shot_power_exponent
             # A defensive return can remain useful even if the requested route
             # is unavailable. Penalize mismatches only after control/slow setup.
             prepared = self.captured[side, ids] | (incoming_speed <= 0.8)
@@ -1452,6 +1509,12 @@ class NeuralTrainingEnv(ArrivalEnv):
                 # This changes reset states only; the actor still chooses every
                 # action, and explicit evaluation fixtures are never modified.
                 requests = rng.choice(4, n, p=self.base._shot_type_p)
+                setup_requests = requests
+                if self.free_request_share:
+                    # A free start is laid out for some route and stays free
+                    # (4: no request, where 0 leaves the env's own draw).
+                    setup_requests = np.where(requests == 0, 4, requests)
+                    requests = np.where(requests == 0, rng.choice(4, n, p=self._explicit_request_p), requests)
                 rail_x = np.where(requests == 1, self.cfg.puck_radius, self.cfg.width - self.cfg.puck_radius)
                 dx = np.where(requests == 3, self.cfg.width / 2 - puck[:, 0],
                               rail_x - puck[:, 0] + self.cfg.wall_tangential / self.cfg.wall_restitution * (rail_x - self.cfg.width / 2))
@@ -1462,7 +1525,7 @@ class NeuralTrainingEnv(ArrivalEnv):
                 eligible = (kind == 0) & (rng.random(n) < self.shot_setup_fraction)
                 eligible &= ((ready > self.decoder.low + .002) & (ready < self.decoder.high - .002)).all(1)
                 paddle[eligible] = ready[eligible]
-                starting_requests[eligible] = requests[eligible]
+                starting_requests[eligible] = setup_requests[eligible]
             if self.stationary_replay is not None:
                 selected = np.flatnonzero((kind == 0) & (rng.random(n) < self.stationary_replay_fraction))
                 examples = rng.integers(len(self.stationary_replay['puck']), size=len(selected))
@@ -1732,6 +1795,7 @@ class NeuralTrainingEnv(ArrivalEnv):
         # A puck placed in a pocket by a reset was not sent there by anyone.
         self._pocket_inside[ids] = self._in_corner_pocket()[ids]
         self._pocket_owned[ids] = self._pocket_counted[ids] = False
+        self._scoring_shot[ids] = -1
         for value in (
             self.touch_count,
             self.shot_count,
@@ -1791,13 +1855,13 @@ class NeuralTrainingEnv(ArrivalEnv):
             self.base._shot_type_opp[ids] = 0
             if self.fixed_opponent_style_fraction:
                 probabilities = self.base._shot_type_p_opp
-                probabilities[ids] = self.base._shot_type_p
+                probabilities[ids] = self._explicit_request_p
                 fixed = ids[(self.kind[ids] == 3) & (rng.random(len(ids)) < self.fixed_opponent_style_fraction)]
                 probabilities[fixed] = np.eye(4)[rng.integers(1, 4, len(fixed))]
             self.base._draw_shot_types(mask & own, agent=True)
             self.base._draw_shot_types(mask & far, agent=False)
             prepared = (starting_requests != 0) & (self.kind[ids] != 3)
-            self.base._shot_type[ids[prepared]] = starting_requests[prepared]
+            self.base._shot_type[ids[prepared]] = starting_requests[prepared] % 4
             if len(windup_ids):
                 self.base._shot_type[windup_ids] = rng.integers(1, 4, len(windup_ids))
         # Randomize initial heat in training drills; keep game heat continuous.
@@ -1895,6 +1959,7 @@ class NeuralTrainingEnv(ArrivalEnv):
         previous_action = self.last_action.copy()
         self.last_action[:] = action
         self.reward_events[:] = 0
+        self.route_events[:] = 0
         self.load_cost[:] = 0
         self.peak_accel[:] = 0
         scores, conceded = e.score_agent.copy(), e.score_opponent.copy()
@@ -1907,6 +1972,10 @@ class NeuralTrainingEnv(ArrivalEnv):
         raw, _, _, _, info = b.step(np.column_stack((low, accel)))
         self.elapsed += b.action_dt
         gf, ga = e.score_agent - scores, e.score_opponent - conceded
+        credited = np.flatnonzero((gf > 0) & (self._scoring_shot[:, 0] >= 0))
+        self.route_events[credited, self._scoring_shot[credited, 0], self._scoring_shot[credited, 1], 2] += 1
+        self._scoring_shot[(gf + ga) > 0] = -1
+        route_events = self.route_events.copy()
         if self.people is not None:
             self._far_view_cache = None
             # After a goal a serving tier's person puts the puck down at rest
@@ -2245,6 +2314,7 @@ class NeuralTrainingEnv(ArrivalEnv):
             unproductive_returns=self.unproductive_returns[0].copy(),
             slow_possession_losses=self.slow_possession_losses[0].copy(),
             request_matches=np.trace(self.aimed_route_counts[0, :, 1:, 1:], axis1=1, axis2=2),
+            route_events=route_events,
             load_peak=self.peak_load[0].copy(),
             overload_seconds=self.overload_seconds[0].copy(),
             peak_accel=self.peak_accel.copy(),

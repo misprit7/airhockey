@@ -1168,7 +1168,7 @@ def test_recipe_is_v4s_command_continued_with_the_table_options():
         changed = {k for k in old if old[k] != mine[k]}
         assert changed == {"run_name", "evaluation_dir", "resume", "initialize_from", "opponent_reference", "minutes",
                            "seed", "value_warmup_updates", "width"}
-        assert set(mine) - set(old) == new | round2 | round3 | round4
+        assert set(mine) - set(old) == new | round2 | round3 | round4 | {"free_request_share"}
 
 
 def test_round2_arm_continues_v5a_with_its_evaluations_changes():
@@ -1248,7 +1248,7 @@ def test_round4_arm_is_a3_continued_with_what_its_evaluation_held_against_it():
     # Arm a3's own command has none of it.
     new_flags = ("--far-cap-threshold", "--far-cap-brake-seconds", "--dead-puck-cap", "--teacher-resting-end",
                  "--anchor-side-rail-open-y", "--anchor-front-margin", "--reach-edge-drill", "--back-rail-drill",
-                 "--own-corner")
+                 "--own-corner", "--free-request-share")
     assert not any(flag.startswith(new_flags) for flag in command("--arm", "a3"))
     # Continues a3 itself, critic and all; the starting point is still a flag.
     assert fourth.resume == Path(recipe.A3) and fourth.initialize_from is None and fourth.value_warmup_updates == 0
@@ -1268,7 +1268,11 @@ def test_round4_arm_is_a3_continued_with_what_its_evaluation_held_against_it():
     changed = {k for k in vars(third) if getattr(third, k) != getattr(fourth, k)}
     assert changed == {"resume", "seed", "far_cap_threshold", "far_cap_brake_seconds", "dead_puck_cap_weight",
                        "teacher_resting_end", "reach_edge_drill_fraction", "anchor_side_rail_open_y",
-                       "anchor_front_margin", "back_rail_drill_fraction", "own_corner_weight"}
+                       "anchor_front_margin", "back_rail_drill_fraction", "own_corner_weight",
+                       "free_request_share"}
+    # Half the learner's possessions carry no request; the explicit half keeps every route trained.
+    assert fourth.free_request_share == 0.5 and third.free_request_share == 0
+    assert parse("--arm", "a4", "--free-request", "0").free_request_share == 0
     # A typed flag still wins; the environment takes the arm's options.
     off = parse("--arm", "a4", "--dead-puck-cap", "0", "--own-corner", "0")
     assert off.dead_puck_cap_weight == 0 and off.own_corner_weight == 0

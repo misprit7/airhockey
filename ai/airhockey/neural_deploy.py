@@ -21,6 +21,7 @@ from airhockey.heuristics import Command
 from airhockey.motion import CartState
 from airhockey.motion_guard import guard_command, predict
 from airhockey.neural_observation import neural_features
+from airhockey.shot_selector import ROUTE_NAMES, RouteClassifier, ShotSelector
 from airhockey.thermal import MotorThermal
 
 ROOT = Path(__file__).resolve().parents[2]
@@ -122,8 +123,18 @@ class LiveMotorLoad:
         return np.where(self.fresh, self.values, self.model.observed[0]).reshape(1, 8).astype(np.float32)
 
 
+SHOT_MODES = ('mix', 'left', 'right', 'straight', 'free', 'auto')
+
+
+def trained_free_request_share(checkpoint):
+    """Share of possessions the run trained with no request (0 for every run before the option)."""
+    meta = json.loads((Path(checkpoint).parent / 'run.json').read_text())
+    return float((meta.get('args') or {}).get('free_request_share') or 0.0)
+
+
 class NeuralPolicy:
-    def __init__(self, checkpoint, speed_mm_s, accel_mm_s2, *, shot_mode='mix', device=None):
+    def __init__(self, checkpoint, speed_mm_s, accel_mm_s2, *, shot_mode='mix', device=None,
+                 selector_options=None):
         import torch
         from airhockey.neural_player import NeuralPlayer, PhysicalHistory
 
@@ -132,8 +143,8 @@ class NeuralPolicy:
         if not (0 < speed_mm_s <= trained_speed * 1000 and
                 0 < accel_mm_s2 <= trained_accel * 1000):
             raise ValueError('neural session caps must be positive and no higher than training caps')
-        if shot_mode not in ('mix', 'left', 'right', 'straight'):
-            raise ValueError('neural shot request must be mix, left, right, or straight')
+        if shot_mode not in SHOT_MODES:
+            raise ValueError('neural shot request must be mix, left, right, straight, free or auto')
         torch.set_num_threads(1)
         state = torch.load(self.ckpt, map_location='cpu', weights_only=False)
         self.net = NeuralPlayer(state['width'], history=state.get('history', 1),
@@ -161,13 +172,33 @@ class NeuralPolicy:
         self.state_age = 0.0
         from airhockey.neural_setup import checkpoint_environment
         self.loads = LiveMotorLoad(checkpoint_environment(self.ckpt).get('thermal_path'))
+        self.free_request_share = trained_free_request_share(self.ckpt)
+        if shot_mode in ('free', 'auto') and not self.net.shot_conditioned:
+            raise ValueError('free and auto shot requests need a shot-conditioned checkpoint')
+        # One request per possession from the shared selector (mix = its
+        # uniform explicit draw, training's); the realised route of each
+        # shot is read back from the policy's own observation.
+        self.selector_options = dict(selector_options or {})
         self.shot_mode = shot_mode
-        self.rng = np.random.default_rng()
+        self.routes = RouteClassifier(width=self.encoder.width, height=2 * self.encoder.half_h)
+        self.last_shot = None
         self.last_action = np.zeros(6, np.float32)
         self.last_obs = None
         self.last_flags = []
         self.sensor_hold = None
         self.reset()
+
+    @property
+    def shot_mode(self):
+        return self._shot_mode
+
+    @shot_mode.setter
+    def shot_mode(self, mode):
+        if mode not in SHOT_MODES:
+            raise ValueError('neural shot request must be mix, left, right, straight, free or auto')
+        self._shot_mode = mode
+        self.selector = ShotSelector('random' if mode == 'mix' else mode,
+                                     **(self.selector_options if mode == 'auto' else {}))
 
     def reset(self):
         # Episode inputs reset; executing commands and physical heat persist.
@@ -175,7 +206,11 @@ class NeuralPolicy:
         self.history.values = self.history.request = None
         self.last_action[:] = 0
         self.in_half = None
-        self.shot = 2 if self.shot_mode == 'mix' else ('left', 'right', 'straight').index(self.shot_mode)
+        # Request codes are the env's: 0 none, 1 left bank, 2 right bank, 3 straight.
+        self.shot = (3 if self.shot_mode == 'mix' else 0 if self.shot_mode in ('free', 'auto')
+                     else ROUTE_NAMES.index(self.shot_mode))
+        self.routes.reset()
+        self.last_shot = None
         self.last_obs = None
 
     def update_motor_load(self, snapshot, now):
@@ -289,10 +324,18 @@ class NeuralPolicy:
             self.cart.vx[:], self.cart.vy[:] = velocity[0]*1000, velocity[1]*1000
         self.motion_history.append((t, copy_cart(self.cart)))
         in_half = base[0, 1] < self.encoder.half_h
-        if self.shot_mode == 'mix' and in_half and not self.in_half:
-            self.shot = int(self.rng.integers(3))
+        # The realised route of the robot's last shot, from the same fix
+        # and slope the actor is given; it is judged under the request it
+        # was struck under, so before a new possession draws one.
+        self.last_shot = self.routes.update(t, base[0, 0:2], base[0, 2:4], base[0, 4:6])
+        if self.last_shot is not None:
+            self.last_shot['request'] = self.shot
+            if self.last_shot['route']:
+                self.selector.record(self.last_shot['route'], self.shot)
+        if in_half and not self.in_half and self.shot_mode not in ('left', 'right', 'straight'):
+            self.shot = self.selector.request()
         self.in_half = in_half
-        base[:, 18:21] = np.eye(3)[self.shot]
+        base[:, 18:21] = np.eye(4)[self.shot][1:]
         obs = neural_features(base, self.last_action[None], self.loads.features(time.monotonic()),
                               np.column_stack((self.cart.ax, self.cart.ay)), self.target,
                               self.command_cap, self.accel, self.decoder.low, self.decoder.high,
@@ -350,5 +393,7 @@ class NeuralPolicy:
         self.command_history.clear()
         self.sensor_hold = None
         self.loads = LiveMotorLoad()
+        self.shot_mode = self.shot_mode     # a fresh selector: the warm-up's possessions are not the session's
+        self.last_shot = None
         self.reset()
         return float(np.median(times))

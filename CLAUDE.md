@@ -186,6 +186,35 @@ Robotic air hockey table that uses reinforcement learning trained in simulation,
       left-rail pucks, the teacher's cap strikes them;
       `--anchor-front-margin`: the teacher itself hovers behind front-edge
       pucks at 90 m/s^2 and stalled on 67% of them).
+    - `shot_selector.py` - WHO PICKS THE SHOT ROUTE (2026-11-10). NumPy
+      only, shared by the sim evaluator and the table runner.
+      `ShotSelector` gives the request for each possession: `random`
+      (training's uniform explicit draw, the table's `mix`), `free`
+      (all-zero input, the network's own choice), a fixed route, or `auto`:
+      free unless a route is under 15% or over 60% of the last 30 completed
+      robot shots (then an explicit request; free until 9 shots; a uniform
+      explicit request 15% of the time anyway). `RouteClassifier` reads
+      each robot shot's realised route from the policy's own observation
+      (puck fix, 30 ms slope, own mallet) with the reward's definitions: a
+      side-rail bounce seen before the centre line, else the state at the
+      line traced on through `rewards.predict_shot`; lost / stopped pucks
+      are not counted. Training side: `train_neural_player.py
+      --free-request-share P` (opt-in; in that share of the LEARNER's
+      possessions there is no request, any aimed route earns the request
+      bonus and none is penalised; the far seat stays explicit; routes
+      chosen are logged as `status["routes"]`). Evaluator:
+      `eval_human_proxy.py --shot-request random|free|auto` (+
+      `candidate_routes` in every report). Table: `run_policy.py
+      --shot-type free|auto` with `--shot-window/-floor/-ceiling/-min-shots/
+      -explore`, `shot_request` / `shot_route` columns in ticks.csv, and
+      `ai/bin/shot_route_replay.py <stamp>` to read a session back.
+      MEASURED ZERO-SHOT: a3 and v4 were never trained with a free request
+      and are NOT usable with one (about 90% right banks at 1% on target,
+      a sixth of the goals); `auto` halves their goals. Keep `mix` for
+      them; `free` / `auto` are for a checkpoint trained with the share
+      (arm a4 has 0.5, not yet trained). Record: "Free shot requests" in
+      `ai/recipes/table-faithful-20261110/README.md`. Tests:
+      `tests/test_shot_selector.py`.
     - `run_names.py` - The `<major>.<minor>-<description>-<stage>` scheme,
       enforced by both trainers (see "Run names").
     - `perception.py` - The sim's tracker model: 6-frame slope estimator,

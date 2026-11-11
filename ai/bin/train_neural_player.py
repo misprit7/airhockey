@@ -21,7 +21,7 @@ from airhockey.neural_finetune import (ANCHOR_DIMS, ANCHOR_SPACES, GUARD, MODE_N
                                        diagnostic_subset, initialization_model, load_teacher, masked_mean,
                                        rail_reference_mask, reference_slots, resting_teacher_mask, std_floor, dead_puck_exploration_scale, teacher_mask, teacher_opponent_slots,
                                        teacher_error, teacher_regression, teacher_weight)
-from airhockey.neural_training import MOTION_COLUMNS, NeuralTrainingEnv
+from airhockey.neural_training import MOTION_COLUMNS, NeuralTrainingEnv, route_report
 from airhockey.on_policy import advantages
 from airhockey.thermal import DEFAULT_MODEL
 
@@ -308,6 +308,10 @@ def build_parser():
                    help="Planned release speed band of those strikes, m/s")
     p.add_argument("--defense-strike-moving-fraction", type=float, default=0,
                    help="Fraction of those drills whose puck is still rolling to the person from the centre line")
+    p.add_argument("--free-request-share", type=float, default=0.0,
+                   help="Share of the learner's possessions with NO shot request (all-zero input): any aimed "
+                        "route earns the request bonus and none is penalised. The rest keep explicit requests. "
+                        "Routes chosen are logged as status['routes']")
     p.add_argument("--left-bank-request-weight", type=float, default=1.0,
                    help="Relative weight of left-bank requests under --shot-request random (right and straight are 1)")
     p.add_argument("--accel-duty-weight", type=float, default=0,
@@ -517,6 +521,7 @@ def environment_options(args, *, shot_conditioned):
         defense_strike_speed=tuple(getattr(args, 'defense_strike_speed', (4.0, 9.0))),
         defense_strike_moving_fraction=getattr(args, 'defense_strike_moving_fraction', 0.0),
         left_bank_request_weight=getattr(args, 'left_bank_request_weight', 1.0),
+        free_request_share=getattr(args, 'free_request_share', 0.0),
         accel_duty_weight=getattr(args, 'accel_duty_weight', 0.0),
         accel_duty_threshold=getattr(args, 'accel_duty_threshold', 60.0),
         reversal_weight=getattr(args, 'reversal_weight', 0.0),
@@ -1064,6 +1069,7 @@ def main():
     ):
         rollout_start = time.monotonic()
         motion = np.zeros(len(MOTION_COLUMNS))
+        route_events = np.zeros((2, 4, 3))
         motion_by_kind = np.zeros((5, len(MOTION_COLUMNS)))
         slot_steps = np.zeros(5)
         lifts = np.zeros(2)
@@ -1201,6 +1207,7 @@ def main():
             if persistent_bias is not None:
                 contacted = np.asarray(info["contacts"]) > 0
             motion += info["motion"].sum(axis=0)
+            route_events += info["route_events"].sum(axis=0)
             slots = np.where(people_rows, 4, info["kind"])
             np.add.at(motion_by_kind, slots, info["motion"])
             slot_steps += np.bincount(slots, minlength=5)
@@ -1673,6 +1680,9 @@ def main():
                    if round4 else {}))
             for name, row, steps in zip(SLOT_NAMES,
                                         motion_by_kind, slot_steps) if steps}
+        if args.free_request_share:
+            # Keys only with the option on, as for round 4 above.
+            status["routes"] = route_report(route_events)
         if dead_explore:
             status["dead_puck_exploration_share"] = float(dwell_masks.float().mean())
         if fidelity:

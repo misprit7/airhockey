@@ -86,7 +86,9 @@ ARMS["a4"] = dict(ARMS["a3"], resume=A3, seed=20261115,
                   far_cap_brake=0.25, far_cap_threshold=20.0,
                   dead_puck_cap=100.0, dead_puck_cap_grace=2.5, teacher_resting_end=2.5,
                   reach_edge_drill=0.2, anchor_side_rail_open_y=0.55, anchor_front_margin=0.06,
-                  back_rail_drill=0.05, own_corner=300.0)
+                  back_rail_drill=0.05, own_corner=300.0,
+                  # Half the learner's possessions carry no request (README "Free shot requests").
+                  free_request=0.5)
 
 
 def argv(a):
@@ -205,6 +207,8 @@ def argv(a):
                         ("--back-rail-drill-fraction", a.back_rail_drill), ("--own-corner-weight", a.own_corner)):
         if value:
             cmd += [flag, str(value)]
+    if a.free_request:
+        cmd += ["--free-request-share", str(a.free_request)]
     return cmd
 
 
@@ -279,6 +283,8 @@ def build_parser():
                    help="Side-rail pucks forward of this y get the teacher anchor instead of the reference's")
     p.add_argument("--anchor-front-margin", type=float,
                    help="No anchor on pucks lying further than this past the mallet's forward limit, m")
+    p.add_argument("--free-request", type=float, default=0.0,
+                   help="Share of the learner's possessions with no shot request (any aimed route earns the bonus)")
     p.add_argument("--n-envs", type=int, default=2048, help="128 per worker keeps the slot layout")
     p.add_argument("--workers", type=int, default=16)
     p.add_argument("--device", default="cuda")
