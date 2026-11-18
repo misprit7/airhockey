@@ -3,9 +3,9 @@
   "difficulty": {
     "max": {"model": "v4.1.2"},
     "hard": {"model": "v4.1.2", "accel": 60},
-    "medium": {"model": "v4.1.2", "accel": 40},
-    "easy": {"model": "v4.1.2", "accel": 25},
-    "beginner": {"model": "v4.1.2", "accel": 15}
+    "medium": {"model": "v4.2.0"},
+    "easy": {"model": "v4.2.1"},
+    "beginner": {"model": "v4.2.2"}
   },
   "models": {
     "v0.1.0": {
@@ -39,6 +39,18 @@
     "v4.1.2": {
       "run": "_neural-table-faithful-20261110-a3", "file": "agent.pt", "date": "2026-11-10", "accel": 100, "parent": "v4.1.1",
       "summary": "v4.1.1 with the two imitation anchors on resting pucks (was arm a3). On the table 2026-11-10 and 11-17."
+    },
+    "v4.2.0": {
+      "run": "v4.2.0", "file": "agent.pt", "date": "2026-11-18", "accel": 40, "parent": "v4.1.2",
+      "summary": "v4.1.2 continued 288M steps with its body limited to 40 m/s^2 (units still 100). Sim only."
+    },
+    "v4.2.1": {
+      "run": "v4.2.1", "file": "agent.pt", "date": "2026-11-18", "accel": 25, "parent": "v4.1.2",
+      "summary": "v4.1.2 continued 286M steps with its body limited to 25 m/s^2 (units still 100). Sim only."
+    },
+    "v4.2.2": {
+      "run": "v4.2.2", "file": "agent.pt", "date": "2026-11-18", "accel": 15, "parent": "v4.1.2",
+      "summary": "v4.1.2 continued 284M steps with its body limited to 15 m/s^2 (units still 100). Sim only."
     }
   }
 }

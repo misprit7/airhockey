@@ -601,6 +601,11 @@ checkpoint>` build the limited env), and `neural_coordinates.limit_cap`.
 The older behaviour of `--accel` on the table (rescaling the model's units)
 halved v4.1.2's goal share at 60 m/s^2 in sim. Launcher:
 `ai/recipes/table-faithful-20261110/finetune.py --arm accel --body-accel N`.
+Modes as of 2026-11-18: `max` = v4.1.2, `hard` = v4.1.2 clipped to 60,
+`medium` / `easy` / `beginner` = v4.2.0 / v4.2.1 / v4.2.2, which are v4.1.2
+continued under a 40 / 25 / 15 m/s^2 body limit (sim goal share 97 / 90 /
+81% against the table people; clipped v4.1.2 at those limits 94 / 72 / 49%).
+None of v4.2.x has been on the table; results and caveats in `ai/MODELS.md`.
 
 ## Run names
 The scheme below is for TD-MPC2 runs only.
@@ -716,6 +721,12 @@ python ai/bin/eval_fast_defense.py expert --output logs/fd-human.json \
   and cut median overshoot from 9.6 to 3.3 mm on that paddle. This has NOT been
   tested on the standard paddle. Gains are non-volatile on the drive, and the
   x0.35 state has no saved snapshot: recreate it with `drive_gains scale`.
+  2026-11-17: the baseline was restored (`drive_gains restore ... --apply`,
+  just before session `20261117-202103`), so the drives may NOT be at x0.35
+  now. Since 2026-11-10 the mallet rings at 21-22 Hz along x near the robot's
+  goal (camera, 14-30 Hz rms: 0.4-0.5 mm in October, ~1.1 mm at x0.35 in
+  November, ~2.0 mm after the restore). Cause not found; the commands carry
+  no such content, so it is mechanical or in the drive loop, not the policy.
 - **Paddles**: `standard` (170 g), `heavy` (370 g) and `printed` in
   `shared/cdpr_geometry.py`. `printed` is `hw/mallet/bin/gen_printed_mallet.py`
   and carries DESIGN values (98 g, markers 68.10/37.30 mm), not measurements.
