@@ -1,0 +1,44 @@
+{
+  "latest": "v4.1.2",
+  "difficulty": {
+    "max": {"model": "v4.1.2"},
+    "hard": {"model": "v4.1.2", "accel": 60},
+    "medium": {"model": "v4.1.2", "accel": 40},
+    "easy": {"model": "v4.1.2", "accel": 25},
+    "beginner": {"model": "v4.1.2", "accel": 15}
+  },
+  "models": {
+    "v0.1.0": {
+      "run": "rail30-100-20261001-v1", "file": "agent.pt", "date": "2026-10-01", "accel": 100, "parent": null,
+      "summary": "Production PPO network of the rail30 / 100 m/s^2 work (was rail30-100-20261001-v1). Training reference and opponent only."
+    },
+    "v1.0.0": {
+      "run": "teacher-dagger-20261018-v1", "file": "agent.pt", "date": "2026-10-18", "accel": 100, "parent": "v0.1.0",
+      "summary": "v0.1.0 widened to 1536 and distilled from the physics teacher (was teacher-dagger-20261018-v1)."
+    },
+    "v2.0.0": {
+      "run": "teacher-ppo-20261018-v2", "file": "agent.pt", "date": "2026-10-18", "accel": 100, "parent": "v1.0.0",
+      "summary": "PPO from v1.0.0 with possession delay (was teacher-ppo-20261018-v2). Failed its table test: idle jitter."
+    },
+    "v3.0.0": {
+      "run": "teacher-ppo-measured-20261018-v3", "file": "agent.pt", "date": "2026-10-18", "accel": 100, "parent": "v2.0.0",
+      "summary": "v2.0.0 under the measured paddle contact (was teacher-ppo-measured-20261018-v3). Experimental."
+    },
+    "v4.0.0": {
+      "run": "teacher-calm-20261018-v4", "file": "agent.pt", "date": "2026-10-18", "accel": 100, "parent": "v2.0.0",
+      "summary": "v2.0.0 with the calm-accel cost (was teacher-calm-20261018-v4, 'v4'). 13 table sessions, 2026-10-19 to 11-08."
+    },
+    "v4.1.0": {
+      "run": "_neural-table-faithful-20261110-a", "file": "agent.pt", "date": "2026-11-10", "accel": 100, "parent": "v4.0.0",
+      "summary": "v4.0.0 in the table-faithful sim against the table people (was arm a, 'v5a')."
+    },
+    "v4.1.1": {
+      "run": "_neural-table-faithful-20261110-a2", "file": "agent.pt", "date": "2026-11-10", "accel": 100, "parent": "v4.1.0",
+      "summary": "v4.1.0 with the dead-puck clock, guard and effort costs, corner drills (was arm a2)."
+    },
+    "v4.1.2": {
+      "run": "_neural-table-faithful-20261110-a3", "file": "agent.pt", "date": "2026-11-10", "accel": 100, "parent": "v4.1.1",
+      "summary": "v4.1.1 with the two imitation anchors on resting pucks (was arm a3). On the table 2026-11-10 and 11-17."
+    }
+  }
+}

@@ -918,6 +918,20 @@ def _load_tdmpc2(name: str, caps: Caps, plan_iters: int, device: str | None,
     return policy
 
 
+def neural_accel_alignment(policy) -> str:
+    """The neural player's accel-limit line of the sim/real alignment.
+
+    The session limit clips the commanded cap and the guard's braking; the
+    checkpoint's inputs and other outputs keep their trained units. It
+    matches training when it equals the limit the checkpoint's body trained
+    under (the trainer's --body-accel, else its full cap).
+    """
+    session, trained, units = policy.accel, policy.trained_body_accel, policy.units_accel
+    line = (f"  sim/real alignment: accel limit {session:g} m/s^2 (cap clipped, units {units:g}); "
+            f"trained body limit: {trained:g} m/s^2")
+    return line + ("" if math.isclose(session, trained) else "  <-- DEVIATION")
+
+
 def neural_request_alignment(policy) -> str:
     """The neural player's shot-request line of the sim/real alignment.
 
@@ -1029,6 +1043,7 @@ def load_policy(spec: str, caps: Caps, plan_iters: int | None = None,
               f"50 Hz; decoder + guard: {ms:.2f} ms median")
         print(f"session caps: {caps.speed_max / 1000:g} m/s, "
               f"{caps.accel_max / 1000:g} m/s^2")
+        print(neural_accel_alignment(policy))
         print(neural_request_alignment(policy))
         print("RMS: fresh drive telemetry with persistent model fallback for missing channels")
         return policy
@@ -2134,8 +2149,13 @@ def resolve_limits(args) -> tuple[float, float]:
     if kind == "neural":
         from airhockey.neural_deploy import resolve_neural_checkpoint, neural_limits
         args.resolved_checkpoint = str(resolve_neural_checkpoint(name))
-        default_speed, default_accel = (
+        default_speed, units_accel = (
             v * 1000 for v in neural_limits(args.resolved_checkpoint))
+        # The default is the limit the checkpoint's body trained under (its
+        # difficulty); anything up to its coordinate units is accepted and
+        # reported as a deviation.
+        from airhockey.neural_deploy import neural_body_accel  # noqa: PLC0415
+        default_accel = neural_body_accel(args.resolved_checkpoint) * 1000
     speed = args.speed
     if speed is None:
         speed = GENTLE_SPEED if args.gentle else default_speed
@@ -2145,7 +2165,7 @@ def resolve_limits(args) -> tuple[float, float]:
     if not all(math.isfinite(v) and v > 0 for v in (speed, accel)):
         raise ValueError("speed and acceleration ceilings must be finite and positive")
     if kind == "neural":
-        if speed > default_speed or accel > default_accel:
+        if speed > default_speed or accel > units_accel:
             raise ValueError("neural session caps cannot exceed checkpoint training limits")
         if not math.isclose(getattr(args, "ramp", 3.0), 3.0):
             raise ValueError("neural arrival policies require the trained --ramp 3")

@@ -1168,7 +1168,27 @@ def test_recipe_is_v4s_command_continued_with_the_table_options():
         changed = {k for k in old if old[k] != mine[k]}
         assert changed == {"run_name", "evaluation_dir", "resume", "initialize_from", "opponent_reference", "minutes",
                            "seed", "value_warmup_updates", "width"}
-        assert set(mine) - set(old) == new | round2 | round3 | round4 | {"free_request_share"}
+        assert set(mine) - set(old) == new | round2 | round3 | round4 | {"free_request_share", "body_accel"}
+        assert args.body_accel is None and "--body-accel" not in cmd
+
+
+def test_difficulty_arm_is_a3s_command_from_a3_with_the_body_and_teacher_limited():
+    spec = importlib.util.spec_from_file_location("recipe_v5", REPO / "ai/recipes/table-faithful-20261110/finetune.py")
+    recipe = importlib.util.module_from_spec(spec)
+    spec.loader.exec_module(recipe)
+    a3 = recipe.argv(recipe.parse(["--arm", "a3", "--run-name", "_x"]))
+    cmd = recipe.argv(recipe.parse(["--arm", "accel", "--body-accel", "25", "--run-name", "_x"]))
+    value = lambda command, flag: command[command.index(flag) + 1]
+    assert value(cmd, "--body-accel") == "25.0" and value(cmd, "--accel") == "100.0"
+    assert value(cmd, "--resume") == recipe.A3
+    assert value(cmd, "--teacher") == "expert:defense_accel=25,strike_accel=23,reach_accel=16"
+    # Nothing else differs from arm a3 but where it starts and its seed.
+    changed = {"--resume", "--seed", "--teacher"}
+    rest = lambda command: [x for i, x in enumerate(command)
+                            if x not in changed | {"--body-accel"} and command[i - 1] not in changed | {"--body-accel"}]
+    assert rest(cmd) == rest(a3)
+    plain = recipe.argv(recipe.parse(["--arm", "accel", "--body-accel", "25", "--no-scale-teacher", "--run-name", "_x"]))
+    assert value(plain, "--teacher") == "expert"
 
 
 def test_round2_arm_continues_v5a_with_its_evaluations_changes():

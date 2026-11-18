@@ -49,6 +49,15 @@ v4's anchor to the teacher's) and the slow puck sent into its own back corner
     PYTHONPATH=ai python3 ai/recipes/table-faithful-20261110/finetune.py \
         --arm a4 --run-name _neural-table-faithful-20261110-a4 --minutes 150
 
+DIFFICULTY MODELS (`--arm accel --body-accel N`, 2026-11-18): arm a3's
+options, continued from a3 itself, with the learner's body limited to N
+m/s^2 (the trainer's --body-accel: inputs and outputs keep a3's units, the
+commanded cap and the guard's braking are clipped). The teacher that labels
+defense plans with the same limit. ai/MODELS.md has the versions.
+
+    PYTHONPATH=ai python3 ai/recipes/table-faithful-20261110/finetune.py \
+        --arm accel --body-accel 40 --run-name v4.2.0 --minutes 240
+
 Simulation only; nothing here touches the table.
 """
 import argparse
@@ -89,6 +98,20 @@ ARMS["a4"] = dict(ARMS["a3"], resume=A3, seed=20261115,
                   back_rail_drill=0.05, own_corner=300.0,
                   # Half the learner's possessions carry no request (README "Free shot requests").
                   free_request=0.5)
+
+
+# Difficulty models: a3's recipe from a3, the body limited by --body-accel.
+ARMS["accel"] = dict(ARMS["a3"], resume=A3, seed=20261118)
+
+
+def limited_teacher(spec, body_accel):
+    """The physics teacher planning with a body limited to `body_accel`:
+    its three effective accelerations (defense 100, strike 92, reach 64 of
+    the 100 m/s^2 body) scaled to the limit."""
+    if body_accel is None or spec != "expert":
+        return spec
+    return (f"expert:defense_accel={body_accel:g},strike_accel={0.92 * body_accel:g},"
+            f"reach_accel={0.64 * body_accel:g}")
 
 
 def argv(a):
@@ -138,7 +161,8 @@ def argv(a):
            "--game-fraction", "0.3", "--slow-receiving-fraction", "0.65", "--practice-selfplay-fraction", "0",
            # The teacher as v4 had it. --resume keeps the anneal's origin, so
            # these give the final weight 0.2 from the first update.
-           "--teacher", a.teacher, "--teacher-weight", "1", "--teacher-weight-final", "0.2",
+           "--teacher", limited_teacher(a.teacher, a.body_accel) if a.scale_teacher else a.teacher,
+           "--teacher-weight", "1", "--teacher-weight-final", "0.2",
            "--teacher-anneal-steps", "60000000", "--teacher-mask", "defense", "--teacher-free-guard-accel",
            "--teacher-opponent-fraction", str(a.teacher_opponents),
            "--calm-accel-weight", str(a.calm_accel), "--calm-accel-power", "1.0",
@@ -209,6 +233,8 @@ def argv(a):
             cmd += [flag, str(value)]
     if a.free_request:
         cmd += ["--free-request-share", str(a.free_request)]
+    if a.body_accel is not None:
+        cmd += ["--body-accel", str(a.body_accel)]
     return cmd
 
 
@@ -285,6 +311,9 @@ def build_parser():
                    help="No anchor on pucks lying further than this past the mallet's forward limit, m")
     p.add_argument("--free-request", type=float, default=0.0,
                    help="Share of the learner's possessions with no shot request (any aimed route earns the bonus)")
+    p.add_argument("--body-accel", type=float, help="Limit the learner's body to this many m/s^2 (difficulty models)")
+    p.add_argument("--scale-teacher", action=argparse.BooleanOptionalAction, default=True,
+                   help="With --body-accel: the teacher plans with the same limit")
     p.add_argument("--n-envs", type=int, default=2048, help="128 per worker keeps the slot layout")
     p.add_argument("--workers", type=int, default=16)
     p.add_argument("--device", default="cuda")

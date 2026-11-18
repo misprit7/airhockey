@@ -2,13 +2,19 @@
 # Turn it on and it plays: the master, the camera and the policy, in one
 # command, from the REPO ROOT.
 #
-#   bash ai/bin/play.sh --policy neural:runs/_neural-player-requests-defense30/agent_step_515850240.pt
-#   bash ai/bin/play.sh --policy tdmpc2:2.3-control-gate-selfplay
-#   bash ai/bin/play.sh --policy tdmpc2:latest --gentle   # FIRST RUN OF ANY NEW CHECKPOINT
-#   bash ai/bin/play.sh --policy tdmpc2:latest --dry      # camera + policy, commands nothing
-#   bash ai/bin/play.sh --policy tdmpc2:latest --tension 1.5
+#   bash ai/bin/play.sh --tension 1.5                      # the latest neural model, full strength
+#   bash ai/bin/play.sh --difficulty easy --tension 1.5    # max | hard | medium | easy | beginner
+#   bash ai/bin/play.sh --policy neural:v4.0.0 --tension 1.5
+#   bash ai/bin/play.sh --policy tdmpc2:latest --gentle    # FIRST RUN OF ANY NEW CHECKPOINT
+#   bash ai/bin/play.sh --dry                              # camera + policy, commands nothing
 #
-# This script's own flags: --policy <spec> (default tdmpc2:latest), --dry,
+# Neural models are named v<major>.<study>.<model>; `python3 -m airhockey.models`
+# (PYTHONPATH=ai) lists them, which one is `latest` and what each difficulty
+# mode runs (ai/models.json, ai/MODELS.md). A difficulty mode is a model plus
+# an acceleration limit.
+#
+# This script's own flags: --policy <spec> (default neural:latest),
+# --difficulty <mode>, --dry,
 # --tension <mm> (cdpr_master's startup pretension; default 0 = slack, which
 # is what the tracking test validated). Everything else goes to
 # ai/bin/run_policy.py, whose defaults reproduce training (6 planner
@@ -30,7 +36,8 @@ set -u
 cd "$(dirname "$0")/../.."
 export PYTHONPATH=ai PYTHONUNBUFFERED=1
 
-POLICY=tdmpc2:latest
+POLICY=neural:latest
+DIFFICULTY=""
 MASTER_ARGS=()
 LIVE=1
 ARGS=()
@@ -41,6 +48,8 @@ while [ $# -gt 0 ]; do
         --dry) LIVE=0; shift ;;
         --policy) POLICY=$2; shift 2 ;;
         --policy=*) POLICY=${1#--policy=}; shift ;;
+        --difficulty) DIFFICULTY=$2; shift 2 ;;
+        --difficulty=*) DIFFICULTY=${1#--difficulty=}; shift ;;
         --tension) MASTER_ARGS+=(--tension "$2"); shift 2 ;;
         --tension=*) MASTER_ARGS+=(--tension "${1#--tension=}"); shift ;;
         --load-hz) MASTER_ARGS+=(--load-hz "$2"); shift 2 ;;
@@ -51,6 +60,14 @@ while [ $# -gt 0 ]; do
         *) ARGS+=("$1"); shift ;;
     esac
 done
+# A difficulty mode names its model and accel limit in ai/models.json; the
+# limit goes to run_policy as --accel (mm/s^2), ahead of anything typed.
+if [ -n "$DIFFICULTY" ]; then
+    MODE=$(python3 -m airhockey.models difficulty "$DIFFICULTY") || exit 1
+    POLICY=neural:${MODE% *}
+    ARGS=(--accel "$(python3 -c "print(round(${MODE#* } * 1000))")" "${ARGS[@]}")
+    echo "difficulty $DIFFICULTY: $POLICY at ${MODE#* } m/s^2"
+fi
 # Scheduling: the master, the runner and the camera tracker it spawns run at
 # realtime priority (SCHED_FIFO 40) when the account is allowed to ask for it,
 # so other jobs on this machine cannot make a policy tick wait in line. No

@@ -199,7 +199,7 @@ def test_resolve_caps_and_reject_mismatched_options(checkpoint):
     with pytest.raises(ValueError): rp.resolve_limits(args)
     args.accel = None; args.ramp = 6
     with pytest.raises(ValueError): rp.resolve_limits(args)
-    with pytest.raises(ValueError): resolve_neural_checkpoint('latest')
+    with pytest.raises(FileNotFoundError): resolve_neural_checkpoint('no-such-run')
     with pytest.raises(ValueError): rp.load_policy(f'neural:{checkpoint}', rp.Caps(), cmd_hz=100)
 
 

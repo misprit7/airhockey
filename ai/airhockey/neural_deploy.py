@@ -20,6 +20,7 @@ from airhockey.dynamics import workspace_in_sim, table_mm_to_sim, sim_to_table_m
 from airhockey.heuristics import Command
 from airhockey.motion import CartState
 from airhockey.motion_guard import guard_command, predict
+from airhockey.neural_coordinates import limit_cap
 from airhockey.neural_observation import neural_features
 from airhockey.shot_selector import ROUTE_NAMES, RouteClassifier, ShotSelector
 from airhockey.thermal import MotorThermal
@@ -28,9 +29,12 @@ ROOT = Path(__file__).resolve().parents[2]
 
 
 def resolve_neural_checkpoint(name):
-    # Explicit selection only: experimental neural models never replace TD latest.
-    if name == 'latest':
-        raise ValueError('neural: requires an explicit run name or checkpoint path')
+    # `latest` and v<major>.<study>.<model> come from the registry
+    # (ai/models.json, airhockey/models.py); anything else is a run
+    # directory under runs/ or a checkpoint path.
+    from airhockey import models
+    if models.is_version(str(name)):
+        return models.resolve(str(name)).resolve()
     path = Path(name).expanduser()
     if not path.exists():
         path = ROOT / 'runs' / name
@@ -60,6 +64,13 @@ def neural_limits(checkpoint):
            not math.isfinite(v) or v <= 0 for v in values):
         raise ValueError('invalid neural training limits')
     return tuple(float(v) for v in values)
+
+
+def neural_body_accel(checkpoint):
+    """m/s^2 the checkpoint's body was limited to in training (trainer
+    --body-accel); its coordinate units' cap when it trained unlimited."""
+    caps = json.loads((Path(checkpoint).parent / 'run.json').read_text())['physical_limits']
+    return float(caps.get('body_acceleration_m_s2') or caps['acceleration_m_s2'])
 
 
 def neural_workspace(checkpoint):
@@ -153,8 +164,16 @@ class NeuralPolicy:
         self.net.to(device or 'cpu').eval()
         self.history = PhysicalHistory(self.net.history)
         self.speed = speed_mm_s / 1000
+        # The session's accel limit and the cap the checkpoint's coordinates
+        # are fractions of. A limit below those units clips the commanded cap
+        # and the guard's braking and changes nothing else: observations and
+        # every other output keep their trained meaning (the trainer's
+        # --body-accel and the evaluators do the same). Rescaling the units
+        # to the limit instead cost a3 half its goal share at 60 m/s^2 in sim.
         self.accel = accel_mm_s2 / 1000
-        self.encoder = ReportEncoder(shot_mode='straight', speed_m_s=self.speed, accel_m_s2=self.accel)
+        self.units_accel = trained_accel
+        self.trained_body_accel = neural_body_accel(self.ckpt)
+        self.encoder = ReportEncoder(shot_mode='straight', speed_m_s=self.speed, accel_m_s2=self.units_accel)
         self.workspace_bounds_mm = neural_workspace(self.ckpt)
         ws = workspace_in_sim(self.encoder.width, self.encoder.half_h,
                               bounds_mm=self.workspace_bounds_mm)
@@ -338,7 +357,7 @@ class NeuralPolicy:
         base[:, 18:21] = np.eye(4)[self.shot][1:]
         obs = neural_features(base, self.last_action[None], self.loads.features(time.monotonic()),
                               np.column_stack((self.cart.ax, self.cart.ay)), self.target,
-                              self.command_cap, self.accel, self.decoder.low, self.decoder.high,
+                              self.command_cap, self.units_accel, self.decoder.low, self.decoder.high,
                               shot_conditioned=self.net.shot_conditioned)
         self.history.append(obs)
         self.last_obs = self.history.for_policy(self.net)[0].copy()
@@ -361,9 +380,9 @@ class NeuralPolicy:
         action = self.net.act(obs[None])[0]
         if not np.isfinite(obs).all() or not np.isfinite(action).all():
             raise ValueError('nonfinite neural observation/action')
-        target, cap = self.decoder.decode(self.cart, action[None], 0.0, self.target,
-                                          self.command_cap, max_speed=self.speed,
-                                          max_accel=self.accel, delay_s=self.delay)
+        target, cap = self.decoder.decode(self.cart, limit_cap(action[None], self.units_accel, self.accel),
+                                          0.0, self.target, self.command_cap, max_speed=self.speed,
+                                          max_accel=self.units_accel, delay_s=self.delay)
         target, cap, changed, unresolved = guard_command(
             self.cart, target, cap, self.target, self.command_cap,
             bounds=self.decoder.bounds, max_accel=self.accel, max_speed=self.speed,

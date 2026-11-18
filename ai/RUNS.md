@@ -1,5 +1,8 @@
 # Runs
 
+Neural-player models are versioned separately as `v<major>.<study>.<model>`:
+see `ai/MODELS.md`. This file is the TD-MPC2 registry and the older history.
+
 Names follow `<major>.<minor>-<description>-<stage>` (`airhockey/run_names.py`):
 
 - **major** bumps when a checkpoint cannot resume from the previous

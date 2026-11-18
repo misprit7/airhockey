@@ -104,6 +104,11 @@ class NeuralTrainingEnv(ArrivalEnv):
         *,
         stage=0,
         accel=60.,
+        # The learner's body limited below `accel`, m/s^2 (None = `accel`).
+        # Observations and actions stay in `accel` units, so a checkpoint
+        # trained at `accel` continues unchanged; its commanded cap and the
+        # guard's braking are held to this. The far side keeps `accel`.
+        body_accel=None,
         workspace_bounds_mm=None,
         thermal_path=DEFAULT_MODEL,
         edge_dwell_weight=0.,
@@ -330,6 +335,9 @@ class NeuralTrainingEnv(ArrivalEnv):
             workspace_bounds_mm=workspace_bounds_mm,
             thermal_path=thermal_path,
         )
+        if body_accel is not None and not 5 < body_accel <= accel:
+            raise ValueError('body_accel must be above 5 m/s^2 and no higher than accel')
+        self.body_accel = None if body_accel is None or body_accel >= accel else float(body_accel)
         if not np.isfinite([edge_dwell_weight,edge_dwell_band]).all() or edge_dwell_weight<0 or edge_dwell_band<=0:
             raise ValueError('invalid edge dwell penalty')
         self.edge_dwell_weight,self.edge_dwell_band=edge_dwell_weight,edge_dwell_band
@@ -827,8 +835,12 @@ class NeuralTrainingEnv(ArrivalEnv):
         ).astype(np.float32)
 
     def _decode(self, action, opponent=False):
-        target, cap = super()._decode(action, opponent)
+        limited = self.body_accel is not None and not opponent
         dyn = self.base._opp_dyn if opponent else self.base._agent_dyn
+        if limited:
+            from airhockey.neural_coordinates import limit_cap
+            action = limit_cap(np.asarray(action), float(np.max(dyn["max_accel"])), self.body_accel)
+        target, cap = super()._decode(action, opponent)
         ids = (
             np.flatnonzero(self.base._opp_policy_id == _OPP_POLICY_MAP["external"])
             if opponent
@@ -850,7 +862,7 @@ class NeuralTrainingEnv(ArrivalEnv):
             previous[ids],
             dyn["command_accel"][ids],
             bounds=self.decoder.bounds,
-            max_accel=dyn["max_accel"][ids],
+            max_accel=np.minimum(dyn["max_accel"][ids], self.body_accel) if limited else dyn["max_accel"][ids],
             max_speed=dyn["max_speed"][ids],
             delay=self.base.command_delay_s,
             action_dt=self.base.action_dt,

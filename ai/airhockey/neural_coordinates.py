@@ -34,6 +34,20 @@ def action_coordinates(action,source,target):
     return result
 
 
+def limit_cap(action,units_accel,limit):
+    """The action with its accel-cap slot held to `limit` m/s^2 (None = unchanged).
+
+    The slot stays in the policy's own units (a fraction of `units_accel`):
+    a body limited below the cap a checkpoint trained with keeps every other
+    coordinate, and every observation, as that checkpoint knows them.
+    """
+    if limit is None or limit>=units_accel:return action
+    result=_copy(action)
+    slot=2*min(max((limit/units_accel-.05)/.95,0),1)**.5-1
+    result[...,5]=result[...,5].clip(max=slot) if torch.is_tensor(result) else np.minimum(result[...,5],slot)
+    return result
+
+
 def observation_coordinates(obs,source,target,history):
     result=_copy(obs)
     frames=result[...,:42*history].reshape(-1,history,42)

@@ -1,7 +1,7 @@
 # Air Hockey RL Project
 
 ## Overview
-Robotic air hockey table that uses reinforcement learning trained in simulation, then transferred to physical hardware. The robot is a built and running cable-driven parallel robot (CDPR): four ClearPath servos driven step/dir by a Teensy, a FLIR camera tracking the puck at 200 Hz, and TD-MPC2 policies trained in the sim and run through `ai/bin/play.sh`. The newest table candidate is the neural player `teacher-calm-20261018-v4`, which has run live on the table in 13 sessions from 2026-10-19 to 2026-11-08 (`logs/run_policy/`), with no written assessment yet (`ai/RUNS.md`, `ai/recipes/expert-distill-20261018/README.md`). `ai/RETRAIN.md` is the TD-MPC2 record up to 2026-09-19. The sim-to-real and hardware status is in `SIM2REAL.md`.
+Robotic air hockey table that uses reinforcement learning trained in simulation, then transferred to physical hardware. The robot is a built and running cable-driven parallel robot (CDPR): four ClearPath servos driven step/dir by a Teensy, a FLIR camera tracking the puck at 200 Hz, and TD-MPC2 policies trained in the sim and run through `ai/bin/play.sh`. The table runs a NEURAL PLAYER; its models are versioned `v<major>.<study>.<model>` in `ai/MODELS.md` / `ai/models.json`, and the latest is `v4.1.2` (formerly "a3"; `v4.0.0` is the former `teacher-calm-20261018-v4`, 13 table sessions 2026-10-19 to 11-08). `bash ai/bin/play.sh` runs the latest; `--difficulty max|hard|medium|easy|beginner` picks a model plus an acceleration limit. `ai/RETRAIN.md` is the TD-MPC2 record up to 2026-09-19. The sim-to-real and hardware status is in `SIM2REAL.md`.
 
 ## Approach
 1. **System identification**: Learn physical dynamics from real hardware (motor response, cable compliance, friction, latency)
@@ -310,7 +310,8 @@ Robotic air hockey table that uses reinforcement learning trained in simulation,
       master keeps `logs/cdpr_master.log`; `play.sh` stamps a copy on exit.
     - `play.sh` - Turn it on and it plays: starts `cdpr_master`, the camera
       and `run_policy.py --live` in one command; Ctrl-C brakes and stops all.
-      Its own flags: `--policy <spec>`, `--tension <mm>` (master pretension
+      Its own flags: `--policy <spec>` (default `neural:latest`),
+      `--difficulty <mode>` (`ai/models.json`), `--tension <mm>` (master pretension
       at ENABLE; default 0 = slack, the setting the tracking test
       validated), `--dry`; everything else passes to `run_policy.py`.
       Flags only, never environment variables.
@@ -580,7 +581,29 @@ goals conceded from 0.10 to 0.04 per game.
     `record_puck.py`, `blobtrack`, and every other vision tool.
 - **Recording**: Save game trajectories at intervals during training for later visual replay. Columnar JSON format for ~78% size reduction. Includes per-frame reward and cumulative reward.
 
+## Model versions (neural player)
+`v<major>.<study>.<model>`: major = a large or architectural change, study =
+goes up each time a person or an AI session finishes a study and trains from
+it, model = the models trained within that study. `ai/models.json` is the
+registry (version -> run directory, parent, `latest`, the difficulty modes);
+`ai/MODELS.md` is the readable table with the old names; `airhockey/models.py`
+resolves names (`neural:latest`, `neural:v4.1.2`) and prints the next free
+version (`PYTHONPATH=ai python3 -m airhockey.models next study`). Register
+every new neural model there and do not invent other names.
+
+A DIFFICULTY MODE is a model plus an acceleration limit for its body
+(2026-11-18). The limit clips the commanded accel cap and the guard's
+braking; inputs and other outputs keep the model's trained units. One rule
+in three places: `run_policy.py --accel` (table), `train_neural_player.py
+--body-accel` (training; recorded in run.json and picked up by
+`checkpoint_environment`, so evaluators given `--environment-from <that
+checkpoint>` build the limited env), and `neural_coordinates.limit_cap`.
+The older behaviour of `--accel` on the table (rescaling the model's units)
+halved v4.1.2's goal share at 60 m/s^2 in sim. Launcher:
+`ai/recipes/table-faithful-20261110/finetune.py --arm accel --body-accel N`.
+
 ## Run names
+The scheme below is for TD-MPC2 runs only.
 `<major>.<minor>-<description>-<stage>` (e.g. `3.3-turnover-selfplay`):
 major = a new lineage (action space, observation layout, horizon, model),
 minor = a recipe change resumed within it, stage = curriculum stage or

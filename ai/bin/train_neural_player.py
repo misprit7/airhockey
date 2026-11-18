@@ -79,6 +79,7 @@ def build_parser():
                    help="Shorten each actor optimizer proposal if its post-step minibatch KL exceeds target-kl")
     p.add_argument("--stage", type=int, default=0)
     p.add_argument('--accel',type=float,default=60)
+    p.add_argument('--body-accel',type=float,help='Limit the learner\'s body below --accel, m/s^2: inputs and outputs stay in --accel units (a checkpoint continues unchanged), its commanded cap and guard braking are held to this. Recorded as body_accel in run.json; the far side keeps --accel')
     p.add_argument('--workspace',choices=['legacy','rail30'],default='legacy')
     p.add_argument('--thermal-model',type=Path,default=DEFAULT_MODEL)
     p.add_argument('--edge-dwell-weight',type=float,default=0,help='Maximum cost per second per nearby rail')
@@ -420,7 +421,7 @@ def environment_options(args, *, shot_conditioned):
     """
     from airhockey.neural_setup import workspace_bounds
     return dict(
-        accel=args.accel,workspace_bounds_mm=workspace_bounds(args.workspace),thermal_path=args.thermal_model,
+        accel=args.accel,body_accel=getattr(args,'body_accel',None),workspace_bounds_mm=workspace_bounds(args.workspace),thermal_path=args.thermal_model,
         edge_dwell_weight=args.edge_dwell_weight,edge_dwell_band=args.edge_dwell_band,
         project_rail_contacts=args.project_rail_contacts,
         paddle_restitution_range=getattr(args, "paddle_restitution_range", None),
@@ -592,6 +593,7 @@ def main():
     p = build_parser()
     args = p.parse_args()
     if not np.isfinite(args.accel) or not 0<args.accel<=120:p.error('accel must be within (0,120] m/s²')
+    if args.body_accel is not None and not 5<args.body_accel<=args.accel:p.error('--body-accel must be above 5 m/s² and no higher than --accel')
     from airhockey.neural_setup import workspace_bounds
     run_bounds=workspace_bounds(args.workspace)
     args.thermal_model=args.thermal_model.resolve()
@@ -873,7 +875,8 @@ def main():
         else "restored"
         if args.resume
         else "fresh",
-        physical_limits=dict(speed_m_s=12, acceleration_m_s2=args.accel),
+        physical_limits=dict(speed_m_s=12, acceleration_m_s2=args.accel,
+                             **({'body_acceleration_m_s2': args.body_accel} if args.body_accel and args.body_accel < args.accel else {})),
         workspace_bounds_mm=run_bounds,
         args={k: str(v) if isinstance(v, Path) else v for k, v in vars(args).items()},
         training_opponents="pool of neural policy snapshots"
