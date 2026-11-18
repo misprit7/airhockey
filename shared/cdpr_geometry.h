@@ -209,7 +209,12 @@ constexpr float MOTOR_Y[NUM_MOTORS] = {
 // radius variation of order 1%, unmodelled, and it varies with how much
 // cable is out. Same for the wire stacking on itself.
 
-constexpr float SPOOL_RADIUS_MM = 48.0f; // 96 mm pitch DIAMETER / 2
+// MEASURED 2026-11-17 by the wound-turns check above: 3 turns of one spool
+// paid out 913 mm, so r = 913 / (6 pi) = 48.44 mm, 0.9% over the 48 mm pitch
+// radius (a first half-turn reading of 156 mm was too coarse to use). One
+// spool only; applied to all four. Session logs suggest the two goal-end
+// spools (1, 2) may run a further ~1% larger than the far pair, unmeasured.
+constexpr float SPOOL_RADIUS_MM = 48.44f;
 constexpr float SPOOL_CIRCUMFERENCE_MM = 2.0f * (float)M_PI * SPOOL_RADIUS_MM;
 
 // Which side of each spool the wire leaves, as a sign in the wrap term.

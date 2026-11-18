@@ -62,7 +62,8 @@ MOTOR_Y = [1108.7, 1062.6, -97.7, -141.9]
 # so r = 48 mm. The single largest scale factor in the machine — see the
 # header for why the part name needs checking against a wound-turns
 # measurement, and for the 96-is-a-diameter-not-a-radius trap.
-SPOOL_RADIUS_MM = 48.0
+# MEASURED 2026-11-17: 3 turns of one spool paid out 913 mm -> 48.44 mm.
+SPOOL_RADIUS_MM = 48.44
 SPOOL_CIRCUMFERENCE_MM = 2.0 * math.pi * SPOOL_RADIUS_MM
 WINDING_SIDE = [-1.0, 1.0, -1.0, 1.0]   # UNVERIFIED — see the header
 RETRACT_CW = [True, False, True, False]
