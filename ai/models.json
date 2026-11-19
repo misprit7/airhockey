@@ -104,6 +104,10 @@
     "v4.3.12": {
       "run": "v4.3.12", "file": "agent_step_1091305472.pt", "date": "2026-11-19", "accel": 100, "parent": "v4.3.8",
       "summary": "v4.3.8 (at 40M steps) continued with three times the batch per update. The file is its 60M-step snapshot, the best of the study: level `new`. Sim only."
+    },
+    "v4.3.13": {
+      "run": "v4.3.13", "file": "agent.pt", "date": "2026-11-19", "accel": 100, "parent": "v4.3.12",
+      "summary": "v4.3.12 (its last file, 90M steps) continued 96M steps with six times the batch per update. As good as v4.3.12 on two seeds, steady from snapshot to snapshot; gates not run. Sim only."
     }
   }
 }

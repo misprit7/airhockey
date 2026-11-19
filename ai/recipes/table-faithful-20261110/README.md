@@ -1528,6 +1528,7 @@ now may sit between the two profiles.
 | v4.3.10 | v4.3.8 at 40M | same | slow exit 200, unproductive 60, follow-through 0.7, recovery share 0.8, exploration 2.0, KL 0.03 | 91M |
 | v4.3.11 | v4.3.8 at 40M | same | tilted to control: capture bonus 120, get-ahead 60, strike-from-behind credit 0.3, exploration 2.0, KL 0.03 | 50M, stopped |
 | v4.3.12 | v4.3.8 at 40M | same | v4.3.8's recipe with 3840 envs on 15 workers: 655k samples an update against 164k | 90M |
+| v4.3.13 | v4.3.12 at 90M | same | the same with 7680 envs on 24 workers: 983k samples an update (35k steps/s alone on the machine) | 96M |
 
 The first four ran side by side from 23:07 and were stopped at 02:02 when
 their 80M and 120M snapshots showed goal share up a little in the soft sims
@@ -1605,6 +1606,9 @@ possession columns is noise.
 | **v4.3.12 (60M)**, the one registered | 98.6%, 5.03 / 0.07 | 96.9%, 5.66 / 0.18 | 71.4% | 7.3% | 37.5% / 18.6% |
 | v4.3.12 (80M, two seeds) | 97.7%, 5.36 / 0.12 | 96.7%, 5.71 / 0.19 | 69.8% | 7.7% | 31.1% / 19.9% |
 | v4.3.12 (90M, the last file, two seeds) | 98.0%, 5.24 / 0.11 | 96.5%, 5.47 / 0.20 | 69.5% | 7.0% | 36.1% / 19.6% |
+| v4.3.13 (21M, two seeds) | 98.3%, 4.88 / 0.09 | 96.8%, 5.76 / 0.19 | 71.5% | 6.8% | 34.8% / 19.5% |
+| v4.3.13 (62M, two seeds) | 99.0%, 5.10 / 0.05 | 97.0%, 5.76 / 0.18 | 70.5% | 6.9% | 35.5% / 16.9% |
+| v4.3.13 (96M, the last file, two seeds) | 98.3%, 5.35 / 0.09 | 97.7%, 5.84 / 0.14 | 69.8% | 6.5% | 33.3% / 17.7% |
 
 Read it this way:
 
@@ -1651,9 +1655,10 @@ Read it this way:
   stops it, labelled the way the physics teacher labels defense, is the
   obvious next thing; so is giving the network the camera's view of its own
   mallet, which is where the error it cannot see comes from.
-- The larger batch was tried once, late, for 76 minutes. It is the one
-  setting that produced steady progress; the next run should start there
-  (and try larger still).
+- The larger batch came late: 76 minutes at three times (v4.3.12), then 48
+  at six times (v4.3.13, which held v4.3.12's level without adding to it).
+  It is the one setting that gave steady snapshots; the next run should
+  start there. v4.3.13 has two seeds and no gates or head-to-head.
 - Self-play ideas not tried: v4.1.2 as a fixed reference opponent
   (`--opponent-reference`), a league of the v4.3 snapshots.
 - Roaming difficulty models (above).
