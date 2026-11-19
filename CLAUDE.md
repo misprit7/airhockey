@@ -754,6 +754,12 @@ once in ten minutes, so goals alone pay for shooting often, not for
 preparing. Two copies of this robot score on each other ~0.1 times a
 minute; 95% of the goals in that arm come from the quarter of games against
 people.
+OPEN, the next thing to fix: on the table a shot from a controlled puck
+scored 1.4 times as often as a rushed one (37% vs 26% of 265 shots), in the
+sim no more often (16% vs 25%), because the simulated people get a mallet
+to 79% of prepared shots and the two real people got to 47%. Until the
+people's DEFENCE is calibrated to that (record: "Does a prepared shot pay?"
+in the recipe README) no goals-only run can learn to prepare its shots.
 
 ## Run names
 The scheme below is for TD-MPC2 runs only.

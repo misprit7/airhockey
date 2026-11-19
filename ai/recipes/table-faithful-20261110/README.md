@@ -1864,3 +1864,46 @@ concede to about a third of all shots however they are struck and score
 0.2-0.3 a minute themselves, so a rushed shot that misses costs nothing; and
 the learner's own copy lets in one shot in a few hundred. A reward of goals
 alone, in this sim, pays for shooting often.
+
+### Does a prepared shot pay? On the table yes, in the sim no (NOT fixed)
+
+The table, sessions of v4.1.2 on 11-10, 11-17 and 11-18 (50 min including
+the time the people spend fetching the puck; 265 robot shots; a goal = a
+puck seen going in at the person's end within 2 s, a detector that misses
+about a quarter of goals):
+
+| | share of shots | go in | of those at 4 m/s or more |
+|---|---|---|---|
+| struck from a controlled puck | 22% | 37% | 40% |
+| struck at a moving puck | 78% | 26% | 31% |
+
+By speed: 2-4 m/s 6%, 4-6 m/s 31%, 6 m/s or more 34%. The robot shoots 5.3
+times a minute there against 19-22 in the sim.
+
+The defender when a shot of 4 m/s or more crosses the centre line (table:
+shots with the person's mallet in view; sim: v4.1.2 against the `table` /
+`table_plus` people with posts, 32 recorded minutes):
+
+| | n | goes in | defender touches the puck | defender's mallet speed at that moment |
+|---|---|---|---|---|
+| table, controlled puck | 45 | 44% | 47% | 0.11 m/s |
+| table, moving puck | 157 | 31% | 56% | 0.19 m/s |
+| sim, controlled puck | 82 | 16% | 79% | 0.37 m/s |
+| sim, moving puck | 367 | 25% | 65% | 0.51 m/s |
+
+Depth (about 140 mm in front of the goal line) and distance off centre
+(about 50 mm) agree. The simulated person is already moving when the shot
+crosses the line and gets a mallet to four prepared shots in five; the two
+real people were nearly still and got to half. Part of it is the proxy's
+read of the wind-up (`anticipation` 0: 23% / 24% go in, touched 66% / 69%).
+Slower reactions were tried on top (`reaction_s` 0.20-0.30 with no read:
+32% / 27%; 0.26-0.38: 22% / 21%), which is not monotone: each trial has
+60-150 prepared shots, about +-6 points, and `reaction_s` also times the
+proxy's own volleys and stops.
+
+What follows from it: in this sim a reward of goals cannot teach preparing
+the shot, because here a prepared shot scores no more often than a rushed
+one, while on the table it scored about 1.4 times as often. Making the sim
+honest about that is a calibration of the people's DEFENCE (a field of its
+own for the defensive reaction and read, fitted on 64-game panels to the
+touch rates above), not a reward. Not done.
