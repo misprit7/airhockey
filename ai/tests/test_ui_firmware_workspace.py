@@ -22,6 +22,9 @@ def hardware(monkeypatch, request):
         def get_workspace(self):
             events.append('workspace')
             return bounds
+        def take_up_slack(self):
+            events.append('takeup')
+            return {'wound_mm': [0.0] * 4, 'amps': [0.4] * 4}
         def enable(self, *args): events.append('enable')
         def set_startup_tension(self, mm): pass
         def disable(self): events.append('disable')

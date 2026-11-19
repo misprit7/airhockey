@@ -441,6 +441,24 @@ async def live_game(ws: WebSocket):
                                 # hand: launch it if it is not running.
                                 # Launching energizes nothing.
                                 await asyncio.to_thread(ROBOT.ensure_master)
+
+                                # Take up cable slack first, every time
+                                # (the user's request, 2026-11-18; Start AI
+                                # already does). Its own short connection,
+                                # closed before the mallet is measured: the
+                                # master serves one client, and winding in
+                                # slack can slide the mallet.
+                                def _take_up():
+                                    from airhockey.hardware import CDPRClient
+                                    client = CDPRClient()
+                                    client.connect()
+                                    try:
+                                        return client.take_up_slack()
+                                    finally:
+                                        client.close()
+                                took = await asyncio.to_thread(_take_up)
+                                print("  HW: slack taken up, wound in "
+                                      + " ".join(f"{v:.1f}" for v in took["wound_mm"]) + " mm")
                                 tension_mm = float(msg.get('tension_mm', 1.5))
                                 if not math.isfinite(tension_mm) or not 0 <= tension_mm <= 6:
                                     raise ValueError('Startup pretension must be between 0 and 6 mm')
