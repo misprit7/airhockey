@@ -2048,3 +2048,45 @@ braking under a fast puck costs goals. `v4.4.6` = v4.4.5 from its 101M
 snapshot with `--selfplay-lift`: the learner's mallet lifts in every game,
 the far robot's still does not (people's mallets do not lift, so goals
 through a far robot's lift are not worth learning).
+
+`v4.4.6`, two seeds per snapshot, against the simulated people in the posts
+sim:
+
+| | v4.3.12 | v4.4.2 | v4.4.5 | v4.4.6 at 101M | at 202M |
+|---|---|---|---|---|---|
+| shots struck from a controlled puck | 23% | 30% | 39% | 43% | 37% |
+| first touch to shot, median | 0.74 s | 0.75 s | 0.82 s | 0.92 s | 0.83 s |
+| shots between the posts | 65% | 67% | 70% | 74% | 75% |
+| shots from a controlled puck that are on target | 73% | 74% | 79% | 86% | 87% |
+| per 100 possessions: controlled, on target and 4 m/s or more | 11.8 | 16.8 | 25.4 | 31.5 | 27.8 |
+| per 100 possessions: any on-target shot of 4 m/s or more | 41 | 45 | 53 | 58 | 60 |
+| goals for / against per minute | 5.0 / 0.15 | 6.0 / 0.14 | 6.4 / 0.30 | 6.3 / 0.22 | 6.2 / 0.23 |
+| conceded through a lift / otherwise | 0.10 / 0.05 | 0.09 / 0.05 | 0.18 / 0.12 | 0.13 / 0.09 | 0.13 / 0.10 |
+| head to head against v4.1.2 | 12-8 | 9-16 | 20-18 | 8-10 | 22-25 |
+
+In training its lift events fell from 0.76 to 0.61 a minute and the goals
+its own snapshots score on it from 1.07 to 0.91 a minute. Playability gates
+at 101M beside v4.1.2 (soft-mallet sim): calmer on every line (idle cap p50
+6.6 against 8.4 m/s^2, |accel| > 60 duty 3.2% against 5.7%, rms accel 23
+against 27, reversals 25 against 46 a minute, load peak 0.82 against 0.84).
+
+TWO THINGS KEEP IT OFF THE TABLE:
+
+- Resting pucks. Stalled share of 1,632 placed pucks: v4.1.2 1.0%, v4.3.12
+  0.4%, v4.4.2 and v4.4.4 0.4%, v4.4.5 1.0%, v4.4.6 5.3% at 101M and 4.0% at
+  202M, nearly all in the row at the front edge of reach (y 0.85: a third to
+  all of the trials at each x) and on the forward side rails. In the
+  recorded trials the mallet lines up about 0.35 m behind the puck and
+  dithers there for the ten seconds without going forward of y 0.55. It
+  came in with the lift in every game; the arm has no drill for those
+  states (`--reach-edge-drill-fraction` 0, an arm-a4 option never trained).
+  At 101M one game had a puck lie 59 s.
+- Load. 3 of 256 games in the RIGID sim reach the 0.95 shutdown level at
+  each snapshot, for 14-18 s each (v4.1.2 1 of 128; v4.3.12, v4.4.2, v4.4.5
+  none), though the typical game peaks lower than v4.1.2's (0.76-0.78
+  against 0.80). None of 256 in the soft-mallet sim it trained in. Not yet
+  traced; the dithering above is a candidate.
+
+`v4.4.7` = v4.4.6 from its 202M snapshot plus `--reach-edge-drill-fraction
+0.3` (30% of the stationary drills: a puck at rest in the last 50 mm of
+forward reach, or against a side rail forward of y 0.58).

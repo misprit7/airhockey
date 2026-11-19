@@ -782,8 +782,16 @@ goals v4.4.4 / v4.4.5 concede (0.27-0.30 a minute to the simulated people,
 v4.1.2 0.32, v4.4.2 0.14) are mostly through the MALLET LIFT: taking
 control of a fast shot means braking under it, and the arm's
 `--no-selfplay-lift` had the learner's lift off in three quarters of its
-games. `v4.4.6` turns it back on (`--selfplay-lift`). Record: the last
-sections of the recipe README.
+games. `v4.4.6` turns it back on (`--selfplay-lift`): 37-43% of shots from
+a controlled puck, 72-73% on target, 28-31 prepared fast on-target shots per
+100 possessions (v4.1.2 6, v4.3.12 12), 0.22 conceded a minute, level with
+v4.1.2, calmer motion than v4.1.2 on every playability line. BUT NOT FOR THE
+TABLE: it hovers 0.35 m behind a puck lying at the front edge of its reach
+(4-5% of resting pucks left, v4.3.12 0.4%) and 3 of 256 rigid-sim games
+reach the load shutdown level. `v4.4.7` adds the drill for those pucks
+(`--reach-edge-drill-fraction 0.3`). RUN THE RESTING-PUCK GATES ON EVERY
+SNAPSHOT OF THIS LINE; the shot-quality table does not show a stall.
+Record: the last sections of the recipe README.
 
 ## Run names
 The scheme below is for TD-MPC2 runs only.
