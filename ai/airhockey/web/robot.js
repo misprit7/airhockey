@@ -52,8 +52,9 @@
         if (!m) { $("ai-mode-note").textContent = ""; return; }
         const clipped = m.accel < m.trained_accel
             ? ` Model ${m.model} trained at ${m.trained_accel} m/s² and is limited to ${m.accel} here.` : "";
+        // A level may carry its own description in ai/models.json ("note").
         $("ai-mode-note").textContent =
-            `${LEVEL_NOTES[m.mode] || ""}${clipped} Levels are defined in ai/models.json.`;
+            `${m.note || LEVEL_NOTES[m.mode] || ""}${clipped} Levels are defined in ai/models.json.`;
     }
     level.addEventListener("change", () => {
         try { localStorage.setItem("airhockey.aiLevel", level.value); } catch (_) { /* private mode */ }

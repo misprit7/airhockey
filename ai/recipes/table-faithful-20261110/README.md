@@ -1492,3 +1492,83 @@ now may sit between the two profiles.
 - The recovery drill (a puck moving away at 0.15-1.2 m/s, mallet behind it)
   pays a fast aimed strike from behind as a success. In the drill v4.1.2
   takes control of 1 puck in 128 and strikes 97 from behind on target.
+
+### What the trainer gained (all opt-in, defaults unchanged)
+
+- `--sim-profile table-20261118 | table-20261119`: the compliant mallet.
+  `finetune.py --trainer-arg=<token>` appends raw trainer options (a later
+  flag overrides the arm's).
+- `--defense-followthrough-fraction F`: that share of block-only defense
+  drills goes on after the block. The block is paid (300) once, the episode
+  then runs until the puck leaves the half, a goal, or 4 s; a conversion
+  adds 60, a fast aimed strike 35, holding the puck to the clock costs 60.
+  The slow-exit and unproductive-return costs apply on the way out.
+- Already there, off in every earlier arm: `--slow-exit-penalty` (a puck
+  that was within reach leaves the reach zone forward under 2 m/s with no
+  fast aimed shot this possession), `--unproductive-return-penalty`,
+  `--recovery-min-speed / --recovery-max-speed / --recovery-fraction`,
+  `--recovery-capture-bonus`, `--recovery-get-ahead-bonus`,
+  `--recovery-persistent-bias` (random offsets held 8 ticks before the first
+  contact of a recovery drill: correlated exploration).
+- `--roam-weight` (difficulty models, see the end).
+
+### Arms (all `finetune.py --arm accel`, 1280 envs, learner at 100 m/s^2)
+
+| version | from | sim | what changed against v4.1.2's recipe | steps |
+|---|---|---|---|---|
+| v4.3.0 | v4.1.2 | `-20261118`, 75% of workers | nothing else | 127M |
+| v4.3.1 | v4.1.2 | same | unproductive return costs 30 | 128M |
+| v4.3.2 | v4.1.2 | gain 0.8-2.5, every worker | nothing else | 127M |
+| v4.3.3 | v4.1.2 | `-20261118`, 75% | unproductive 30; recovery drill to 2.2 m/s, capture bonus 60, get-ahead 30 | 83M |
+| v4.3.4 | v4.3.2 | `-20261119` with gain 0.3-3.5, every worker | v4.3.3's terms + slow exit costs 100 | 84M |
+| v4.3.5 | v4.3.2 | same | "control first": slow exit 200, unproductive 60, shots at a moving puck worth half and fined 20, strike-from-behind credit 0.3 | 48M, stopped |
+| v4.3.6 | v4.3.2 | same | v4.3.4 + follow-through defense drills 0.5 | 95M |
+| v4.3.8 | v4.3.6 at 40M | same | v4.3.6 + recovery drill at 0.6-2.4 m/s in 70% of receiving drills, persistent exploration 1.0 | see results |
+| v4.3.9 | v4.3.8 at 40M | same | v4.3.8 with KL target 0.05 (0.02 elsewhere) | see results |
+| v4.3.10 | v4.3.8 at 40M | same | slow exit 200, unproductive 60, follow-through 0.7, recovery share 0.8, exploration 2.0, KL 0.03 | see results |
+
+The first four ran side by side from 23:07 and were stopped at 02:02 when
+their 80M and 120M snapshots showed goal share up a little in the soft sims
+and nothing else moving. v4.3.4-6 first ran 15 minutes from v4.3.3 under
+`-20261118` and were restarted from v4.3.2 once the calibration was done.
+v4.3.5 lost defense (30 and 42 goals conceded in the two sims against 18
+and 35 for v4.1.2) without gaining control and was stopped.
+
+### Difficulty models that roam: three attempts, none worked (v4.3.7)
+
+Asked for at the same time: the easier levels (v4.2.x, a body limited to
+40 / 25 / 15 m/s^2) cannot shoot and still defend as well as the full model
+(0.13 goals conceded a minute at `medium` against 0.14 at `max`); make them
+strategically worse at full speed instead, standing out from the goal.
+
+`--roam-weight W` pays `W` per second for standing forward in the workspace
+while the puck is on the far half and no fast shot is incoming. Three runs,
+each evaluated by where the mallet stands while the puck is on the far half
+(v4.1.2: median 127 mm in front of its goal line, 0.14 conceded a minute):
+
+| attempt | reward | from | steps | standing depth, median | conceded / min |
+|---|---|---|---|---|---|
+| 1 | W 40 and 120, forward of 0.30 m only | v4.1.2 | 34M each | 134, 139 mm | 0.11, 0.08 |
+| 2 | W 60, from the back edge of the workspace; teacher anchor off | v4.3.2 | 26M | 120 mm | 0.12 |
+| 3 | W 100, half on the mallet's position and half on the destination of the arrival asked for; teacher off | v4.3.2 | 21M | 121 mm | 0.12 |
+
+Attempt 1 had no slope where the mallet stands (a bug in the reward).
+Attempts 2 and 3 have one and still moved nothing in 130-160 updates. Not
+understood; candidates are the size of an update at this learning rate
+(7.6e-6, KL 0.02) against a habit 900M steps old, and the 600-per-goal cost
+of every step forward against people who shoot at 7 m/s. The run kept as
+v4.3.7 is attempt 3; the others were deleted. It is NOT a difficulty model.
+
+A different handle that does work in sim, measured but NOT built into the
+runner: delaying what the camera shows the policy. v4.1.2 at full speed
+against the table people (32 games per tier, `table-20261029`):
+
+| extra camera latency | goal share (`table` / `table_plus`) | robot goals / min | conceded / min | shot speed, m/s |
+|---|---|---|---|---|
+| 0 | 97.7% | 5.9 | 0.14 | 7.3 |
+| 60 ms | 86% / 74% | 3.5 / 3.1 | 0.6 / 1.1 | 5.2 |
+| 120 ms | 57% / 58% | 2.1 / 2.6 | 1.6 / 1.9 | 4.2 |
+| 200 ms | 49% / 45% | 2.0 / 2.2 | 2.1 / 2.7 | 3.7 |
+
+That is slower reactions, not worse strategy, and zero-shot on a network
+never trained with the delay (its strikes at moving pucks mistime too).

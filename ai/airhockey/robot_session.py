@@ -79,7 +79,8 @@ def difficulty_modes() -> list[dict]:
         version, accel = models.difficulty(mode, data)
         trained = float(data["models"][version]["accel"])
         out.append(dict(mode=mode, model=version, accel=accel, trained_accel=trained,
-                        latest=version == data["latest"]))
+                        latest=version == data["latest"],
+                        note=data["difficulty"][mode].get("note")))
     return out
 
 
