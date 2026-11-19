@@ -1865,45 +1865,91 @@ concede to about a third of all shots however they are struck and score
 the learner's own copy lets in one shot in a few hundred. A reward of goals
 alone, in this sim, pays for shooting often.
 
-### Does a prepared shot pay? On the table yes, in the sim no (NOT fixed)
+### Does a prepared shot pay? Not established (corrected 2026-11-19)
 
-The table, sessions of v4.1.2 on 11-10, 11-17 and 11-18 (50 min including
-the time the people spend fetching the puck; 265 robot shots; a goal = a
-puck seen going in at the person's end within 2 s, a detector that misses
-about a quarter of goals):
+An earlier version of this section said a prepared shot scored 1.4 times as
+often as a rushed one on the table and no more often in the sim, and blamed
+the simulated people's defence. That rested on three November sessions and
+82 simulated shots. With the October sessions and 128 recorded games it does
+not hold.
 
-| | share of shots | go in | of those at 4 m/s or more |
+Robot shots of 4 m/s or more at the centre line. "Controlled" = the puck was
+under 0.5 m/s before the striking touch. A table goal = a puck seen going in
+at the person's end within 2 s (a detector that misses some). "On target" =
+the track at the line, traced through the rails, fits between the posts.
+
+| | n controlled / moving | shot goes in | on-target shot goes in |
 |---|---|---|---|
-| struck from a controlled puck | 22% | 37% | 40% |
-| struck at a moving puck | 78% | 26% | 31% |
+| table, October: v4 against the two people `table` / `table_plus` are modelled on (10-19, 10-29) | 50 / 95 | 20% / 24% | 23% / 27% |
+| table, November: v4.1.2 (11-10, 11-17, 11-18) | 50 / 164 | 42% / 31% | 53% / 39% |
+| sim: v4.1.2 against `table` / `table_plus`, posts, 128 games | 322 / 1499 | 24% / 24% | 33% / 32% |
 
-By speed: 2-4 m/s 6%, 4-6 m/s 31%, 6 m/s or more 34%. The robot shoots 5.3
-times a minute there against 19-22 in the sim.
+An on-target fast shot went in 27% of the time on 10-19 (n 51), 24% on 10-29
+(90), 57% on 11-10 (40), 35% on 11-17 (83) and 43% on 11-18 (23). So:
 
-The defender when a shot of 4 m/s or more crosses the centre line (table:
-shots with the person's mallet in view; sim: v4.1.2 against the `table` /
-`table_plus` people with posts, 32 recorded minutes):
+- The simulated people defend like the two October people they were built
+  from (25% on the table, 32% in the sim). Their defence is not too strong.
+- The November sessions were defended more loosely, and it is only there
+  that a prepared shot did better than a rushed one. The logs do not say who
+  played or how seriously.
+- In the sim a prepared shot and a rushed one score equally often. The
+  earlier "16% against 25%" was 82 shots.
 
-| | n | goes in | defender touches the puck | defender's mallet speed at that moment |
-|---|---|---|---|---|
-| table, controlled puck | 45 | 44% | 47% | 0.11 m/s |
-| table, moving puck | 157 | 31% | 56% | 0.19 m/s |
-| sim, controlled puck | 82 | 16% | 79% | 0.37 m/s |
-| sim, moving puck | 367 | 25% | 65% | 0.51 m/s |
+Per possession the robot touched (puck arriving at 1.5 m/s or more;
+"prepared" = the last touch was on a puck under 0.5 m/s after an earlier
+touch):
 
-Depth (about 140 mm in front of the goal line) and distance off centre
-(about 50 mm) agree. The simulated person is already moving when the shot
-crosses the line and gets a mallet to four prepared shots in five; the two
-real people were nearly still and got to half. Part of it is the proxy's
-read of the wind-up (`anticipation` 0: 23% / 24% go in, touched 66% / 69%).
-Slower reactions were tried on top (`reaction_s` 0.20-0.30 with no read:
-32% / 27%; 0.26-0.38: 22% / 21%), which is not monotone: each trial has
-60-150 prepared shots, about +-6 points, and `reaction_s` also times the
-proxy's own volleys and stops.
+| | prepared: n, leaves as a shot >= 4 m/s, scores | struck moving: n, shot, scores |
+|---|---|---|
+| table, October (v4) | 41, 88%, 27% | 172, 41%, 16% |
+| table, November (v4.1.2) | 69, 51%, 25% | 313, 49%, 20% |
+| sim (v4.1.2) | 100, 72%, 22% | 678, 48%, 21% |
 
-What follows from it: in this sim a reward of goals cannot teach preparing
-the shot, because here a prepared shot scores no more often than a rushed
-one, while on the table it scored about 1.4 times as often. Making the sim
-honest about that is a calibration of the people's DEFENCE (a field of its
-own for the defensive reaction and read, fitted on 64-game panels to the
-touch rates above), not a reward. Not done.
+Pooled, a prepared possession scored 26% of the time on the table against
+19% (110 and 485 possessions; 1.4 standard errors), and 22% against 21% in
+the sim. A difference between table and sim is not established here either.
+
+Where the defender stands when the robot strikes (sideways from the goal's
+centre, median of the absolute value; mean): 10-19 72 mm (-66), 10-29 34 mm
+(+6), 11-10 76 mm (-66), 11-17 46 mm (+1), 11-18 48 mm (-46); sim 35 mm (0).
+In three of the five groups the person stood 46-66 mm to one side.
+`HumanTier.guard_scatter_m` (opt-in, no tier uses it; test in
+`tests/test_human_proxy.py`) gives a simulated person a new standing place
+each time the puck goes over to the robot. Trials, v4.1.2, 128 games each,
+on-target fast shots that go in, controlled / moving:
+
+| defence | controlled / moving |
+|---|---|
+| `table` / `table_plus` as they are | 33% / 32% |
+| `guard_scatter_m` (0.05, 0.085) | 29% / 36% |
+| the same, `anticipation` 0 (no read of the wind-up) | 35% / 40% |
+| the same, `anticipation` (0, 0.3) | 44% / 38% |
+
+The last is within the November sessions' 53% / 39% (n 36 / 110). It is a
+description of looser defending, not a correction of the existing people.
+
+What follows: goals alone do not teach this robot to prepare its shots, and
+the table does not show that they should. If the patient style is wanted it
+has to be paid for directly, or looser defenders added as a further kind of
+person once it is known who the November sessions were.
+
+### v4.4.2 to 252M steps: the posts delay the aim drift, they do not stop it
+
+Posts sim, against the simulated people; two seeds at 101M and 252M, one at
+151M and 202M (steps since the restart from v4.4.1's 101M snapshot):
+
+| | v4.3.12 | v4.4.1 at 101M | v4.4.2 at 101M | 151M | 202M | 252M |
+|---|---|---|---|---|---|---|
+| shots that fit between the posts | 65% | 66% | 67% | 65% | 57% | 61% |
+| wide misses | 28% | 26% | 27% | 28% | 33% | 31% |
+| shots struck from a controlled puck | 23% | 31% | 30% | 29% | 28% | 27% |
+| first touch to shot, median | 0.74 s | 0.78 s | 0.75 s | 0.76 s | 0.68 s | 0.72 s |
+| per 100 possessions: controlled, on target and 4 m/s or more | 11.8 | 18.0 | 16.8 | 16.1 | 14.0 | 14.2 |
+| goals per 100 shots | 30 | 31 | 31 | 29 | 29 | 32 |
+| puck given away slowly | 7.8% | 4.2% | 4.0% | 4.5% | 4.7% | 2.9% |
+| goals conceded per minute | 0.15 | 0.16 | 0.14 | 0.23 | 0.19 | 0.20 |
+
+Goals per shot do not move while the aim does: against these defenders an
+on-target shot 75-149 mm from the centre goes in 39% of the time and one
+nearer the centre 28% (table, October: 28% and 24%), so a wider aim that
+misses more often can cost nothing in goals.

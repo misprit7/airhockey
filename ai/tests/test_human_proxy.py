@@ -437,3 +437,25 @@ def test_benchmark_loop_reports_and_records(tmp_path):
     assert len(frames) == round(4.0 / 0.02)
     assert min(f.opponent_y for f in frames) >= REACH_Y - 1e-9
     assert Path(path).name == "still_vs_human-proxy-club-g0.json"
+
+
+def test_guard_scatter_is_a_new_standing_place_each_time_the_puck_goes_over():
+    """Opt-in: without it the person waits exactly on the shadow position, as before."""
+    n = 64
+    still = replace(CLUB, anticipation=(0.0, 0.0), shadow_gain=(0.0, 0.0))
+    places = {}
+    for name, tier in (("exact", still), ("scatter", replace(still, guard_scatter_m=(0.06, 0.06)))):
+        p = HumanProxy(n, tier, seed=4)
+        away, coming = _view(n, puck=(0.5, 1.6)), _view(n, puck=(0.5, 0.9), vel=(0.0, 3.0))
+        p.reset(away)
+        spells = []
+        for _ in range(8):
+            for _ in range(3):
+                p.act(coming)                                   # on its own half, on the way over
+            xs = np.array([p.act(away)[0] for _ in range(10)])
+            assert np.ptp(xs[2:], axis=0).max() < 1e-12         # waits where it settled
+            spells.append(xs[-1])
+        places[name] = np.array(spells) - W / 2
+    np.testing.assert_allclose(places["exact"], 0.0, atol=1e-12)
+    assert 0.045 < places["scatter"].std() < 0.075
+    assert np.abs(np.diff(places["scatter"], axis=0)).mean() > 0.03    # not the same place twice

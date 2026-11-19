@@ -754,12 +754,21 @@ once in ten minutes, so goals alone pay for shooting often, not for
 preparing. Two copies of this robot score on each other ~0.1 times a
 minute; 95% of the goals in that arm come from the quarter of games against
 people.
-OPEN, the next thing to fix: on the table a shot from a controlled puck
-scored 1.4 times as often as a rushed one (37% vs 26% of 265 shots), in the
-sim no more often (16% vs 25%), because the simulated people get a mallet
-to 79% of prepared shots and the two real people got to 47%. Until the
-people's DEFENCE is calibrated to that (record: "Does a prepared shot pay?"
-in the recipe README) no goals-only run can learn to prepare its shots.
+DOES A PREPARED SHOT PAY? NOT ESTABLISHED (an earlier note here said it
+scored 1.4 times as often on the table and blamed the simulated people's
+defence; that was three November sessions). Shots of 4 m/s or more, from a
+controlled puck / at a moving one: October, v4 against the two people the
+`table` tiers are modelled on, 20% / 24% go in; November, v4.1.2, 42% / 31%;
+sim, 24% / 24% (1,800 shots). The simulated people defend like the October
+people (an on-target fast shot goes in 25% on the table, 32% in the sim);
+November's defending was looser (35-57% by session) and the logs do not say
+who played. So goals alone do not teach preparing the shot and the table
+does not show that they should: pay for it directly if that style is
+wanted. `HumanTier.guard_scatter_m` (opt-in, unused) plus a weak
+`anticipation` reproduces the November numbers. `v4.4.2` (posts): the aim
+held to 150M steps and drifted again after (shots between the posts 67% ->
+61% at 252M, goals per shot unchanged). Record: the last two sections of
+the recipe README.
 
 ## Run names
 The scheme below is for TD-MPC2 runs only.

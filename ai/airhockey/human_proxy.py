@@ -188,6 +188,11 @@ class HumanTier:
     # is gone after at full speed and struck as soon as the mallet is behind
     # it, with no set-up and no feint.
     chase_s: float | None = None
+    # Where it stands to guard, sideways: (low, high) of a per-game standard
+    # deviation, m. Each time the puck goes over to the robot the person
+    # settles that far (a fresh normal draw) to one side of the shadow
+    # position and waits there. None: exactly on the shadow position.
+    guard_scatter_m: tuple | None = None
 
 
 CLUB = HumanTier("club")
@@ -481,6 +486,10 @@ class HumanProxy:
             self.volley_setup = view[:, 4:6].copy()
             self.volley_attempts = np.zeros(n, dtype=int)
             self.volleys = np.zeros(n, dtype=int)
+        if t.guard_scatter_m is not None:
+            self.guard_scatter = u(t.guard_scatter_m)
+            self.guard_offset = self.guard_scatter * rng.standard_normal(n)
+            self.guard_was_away = np.zeros(n, bool)
         self.last_target = view[:, 4:6].copy()
         return self.commands_table(self.last_target, np.minimum(t.idle_speed_m_s, self.max_speed),
                                    np.minimum(t.idle_accel_m_s2, self.max_accel))
@@ -722,6 +731,14 @@ class HumanProxy:
         threat, block_x, block_y, arrival = self._defense_forecast(seen[:, :2], seen_vel)
         now = seen[:, :2] + seen[:, 2:4] * self.reaction[:, None]
         shadow_x = centre + self.shadow * (np.clip(now[:, 0], 0, self.width) - centre)
+        if t.guard_scatter_m is not None:
+            # A person does not stand on the exact spot: a new place each time
+            # the puck goes over to the robot (one fixed draw a tick).
+            draw = self.rng.standard_normal(n)
+            gone = puck[:, 1] > half
+            self.guard_offset = np.where(gone & ~self.guard_was_away, self.guard_scatter * draw, self.guard_offset)
+            self.guard_was_away = gone
+            shadow_x = shadow_x + self.guard_offset
         shadow_x = np.clip(shadow_x, centre - self.mouth + 0.02, centre + self.mouth - 0.02)
         # Reading the shooter (watched continuously, not a reaction): the
         # robot's mallet closing on the puck from behind it. Where a shot along
