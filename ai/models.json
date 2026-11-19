@@ -2,6 +2,8 @@
   "latest": "v4.1.2",
   "difficulty": {
     "max": {"model": "v4.1.2"},
+    "new": {"model": "v4.3.12", "note": "Full strength, trained 2026-11-19 to chase down the puck after its own block and to cope with a mallet that lags on its cables. Simulation results only: it has not been on the table. 'max' is the model that has."},
+    "new-chase": {"model": "v4.3.10", "note": "Full strength, trained 2026-11-19; of the new models it goes after the puck hardest once it has blocked a shot. Simulation results only: it has not been on the table."},
     "hard": {"model": "v4.1.2", "accel": 60},
     "medium": {"model": "v4.2.0"},
     "easy": {"model": "v4.2.1"},
@@ -51,6 +53,58 @@
     "v4.2.2": {
       "run": "v4.2.2", "file": "agent.pt", "date": "2026-11-18", "accel": 15, "parent": "v4.1.2",
       "summary": "v4.1.2 continued 284M steps with its body limited to 15 m/s^2 (units still 100). Sim only."
+    },
+    "v4.3.0": {
+      "run": "v4.3.0", "file": "agent.pt", "date": "2026-11-19", "accel": 100, "parent": "v4.1.2",
+      "summary": "v4.1.2 continued 127M steps with the robot mallet compliant on its cables (sim profile table-20261118). Sim only."
+    },
+    "v4.3.1": {
+      "run": "v4.3.1", "file": "agent.pt", "date": "2026-11-19", "accel": 100, "parent": "v4.1.2",
+      "summary": "As v4.3.0 with a cost of 30 on returning the puck without control or a real shot. 128M steps. Sim only."
+    },
+    "v4.3.2": {
+      "run": "v4.3.2", "file": "agent.pt", "date": "2026-11-19", "accel": 100, "parent": "v4.1.2",
+      "summary": "As v4.3.0 with a softer mallet (gain 0.8-2.5) on every worker. 127M steps. Base of v4.3.4 onward. Sim only."
+    },
+    "v4.3.3": {
+      "run": "v4.3.3", "file": "agent.pt", "date": "2026-11-19", "accel": 100, "parent": "v4.1.2",
+      "summary": "As v4.3.1 plus recovery drills to 2.2 m/s with capture and get-ahead bonuses. 83M steps. Sim only."
+    },
+    "v4.3.4": {
+      "run": "v4.3.4", "file": "agent.pt", "date": "2026-11-19", "accel": 100, "parent": "v4.3.2",
+      "summary": "v4.3.2 in the calibrated soft-mallet sim (table-20261119) with a cost of 100 on a reachable slow puck leaving. 84M steps. Sim only."
+    },
+    "v4.3.5": {
+      "run": "v4.3.5", "file": "agent.pt", "date": "2026-11-19", "accel": 100, "parent": "v4.3.2",
+      "summary": "'Control first' rewards (shots at a moving puck worth less). Stopped at 48M steps: it lost defense. Not for use."
+    },
+    "v4.3.6": {
+      "run": "v4.3.6", "file": "agent.pt", "date": "2026-11-19", "accel": 100, "parent": "v4.3.2",
+      "summary": "As v4.3.4 plus defense drills that continue after the block. 95M steps. Sim only."
+    },
+    "v4.3.7": {
+      "run": "v4.3.7", "file": "agent.pt", "date": "2026-11-19", "accel": 100, "parent": "v4.3.2",
+      "summary": "Third attempt at a roaming difficulty model (--roam-weight 100). 21M steps; it does not roam. Not a difficulty model."
+    },
+    "v4.3.8": {
+      "run": "v4.3.8", "file": "agent_step_1030848512.pt", "date": "2026-11-19", "accel": 100, "parent": "v4.3.6",
+      "summary": "v4.3.6 (at 40M steps) plus chase drills on pucks leaving at 0.6-2.4 m/s with persistent exploration. The file is its 40M-step snapshot; agent.pt (98M) lost the gain. Sim only."
+    },
+    "v4.3.9": {
+      "run": "v4.3.9", "file": "agent.pt", "date": "2026-11-19", "accel": 100, "parent": "v4.3.8",
+      "summary": "v4.3.8 continued with a larger policy step (KL 0.05). 48M steps: defense slipped. Not for use."
+    },
+    "v4.3.10": {
+      "run": "v4.3.10", "file": "agent_step_1070989312.pt", "date": "2026-11-19", "accel": 100, "parent": "v4.3.8",
+      "summary": "v4.3.8 with a stronger push (slow exit costs 200, more follow-through drills, wider exploration). The file is its 40M-step snapshot. Recovers the puck after a block most often of the study. Sim only."
+    },
+    "v4.3.11": {
+      "run": "v4.3.11", "file": "agent.pt", "date": "2026-11-19", "accel": 100, "parent": "v4.3.8",
+      "summary": "v4.3.8 tilted toward stopping the puck rather than striking it from behind. 50M steps: lost the gain. Not for use."
+    },
+    "v4.3.12": {
+      "run": "v4.3.12", "file": "agent_step_1051000832.pt", "date": "2026-11-19", "accel": 100, "parent": "v4.3.8",
+      "summary": "v4.3.8's recipe with three times the batch per update. Sim only."
     }
   }
 }

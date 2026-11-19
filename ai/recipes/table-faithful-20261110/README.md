@@ -1572,3 +1572,74 @@ against the table people (32 games per tier, `table-20261029`):
 
 That is slower reactions, not worse strategy, and zero-shot on a network
 never trained with the delay (its strikes at moving pucks mistime too).
+
+### Results (sim only; nothing here has been on the table)
+
+Against the `table` / `table_plus` people, 64 one-minute games per tier.
+Possession and block numbers from 32 recorded minutes per seed in the
+calibrated sim. v4.1.2, v4.3.8, v4.3.10 and v4.3.12 are means of three
+seeds; the others one seed, for which a difference of 3 points in the
+possession columns is noise.
+
+| model (snapshot) | rigid: share, GF / GA per min | calibrated: share, GF / GA | ends in a shot | slow untouched exit | after a block: recovered / left slowly |
+|---|---|---|---|---|---|
+| table, v4.1.2 | | | 49.5% | 13.2% | 25.8% / 21.8% |
+| v4.1.2 | 97.5%, 6.07 / 0.16 | 94.6%, 4.75 / 0.27 | 61.9% | 13.0% | 27.2% / 26.7% |
+| v4.3.0 | 98.4%, 5.20 / 0.09 | 96.4%, 4.87 / 0.18 | 62.7% | 10.9% | 29.7% / 24.3% |
+| v4.3.1 | 98.7%, 4.77 / 0.06 | 96.7%, 4.85 / 0.16 | 60.3% | 14.0% | 27.5% / 28.5% |
+| v4.3.2 | 98.5%, 5.19 / 0.08 | 97.1%, 5.20 / 0.16 | 59.7% | 12.1% | 23.9% / 25.8% |
+| v4.3.3 | 98.7%, 5.53 / 0.07 | 95.9%, 5.10 / 0.22 | 58.2% | 12.6% | 24.5% / 26.6% |
+| v4.3.4 (80M) | 99.3%, 5.52 / 0.04 | 96.4%, 5.20 / 0.20 | 60.4% | 12.5% | 24.4% / 24.6% |
+| v4.3.5 (40M) | 95.5%, 5.02 / 0.23 | 93.5%, 4.73 / 0.33 | 62.7% | 11.8% | 23.5% / 25.0% |
+| v4.3.6 (80M) | 98.6%, 5.40 / 0.08 | 95.9%, 5.26 / 0.23 | 65.2% | 10.2% | 29.2% / 24.1% |
+| **v4.3.8 (40M)** | 97.7%, 5.32 / 0.13 | 95.9%, 5.25 / 0.22 | 69.6% | 8.7% | 29.4% / 22.5% |
+| v4.3.8 (80M, two seeds) | 97.2%, 4.68 / 0.13 | 95.3%, 4.42 / 0.22 | 61.1% | 11.8% | 21.9% / 28.1% |
+| v4.3.9 (40M) | 95.2%, 4.62 / 0.23 | 95.6%, 4.55 / 0.21 | 58.7% | 13.5% | 22.3% / 25.2% |
+| **v4.3.10 (40M)** | 97.9%, 4.76 / 0.10 | 96.9%, 5.08 / 0.16 | 70.4% | 8.0% | 35.3% / 18.5% |
+| v4.3.11 (40M) | 98.4%, 4.77 / 0.08 | 95.9%, 4.73 / 0.20 | 63.6% | 10.7% | 27.1% / 26.3% |
+| **v4.3.12 (20M)** | 98.7%, 5.70 / 0.08 | 97.5%, 5.60 / 0.15 | 67.2% | 9.5% | 30.9% / 21.7% |
+| v4.3.12 (40M, two seeds) | 97.9%, 5.13 / 0.11 | 95.9%, 5.13 / 0.22 | 67.8% | 9.5% | 28.8% / 21.6% |
+
+Read it this way:
+
+- Training with a compliant mallet (every v4.3 row) costs nothing in the
+  rigid sim's goal share and takes 6-15 goals off the 35 conceded per 128
+  minutes in the calibrated one (v4.3.5 excepted). It scores somewhat less per minute in the
+  rigid sim (5.2-5.7 against 6.1).
+- The possession columns moved only once the drills covered what the table
+  shows: pucks leaving at 0.6-2.4 m/s (v4.3.8 on), with the block-and-play-on
+  defense drill and the slow-exit cost. Costs alone (v4.3.4) and softer
+  credit for quick shots (v4.3.5) did not.
+- No model takes control of a puck moving away: 0-1 of 128 in the recovery
+  drill for every row. They strike it from behind (73-87 of 128 on target in
+  the calibrated sim for the three bold rows, against 66-70 for v4.1.2). The rebound off a block is also
+  softer (median 1.65-1.79 m/s against 1.88).
+- Snapshots of one run differ more than arms do. v4.3.8 at 80M and its
+  continuations v4.3.9 and v4.3.11 lost what the 40M snapshot had. The run
+  with three times the batch (v4.3.12, 655k samples an update) kept it at
+  20M and 40M. The registry points at the snapshots (`"file"`).
+- Robot against robot (64 games at both ends, calibrated sim) all three are
+  behind v4.1.2: shots on target 926 / 904 / 814 against 982 / 1029 / 968,
+  goals 15-21 / 19-23 / 23-27.
+- Gates beside v4.1.2 (calibrated sim): playability about equal (load 0.84
+  to 0.85; reversals 47-51 a minute against 46; cap above 40 m/s^2 in
+  28-34% of far-half ticks against 23%; forward excursion on shots of
+  5 m/s or more 140-162 mm against 150). Resting pucks: stall map 0.9% /
+  1.6% / 1.2% against 1.0%; a left-corner puck under a straight request is
+  touched in 41 / 42 / 39 of 48 trials against 47; rest spells of 4 s or
+  more in 64 games: 0 / 1 (8.5 s, on a rail) / 0 against 0.
+
+### Not done, and what is not known
+
+- The table. Everything above is the sim, and the calibration is from
+  sessions before the camera fix.
+- Taking control of a puck moving away. It needs more than a bonus: the
+  network has a reliable answer (strike from behind) that a compliant mallet
+  makes less accurate, not useless. A teacher that goes round the puck and
+  stops it, labelled the way the physics teacher labels defense, is the
+  obvious next thing; so is giving the network the camera's view of its own
+  mallet, which is where the error it cannot see comes from.
+- The larger batch was tried once, late, for 76 minutes.
+- Self-play ideas not tried: v4.1.2 as a fixed reference opponent
+  (`--opponent-reference`), a league of the v4.3 snapshots.
+- Roaming difficulty models (above).

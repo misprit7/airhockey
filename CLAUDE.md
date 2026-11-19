@@ -690,6 +690,35 @@ Modes as of 2026-11-18: `max` = v4.1.2, `hard` = v4.1.2 clipped to 60,
 continued under a 40 / 25 / 15 m/s^2 body limit (sim goal share 97 / 90 /
 81% against the table people; clipped v4.1.2 at those limits 94 / 72 / 49%).
 None of v4.2.x has been on the table; results and caveats in `ai/MODELS.md`.
+A mode may carry a `note` (shown under the UI's level selector) and any key
+is a level: 2026-11-19 added `new` = v4.3.12 and `new-chase` = v4.3.10, the
+two best checkpoints of the v4.3 study at full strength. `latest` and `max`
+stay v4.1.2 until one of them has played on the table.
+
+THE v4.3 STUDY (2026-11-19, record: "Round 5" of
+`ai/recipes/table-faithful-20261110/README.md`, results `ai/MODELS.md`).
+On the table v4.1.2's possessions end in a shot 50% of the time (83% in its
+training sim); the commonest loss is the rebound off its OWN BLOCK leaving
+at 1-2 m/s with the mallet behind it (it recovers a third of the rebounds
+under 2 m/s, 70% in sim, and never chases one above ~1.5 m/s). The sim
+profile `table-20261119` (compliant mallet, calibrated on those rebounds)
+reproduces this. Trainer options added or first used, all opt-in:
+`--defense-followthrough-fraction` (block-only defense drills that go on
+after the block), `--slow-exit-penalty`, `--unproductive-return-penalty`,
+recovery drills at higher speed with `--recovery-persistent-bias`
+(`--recovery-min/max-speed`, `--recovery-fraction`), and `finetune.py
+--trainer-arg=<token>` to pass any of them. LESSONS: (1) at this lineage's
+fine-tune step (lr ~8e-6, KL 0.02, 164k samples per update) checkpoints 40M
+steps apart differ more than arms do; evaluate snapshots on 2-3 seeds and
+register the snapshot, not the last file (`"file"` in `ai/models.json`).
+Three times the batch (`--n-envs 3840 --workers 15`) held a gain that the
+small-batch runs lost. (2) Rewards alone did not teach taking control of a
+puck moving away (0-1 of 128 in the drill, every model): the gain is more
+chasing and softer blocks. (3) `--roam-weight` (a difficulty model that
+stands out from its goal) changed nothing in three tries; v4.3.7 is not a
+difficulty model. Delaying the camera's view does make a full-speed bot
+beatable in sim (+60 / 120 / 200 ms: 80 / 57 / 47% goal share) but is not
+in the runner.
 
 ## Run names
 The scheme below is for TD-MPC2 runs only.
