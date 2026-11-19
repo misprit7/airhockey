@@ -1977,8 +1977,9 @@ Why a payment at all: see the two sections above. Goals alone leave the
 share of prepared shots where it is, and that is what was asked to change.
 
 `v4.4.3` (W = 100, a sixth of a goal; stopped at 111M steps). In its
-training games prepared shots went from 30% to 33% of on-target shots (3.9
--> 4.7 a minute, captures 6.1 -> 7.1). Against the simulated people, two
+training games prepared shots went from 31% to 33% of on-target shots
+between 36M and 111M steps (4.4 -> 4.7 a minute, captures 6.6 -> 7.1; v4.4.2
+stayed at 29-31% throughout). Against the simulated people, two
 seeds, nothing measurable: shots from a controlled puck 30% (v4.4.2 30%),
 first touch to shot 0.77 s (0.75), controlled + on target + 4 m/s per 100
 possessions 17.1 (16.8). Shots between the posts 60% (67%), as v4.4.2
