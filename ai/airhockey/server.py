@@ -79,7 +79,9 @@ async def motor_load_status():
 
 # ── The table: slack take-up and the AI (airhockey/robot_session.py) ──────
 # The only routes here that can make the robot move are the two POSTs that
-# start something, and each needs {"confirm": true} from the button's dialog.
+# start something. Each needs {"confirm": true} in its body, which the
+# buttons send; there is no dialog (removed 2026-11-18), the field only keeps
+# a stray bare POST from starting the robot.
 
 
 @app.get("/api/robot")

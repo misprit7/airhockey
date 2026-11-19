@@ -1465,3 +1465,32 @@ def test_take_up_is_stopped_by_closing_the_socket():
         def take_up_slack(self):
             return {"wound_mm": [0] * 4, "amps": [0.4] * 4}
     assert rp.take_up_slack(Done(), lambda: False, poll_s=0.01)["amps"] == [0.4] * 4
+
+
+def test_park_home_stays_connected_until_the_mallet_is_there(_nosleep):
+    """Whoever started the session de-energizes the drives when it exits, so
+    leaving before the traverse ends strands the mallet part-way."""
+    class Moving(_FakeClient):
+        polls = 0
+
+        def get_position(self):
+            self.calls.append(("POS",))
+            if not any(c[0] == "LIMITS" for c in self.calls):
+                return 1900.0, 800.0, 0.0, 0.0             # where the brake left it
+            self.polls += 1
+            arrived = self.polls >= 12
+            return ((geom.HOME_X, geom.HOME_Y, 0.0, 0.0) if arrived
+                    else (geom.HOME_X + 300.0 - 25.0 * self.polls, geom.HOME_Y, -500.0, 0.0))
+
+    c = Moving()
+    rp._shutdown(c, _park_args("home"), prev=None)
+    after_move = c.calls[[k[0] for k in c.calls].index("LIMITS") + 2:]
+    assert [k[0] for k in after_move] == ["POS"] * 12 + ["CLOSE"]
+
+    class Stuck(_FakeClient):                                # never arrives: gives up, still closes
+        def get_position(self):
+            self.calls.append(("POS",))
+            return 1900.0, 800.0, 0.0, 0.0
+    c = Stuck()
+    rp._shutdown(c, _park_args("home"), prev=None)
+    assert c.calls[-1] == ("CLOSE",) and 10 < sum(k[0] == "POS" for k in c.calls) < 200

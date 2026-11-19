@@ -597,15 +597,18 @@ goals conceded from 0.10 to 0.04 per game.
     `logs/ui_master.json`). The UI's wording calls it the motor controller.
     `airhockey/robot_session.py` does the actions: take-up is the master's
     `TAKEUP` on a short-lived connection; the AI is `ai/bin/play.sh --difficulty <level> --tension
-    <mm>` as a child process (`--use-running-master` when a master is
-    listening; its PRETENSION is then set first), output in
+    <mm> --park home` as a child process (`--use-running-master` when a
+    master is listening; its PRETENSION is then set first; `--park home`
+    so Stop AI returns the mallet to HOME, which `run_policy` now waits
+    for before disconnecting), output in
     `logs/ai_session.log`, pid in `logs/ai_session.json` so a restarted
     server still finds and can stop it. Stop is SIGINT to its process
     group, i.e. Ctrl-C. When a session ends on a master it did not start,
     the UI sends DISABLE (the runner alone leaves the drives holding). One at a time, and never while a tab holds the
     hardware. Routes: `GET /api/robot`, `POST /api/robot/takeup[/stop]`,
     `POST /api/robot/ai/start|stop`, `POST /api/robot/master/stop`; the two that start motion need
-    `{"confirm": true}` from the button's dialog. `web/robot.js` is the
+    `{"confirm": true}` in the body (sent by the buttons; there are no
+    confirmation dialogs, by the user's choice). `web/robot.js` is the
     client. Whether a master is running is read from `/proc/net/tcp`,
     never by connecting (the master serves one client).
   - **Simulation**: play by mouse or watch checkpoints.

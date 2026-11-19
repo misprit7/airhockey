@@ -1,6 +1,7 @@
 // The Robot tab's two actions on the real table: "Start AI" and "Take up
 // cable slack". Both are done by the server (airhockey/robot_session.py);
-// this file asks, confirms, and shows what the server reports.
+// this file asks and shows what the server reports. No confirmation dialogs
+// (removed at the user's request, 2026-11-18): a press is the decision.
 //
 // Loaded after app.js and shares its globals: ws, mode, hardwareOn,
 // hardwareModeListeners, startupTension.
@@ -75,9 +76,9 @@
         let text;
         if (ai.state === "running") {
             text = `Running ${ai.difficulty} (${ai.model}, up to ${ai.accel} m/s²) for ${elapsed(ai.started)}. ` +
-                "Stop brakes the mallet where it is.";
+                "Stop brakes the mallet, returns it to the centre and switches the drives off.";
         } else if (ai.state === "stopping") {
-            text = "Stopping: braking the mallet, then closing the session…";
+            text = "Stopping: braking, returning to the centre, then switching the drives off…";
         } else if (ai.state === "exited") {
             const how = ai.exit_code === 0 ? "ended normally"
                 : ai.exit_code === null || ai.exit_code === undefined ? "ended" : `ended with an error (exit code ${ai.exit_code})`;
@@ -219,12 +220,6 @@
         const mm = tension();
         if (!m) return showError("ai-status", "No level selected.");
         if (mm === null) return showError("ai-status", "Startup pretension must be between 0 and 6 mm.");
-        const ok = window.confirm(
-            `Start the AI at level "${m.mode}" (${m.model}, up to ${m.accel} m/s²)?\n\n` +
-            "THE ROBOT WILL MOVE. Keep hands clear of the mallet and cables.\n" +
-            "It takes up cable slack, measures the mallet with the camera, enables the drives " +
-            `(pretension ${mm} mm) and starts playing. Stop AI brakes it.`);
-        if (!ok) return;
         try {
             await releaseManualControl();
         } catch (e) {
@@ -240,11 +235,6 @@
             return;
         }
         if (hardwareOn) return showError("takeup-status", "Turn Hardware off first: slack is taken up with the drives' own motion, before they are enabled for control.");
-        const ok = window.confirm(
-            "Take up cable slack?\n\nTHE SPOOLS WILL TURN, slowly. Keep hands clear of the cables.\n" +
-            "The drives energize, each cable is wound in until its drive feels it pull back, " +
-            "and the drives switch off again. The mallet may slide a little.");
-        if (!ok) return;
         await post("/api/robot/takeup", { confirm: true }, "takeup-status");
     });
 

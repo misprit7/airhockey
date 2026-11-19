@@ -2111,6 +2111,10 @@ def _status(t, report, action, committer, flags, n_clamped, rate, live, lag,
 # A stop from the 8000 mm/s cap at the 24000 mm/s^2 one takes v/a = 0.33 s,
 # plus the jerk ramp. Half a second covers it with margin.
 BRAKE_SETTLE_S = 0.5
+# --park home: how often the traverse is checked, and what counts as there.
+PARK_POLL_S = 0.05
+PARK_ARRIVED_MM = 3.0
+PARK_ARRIVED_MM_S = 20.0
 
 
 def _shutdown(client, args, prev):
@@ -2163,8 +2167,27 @@ def _shutdown(client, args, prev):
         if args.park == "home":
             client.set_limits(args.park_speed, args.park_accel)
             client.command_position(geom.HOME_X, geom.HOME_Y, args.park_speed)
-            time.sleep(0.3)
+            # Stay connected until it is there. Whoever started this session
+            # (play.sh stopping its master, the web UI's Stop AI) de-energizes
+            # the drives as soon as it exits, and before 2026-11-18 this
+            # returned after 0.3 s: the traverse was cut short wherever the
+            # mallet happened to be.
+            distance = math.hypot(geom.HOME_X - bx, geom.HOME_Y - by)
+            limit_s = (distance / max(args.park_speed, 1.0)
+                       + args.park_speed / max(args.park_accel, 1.0) + 1.5)
             where = f"HOME ({geom.HOME_X:.0f}, {geom.HOME_Y:.0f})"
+            for _ in range(max(1, int(limit_s / PARK_POLL_S))):
+                time.sleep(PARK_POLL_S)
+                try:
+                    x, y, vx, vy = client.get_position()
+                except Exception:      # noqa: BLE001
+                    break
+                if (math.hypot(x - geom.HOME_X, y - geom.HOME_Y) <= PARK_ARRIVED_MM
+                        and math.hypot(vx, vy) <= PARK_ARRIVED_MM_S):
+                    break
+            else:
+                where = (f"({x:.0f}, {y:.0f}), still short of HOME after "
+                         f"{limit_s:.1f} s")
 
         client.close()
         print(f"\nparked at {where}, disconnected "

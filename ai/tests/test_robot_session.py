@@ -198,7 +198,8 @@ def test_ai_runs_the_launcher_and_stops_it_with_sigint(tmp_path, monkeypatch):
         s.start_ai("easy", 9)
     s.start_ai("easy", 2.0)
     # No master running: the launcher starts its own and nothing is sent to one.
-    assert commands == [["bash", "ai/bin/play.sh", "--difficulty", "easy", "--tension", "2"]] and log == []
+    assert commands == [["bash", "ai/bin/play.sh", "--difficulty", "easy", "--tension", "2",
+                         "--park", "home"]] and log == []
     status = s.status()
     assert status["ai"]["state"] == "running" and status["ai"]["difficulty"] == "easy"
     assert status["ai"]["model"] == robot_session.models.difficulty("easy")[0] and status["ai"]["own_master"]
@@ -224,7 +225,8 @@ def test_ai_on_a_running_master_sets_its_pretension_and_keeps_it(tmp_path, monke
     monkeypatch.setattr(s, "_command", lambda d, t, running: seen.append(
         RobotSession._command(s, d, t, running)) or [sys.executable, "-c", "pass"])
     s.start_ai("max", 1.5)
-    assert seen == [["bash", "ai/bin/play.sh", "--difficulty", "max", "--tension", "1.5", "--use-running-master"]]
+    assert seen == [["bash", "ai/bin/play.sh", "--difficulty", "max", "--tension", "1.5", "--use-running-master",
+                     "--park", "home"]]
     assert log[:3] == ["connect", ("tension", 1.5), "close"]
     assert json.loads((tmp_path / "logs" / "ai_session.json").read_text())["own_master"] is False
     assert wait_for(lambda: s.status()["ai"]["state"] == "exited")

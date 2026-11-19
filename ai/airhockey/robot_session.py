@@ -293,6 +293,10 @@ class RobotSession:
         cmd = ["bash", "ai/bin/play.sh", "--difficulty", difficulty, "--tension", f"{tension_mm:g}"]
         if master_running:
             cmd.append("--use-running-master")
+        # Stop AI: brake, then return slowly to the centre of the robot's
+        # half before the drives go off (run_policy --park home), rather than
+        # leave the mallet wherever the rally ended.
+        cmd += ["--park", "home"]
         return cmd
 
     def ai_running(self) -> bool:
