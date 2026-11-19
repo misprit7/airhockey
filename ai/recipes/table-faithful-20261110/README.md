@@ -1761,3 +1761,106 @@ minutes. Per update that is about 10 goals for and 16 against from the
 self-play games, and about 220 scored against the simulated people, who
 take a quarter of the games. Most of the goal signal still comes from the
 people, although self-play is 60% of the experience.
+
+### v4.4.1 over 270M steps: paid only for goals, it aimed at the sim's goal, which was too wide
+
+Stopped at 271M of a planned 800M steps. Shot quality by snapshot (calibrated
+sim, the measures above; v4.3.12 is three seeds, 101M and 252M two, the
+others one):
+
+| | v4.3.12 | 101M | 151M | 202M | 252M |
+|---|---|---|---|---|---|
+| shots struck from a controlled puck | 26% | 30% | 26% | 26% | 24% |
+| first touch to shot, median | 0.75 s | 0.77 s | 0.78 s | 0.78 s | 0.77 s |
+| shots on target | 67% | 63% | 61% | 54% | 52% |
+| of them: from a controlled puck / at a moving puck | 78% / 63% | 78% / 57% | 75% / 56% | 60% / 52% | 66% / 47% |
+| goals per 100 shots | 34 | 39 | 36 | 37 | 35 |
+| per 100 possessions: controlled, on target and 4 m/s or more | 13.9 | 16.9 | 14.3 | 11.8 | 11.1 |
+| puck leaves slowly with the robot not playing it | 7.3% | 4.5% | 5.5% | 5.2% | 4.2% |
+| goals conceded per minute | 0.18 | 0.16 | 0.20 | 0.20 | 0.21 |
+
+Against its own snapshots the learner's scoring went from 0.08 to about 0.10
+goals a minute in the first 100M steps and stayed there (conceded 0.12-0.18);
+against the simulated people 5.0 to 5.4 a minute.
+
+So: at 101M a little more of what was wanted and fewer pucks given away, and
+after that the aim got worse while the goals per shot did not. Where each
+shot was heading when it crossed the centre line, as a distance from the
+centre of the goal (mouth 379 mm, puck radius 40.7 mm):
+
+| | fits between the posts (< 149 mm) | post band (149-189 mm) | wide | goes straight in: fits / post band / wide |
+|---|---|---|---|---|
+| v4.1.2 | 53% | 9% | 38% | 31% / 30% / 4% |
+| v4.3.12 | 69% | 7% | 24% | 28% / 43% / 3% |
+| v4.4.1 at 101M | 66% | 10% | 24% | 32% / 40% / 4% |
+| at 151M | 63% | 10% | 26% | 28% / 41% / 5% |
+| at 202M | 56% | 9% | 35% | 37% / 41% / 3% |
+| at 252M | 55% | 12% | 34% | 34% / 38% / 3% |
+
+The shots moved outward (mean distance from the goal's centre of the shots
+inside the mouth 70 -> 87 mm), toward a band where the sim paid best and
+where, on the table, the post is.
+
+### The sim's goal was a puck diameter too wide (`table-20261119-posts`)
+
+`batch_physics` counts a goal when the puck's CENTRE passes the end line
+inside the mouth, and skips the end-rail bounce on the same test. A puck
+whose centre is within a radius of the mouth's end therefore scores, though
+it does not fit: the sim's goal is 379 mm wide, the slot a puck passes
+through cleanly 298 mm. Rounds 1 to 5 paid the aim bonus on
+`first_goal_crossing`, which uses the 298 mm, so those networks aimed inside
+it. A game that pays only goals has no such term.
+
+The table (34 sessions, 2026-09-20 to 11-18, 200 Hz puck track; every puck
+entering the last 140 mm before an end rail at 1.5 m/s or more on a straight
+line, at either end; "in" = not seen again for 0.7 s; rows with the
+defender's mallet more than 150 mm from the arrival point):
+
+| arrival, from the goal's centre | n | counted in |
+|---|---|---|
+| 0-80 mm | 146 | 71% |
+| 80-149 mm (still fits) | 100 | 67% |
+| 149-170 mm (inner half of the post band) | 29 | 41% |
+| 170-190 mm (outer half) | 26 | 23% |
+| 190-210 mm | 36 | 11% |
+| beyond 210 mm | 349 | 7% |
+
+The method misses about a quarter of clean goals and counts 7% of wide pucks
+(deflections, tracker losses), so read the rows against each other: relative
+to a clean arrival the inner half of the post band goes in 0.55 times as
+often and the outer half 0.26 times. In the sim both were 1.
+
+Model (`engine.goal_posts`, `BatchPhysicsEngine._collide_posts`, opt-in, off
+by default): the four mouth ends are corners of the end rail. A puck whose
+centre is inside the mouth but within a radius of a corner collides with it,
+rail restitution along the corner-to-centre line and the end rail's
+tangential retention across it, swept over the substep so a fast puck cannot
+step over the contact. A straight shot is turned into the goal when it
+arrives within 159 mm of the centre and is sent back beyond that; an angled
+shot needs more room at the post it passes. No fitted parameter. Profile
+`table-20261119-posts` = `table-20261119` plus the part `posts`; every other
+profile and the default sim are unchanged. Tests in
+`tests/test_table_fidelity.py`. Not in `physics.py` (the web UI's manual
+sim).
+
+The same models in the sim with posts (one seed):
+
+| | v4.1.2 | v4.3.12 | v4.4.1 at 101M | at 252M |
+|---|---|---|---|---|
+| goals per 100 shots | 26 | 27 | 31 | 31 |
+| shots on target | 50% | 64% | 64% | 58% |
+| per 100 possessions: controlled, on target and 4 m/s or more | 6.2 | 12.6 | 19.7 | 11.8 |
+| goal share against the simulated people | 93.3% | 97.4% | 98.4% | 96.8% |
+
+Goal share barely moves, because the people's shots meet the same posts.
+Every earlier goals-per-shot number in this file is about a fifth too high.
+
+`v4.4.2` is arm `selfplay` again from v4.4.1's 101M snapshot under
+`--sim-profile table-20261119-posts`, otherwise unchanged.
+
+What this run does NOT show is the patient shot. First touch to shot stayed
+at 0.77 s throughout, and the incentives explain it: the simulated people
+concede to about a third of all shots however they are struck and score
+0.2-0.3 a minute themselves, so a rushed shot that misses costs nothing; and
+the learner's own copy lets in one shot in a few hundred. A reward of goals
+alone, in this sim, pays for shooting often.

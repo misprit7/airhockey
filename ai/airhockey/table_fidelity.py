@@ -53,6 +53,10 @@ cables that lags the motion profile and rings (enable_mallet_compliance).
 Profile table-20261119 is the same with the compliance calibrated on the
 table's rebounds off a block (about twice as soft; see PROFILES).
 
+Profile table-20261119-posts adds `posts`: the goal mouth's ends are the end
+rail's corners and a puck has to fit between them (engine.goal_posts). In
+every other profile a puck scores whenever its centre is inside the mouth.
+
 NOT modelled: the 220-400 mm strike-and-return position losses,
 and the runner's goal watchdog pausing the policy.
 """
@@ -88,12 +92,22 @@ PROFILES["table-20261118"] = dict(PROFILES["table-20261029"], compliance={"malle
 # wrong place, and the table as it is now may sit nearer table-20261118.
 PROFILES["table-20261119"] = dict(PROFILES["table-20261029"], compliance={"mallet_compliance": {
     "gain": (1.0, 3.5), "frequency_hz": (8.0, 26.0), "damping": (0.02, 0.15)}})
+# 2026-11-19: GOAL POSTS. The sim counted a goal whenever the puck's CENTRE
+# was inside the 380 mm mouth, i.e. a goal one puck diameter (81 mm, 27%)
+# wider than the slot a puck fits through. On the table (puck arrivals at
+# either end rail with the defender's mallet away, all logged sessions) a puck
+# arriving 149-170 mm from the goal's centre goes in 0.55 times as often as a
+# clean one and at 170-190 mm 0.26 times; the corner model here turns a straight
+# shot in up to 159 mm and back out beyond. Found because a run paid for goals only
+# (v4.4.1) moved its aim out to the edge: shots that fit fell from 69% to
+# 55%, the post band rose from 7% to 12% and wide misses from 24% to 34%.
+PROFILES["table-20261119-posts"] = dict(PROFILES["table-20261119"], posts={"goal_posts": True})
 DEFAULT_PROFILE = "table-20261029"
 
 
 def table_fidelity(profile: str = DEFAULT_PROFILE, *, contact: bool = True,
                    lift: bool = True, sensing: bool = True, actuator: bool = True,
-                   compliance: bool = True, **overrides: Any) -> dict[str, Any]:
+                   compliance: bool = True, posts: bool = True, **overrides: Any) -> dict[str, Any]:
     """NeuralTrainingEnv keyword arguments for a named table profile.
 
     contact/lift/sensing/actuator drop a part of the profile (for ablations
@@ -107,7 +121,8 @@ def table_fidelity(profile: str = DEFAULT_PROFILE, *, contact: bool = True,
     parts = PROFILES[profile]
     options: dict[str, Any] = {}
     for name, wanted in (("contact", contact), ("lift", lift),
-                         ("sensing", sensing), ("actuator", actuator), ("compliance", compliance)):
+                         ("sensing", sensing), ("actuator", actuator), ("compliance", compliance),
+                         ("posts", posts)):
         if wanted and name in parts:
             options.update(parts[name])
     known = {key for part in parts.values() for key in part}
@@ -118,7 +133,7 @@ def table_fidelity(profile: str = DEFAULT_PROFILE, *, contact: bool = True,
     return {key: value for key, value in options.items() if value is not None}
 
 
-PARTS = ("contact", "lift", "sensing", "actuator", "compliance")
+PARTS = ("contact", "lift", "sensing", "actuator", "compliance", "posts")
 
 
 def profile_options(spec: str | None) -> dict[str, Any]:

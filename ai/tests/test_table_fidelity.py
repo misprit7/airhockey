@@ -595,3 +595,71 @@ def test_far_body_compliance_gives_the_robot_at_the_far_end_the_same_soft_mallet
     rigid_gap, _ = far_gap(False)
     assert soft_gap > 0.003 and rigid_gap < 1e-9
     assert soft_seen < 1e-12, "the far policy is shown its profile position, not the true one"
+
+
+# ── goal posts ──────────────────────────────────────────────────────────
+
+def _shots_at_the_goal(offsets, speed, *, posts, angle=0.0, far_end=True):
+    """Pucks sent at an end line, arriving `offsets` metres from the goal's centre; True = scored."""
+    cfg = BatchPhysicsEngine(1).config
+    engine = BatchPhysicsEngine(len(offsets), cfg)
+    engine.goal_posts = posts
+    engine.puck_friction[:] = 0.0
+    engine.drag_b[:] = 0.0
+    run = 0.3
+    engine.puck_x[:] = cfg.width / 2 + np.asarray(offsets) - np.tan(angle) * run
+    engine.puck_y[:] = cfg.height - run if far_end else run
+    engine.puck_vx[:] = speed * np.sin(angle)
+    engine.puck_vy[:] = speed * np.cos(angle) * (1 if far_end else -1)
+    engine.paddle_agent_x[:], engine.paddle_agent_y[:] = 0.06, 0.6     # both mallets out of the way
+    engine.paddle_opp_x[:], engine.paddle_opp_y[:] = 0.06, 1.4
+    # Long enough for a puck the corner has slowed to a crawl, too short for a rebound to return.
+    for _ in range(int((run / (speed * np.cos(angle)) + 0.25) * 400)):
+        engine.step(1 / 400)
+    return (engine.score_agent if far_end else engine.score_opponent) > 0
+
+
+@pytest.mark.parametrize("speed", [2.0, 7.0, 12.0, 16.0])
+@pytest.mark.parametrize("far_end", [True, False])
+def test_a_puck_has_to_fit_between_the_goal_posts(speed, far_end):
+    """Mouth 379 mm, puck radius 40.7: a centre within 149 mm passes clean, one that clears the
+    corner by 0.74 of a radius (159 mm) is turned in, a squarer hit comes back. Swept, so the
+    result does not depend on speed. Without posts the whole mouth scores, as it always did."""
+    offsets = np.array([0.0, 0.10, 0.145, 0.155, 0.165, 0.175, 0.188, 0.195, 0.25])
+    both = np.concatenate([offsets, -offsets])
+    without = _shots_at_the_goal(both, speed, posts=False, far_end=far_end)
+    with_posts = _shots_at_the_goal(both, speed, posts=True, far_end=far_end)
+    inside = np.abs(both) < 0.189
+    assert (without == inside).all()
+    assert (with_posts == (np.abs(both) < 0.16)).all()
+
+
+def test_an_angled_shot_needs_more_room_at_the_post_it_passes():
+    """Moving toward +x at 30 degrees, a puck is still left of its arrival point when it passes the
+    left corner, so it must arrive further inside there; at the right post nothing changes."""
+    offsets = np.array([-0.155, -0.13, 0.13, 0.155])
+    scored = _shots_at_the_goal(offsets, 7.0, posts=True, angle=np.radians(30))
+    assert scored.tolist() == [False, True, True, True]
+
+
+def test_a_clean_shot_is_untouched_by_the_posts():
+    cfg = BatchPhysicsEngine(1).config
+    engine = BatchPhysicsEngine(2, cfg)
+    engine.goal_posts = True
+    engine.puck_x[:] = cfg.width / 2 + np.array([0.14, -0.14])
+    engine.puck_y[:] = cfg.height - 0.1
+    engine.puck_vx[:], engine.puck_vy[:] = 0.0, 5.0
+    before = engine.puck_x.copy()
+    for _ in range(4):
+        engine._move_puck(1 / 400)
+        engine._collide_posts(1 / 400)
+    assert np.array_equal(engine.puck_x, before) and (engine.puck_vy == 5.0).all()
+
+
+def test_posts_are_a_part_of_one_profile_only():
+    assert table_fidelity("table-20261119-posts")["goal_posts"] is True
+    assert table_fidelity("table-20261119-posts", posts=False) == table_fidelity("table-20261119")
+    for name in ("table-20261029", "table-20261118", "table-20261119"):
+        assert "goal_posts" not in table_fidelity(name)
+    assert NeuralTrainingEnv(4, stage=5, **table_fidelity("table-20261119-posts")).engine.goal_posts is True
+    assert NeuralTrainingEnv(4, stage=5).engine.goal_posts is False

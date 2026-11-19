@@ -114,6 +114,10 @@ class BatchPhysicsEngine:
         # Opt-in and checkpointed by the expanded-workspace experiment. Paddle
         # separation can otherwise leave a puck through a rail until next tick.
         self.project_rail_contacts = False
+        # Opt-in (table_fidelity part "posts"). Off = the historical sim, where
+        # a puck is a goal whenever its CENTRE is inside the mouth, so the goal
+        # is a puck diameter wider than the slot a puck fits through.
+        self.goal_posts = False
 
         # Per-env physics parameters — shape [N]
         # Initialized to defaults; randomized on reset when domain_randomize=True
@@ -362,6 +366,8 @@ class BatchPhysicsEngine:
             self.lift_age += dt
         self._apply_friction(dt)
         self._move_puck(dt)
+        if self.goal_posts:
+            self._collide_posts(dt)
         self._collide_walls()
         self._collide_paddle(
             self.paddle_agent_x, self.paddle_agent_y,
@@ -556,6 +562,74 @@ class BatchPhysicsEngine:
         self.puck_y = np.where(bounce_top, cfg.height - r, self.puck_y)
         self.puck_vy = np.where(bounce_top, -np.abs(self.puck_vy) * e, self.puck_vy)
         self.puck_vx = np.where(bounce_top, self.puck_vx * self.end_wall_tangential, self.puck_vx)
+
+    def _collide_posts(self, dt: float) -> None:
+        """Goal posts: the corners where the end rail stops at a goal mouth.
+
+        A puck whose centre is inside the mouth but within a radius of a
+        corner meets that corner (rail restitution along the line from corner
+        to centre, the end rail's tangential retention across it). A glancing
+        contact turns it into the goal, a squarer one sends it back: at the
+        nominal restitution 0.785 and retention 0.66 a straight shot keeps
+        going when its centre clears the corner by 0.74 of a radius, i.e.
+        arrives within 159 mm of the goal's centre. Swept over the move just made, because at 2.5 ms a
+        12 m/s puck travels 30 mm and the contact window is shorter than that.
+        Centres outside the mouth are left to the flat rail in _collide_walls.
+
+        Table, 34 sessions 2026-09-20 to 11-18, untouched arrivals at either
+        end: 69% counted in up to 149 mm from the goal's centre (the slot a
+        puck fits through), 41% at 149-170 mm, 23% at 170-190 mm, 7% beyond
+        (the tracker's background). Without posts all of 149-190 mm is a goal.
+        """
+        cfg = self.config
+        r = cfg.puck_radius
+        reach = 2 * r + np.hypot(self.puck_vx, self.puck_vy) * dt
+        idx = np.flatnonzero((self.puck_y < reach) | (self.puck_y > cfg.height - reach))
+        if not len(idx):
+            return
+        vx, vy = self.puck_vx[idx], self.puck_vy[idx]
+        dx, dy = vx * dt, vy * dt
+        x0, y0 = self.puck_x[idx] - dx, self.puck_y[idx] - dy
+        goal_left = (cfg.width - cfg.goal_width) / 2
+        goal_right = (cfg.width + cfg.goal_width) / 2
+        a = dx * dx + dy * dy
+        first = np.full(len(idx), np.inf)
+        post_x = np.zeros(len(idx))
+        post_y = np.zeros(len(idx))
+        for corner_x in (goal_left, goal_right):
+            for corner_y in (0.0, cfg.height):
+                rx, ry = x0 - corner_x, y0 - corner_y
+                b = rx * dx + ry * dy
+                c = rx * rx + ry * ry - r * r
+                disc = b * b - a * c
+                closing = (b < 0) & (disc >= 0) & (a > 0)
+                s = np.where(closing, (-b - np.sqrt(np.maximum(disc, 0.0))) / np.maximum(a, 1e-18), np.inf)
+                s = np.where(closing & (c < 0), 0.0, s)       # already overlapping: resolve at the start
+                hit = closing & (s <= 1) & (s < first)
+                contact_x = x0 + np.where(hit, s, 0.0) * dx
+                hit &= (contact_x > goal_left) & (contact_x < goal_right)
+                first = np.where(hit, s, first)
+                post_x = np.where(hit, corner_x, post_x)
+                post_y = np.where(hit, corner_y, post_y)
+        hit = np.isfinite(first)
+        if not hit.any():
+            return
+        idx, s = idx[hit], first[hit]
+        vx, vy, dx, dy, x0, y0 = vx[hit], vy[hit], dx[hit], dy[hit], x0[hit], y0[hit]
+        post_x, post_y = post_x[hit], post_y[hit]
+        nx, ny = x0 + s * dx - post_x, y0 + s * dy - post_y
+        norm = np.maximum(np.hypot(nx, ny), 1e-12)
+        nx, ny = nx / norm, ny / norm
+        v_normal = vx * nx + vy * ny
+        tx, ty = vx - v_normal * nx, vy - v_normal * ny
+        keep = self.end_wall_tangential[idx]
+        new_vx = keep * tx - self.wall_restitution[idx] * v_normal * nx
+        new_vy = keep * ty - self.wall_restitution[idx] * v_normal * ny
+        left = (1.0 - s) * dt
+        self.puck_x[idx] = post_x + r * nx + new_vx * left
+        self.puck_y[idx] = post_y + r * ny + new_vy * left
+        self.puck_vx[idx] = new_vx
+        self.puck_vy[idx] = new_vy
 
     def _collide_paddle(
         self,

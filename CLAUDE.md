@@ -145,6 +145,17 @@ Robotic air hockey table that uses reinforcement learning trained in simulation,
       `-20261118` 1.36 and 56%; `-20261119` in between the two nearest
       trials). Those table sessions predate the camera recalibration of
       2026-11-18, so part of that gain stands in for a mis-seen puck.
+      GOAL POSTS (2026-11-19, part `posts`, profile `table-20261119-posts` =
+      `-20261119` plus it; `engine.goal_posts`, off everywhere else): the sim
+      scores a goal whenever the puck's CENTRE is inside the 379 mm mouth,
+      so its goal is a puck diameter wider than the slot a puck fits through
+      (298 mm). With posts the mouth's ends are corners of the end rail: a
+      straight shot arriving within 159 mm of the centre is turned in, beyond
+      that it comes back. On the table a puck arriving 149-170 mm out goes in
+      0.55 times as often as a clean one and at 170-190 mm 0.26 times (34
+      sessions, either end). Goals per shot in older reports are about a
+      fifth too high; goal share hardly changes. USE THE POSTS PROFILE for
+      any run whose reward is mostly goals.
     - `playability.py` - The PHYSICAL-PLAYABILITY GATES (2026-11-10), one
       function for a simulated game and for a table session's
       `ticks.csv` + `replay.jsonl`: idle accel cap, share of ticks asking
@@ -732,6 +743,17 @@ against the simulated people, no teacher and no fixed older networks, no
 imitation; `--game-shaping-scale 0` makes a game pay goals, the physical
 costs and the anti-stall rules only (drills keep their rewards). Before it,
 self-play was ~4% of all experience.
+RESULT (`v4.4.1`, 271M steps, stopped): at 101M steps about v4.3.12 with
+fewer pucks given away (registered file); after that the aim moved out to
+the edge of the goal, where the sim had no posts (shots that fit between the
+posts 69% -> 55%, wide misses 24% -> 34%, goals per shot unchanged). Hence
+the posts profile above; `v4.4.2` is the same arm under it. First touch to
+shot did not move (0.77 s): the simulated people concede to a third of all
+shots however struck and rarely score, and the learner's own copy concedes
+once in ten minutes, so goals alone pay for shooting often, not for
+preparing. Two copies of this robot score on each other ~0.1 times a
+minute; 95% of the goals in that arm come from the quarter of games against
+people.
 
 ## Run names
 The scheme below is for TD-MPC2 runs only.
