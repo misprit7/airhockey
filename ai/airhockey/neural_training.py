@@ -198,6 +198,7 @@ class NeuralTrainingEnv(ArrivalEnv):
         readiness_cost_weight=0.0,
         defensive_depth_weight=0.0,
         defensive_depth_target=.30,
+        roam_weight=0.0,
         possession_delay_weight=0.0,
         calm_accel_weight=0.0,
         calm_speed=1.5,
@@ -323,6 +324,13 @@ class NeuralTrainingEnv(ArrivalEnv):
             raise ValueError("invalid defensive depth shaping")
         self.defensive_depth_weight = defensive_depth_weight
         self.defensive_depth_target = defensive_depth_target
+        # DIFFICULTY MODELS (2026-11-18): a deliberately worse defender that
+        # is still fast. Pays per second for standing FORWARD of the guard
+        # depth while the opponent prepares, the opposite of the depth cost,
+        # so the model comes out of its goal and can be shot past.
+        if not np.isfinite(roam_weight) or roam_weight < 0:
+            raise ValueError("roam_weight must be finite and non-negative")
+        self.roam_weight = float(roam_weight)
         self.goals_only = bool(goals_only)
         games = games or self.goals_only
         continuous_rallies = continuous_rallies or self.goals_only
@@ -1942,6 +1950,16 @@ class NeuralTrainingEnv(ArrivalEnv):
                          max(self.decoder.high[1] - self.defensive_depth_target, .01), 0, 1)
         return preparing * opponent_half * excess**2
 
+    def roam_reward(self):
+        """0..1: how far forward of the guard depth the mallet stands while
+        the opponent has the puck and no fast shot is on its way."""
+        e = self.engine
+        preparing = (e.puck_vy >= 0) | (np.hypot(e.puck_vx, e.puck_vy) < 2)
+        opponent_half = np.clip((e.puck_y - 1.0) / .15, 0, 1)
+        forward = np.clip((e.paddle_agent_y - self.defensive_depth_target) /
+                          max(self.decoder.high[1] - self.defensive_depth_target, .01), 0, 1)
+        return preparing * opponent_half * forward
+
     def step(self, action):
         action = np.asarray(action, np.float32)
         if action.shape != (self.n_envs, 6) or not np.isfinite(action).all():
@@ -2119,6 +2137,8 @@ class NeuralTrainingEnv(ArrivalEnv):
         # Training-only preference while the opponent can prepare a shot.
         # Stops charging once a fast shot is incoming; never clips an action.
         reward -= self.defensive_depth_weight * b.action_dt * self.defensive_depth_cost()
+        if self.roam_weight:
+            reward += self.roam_weight * b.action_dt * self.roam_reward()
         # Accel cap asked for while nothing on the table needs it. The sim's
         # paddle follows any cap exactly; the table's tips its mallet past
         # ~1.5 g, rings its cables and sags the motor supply, so a guard
