@@ -1732,3 +1732,32 @@ mallet those are the less accurate ones (63% against 78% for v4.3.12).
   first 15 updates because the reward under it changed.
 - Not from first principles in the strict sense: it starts from a network
   that was guided for a billion steps, and the far seat's mallet is rigid.
+
+### What the first two launches showed: the two ends were not equal
+
+`v4.4.0` (63M steps, stopped) was the arm as first written. Its 50M snapshot
+played like v4.3.12, as expected that early, but the trainer's own counters
+said self-play was no contest: against its own snapshots the learner scored
+0.06 goals a minute and conceded 0.73. Two things were one-sided, both left
+from recipes in which the far side was mostly not a copy of the learner:
+
+- The soft mallet was the learner's only (round 5). In the round-5
+  head-to-heads the far seat put 40-50% more shots on target than the near
+  seat whichever model sat there. `mallet_compliance far_body=true` now gives
+  a robot-bodied far side the same mallet. Alone it changed nothing in the
+  goal counts (0.07 / 0.70).
+- The mallet lift (a 6-8 m/s puck slipping under a braking mallet) has been
+  the learner's only since arm a2 (`mallet_lift far_body=false`, so the
+  learner could not farm goals under the far robot's mallet). The counters:
+  0.71 lifts a minute for the learner, none for its copy. That is where the
+  0.7 goals a minute came from. `--no-selfplay-lift` (new) takes the
+  learner's lift out of full games against a network; it keeps it against
+  the simulated people and in the drills, where it models the table.
+
+`v4.4.1` has both. Against its own snapshots, first 3,300 game-minutes:
+0.074 goals a minute scored, 0.122 conceded. So the plain fact about
+self-play with this robot: two copies score on each other about once in ten
+minutes. Per update that is about 10 goals for and 16 against from the
+self-play games, and about 220 scored against the simulated people, who
+take a quarter of the games. Most of the goal signal still comes from the
+people, although self-play is 60% of the experience.
