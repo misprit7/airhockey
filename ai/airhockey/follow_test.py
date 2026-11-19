@@ -231,7 +231,8 @@ class FollowTest:
                  clock=time.time, sleep=time.sleep,
                  sample_hz: float = SAMPLE_HZ,
                  box: tuple[float, float, float, float] | None = None,
-                 segments: list[Segment] | None = None):
+                 segments: list[Segment] | None = None,
+                 summarizer=None, drive_field: str = "encoder"):
         self.client = client
         self.camera = camera
         self.on_status = on_status
@@ -240,6 +241,11 @@ class FollowTest:
         self.sleep = sleep
         self.sample_hz = sample_hz
         self.segments = segments if segments is not None else sequence(box)
+        # Another move list scored another way reuses this loop and its logs
+        # (airhockey/ring_test.py): `summarizer(rows, segs, camera=)` replaces
+        # the tracking verdict, `drive_field` picks what SAMPLE records.
+        self.summarizer = summarizer or summarize
+        self.drive_field = drive_field
         self.rows: list[dict] = []
         self.result: dict | None = None
         self.error: str | None = None
@@ -299,8 +305,9 @@ class FollowTest:
         sample_note = None
         if hasattr(self.client, "sample_drives"):
             try:
-                drive_samples = self.client.sample_drives(
-                    self.progress["estimate_s"] + SAMPLE_MARGIN_S)
+                seconds = self.progress["estimate_s"] + SAMPLE_MARGIN_S
+                drive_samples = (self.client.sample_drives(seconds) if self.drive_field == "encoder"
+                                 else self.client.sample_drives(seconds, self.drive_field))
             except Exception as e:                   # noqa: BLE001
                 sample_note = f"fast drive sampling unavailable: {e}"
         t0 = self.clock()
@@ -391,7 +398,7 @@ class FollowTest:
             except Exception:                        # noqa: BLE001
                 pass
 
-        summary = summarize(rows, segs, camera=self.camera is not None)
+        summary = self.summarizer(rows, segs, camera=self.camera is not None)
         summary["caps"] = {"speed_mm_s": v_max, "accel_mm_s2": a_max}
         summary["stopped_early"] = self._stop.is_set()
         summary["drive_samples"] = drive_samples

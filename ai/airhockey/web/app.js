@@ -1436,10 +1436,28 @@ let followTestRunning = false;
     });
 })();
 
+// The ring test is the same loop with another move list; one runs at a time.
+let followTestKind = "tracking";
+
+(() => {
+    const b = document.getElementById("btn-ring-test");
+    if (!b) return;
+    b.addEventListener("click", () => {
+        if (!ws || ws.readyState !== 1) return;
+        if (mode === "replay") setMode("control");
+        ws.send(JSON.stringify(followTestRunning
+            ? { type: "follow_test", action: "stop" }
+            : { type: "follow_test", action: "start", sequence: "ring" }));
+    });
+})();
+
 function setFollowTestRunning(on) {
     followTestRunning = on;
+    const ring = followTestKind === "ring";
     const b = document.getElementById("btn-follow-test");
-    if (b) b.textContent = on ? "Stop tracking test" : "Run tracking test";
+    const r = document.getElementById("btn-ring-test");
+    if (b) { b.textContent = on && !ring ? "Stop tracking test" : "Run tracking test"; b.disabled = on && ring; }
+    if (r) { r.textContent = on && ring ? "Stop ring test" : "Run ring test"; r.disabled = on && !ring; }
 }
 
 function updateFollowTest(p) {
@@ -1459,12 +1477,19 @@ function showFollowTest(msg) {
     const out = document.getElementById("follow-test-result");
     if (!el || !out) return;
     if (msg.state === "started") {
+        followTestKind = msg.sequence === "ring" ? "ring" : "tracking";
         setFollowTestRunning(true);
         out.classList.add("hidden");
         el.textContent = msg.camera
             ? `running ${msg.segments} segments`
             : `running ${msg.segments} segments \u2014 camera OFF, drives vs steps only`;
         el.className = msg.camera ? "" : "bad";
+    } else if (msg.state === "done" && msg.sequence === "ring") {
+        setFollowTestRunning(false);
+        el.textContent = "ring test done";
+        el.className = "";
+        out.textContent = msg.text;
+        out.classList.remove("hidden");
     } else if (msg.state === "done") {
         setFollowTestRunning(false);
         const v = msg.summary && msg.summary.verdict;

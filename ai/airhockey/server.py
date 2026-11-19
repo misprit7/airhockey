@@ -361,6 +361,7 @@ async def live_game(ws: WebSocket):
         return policy_cache[run_name]
     hardware_dynamics = None
     follow_test = None      # airhockey.follow_test.FollowTest while it runs
+    ring_restore = None     # (speed, accel) to put back after a ring test
 
     def _testing():
         return follow_test is not None and follow_test.running
@@ -562,6 +563,48 @@ async def live_game(ws: WebSocket):
                             await ws.send_json({"type": "follow_test",
                                                 "state": "error",
                                                 "error": "already running"})
+                        elif msg.get("sequence") == "ring":
+                            # The ring test (airhockey/ring_test.py): holds
+                            # and small steps at five places, the camera on
+                            # the mallet and the drives' currents sampled.
+                            # It needs the camera, so it turns it on, and it
+                            # runs at its own caps so runs compare; the caps
+                            # in force now are put back when it ends.
+                            from airhockey import ring_test
+                            try:
+                                if not VISION.running:
+                                    VISION.start()
+                                    for _ in range(60):
+                                        if VISION.latest_pose() is not None or VISION.error:
+                                            break
+                                        await asyncio.sleep(0.05)
+                                if VISION.latest_pose() is None:
+                                    raise RuntimeError(
+                                        "the camera does not see the robot's mallet"
+                                        + (f" ({VISION.error})" if VISION.error else ""))
+                                state = hardware_dynamics.hw_state()
+                                ring_restore = (state["speed_limit"], state["accel_limit"])
+                                hardware_dynamics.set_limits(ring_test.TEST_SPEED_MM_S,
+                                                             ring_test.TEST_ACCEL_MM_S2)
+                                box = state.get("workspace_mm")
+                                VISION.set_boost(True)
+                                follow_test = FollowTest(
+                                    hardware_dynamics.client, camera=VISION.latest_pose_stamped,
+                                    on_status=hardware_dynamics.absorb_status,
+                                    segments=ring_test.ring_sequence(
+                                        (box["min_x"], box["max_x"], box["min_y"], box["max_y"]) if box else None),
+                                    summarizer=ring_test.quiet_summary, drive_field="torque",
+                                    log_dir=ring_test.LOG_DIR)
+                                follow_test.kind = "ring"
+                                follow_test.start()
+                                await ws.send_json({
+                                    "type": "follow_test", "state": "started", "sequence": "ring",
+                                    "camera": True, "segments": len(follow_test.segments)})
+                            except Exception as e:      # noqa: BLE001
+                                follow_test = None
+                                VISION.set_boost(False)
+                                await ws.send_json({"type": "follow_test", "state": "error",
+                                                    "sequence": "ring", "error": str(e)})
                         else:
                             cam = (VISION.latest_pose_stamped
                                    if VISION.running else None)
@@ -676,11 +719,26 @@ async def live_game(ws: WebSocket):
                     VISION.set_boost(False)
                     if hardware_dynamics:
                         target_x, target_y = hardware_dynamics.x, hardware_dynamics.y
+                    ring = getattr(ft, "kind", None) == "ring"
+                    if ring and hardware_dynamics and ring_restore and all(ring_restore):
+                        try:
+                            hardware_dynamics.set_limits(*ring_restore)
+                        except Exception as e:      # noqa: BLE001
+                            print(f"  ring test: could not restore the motion limits: {e}")
+                    ring_restore = None
                     if ft.error:
                         print(f"  tracking test failed: {ft.error}")
                         await ws.send_json({"type": "follow_test",
                                             "state": "error",
+                                            "sequence": "ring" if ring else None,
                                             "error": ft.error})
+                    elif ring and ft.result:
+                        from airhockey import ring_test
+                        result = await asyncio.to_thread(ring_test.finish, ft)
+                        print("  ring test:\n    " + result["text"].replace("\n", "\n    "))
+                        await ws.send_json({"type": "follow_test", "state": "done", "sequence": "ring",
+                                            "summary": {"verdict": result["reading"][0] if result["reading"] else ""},
+                                            "text": result["text"]})
                     elif ft.result:
                         text = format_summary(ft.result)
                         print("  tracking test:\n    "

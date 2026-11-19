@@ -287,13 +287,16 @@ class CDPRClient:
             }
         raise RuntimeError(f"CDPR enc failed: {resp}")
 
-    def sample_drives(self, seconds: float) -> str:
-        """Log every drive's encoder as fast as the bus allows, for `seconds`.
+    def sample_drives(self, seconds: float, field: str = "encoder") -> str:
+        """Log every drive's encoder (or, with field="torque", its measured
+        current) as fast as the bus allows, for `seconds`.
 
         Returns at once with the master-relative CSV path; the file appears
         when sampling ends. Reads only.
         """
-        resp = self._send(f"SAMPLE {seconds:.2f}")
+        if field not in ("encoder", "torque"):
+            raise ValueError("field must be encoder or torque")
+        resp = self._send(f"SAMPLE {seconds:.2f}" + (" torque" if field == "torque" else ""))
         if resp.startswith("OK SAMPLE "):
             return resp.split(maxsplit=2)[2]
         raise RuntimeError(f"CDPR sample failed: {resp}")

@@ -296,22 +296,28 @@ static LoadValue readYielding(ClearPath &robot, unsigned node, LoadField field) 
 //
 // Held in memory and written at the end, so disk latency cannot open a gap.
 // Times are CLOCK_MONOTONIC. Ends early on DISABLE or a fault.
-static void sampleDrives(ClearPath *robot, double seconds, std::string path) {
+//
+// `field` is Encoder (the default) or TorqueAmps. The encoder resolves 0.38 mm
+// of cable per count, so a shaft ringing by less than that reads flat; the
+// drive's measured current shows whether its loop is in the ring at all.
+static void sampleDrives(ClearPath *robot, double seconds, std::string path, LoadField field) {
     struct Sample { double start, end, value; unsigned node; bool valid; };
     std::vector<Sample> samples;
     samples.reserve(static_cast<std::size_t>(seconds * 2000.0));
     const double deadline = loadMonotonic() + seconds;
     while (!g_stop && g_motors_enabled && loadMonotonic() < deadline) {
         for (unsigned node = 0; node < 4 && !g_stop; node++) {
-            LoadValue v = readYielding(*robot, node, LoadField::Encoder);
+            LoadValue v = readYielding(*robot, node, field);
             samples.push_back({v.start, v.end, v.value, node, v.valid});
         }
     }
     FILE *f = fopen(path.c_str(), "w");
     if (f) {
-        fprintf(f, "start_monotonic,end_monotonic,node,encoder_counts,valid\n");
+        const bool torque = field == LoadField::TorqueAmps;
+        fprintf(f, "start_monotonic,end_monotonic,node,%s,valid\n", torque ? "torque_amps" : "encoder_counts");
         for (const Sample &s : samples)
-            fprintf(f, "%.6f,%.6f,%u,%.1f,%d\n", s.start, s.end, s.node, s.value, s.valid);
+            fprintf(f, torque ? "%.6f,%.6f,%u,%.4f,%d\n" : "%.6f,%.6f,%u,%.1f,%d\n",
+                    s.start, s.end, s.node, s.value, s.valid);
         fclose(f);
         logf("  drive samples: %zu reads -> %s\n", samples.size(), path.c_str());
     } else {
@@ -896,11 +902,15 @@ static int handleCommand(const char *line, ClearPath &robot, int client_fd, int 
     } else if (strncmp(line, "SAMPLE", 6) == 0) {
         // Starts in the background and answers at once: the client has moves
         // to send while this runs. Reads only.
+        // "SAMPLE <seconds> [torque]": the drives' encoders, or with "torque"
+        // their measured current instead (one field, so the rate stays ~100 Hz
+        // per motor).
         double seconds = 0.0;
-        char extra;
-        if (sscanf(line, "SAMPLE %lf %c", &seconds, &extra) != 1 ||
-            !(seconds >= 0.5 && seconds <= 120.0)) {
-            snprintf(resp, sizeof(resp), "ERR SAMPLE needs seconds, 0.5 to 120\n");
+        char what[16] = "";
+        int got = sscanf(line, "SAMPLE %lf %15s", &seconds, what);
+        const bool torque = got == 2 && !strcmp(what, "torque");
+        if (got < 1 || (got == 2 && !torque) || !(seconds >= 0.5 && seconds <= 120.0)) {
+            snprintf(resp, sizeof(resp), "ERR SAMPLE needs seconds, 0.5 to 120, then optionally torque\n");
         } else if (!g_motors_enabled || g_fault) {
             snprintf(resp, sizeof(resp), "ERR motors not enabled\n");
         } else if (g_sampling.exchange(true)) {
@@ -911,7 +921,8 @@ static int handleCommand(const char *line, ClearPath &robot, int client_fd, int 
             char path[256];
             snprintf(path, sizeof(path), "logs/drive_samples/%.0f-%d.csv",
                      loadWallTime() * 1000000, getpid());
-            g_sampler = std::thread(sampleDrives, &robot, seconds, std::string(path));
+            g_sampler = std::thread(sampleDrives, &robot, seconds, std::string(path),
+                                    torque ? LoadField::TorqueAmps : LoadField::Encoder);
             snprintf(resp, sizeof(resp), "OK SAMPLE %s\n", path);
         }
 
