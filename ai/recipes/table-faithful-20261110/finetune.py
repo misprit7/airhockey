@@ -111,7 +111,11 @@ ARMS["accel"] = dict(ARMS["a3"], resume=A3, seed=20261118)
 # anchors. The remaining 20% are v4.3.12's drills with their own rewards.
 # A resting puck may lie 3 s before the dead-puck cost runs (1 s before).
 V4312 = "runs/v4.3.12/agent_step_1091305472.pt"
-SOFT_MALLET = 'mallet_compliance={"gain": [0.3, 3.5], "frequency_hz": [8.0, 26.0], "damping": [0.02, 0.15]}'
+# Both ends: a copy of the robot at the far end gets the same soft mallet
+# (far_body). v4.4.0 ran without it and its self-play was lopsided: 0.06 goals
+# a minute for the learner, 0.73 against, on a rigid-mallet copy of itself.
+SOFT_MALLET = ('mallet_compliance={"gain": [0.3, 3.5], "frequency_hz": [8.0, 26.0], "damping": [0.02, 0.15], '
+               '"far_body": true}')
 ARMS["selfplay"] = dict(
     ARMS["accel"], resume=V4312, seed=20261140, references=False, game_fraction="0.8", human_proxy_share=0.25,
     teacher_opponents=0.0, teacher_weights=["0", "0"], teacher_resting=0.0, reference_rail=0.0,

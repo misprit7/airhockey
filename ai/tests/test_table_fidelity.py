@@ -568,3 +568,30 @@ def test_profile_20261119_is_the_calibrated_softer_mallet():
     # The older names keep their meaning.
     assert table_fidelity("table-20261118")["mallet_compliance"] is True
     assert "mallet_compliance" not in table_fidelity("table-20261029")
+
+
+def test_far_body_compliance_gives_the_robot_at_the_far_end_the_same_soft_mallet():
+    """Opt-in: the far side's true mallet leaves its profile under acceleration, its own-mallet
+    input stays the profile, and without the option the far side is rigid as before."""
+    def far_gap(far_body):
+        options = dict(table_fidelity("table-20261119"))
+        options["mallet_compliance"] = dict(options["mallet_compliance"], gain=(2.0, 2.0), far_body=far_body)
+        env = NeuralTrainingEnv(8, stage=5, seed=5, game_fraction=1.0, **options)
+        env.reset()
+        base = env.base
+        robot = ~base._opp_free
+        assert robot.any()
+        gaps, seen = [], []
+        rng = np.random.default_rng(0)
+        for k in range(15):
+            action = np.zeros((8, 6)); action[:, 0] = (-1) ** (k // 3); action[:, 4] = -1; action[:, 5] = 1   # hard flips
+            env.set_opponent_action(action)
+            env.step(rng.uniform(-1, 1, (8, 6)))
+            gaps.append(np.hypot(base.engine.paddle_opp_x - base._opp_dyn["x"],
+                                 base.engine.paddle_opp_y - base._opp_dyn["y"])[robot].max())
+            seen.append(np.abs(base._far_own_xy()[0] - base._opp_dyn["x"])[robot].max())
+        return max(gaps), max(seen)
+    soft_gap, soft_seen = far_gap(True)
+    rigid_gap, _ = far_gap(False)
+    assert soft_gap > 0.003 and rigid_gap < 1e-9
+    assert soft_seen < 1e-12, "the far policy is shown its profile position, not the true one"
