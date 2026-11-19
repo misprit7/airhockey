@@ -63,6 +63,7 @@ CORNER_POCKET_ENTRY_SPEED = 2.0    # m/s: faster pucks bounce back out of the po
 REVERSAL_WINDOW_TICKS = 5      # 100 ms, as airhockey.playability counts them
 REVERSAL_GAP_S = 0.15
 STRIKE_DRILL_SECONDS = 6       # a person takes up to ~4 s to get to a puck and strike it
+DEFENSE_FOLLOW_SECONDS = 4.0   # a follow-through defense drill's time after the block
 
 
 def route_report(events):
@@ -164,6 +165,7 @@ class NeuralTrainingEnv(ArrivalEnv):
         random_defense_start_fraction=0.0,
         defense_clear_reward=0.0,
         defense_block_only=False,
+        defense_followthrough_fraction=0.0,
         defense_windup_fraction=0.0,
         shot_speed_scale=6.0,
         conversion_speed_scale=5.0,
@@ -670,6 +672,17 @@ class NeuralTrainingEnv(ArrivalEnv):
         self.random_defense_start_fraction = random_defense_start_fraction
         self.defense_clear_reward = defense_clear_reward
         self.defense_block_only = bool(defense_block_only)
+        # A share of block-only defense drills that go on after the block:
+        # the block is paid as usual, then the rebound is the learner's to
+        # recover (get ahead of it, control it, shoot) until it leaves the
+        # half. Block-only drills end at the block, so nothing in them ever
+        # taught what to do with the puck the block leaves behind.
+        if not 0 <= defense_followthrough_fraction <= 1 or (defense_followthrough_fraction and not defense_block_only):
+            raise ValueError("defense followthrough fraction must be in [0,1] and needs defense_block_only")
+        self.defense_followthrough_fraction = float(defense_followthrough_fraction)
+        self.defense_follow = np.zeros(n_envs, bool)
+        self._defense_blocked = np.zeros(n_envs, bool)
+        self._defense_deadline = np.full(n_envs, np.inf)
         if not 0 <= defense_windup_fraction <= 1:
             raise ValueError("defense windup fraction must be in [0,1]")
         self.defense_windup_fraction = defense_windup_fraction
@@ -1748,6 +1761,11 @@ class NeuralTrainingEnv(ArrivalEnv):
         self._recovery_ahead_paid[ids] = False
         self.defense_windup[ids] = windup & (self.kind[ids] == 2)
         self.edge_drill[ids] = edge & (self.kind[ids] == 0)
+        self.defense_follow[ids] = False
+        if self.defense_followthrough_fraction:
+            self.defense_follow[ids] = (self.kind[ids] == 2) & (rng.random(len(ids)) < self.defense_followthrough_fraction)
+        self._defense_blocked[ids] = False
+        self._defense_deadline[ids] = np.inf
         self._edge_contact[:, ids] = False
         self._edge_paid[:, ids] = False
         self.edge_recovery_count[:, ids] = 0
@@ -2241,7 +2259,11 @@ class NeuralTrainingEnv(ArrivalEnv):
         skill_seconds = np.where(self.edge_drill, 12, 6 if self.possession_followthrough else 4)
         if self.people is not None:
             skill_seconds = np.where(self.strike_drill, STRIKE_DRILL_SECONDS, skill_seconds)
-        terminal = skill & (((gf + ga) > 0) | (self.elapsed >= skill_seconds))
+        timeout = self.elapsed >= skill_seconds
+        if self.defense_followthrough_fraction:
+            # After its block a follow-through drill runs on its own clock.
+            timeout = np.where(self._defense_blocked, self.elapsed >= self._defense_deadline, timeout)
+        terminal = skill & (((gf + ga) > 0) | timeout)
         reward[terminal & (gf == 0)] -= 2
         # Expiring without attempting an aimed shot must not be cheaper than
         # playing. A conceded goal already has its own penalty; do not charge
@@ -2263,6 +2285,23 @@ class NeuralTrainingEnv(ArrivalEnv):
                 # a block; follow it until it reverses, stops, or concedes.
                 defended = (self.kind == 2) & (ga == 0) & (self.touch_count[0] > 0) & (
                     (e.puck_vy > .05) | (np.hypot(e.puck_vx, e.puck_vy) < .3))
+                if self.defense_followthrough_fraction:
+                    first = defended & self.defense_follow & ~self._defense_blocked
+                    reward[first] += self.defense_clear_reward
+                    self._defense_blocked |= first
+                    self._defense_deadline[first] = self.elapsed[first] + DEFENSE_FOLLOW_SECONDS
+                    # The rest of the possession: ends when the puck leaves
+                    # the half (struck, or lost), at a goal, or on the clock.
+                    blocked = self.defense_follow & self._defense_blocked
+                    left = blocked & (e.puck_y >= self.cfg.height / 2)
+                    converted = self.convert_count[0] > 0
+                    reward[left & converted] += 60
+                    reward[left & ~converted & (self.fast_aimed_count[0] > 0)] += 35
+                    # Holding the recovered puck until the clock runs out is
+                    # not a recovery.
+                    reward[blocked & ~first & timeout & ~left & ((gf + ga) == 0)] -= 60
+                    terminal |= left
+                    defended &= ~self.defense_follow
             terminal |= defended
             reward[defended] += self.defense_clear_reward
         if self.possession_followthrough:

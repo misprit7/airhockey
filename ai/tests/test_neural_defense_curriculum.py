@@ -114,3 +114,36 @@ def test_block_only_does_not_require_control_or_opponent_half_clearance():
     assert terminal[0] and reward[0]>290
     assert not terminal[1:].any()
     assert env.capture_count[0,0]==0 and env.engine.puck_y[0]<1
+
+
+def test_followthrough_defense_drill_pays_the_block_and_plays_on_until_the_puck_leaves():
+    env=NeuralTrainingEnv(3,stage=2,defense_clear_reward=300,defense_block_only=True,
+                          defense_followthrough_fraction=1.0,realistic=False,randomize=False,setup_weight=0)
+    # 0: blocked, rebound still in the half; 1: blocked, rebound already past
+    # the centre line; 2: a game slot, untouched by the option.
+    env.reset(fixtures=Fixtures(np.array([2,2,3]),
+        np.array([[.5,.5,0,1.0],[.5,.99,0,1.0],[.5,.5,0,4]]),
+        np.tile([.2,.2],(3,1)),np.full(3,.5)))
+    assert env.defense_follow.tolist()==[True,True,False]
+    env.touch_count[0]=[1,1,1]
+    _,reward,terminal,_,_=env.step(np.zeros((3,6)))
+    assert reward[0]>290 and not terminal[0], "the block is paid once and the drill goes on"
+    assert env._defense_blocked[0] and np.isfinite(env._defense_deadline[0])
+    assert terminal[1] and reward[1]>250, "it ends when the puck leaves the half"
+    assert not terminal[2]
+    _,again,terminal,_,_=env.step(np.zeros((3,6)))
+    assert again[0]<100 and not terminal[0], "no second payment"
+    # The clock after the block: an unshot puck still in the half ends it.
+    env.engine.puck_vy[0]=0; env.engine.puck_vx[0]=0
+    env.elapsed[0]=env._defense_deadline[0]
+    _,late,terminal,_,_=env.step(np.zeros((3,6)))
+    assert terminal[0] and late[0]<-50
+
+
+def test_followthrough_needs_block_only_and_is_off_by_default():
+    import pytest
+    with pytest.raises(ValueError):
+        NeuralTrainingEnv(2,stage=2,defense_followthrough_fraction=.5)
+    env=NeuralTrainingEnv(2,stage=2,defense_clear_reward=300,defense_block_only=True,realistic=False,randomize=False)
+    env.reset(fixtures=Fixtures(np.array([2,2]),np.array([[.5,.5,0,4],[.5,.5,0,4]]),np.tile([.2,.2],(2,1)),np.full(2,.5)))
+    assert not env.defense_follow.any()

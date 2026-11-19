@@ -162,6 +162,9 @@ def build_parser():
     p.add_argument("--random-defense-start-fraction", type=float, default=0)
     p.add_argument("--defense-clear-reward", type=float, default=0)
     p.add_argument("--defense-block-only", action="store_true", help="End isolated defense at a block, without requiring control or an opponent-half clearance")
+    p.add_argument("--defense-followthrough-fraction", type=float, default=0,
+                   help="Share of block-only defense drills that continue after the block: the rebound must be recovered "
+                        "(controlled and shot, or struck fast on target) before it leaves the half")
     p.add_argument("--defense-windup-fraction", type=float, default=0, help="Fraction of defensive practice with a hidden delay before a fast direct launch")
     p.add_argument("--shot-speed-scale", type=float, default=6)
     p.add_argument("--conversion-speed-scale", type=float, default=5)
@@ -475,6 +478,7 @@ def environment_options(args, *, shot_conditioned):
         random_defense_start_fraction=args.random_defense_start_fraction,
         defense_clear_reward=args.defense_clear_reward,
         defense_block_only=args.defense_block_only,
+        defense_followthrough_fraction=args.defense_followthrough_fraction,
         defense_windup_fraction=args.defense_windup_fraction,
         shot_speed_scale=args.shot_speed_scale,
         conversion_speed_scale=args.conversion_speed_scale,

@@ -1168,7 +1168,8 @@ def test_recipe_is_v4s_command_continued_with_the_table_options():
         changed = {k for k in old if old[k] != mine[k]}
         assert changed == {"run_name", "evaluation_dir", "resume", "initialize_from", "opponent_reference", "minutes",
                            "seed", "value_warmup_updates", "width"}
-        assert set(mine) - set(old) == new | round2 | round3 | round4 | {"free_request_share", "body_accel", "roam_weight"}
+        assert set(mine) - set(old) == new | round2 | round3 | round4 | {"free_request_share", "body_accel", "roam_weight",
+                                                                         "defense_followthrough_fraction"}
         assert args.body_accel is None and "--body-accel" not in cmd
 
 
