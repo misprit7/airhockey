@@ -235,6 +235,7 @@ def argv(a):
         cmd += ["--free-request-share", str(a.free_request)]
     if a.body_accel is not None:
         cmd += ["--body-accel", str(a.body_accel)]
+    cmd += list(getattr(a, 'trainer_arg', None) or [])
     return cmd
 
 
@@ -317,6 +318,8 @@ def build_parser():
     p.add_argument("--n-envs", type=int, default=2048, help="128 per worker keeps the slot layout")
     p.add_argument("--workers", type=int, default=16)
     p.add_argument("--device", default="cuda")
+    p.add_argument("--trainer-arg", action="append", default=[], metavar="ARG",
+                   help="appended to the trainer command as it stands (repeat; a later flag overrides the recipe's)")
     p.add_argument("--print", action="store_true", help="print the command instead of running it")
     return p
 

@@ -227,6 +227,7 @@ class NeuralTrainingEnv(ArrivalEnv):
         table_sensing=None,
         command_delay_range=None,
         late_command_probability=None,
+        mallet_compliance=None,
         # Opt-in table-faithful training (ai/recipes/table-faithful-20261110).
         # People at the far end: this share of full-game slots, a tier and a
         # new person drawn per game (airhockey.training_proxies).
@@ -363,6 +364,8 @@ class NeuralTrainingEnv(ArrivalEnv):
             enable(**({} if option is True else dict(option)))
         if command_delay_range is not None or late_command_probability is not None:
             self.base.enable_command_jitter(command_delay_range, late_command_probability)
+        if mallet_compliance is not None and mallet_compliance is not False:
+            self.base.enable_mallet_compliance(**({} if mallet_compliance is True else dict(mallet_compliance)))
         if report_sensing and self.base._perception is not None:
             self.base.enable_report_estimator()
         if not 0 <= recovery_fraction <= 1:

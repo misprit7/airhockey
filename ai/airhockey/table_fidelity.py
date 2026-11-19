@@ -48,8 +48,10 @@ name, or `name:contact,lift` for some of its parts; absent = the historical
 sim), record it in their JSON and report LiftTally: pucks that went under each
 robot mallet, and the goals that followed within a second.
 
-NOT modelled: mallet follow lag as a separate compliant body (6-20 mm of
-deflection at 100 m/s^2), the 220-400 mm strike-and-return position losses,
+Profile table-20261118 adds `compliance`: the mallet as a mass on elastic
+cables that lags the motion profile and rings (enable_mallet_compliance).
+
+NOT modelled: the 220-400 mm strike-and-return position losses,
 and the runner's goal watchdog pausing the policy.
 """
 
@@ -68,12 +70,16 @@ PROFILES = {
                      "late_command_probability": (0.001, 0.028)},
     },
 }
+# 2026-11-18: the same table plus the mallet as a compliant body on its
+# cables (BatchAirHockeyEnv.enable_mallet_compliance). A new name, so every
+# number reported under table-20261029 keeps meaning what it meant.
+PROFILES["table-20261118"] = dict(PROFILES["table-20261029"], compliance={"mallet_compliance": True})
 DEFAULT_PROFILE = "table-20261029"
 
 
 def table_fidelity(profile: str = DEFAULT_PROFILE, *, contact: bool = True,
                    lift: bool = True, sensing: bool = True, actuator: bool = True,
-                   **overrides: Any) -> dict[str, Any]:
+                   compliance: bool = True, **overrides: Any) -> dict[str, Any]:
     """NeuralTrainingEnv keyword arguments for a named table profile.
 
     contact/lift/sensing/actuator drop a part of the profile (for ablations
@@ -87,8 +93,8 @@ def table_fidelity(profile: str = DEFAULT_PROFILE, *, contact: bool = True,
     parts = PROFILES[profile]
     options: dict[str, Any] = {}
     for name, wanted in (("contact", contact), ("lift", lift),
-                         ("sensing", sensing), ("actuator", actuator)):
-        if wanted:
+                         ("sensing", sensing), ("actuator", actuator), ("compliance", compliance)):
+        if wanted and name in parts:
             options.update(parts[name])
     known = {key for part in parts.values() for key in part}
     unknown = set(overrides) - known
@@ -98,7 +104,7 @@ def table_fidelity(profile: str = DEFAULT_PROFILE, *, contact: bool = True,
     return {key: value for key, value in options.items() if value is not None}
 
 
-PARTS = ("contact", "lift", "sensing", "actuator")
+PARTS = ("contact", "lift", "sensing", "actuator", "compliance")
 
 
 def profile_options(spec: str | None) -> dict[str, Any]:

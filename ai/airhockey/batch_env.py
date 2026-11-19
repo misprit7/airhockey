@@ -663,6 +663,7 @@ class BatchAirHockeyEnv:
         self._command_delay_env = None
         self._late_command_range = None
         self._late_command_p = None
+        self._compliance = None     # enable_mallet_compliance
         # Table sensing: measured dropouts, and the far side's own puck
         # track for a hand-held opponent, who watches the table, not the
         # camera (ring columns 9-12; 13 flags the rival mallet hidden).
@@ -692,6 +693,61 @@ class BatchAirHockeyEnv:
         self._puck_slow_count = np.zeros(n_envs, dtype=np.int32)
         self._stuck_unattended_steps = max(1, int(round(self.STUCK_UNATTENDED_S / action_dt)))
         self._stuck_attended_steps = max(1, int(round(self.STUCK_ATTENDED_S / action_dt)))
+
+    def enable_mallet_compliance(self, frequency_hz=(10.0, 26.0), damping=(0.03, 0.15),
+                                 gain=(0.5, 1.5), limit_m: float = 0.03) -> None:
+        """The robot's mallet as a mass on elastic cables (2026-11-18).
+
+        The motion profile is where the SPOOLS put the mallet; the mallet
+        itself hangs on cables and springs, lags behind an accelerating
+        profile by about a/w^2 and rings afterwards. On the table (v4.1.2,
+        2026-11) the camera's mallet is 5-9 mm rms from the controller's once
+        timing is fitted out, 40 mm at the 90th percentile when moving fast,
+        and the ring test finds 10-27 Hz rings of 0.5-4 mm after a 30 mm step
+        at 60 m/s^2 that take about a second to die. Without this the sim's
+        mallet IS the profile, and a policy learns touches that only work
+        with a mallet exactly where it believes it is.
+
+        Per episode and axis: a natural frequency, a damping ratio and a gain
+        on the forcing (1 = an ideal base-excited mass). The puck meets the
+        TRUE mallet (position and velocity); the policy's own-mallet input
+        stays the profile, as on the table, where it is step counts. Agent
+        seat only: the far side keeps a rigid mallet.
+        """
+        n = self.n_envs
+        self._compliance = dict(frequency=tuple(frequency_hz), damping=tuple(damping), gain=tuple(gain),
+                                limit=float(limit_m), w=np.zeros((2, n)), zeta=np.zeros(n), k=np.zeros(n),
+                                e=np.zeros((2, n)), ev=np.zeros((2, n)), pv=np.zeros((2, n)))
+        self._draw_compliance(np.arange(n))
+
+    def _draw_compliance(self, idx) -> None:
+        c = self._compliance
+        m = len(idx)
+        c["w"][:, idx] = 2.0 * np.pi * self._rng.uniform(*c["frequency"], size=(2, m))
+        c["zeta"][idx] = self._rng.uniform(*c["damping"], size=m)
+        c["k"][idx] = self._rng.uniform(*c["gain"], size=m)
+        c["e"][:, idx] = 0.0
+        c["ev"][:, idx] = 0.0
+        c["pv"][0, idx] = self._agent_dyn["vx"][idx]
+        c["pv"][1, idx] = self._agent_dyn["vy"][idx]
+
+    def _comply(self, x, y, dt):
+        """Profile position -> where the mallet really is this substep."""
+        c = self._compliance
+        v = np.stack([self._agent_dyn["vx"], self._agent_dyn["vy"]])
+        accel = (v - c["pv"]) / dt
+        c["pv"] = v
+        c["ev"] += (-2.0 * c["zeta"] * c["w"] * c["ev"] - c["w"] ** 2 * c["e"] - c["k"] * accel) * dt
+        c["e"] += c["ev"] * dt
+        np.clip(c["e"], -c["limit"], c["limit"], out=c["e"])
+        return x + c["e"][0], y + c["e"][1]
+
+    def _own_xy(self):
+        """The agent's OWN mallet as its controller knows it: the profile's
+        position. The engine's is the true one, which only the camera sees."""
+        if self._compliance is None:
+            return self.engine.paddle_agent_x, self.engine.paddle_agent_y
+        return self._agent_dyn["x"].copy(), self._agent_dyn["y"].copy()
 
     def enable_command_jitter(self, delay_range=None, late_probability=None) -> None:
         """Opt into per-episode command latency and late ticks.
@@ -948,6 +1004,8 @@ class BatchAirHockeyEnv:
         self._agent_dyn["y"][idx] = self.engine.paddle_agent_y[idx]
         self._agent_dyn["vx"][idx] = 0.0
         self._agent_dyn["vy"][idx] = 0.0
+        if self._compliance is not None:
+            self._draw_compliance(np.asarray(idx))
         self._clear_profile_accel(self._agent_dyn, idx)
 
         # Override opponent position for stationary policies (per-env)
@@ -1193,6 +1251,8 @@ class BatchAirHockeyEnv:
                                            accel_cap=agent_accel_cap,
                                            defer_command=defer_agent)
             ax, ay = self._clamp_to_half(ax, ay, agent=True)
+            if self._compliance is not None:
+                ax, ay = self._comply(ax, ay, dt)
             self.engine.update_paddle_agent(ax, ay, dt)
 
             # Update opponent
@@ -2101,11 +2161,12 @@ class BatchAirHockeyEnv:
             cols.append(frame[:, 4])
             cols.append(frame[:, 5])
         dt = self.action_dt
-        agent_vx = (e.paddle_agent_x - self._prev_agent_x) / dt
-        agent_vy = (e.paddle_agent_y - self._prev_agent_y) / dt
-        self._prev_agent_x[:] = e.paddle_agent_x
-        self._prev_agent_y[:] = e.paddle_agent_y
-        cols += [e.paddle_agent_x, e.paddle_agent_y, agent_vx, agent_vy]
+        own_x, own_y = self._own_xy()
+        agent_vx = (own_x - self._prev_agent_x) / dt
+        agent_vy = (own_y - self._prev_agent_y) / dt
+        self._prev_agent_x[:] = own_x
+        self._prev_agent_y[:] = own_y
+        cols += [own_x, own_y, agent_vx, agent_vy]
         cols += [self._prev_action[:, k] for k in range(4)]
         cols += [np.full(self.n_envs, self.ROBOT_SIDE),
                  self._agent_dyn["max_speed"] / MAX_SPEED_M_S,
@@ -2122,8 +2183,9 @@ class BatchAirHockeyEnv:
         # OWN paddle: fresh and true. The controller knows its own commanded
         # position with ~zero latency on the real machine; only the puck and
         # the opponent arrive through the camera.
-        agent_vx = (e.paddle_agent_x - self._prev_agent_x) / dt
-        agent_vy = (e.paddle_agent_y - self._prev_agent_y) / dt
+        own_x, own_y = self._own_xy()
+        agent_vx = (own_x - self._prev_agent_x) / dt
+        agent_vy = (own_y - self._prev_agent_y) / dt
 
         if self._perception is not None:
             seen, opp_vx, opp_vy = self._camera_read()
@@ -2136,8 +2198,8 @@ class BatchAirHockeyEnv:
             opp_vy = (e.paddle_opp_y - self._prev_opp_y) / dt
 
         # Update previous positions
-        self._prev_agent_x[:] = e.paddle_agent_x
-        self._prev_agent_y[:] = e.paddle_agent_y
+        self._prev_agent_x[:] = own_x
+        self._prev_agent_y[:] = own_y
         self._prev_opp_x[:] = e.paddle_opp_x
         self._prev_opp_y[:] = e.paddle_opp_y
 
@@ -2146,7 +2208,7 @@ class BatchAirHockeyEnv:
         # built. The human side reads above 1.0, which is the point.
         return np.column_stack([
             px, py, pvx, pvy,
-            e.paddle_agent_x, e.paddle_agent_y, agent_vx, agent_vy,
+            own_x, own_y, agent_vx, agent_vy,
             opp_x, opp_y, opp_vx, opp_vy,
             np.full(self.n_envs, self.ROBOT_SIDE),
             self._agent_dyn["max_speed"] / MAX_SPEED_M_S,
