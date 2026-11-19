@@ -720,6 +720,19 @@ difficulty model. Delaying the camera's view does make a full-speed bot
 beatable in sim (+60 / 120 / 200 ms: 80 / 57 / 47% goal share) but is not
 in the runner.
 
+JUDGE THE OFFENSE BY SHOT QUALITY, NOT GOALS PER MINUTE (the user,
+2026-11-19): wanted is a robot that takes the time to control the puck and
+then makes a fast shot on target, consistently, not one that rushes. The
+measures ("Round 6" of the recipe README): share of shots struck from a
+controlled puck (v4.1.2 16%, v4.3.12 26%), first touch to shot (0.6-0.75 s),
+on-target rate (51% / 67%), and controlled fast on-target shots per 100
+possessions (5 / 14). Round 6 / `v4.4.0` (`finetune.py --arm selfplay`):
+80% full games, of them 75% against the learner's own snapshots and 25%
+against the simulated people, no teacher and no fixed older networks, no
+imitation; `--game-shaping-scale 0` makes a game pay goals, the physical
+costs and the anti-stall rules only (drills keep their rewards). Before it,
+self-play was ~4% of all experience.
+
 ## Run names
 The scheme below is for TD-MPC2 runs only.
 `<major>.<minor>-<description>-<stage>` (e.g. `3.3-turnover-selfplay`):

@@ -193,6 +193,9 @@ def build_parser():
     p.add_argument("--readiness-cost-weight", type=float, default=0, help="Per-second cost of exposed defense while the opponent can prepare a shot")
     p.add_argument("--defensive-depth-weight", type=float, default=0, help="Per-second cost of forward positioning while the opponent prepares; training only")
     p.add_argument("--defensive-depth-target", type=float, default=.30, help="No depth cost behind this distance from own goal, meters")
+    p.add_argument("--game-shaping-scale", type=float, default=1.0,
+                   help="Scale of the guidance rewards (shot, capture, request, potentials) in full-game slots; "
+                        "0 = a game pays goals, the physical costs and the anti-stall rules only. Drills unchanged")
     p.add_argument("--roam-weight", type=float, default=0,
                    help="Difficulty models: reward per second for standing forward of --defensive-depth-target while the opponent prepares")
     p.add_argument("--readiness-lateral-uncertainty", type=float, default=0, help="Opponent release-position uncertainty in meters for preparation rewards")
@@ -514,6 +517,7 @@ def environment_options(args, *, shot_conditioned):
         defensive_depth_weight=args.defensive_depth_weight,
         defensive_depth_target=args.defensive_depth_target,
         roam_weight=getattr(args, "roam_weight", 0.0),
+        game_shaping_scale=getattr(args, "game_shaping_scale", 1.0),
         readiness_lateral_uncertainty=args.readiness_lateral_uncertainty,
         defense_windup_lateral_speed=args.defense_windup_lateral_speed,
         defense_windup_bank_fraction=args.defense_windup_bank_fraction,

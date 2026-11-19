@@ -1662,3 +1662,73 @@ Read it this way:
 - Self-play ideas not tried: v4.1.2 as a fixed reference opponent
   (`--opponent-reference`), a league of the v4.3 snapshots.
 - Roaming difficulty models (above).
+
+## Round 6: mostly self-play, a game pays goals and physical costs only (2026-11-19, v4.4.0)
+
+Asked after round 5: push toward self-play that learns from first principles
+rather than being guided, at least half self-play, the reward mostly goals
+for and against plus the physical costs; some simulated people and drills
+may stay. And a correction to how round 5 was judged: goals per minute is
+NOT the measure. Wanted is a robot that takes the time to gain full control
+of the puck and then makes a fast shot on target, every time, instead of
+rushing every shot.
+
+### What training had been (v4.1.2 to v4.3.13)
+
+30% of the slots were full games, 70% drills. Game time by far-end player,
+measured on v4.3.12's run: simulated people 30%, the scripted physics
+teacher 30%, two fixed older networks 26%, the learner's own snapshots 14%.
+So self-play was about 4% of all experience. In a game the learner was paid
+600 a goal and, on top, for shots by speed and aim, the requested route,
+captures, conversions and a setup potential; from round 5 also charged for
+slow exits. The actor was pulled toward the teacher's action on defense
+states (weight 0.2) and toward two imitation anchors on resting pucks.
+
+Two of those terms push toward a quick shot: a rushed shot at a moving puck
+earns the same shot income as a prepared one (`--fallback-shot-scale 1`),
+and a puck that has lain within reach for 1 s costs 40 a second
+(`--dead-puck-weight 40 --dead-puck-grace 1`).
+
+### Shot quality, the measure from here on
+
+From the recorded games against the `table` / `table_plus` people in the
+calibrated sim (three seeds, 32 minutes each). A shot is the puck leaving
+the half at 2 m/s or more within 0.7 s of a touch; "controlled" is the puck
+under 0.5 m/s just before the striking touch; on target is
+`shot_flight.first_goal_crossing` at the centre line.
+
+| | v4.1.2 | v4.3.12 |
+|---|---|---|
+| shots struck from a controlled puck | 16% | 26% |
+| first touch to shot, median | 0.61 s | 0.75 s |
+| shots on target: all / from a controlled puck / at a moving puck | 51% / 53% / 51% | 67% / 78% / 63% |
+| speed of on-target shots, median | 6.0 m/s | 6.2 m/s |
+| per 100 possessions: controlled, on target and 4 m/s or more | 5.1 | 13.9 |
+| per 100 possessions: any on-target shot of 4 m/s or more | 28 | 44 |
+
+The complaint in numbers: three shots in four are struck at a moving puck
+within three quarters of a second of the first touch, and under a soft
+mallet those are the less accurate ones (63% against 78% for v4.3.12).
+
+### Arm `selfplay` (`finetune.py --arm selfplay`)
+
+- 80% of the slots are full games. No fixed older networks and no teacher
+  at the far end: three quarters of the games are against the pool of the
+  learner's own snapshots (6, one added every 50 updates), a quarter against
+  the simulated people. Self-play is 60% of all experience, people 20%.
+- `--game-shaping-scale 0` (new): in a full game the event income (shots,
+  captures, conversions, requests, slow-exit and unproductive-return costs,
+  both seats), the passive-return cost and the setup / control potentials
+  are scaled out. A game pays +-600 a goal, the physical costs (motor load,
+  calm accel, accel duty and effort, reversals, far cap, guard, idle speed,
+  edge dwell, the 12000 shutdown) and the rules that stand in for a referee
+  the table does not have: possession delay after 4 s, turnover, and the
+  dead-puck cost, whose grace goes from 1 s to 3 s.
+- No imitation: teacher weight 0, no resting-puck anchors.
+- The other 20% of the slots are v4.3.12's drills with their own rewards
+  (chase drills, defense that plays on after the block, stationary strikes).
+- From v4.3.12 (its 60M snapshot), in the calibrated soft-mallet sim, 5120
+  envs on 16 workers (655k samples an update), the critic alone for the
+  first 15 updates because the reward under it changed.
+- Not from first principles in the strict sense: it starts from a network
+  that was guided for a billion steps, and the far seat's mallet is rigid.

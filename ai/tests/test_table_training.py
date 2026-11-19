@@ -1169,7 +1169,7 @@ def test_recipe_is_v4s_command_continued_with_the_table_options():
         assert changed == {"run_name", "evaluation_dir", "resume", "initialize_from", "opponent_reference", "minutes",
                            "seed", "value_warmup_updates", "width"}
         assert set(mine) - set(old) == new | round2 | round3 | round4 | {"free_request_share", "body_accel", "roam_weight",
-                                                                         "defense_followthrough_fraction"}
+                                                                         "defense_followthrough_fraction", "game_shaping_scale"}
         assert args.body_accel is None and "--body-accel" not in cmd
 
 
@@ -1336,3 +1336,48 @@ def test_roam_reward_pays_half_on_the_commanded_target():
         action = np.zeros((1, 6)); action[0, 1] = y
         return float(env.step(action)[1][0])
     assert paid(1.0) - paid(-1.0) > .3          # 50 * 0.02 s * half of the full span
+
+
+def test_game_shaping_scale_zero_leaves_a_game_goals_physical_costs_and_rules():
+    """Two identical tables, one with the guidance scaled out of full games:
+    a shot's event income and the setup potential stop reaching the reward,
+    a goal and the drills do not change."""
+    def make(scale):
+        env = NeuralTrainingEnv(4, stage=5, seed=7, realistic=False, randomize=False, game_fraction=.5,
+                                game_goal_weight=600.0, game_shaping_scale=scale)
+        env.reset()
+        return env
+    full, bare = make(1.0), make(0.0)
+    game = full.kind == 3
+    assert game.any() and (~game).any() and (bare.kind == full.kind).all()
+    for env in (full, bare):
+        env.reward_events[0, :] = 0
+    action = np.zeros((4, 6))
+    a, b = full.step(action)[1], bare.step(action)[1]
+    # Guidance present in the full env (the potential moves as the mallet does), none of it in the bare one's games.
+    full2, bare2 = make(1.0), make(0.0)
+    full2._potential[:] += 50.0; bare2._potential[:] += 50.0        # as if the setup potential had just fallen by 50
+    c, d = full2.step(action)[1], bare2.step(action)[1]
+    np.testing.assert_allclose((c - a)[game], -50.0, atol=1.0)
+    np.testing.assert_allclose((d - b)[game], 0.0, atol=1.0)
+    np.testing.assert_allclose((d - b)[~game], -50.0, atol=1.0)       # drills keep their guidance
+    with pytest.raises(ValueError):
+        NeuralTrainingEnv(2, stage=5, game_shaping_scale=1.5)
+
+
+def test_selfplay_arm_is_mostly_self_play_with_bare_games():
+    import importlib.util
+    spec = importlib.util.spec_from_file_location("finetune", REPO / "ai/recipes/table-faithful-20261110/finetune.py")
+    module = importlib.util.module_from_spec(spec); spec.loader.exec_module(module)
+    cmd = module.argv(module.parse(["--arm", "selfplay", "--run-name", "x", "--n-envs", "7680", "--workers", "24"]))
+    value = lambda flag: cmd[len(cmd) - 1 - cmd[::-1].index(flag) + 1]      # the last one wins
+    assert "--opponent-reference" not in cmd and "--opponent-checkpoint" not in cmd
+    assert "--skill-reference" not in cmd and "--teacher-resting-weight" not in cmd
+    assert float(value("--game-fraction")) * (1 - float(value("--human-proxy-share"))) >= 0.5   # self-play share of all slots
+    assert float(value("--game-shaping-scale")) == 0 and float(value("--teacher-weight")) == 0
+    assert float(value("--teacher-opponent-fraction")) == 0 and float(value("--dead-puck-grace")) == 3
+    # The physical costs and the rules are still there.
+    for flag in ("--calm-accel-weight", "--load-weight", "--accel-duty-weight", "--reversal-weight", "--far-cap-weight",
+                 "--guard-weight", "--accel-effort-weight", "--idle-speed-weight", "--dead-puck-weight",
+                 "--possession-delay-weight", "--shutdown-penalty"):
+        assert float(value(flag)) > 0, flag

@@ -103,6 +103,25 @@ ARMS["a4"] = dict(ARMS["a3"], resume=A3, seed=20261115,
 # Difficulty models: a3's recipe from a3, the body limited by --body-accel.
 ARMS["accel"] = dict(ARMS["a3"], resume=A3, seed=20261118)
 
+# Round 6 (2026-11-19, README): mostly self-play, and a game pays goals, the
+# physical costs and the anti-stall rules only. 80% of the slots are full
+# games: three quarters of those against the pool of the learner's own
+# snapshots (no fixed older networks, no teacher at the far end), a quarter
+# against the simulated people. No imitation: teacher weight 0, no resting-puck
+# anchors. The remaining 20% are v4.3.12's drills with their own rewards.
+# A resting puck may lie 3 s before the dead-puck cost runs (1 s before).
+V4312 = "runs/v4.3.12/agent_step_1091305472.pt"
+SOFT_MALLET = 'mallet_compliance={"gain": [0.3, 3.5], "frequency_hz": [8.0, 26.0], "damping": [0.02, 0.15]}'
+ARMS["selfplay"] = dict(
+    ARMS["accel"], resume=V4312, seed=20261140, references=False, game_fraction="0.8", human_proxy_share=0.25,
+    teacher_opponents=0.0, teacher_weights=["0", "0"], teacher_resting=0.0, reference_rail=0.0,
+    game_shaping=0.0, value_warmup=15, dead_puck_grace=3.0,
+    sim_profile="table-20261119", sim_profile_share=1.0, sim_option=ARMS["accel"]["sim_option"] + [SOFT_MALLET],
+    trainer_arg=["--unproductive-return-penalty", "30", "--recovery-min-speed", "0.6", "--recovery-max-speed", "2.4",
+                 "--recovery-fraction", "0.7", "--recovery-persistent-bias", "1.0", "--recovery-capture-bonus", "60",
+                 "--recovery-get-ahead-bonus", "30", "--slow-exit-penalty", "100",
+                 "--defense-followthrough-fraction", "0.5"])
+
 
 def limited_teacher(spec, body_accel):
     """The physics teacher planning with a body limited to `body_accel`:
@@ -117,8 +136,11 @@ def limited_teacher(spec, body_accel):
 def argv(a):
     cmd = [sys.executable, "ai/bin/train_neural_player.py",
            "--run-name", a.run_name, "--evaluation-dir", f"logs/neural-player/table-faithful-20261110/{a.run_name}",
-           "--resume", a.resume, "--opponent-checkpoint", PRODUCTION,
-           "--opponent-reference", PRODUCTION, "--opponent-reference", V4,
+           "--resume", a.resume,
+           # Fixed older networks at the far end of every fourth slot; without
+           # them those slots go to the pool of the learner's own snapshots.
+           *(["--opponent-checkpoint", PRODUCTION, "--opponent-reference", PRODUCTION, "--opponent-reference", V4]
+             if a.references else []),
            "--n-envs", str(a.n_envs), "--workers", str(a.workers), "--rollout", "128", "--epochs", "2", "--minibatch", "2048",
            "--steps", str(a.steps), "--minutes", str(a.minutes), "--save-every", "40000000", "--seed", str(a.seed),
            "--value-lr", "0.0005", "--std-scale", "1.0", "--entropy", "0.0002", "--target-kl", "0.02", "--backtrack-kl",
@@ -158,11 +180,11 @@ def argv(a):
            "--quiet-exploration", "--hot-effort-exploration", "3", "--defense-request-consistency", "1.0",
            "--load-weight", "32", "--load-energy-weight", "1", "--load-holding-weight", "3", "--load-holding-horizon", "15",
            "--skill-replay-weight", "0", "--skill-reference-weight", "0", "--practice-defense-fraction", "0.45",
-           "--game-fraction", "0.3", "--slow-receiving-fraction", "0.65", "--practice-selfplay-fraction", "0",
+           "--game-fraction", a.game_fraction, "--slow-receiving-fraction", "0.65", "--practice-selfplay-fraction", "0",
            # The teacher as v4 had it. --resume keeps the anneal's origin, so
            # these give the final weight 0.2 from the first update.
            "--teacher", limited_teacher(a.teacher, a.body_accel) if a.scale_teacher else a.teacher,
-           "--teacher-weight", "1", "--teacher-weight-final", "0.2",
+           "--teacher-weight", a.teacher_weights[0], "--teacher-weight-final", a.teacher_weights[1],
            "--teacher-anneal-steps", "60000000", "--teacher-mask", "defense", "--teacher-free-guard-accel",
            "--teacher-opponent-fraction", str(a.teacher_opponents),
            "--calm-accel-weight", str(a.calm_accel), "--calm-accel-power", "1.0",
@@ -235,6 +257,11 @@ def argv(a):
         cmd += ["--free-request-share", str(a.free_request)]
     if a.body_accel is not None:
         cmd += ["--body-accel", str(a.body_accel)]
+    # Round 6: each absent at its earlier-arm default.
+    if a.game_shaping != 1:
+        cmd += ["--game-shaping-scale", str(a.game_shaping)]
+    if a.value_warmup:
+        cmd += ["--value-warmup-updates", str(a.value_warmup)]
     cmd += list(getattr(a, 'trainer_arg', None) or [])
     return cmd
 
@@ -315,6 +342,16 @@ def build_parser():
     p.add_argument("--body-accel", type=float, help="Limit the learner's body to this many m/s^2 (difficulty models)")
     p.add_argument("--scale-teacher", action=argparse.BooleanOptionalAction, default=True,
                    help="With --body-accel: the teacher plans with the same limit")
+    # Round 6. Defaults are the earlier arms; --arm selfplay sets them.
+    p.add_argument("--references", action=argparse.BooleanOptionalAction, default=True,
+                   help="Fixed older networks (v0.1.0, v4.0.0) at the far end of every fourth slot")
+    p.add_argument("--game-fraction", default="0.3", help="Share of the slots that are full games; the rest are drills")
+    p.add_argument("--teacher-weights", nargs=2, default=["1", "0.2"], metavar=("START", "FINAL"),
+                   help="Weight of the physics teacher's action on defense states (imitation)")
+    p.add_argument("--game-shaping", type=float, default=1.0,
+                   help="Scale of the guidance rewards in full games; 0 = goals, physical costs and anti-stall rules only")
+    p.add_argument("--value-warmup", type=int, default=0,
+                   help="First updates that fit the critic only (use when the reward changes under a resumed critic)")
     p.add_argument("--n-envs", type=int, default=2048, help="128 per worker keeps the slot layout")
     p.add_argument("--workers", type=int, default=16)
     p.add_argument("--device", default="cuda")

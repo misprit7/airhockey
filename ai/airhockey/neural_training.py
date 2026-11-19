@@ -201,6 +201,7 @@ class NeuralTrainingEnv(ArrivalEnv):
         defensive_depth_weight=0.0,
         defensive_depth_target=.30,
         roam_weight=0.0,
+        game_shaping_scale=1.0,
         possession_delay_weight=0.0,
         calm_accel_weight=0.0,
         calm_speed=1.5,
@@ -333,6 +334,16 @@ class NeuralTrainingEnv(ArrivalEnv):
         if not np.isfinite(roam_weight) or roam_weight < 0:
             raise ValueError("roam_weight must be finite and non-negative")
         self.roam_weight = float(roam_weight)
+        # Scale of the GUIDANCE in full-game slots: the event income (shots,
+        # captures, conversions, requests, slow-exit and unproductive-return
+        # costs, both seats), the passive-return cost and the setup / control
+        # potentials. 0 leaves a game paying goals, the physical costs (load,
+        # calm accel, accel duty and effort, reversals, far cap, guard, idle
+        # speed, edge dwell, shutdown) and the rules that stand in for a
+        # referee (dead puck, possession delay, turnover). Drills keep theirs.
+        if not np.isfinite(game_shaping_scale) or not 0 <= game_shaping_scale <= 1:
+            raise ValueError("game_shaping_scale must be in [0,1]")
+        self.game_shaping_scale = float(game_shaping_scale)
         self.goals_only = bool(goals_only)
         games = games or self.goals_only
         continuous_rallies = continuous_rallies or self.goals_only
@@ -2156,8 +2167,9 @@ class NeuralTrainingEnv(ArrivalEnv):
             # their strikes judged against a request they never saw moved
             # the learner's reward by 16 a second either way. Goals stand.
             far_income[self._people_game & (b._opp_policy_id == _OPP_POLICY_MAP["human_proxy"])] = 0
-        reward = reward + self.reward_events[0] - far_income - 0.005
-        reward -= 0.5 * passive
+        shaping = np.where(game, self.game_shaping_scale, 1.0)
+        reward = reward + shaping * (self.reward_events[0] - far_income) - 0.005
+        reward -= 0.5 * passive * shaping
         reward += 0.5 * info["penalty"]
         reward += (25 - self.turnover_weight) * (self.turnovers[0] - previous_turnovers)
         reward -= self.load_weight * self.load_cost
@@ -2372,7 +2384,7 @@ class NeuralTrainingEnv(ArrivalEnv):
             reward[shutdown] -= self.shutdown_penalty
             self._shutdown_reset |= shutdown
         after = self.potential()
-        reward += self.discount * np.where(terminal, 0, after) - self._potential
+        reward += shaping * (self.discount * np.where(terminal, 0, after) - self._potential)
         self._potential = after
         if self.goals_only:
             # Deliberately bypass ALL shaping, including hard-coded time,
