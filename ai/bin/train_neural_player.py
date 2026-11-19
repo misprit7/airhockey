@@ -196,6 +196,9 @@ def build_parser():
     p.add_argument("--game-shaping-scale", type=float, default=1.0,
                    help="Scale of the guidance rewards (shot, capture, request, potentials) in full-game slots; "
                         "0 = a game pays goals, the physical costs and the anti-stall rules only. Drills unchanged")
+    p.add_argument("--game-prepared-shot-weight", type=float, default=0.0,
+                   help="Full games only, the learner only, not scaled by --game-shaping-scale: this much for an on-target "
+                        "shot struck from a captured puck, times a speed ramp from 0 at 2 m/s to 1 at 6 m/s. 0 = off")
     p.add_argument("--selfplay-lift", action=argparse.BooleanOptionalAction, default=True,
                    help="--no-selfplay-lift: the learner's mallet does not lift in full games against a neural far side "
                         "(it still does against people and in drills); with mallet_lift far_body=false that makes "
@@ -522,6 +525,7 @@ def environment_options(args, *, shot_conditioned):
         defensive_depth_target=args.defensive_depth_target,
         roam_weight=getattr(args, "roam_weight", 0.0),
         game_shaping_scale=getattr(args, "game_shaping_scale", 1.0),
+        game_prepared_shot_weight=getattr(args, "game_prepared_shot_weight", 0.0),
         selfplay_lift=getattr(args, "selfplay_lift", True),
         readiness_lateral_uncertainty=args.readiness_lateral_uncertainty,
         defense_windup_lateral_speed=args.defense_windup_lateral_speed,

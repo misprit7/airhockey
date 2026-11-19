@@ -116,6 +116,10 @@
     "v4.4.1": {
       "run": "v4.4.1", "file": "agent_step_1255145472.pt", "date": "2026-11-19", "accel": 100, "parent": "v4.4.0",
       "summary": "The self-play arm with equal ends. The file is its 101M-step snapshot: about v4.3.12, with fewer pucks given away. Later snapshots aim at the edge of the sim's goal, which had no posts; do not use them. Sim only."
+    },
+    "v4.4.2": {
+      "run": "v4.4.2", "file": "agent_step_1356070912.pt", "date": "2026-11-19", "accel": 100, "parent": "v4.4.1",
+      "summary": "The self-play arm continued from v4.4.1 in the sim with goal posts. The file is its 101M-step snapshot: the same play as v4.4.1 within the evaluation's noise. The aim held to 150M steps and moved out again after; later snapshots are no better. Sim only."
     }
   }
 }

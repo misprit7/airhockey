@@ -1170,7 +1170,7 @@ def test_recipe_is_v4s_command_continued_with_the_table_options():
                            "seed", "value_warmup_updates", "width"}
         assert set(mine) - set(old) == new | round2 | round3 | round4 | {"free_request_share", "body_accel", "roam_weight",
                                                                          "defense_followthrough_fraction", "game_shaping_scale",
-                                                                         "selfplay_lift"}
+                                                                         "selfplay_lift", "game_prepared_shot_weight"}
         assert args.body_accel is None and "--body-accel" not in cmd
 
 
@@ -1364,6 +1364,43 @@ def test_game_shaping_scale_zero_leaves_a_game_goals_physical_costs_and_rules():
     np.testing.assert_allclose((d - b)[~game], -50.0, atol=1.0)       # drills keep their guidance
     with pytest.raises(ValueError):
         NeuralTrainingEnv(2, stage=5, game_shaping_scale=1.5)
+
+
+def test_game_prepared_shot_payment_is_for_a_captured_fast_on_target_shot_in_a_game():
+    def struck(velocity, *, captured, weight=100.0, incoming=0.3, side="agent"):
+        env = NeuralTrainingEnv(1, stage=5, shot_conditioned=True, capture_first=True, randomize=False, realistic=False,
+                                game_shaping_scale=0.0, game_prepared_shot_weight=weight)
+        env.reset()
+        env.engine.puck_x[:] = env.engine.puck_y[:] = .5
+        env.captured[:] = captured
+        env._contact(dict(body=side, indices=np.array([0]), incoming=np.array([[0., -incoming]]),
+                          outgoing_before_speed_cap=np.array([velocity], dtype=float)))
+        return float(env.prepared_events[0])
+    assert struck([0, 8], captured=True) == 100.0
+    assert struck([0, 4], captured=True) == 50.0                 # the speed ramp: 0 at 2 m/s, all of it at 6
+    assert struck([0, 2], captured=True) == 0.0
+    assert struck([0, 8], captured=False, incoming=3) == 0.0     # struck moving
+    assert struck([2, 8], captured=True) == 0.0                  # wide
+    assert struck([0, 8], captured=True, weight=0.0) == 0.0
+    assert struck([0, -8], captured=True, side="opponent") == 0.0    # the far side's shots are not the learner's income
+
+    # It reaches the reward of a full game, guidance scaled out or not, and no drill's.
+    def make(weight):
+        env = NeuralTrainingEnv(4, stage=5, seed=7, realistic=False, randomize=False, game_fraction=.5,
+                                game_goal_weight=600.0, game_shaping_scale=0.0, game_prepared_shot_weight=weight)
+        env.reset()
+        return env
+    plain, paying = make(0.0), make(100.0)
+    game = paying.kind == 3
+    assert game.any() and (~game).any()
+    paying.prepared_events[:] = 100.0
+    action = np.zeros((4, 6))
+    a, b = plain.step(action)[1], paying.step(action)[1]
+    np.testing.assert_allclose((b - a)[game], 100.0, atol=1e-3)
+    np.testing.assert_allclose((b - a)[~game], 0.0, atol=1e-3)
+    assert not paying.prepared_events.any()                       # paid once
+    with pytest.raises(ValueError):
+        NeuralTrainingEnv(2, stage=5, game_prepared_shot_weight=-1.0)
 
 
 def test_selfplay_arm_is_mostly_self_play_with_bare_games():

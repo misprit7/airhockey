@@ -59,6 +59,7 @@ symlink under `runs/`).
 | `v4.3.13` | - | v4.3.12 | 100 | v4.3.12 continued with six times the batch. Equal to it on two seeds; gates not run. Sim only. |
 | `v4.4.0` | - | v4.3.12 | 100 | First launch of the self-play arm (a game pays goals and physical costs only). Ends not equal; not for use. Sim only. |
 | `v4.4.1` | - | v4.4.0 | 100 | The self-play arm with equal ends (its 101M-step snapshot). About v4.3.12, fewer pucks given away; later snapshots aim at the edge of a goal that had no posts. Sim only. |
+| `v4.4.2` | - | v4.4.1 | 100 | The self-play arm continued in the sim with goal posts (its 101M-step snapshot). Same play as v4.4.1 within noise; the aim held to 150M steps and moved out again after. Sim only. |
 
 Majors 1 to 4 keep the numbers the packaged models already had (v1 to v4);
 only v1 was an architectural change. From here on a major means what the

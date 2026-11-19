@@ -202,6 +202,7 @@ class NeuralTrainingEnv(ArrivalEnv):
         defensive_depth_target=.30,
         roam_weight=0.0,
         game_shaping_scale=1.0,
+        game_prepared_shot_weight=0.0,
         selfplay_lift=True,
         possession_delay_weight=0.0,
         calm_accel_weight=0.0,
@@ -346,6 +347,15 @@ class NeuralTrainingEnv(ArrivalEnv):
         if not np.isfinite(game_shaping_scale) or not 0 <= game_shaping_scale <= 1:
             raise ValueError("game_shaping_scale must be in [0,1]")
         self.game_shaping_scale = float(game_shaping_scale)
+        # One payment that does not go through game_shaping_scale, in
+        # full-game slots only and for the learner only: this much for a shot
+        # the learner strikes from a CAPTURED puck (slower than
+        # capture_max_speed at its mallet for capture_duration, and not let go
+        # since) that is on target, times a speed ramp from 0 at 2 m/s to 1
+        # at 6 m/s. A shot at a moving puck earns none of it. 0 = off.
+        if not np.isfinite(game_prepared_shot_weight) or game_prepared_shot_weight < 0:
+            raise ValueError("game_prepared_shot_weight must be non-negative")
+        self.game_prepared_shot_weight = float(game_prepared_shot_weight)
         # False: the learner's mallet does not lift in a full game against a
         # NEURAL far side (it still does against people and in drills). With
         # mallet_lift far_body=False, as every arm since a2 has it, only the
@@ -811,6 +821,7 @@ class NeuralTrainingEnv(ArrivalEnv):
         self.control_time = np.zeros((2, n_envs))
         self.contact_clock = np.full((2, n_envs), -100.0)
         self.reward_events = np.zeros((2, n_envs))
+        self.prepared_events = np.zeros(n_envs)     # game_prepared_shot_weight income, paid at the next reward
         self.guard_changed = np.zeros((2, n_envs), int)
         self.guard_unresolved = np.zeros((2, n_envs), int)
         self.peak_load = np.zeros((2, n_envs))
@@ -1082,6 +1093,8 @@ class NeuralTrainingEnv(ArrivalEnv):
         self.reward_events[side, ids] += shot * reward
         converted = shot & aimed & self.captured[side, ids]
         self.convert_count[side, ids] += converted
+        if self.game_prepared_shot_weight and side == 0:
+            self.prepared_events[ids] += self.game_prepared_shot_weight * converted * np.clip((speed - 2) / 4, 0, 1)
         quality = (
             1 - self.conversion_speed_weight
         ) + self.conversion_speed_weight * np.clip(
@@ -1858,6 +1871,7 @@ class NeuralTrainingEnv(ArrivalEnv):
         self._pocket_inside[ids] = self._in_corner_pocket()[ids]
         self._pocket_owned[ids] = self._pocket_counted[ids] = False
         self._scoring_shot[ids] = -1
+        self.prepared_events[ids] = 0
         for value in (
             self.touch_count,
             self.shot_count,
@@ -2181,6 +2195,8 @@ class NeuralTrainingEnv(ArrivalEnv):
             far_income[self._people_game & (b._opp_policy_id == _OPP_POLICY_MAP["human_proxy"])] = 0
         shaping = np.where(game, self.game_shaping_scale, 1.0)
         reward = reward + shaping * (self.reward_events[0] - far_income) - 0.005
+        reward += game * self.prepared_events
+        self.prepared_events[:] = 0
         reward -= 0.5 * passive * shaping
         reward += 0.5 * info["penalty"]
         reward += (25 - self.turnover_weight) * (self.turnovers[0] - previous_turnovers)
