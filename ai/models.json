@@ -135,7 +135,7 @@
     },
     "v4.4.6": {
       "run": "v4.4.6", "file": "agent_step_1860698112.pt", "date": "2026-11-19", "accel": 100, "parent": "v4.4.5",
-      "summary": "v4.4.5 continued with the learner's mallet lift on in every game (--selfplay-lift), 202M steps (the file). 37-43% of shots from a controlled puck, 72-73% on target, 28-31 prepared fast on-target shots per 100 possessions (v4.3.12 12), concedes 0.22 a minute to the simulated people (v4.1.2 0.32), level with v4.1.2 head to head. NOT FOR THE TABLE: it hovers behind a puck lying at the front edge of its reach (4-5% of resting pucks left, v4.3.12 0.4%) and 3 of 256 rigid-sim games reached the load shutdown level. Sim only."
+      "summary": "v4.4.5 continued with the learner's mallet lift on in every game (--selfplay-lift), 202M steps (the file). 37-43% of shots from a controlled puck, 72-73% on target, 28-31 prepared fast on-target shots per 100 possessions (v4.3.12 12), concedes 0.22 a minute to the simulated people (v4.1.2 0.32), level with v4.1.2 head to head. NOT FOR THE TABLE: it hovers behind a puck lying at the front edge of its reach (4-5% of resting pucks left, v4.3.12 0.4%), dithering there until the load reaches the shutdown level (3 of 256 rigid-sim games). Sim only."
     },
     "v4.4.7": {
       "run": "v4.4.7", "date": "2026-11-19", "accel": 100, "parent": "v4.4.6",

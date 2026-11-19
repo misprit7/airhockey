@@ -2084,8 +2084,11 @@ TWO THINGS KEEP IT OFF THE TABLE:
 - Load. 3 of 256 games in the RIGID sim reach the 0.95 shutdown level at
   each snapshot, for 14-18 s each (v4.1.2 1 of 128; v4.3.12, v4.4.2, v4.4.5
   none), though the typical game peaks lower than v4.1.2's (0.76-0.78
-  against 0.80). None of 256 in the soft-mallet sim it trained in. Not yet
-  traced; the dithering above is a candidate.
+  against 0.80). None of 256 in the soft-mallet sim it trained in. It is
+  the same thing: every one of those games ended 0-0 or 1-0 where the mean
+  is 5.5 goals a game, i.e. a puck lay all minute and the mallet dithered
+  behind it (the evaluator's `reachable_stall_seconds`: 58-126 s per 64
+  games, v4.1.2 44-53 s). v4.1.2's one such game is the same.
 
 `v4.4.7` = v4.4.6 from its 202M snapshot plus `--reach-edge-drill-fraction
 0.3` (30% of the stationary drills: a puck at rest in the last 50 mm of
