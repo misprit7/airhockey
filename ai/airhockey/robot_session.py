@@ -1,28 +1,39 @@
 """What the web UI's Robot tab can start on the table: slack take-up and the AI.
 
+CDPR_MASTER    The bridge to the drives and the Teensy. Nobody has to start
+               it by hand: take-up and manual control start it when it is not
+               running (``ensure_master``: build if stale, launch detached,
+               wait for its port), and it then stays up, idle and with the
+               drives de-energized, until "Stop cdpr_master" or a reboot. It
+               holds the SC-Hub USB port, so ``activate`` and ``drive_gains``
+               need it stopped.
 SLACK TAKE-UP  cdpr_master's ``TAKEUP``: the drives energize, each cable is
-               wound in one motor step (0.38 mm) at a time until its own drive's current says
-               the cable pulls back, and the drives de-energize. Needs a
-               running master and nobody else holding it.
+               wound in one motor step (0.38 mm) at a time until its own
+               drive's current says the cable pulls back, and the drives
+               de-energize.
 THE AI         ``ai/bin/play.sh`` as a child process, exactly the command a
                terminal would run: it starts cdpr_master if none is running
                (``--use-running-master`` otherwise), and the runner it launches
                takes up slack, measures the mallet with the camera, enables and
                plays. Stop is the same SIGINT that Ctrl-C sends: the runner
                brakes and exits, then the launcher stops a master it started.
+               On a master that was already running the runner leaves the
+               drives holding, so this module sends DISABLE when the session
+               ends: the AI stopping always de-energizes the drives.
 
 One at a time, and never while a browser tab holds the hardware for manual
 control (the master serves one client). Nothing here runs unless a person
 presses the button: the server only calls ``start_*`` from a POST.
 
 The AI's output goes to ``logs/ai_session.log`` and its pid to
-``logs/ai_session.json``, so a restarted web server still finds, shows and can
-stop a session it did not start.
+``logs/ai_session.json`` (the master's to ``logs/ui_master.json``), so a
+restarted web server still finds, shows and can stop what it did not start.
 """
 from __future__ import annotations
 
 import json
 import os
+import shutil
 import signal
 import socket
 import subprocess
@@ -80,13 +91,40 @@ def _alive(pid: int, marker: str = "play.sh") -> bool:
     return marker in cmdline
 
 
+def _launch_master(root: Path) -> subprocess.Popen:
+    """Build cdpr_master if its sources changed, then start it detached.
+
+    The same two steps as ai/bin/play.sh: `make -C sw build/cdpr_master`, and
+    realtime priority when the account may ask for it. Launching energizes
+    nothing; the drives stay off until ENABLE or TAKEUP.
+    """
+    build = subprocess.run(["make", "-C", "sw", "build/cdpr_master"], cwd=root, capture_output=True,
+                           text=True, timeout=600)
+    if build.returncode != 0:
+        tail = "\n".join((build.stdout + build.stderr).strip().splitlines()[-6:])
+        raise RuntimeError(f"The motor controller (cdpr_master) did not build:\n{tail}")
+    command = [str(root / "sw" / "build" / "cdpr_master")]
+    if shutil.which("chrt") and subprocess.run(["chrt", "-f", "40", "true"], capture_output=True).returncode == 0:
+        command = ["chrt", "-f", "40", *command]
+    # It writes logs/cdpr_master.log itself; stdout would only duplicate it.
+    return subprocess.Popen(command, cwd=root, stdin=subprocess.DEVNULL, stdout=subprocess.DEVNULL,
+                            stderr=subprocess.DEVNULL, start_new_session=True)
+
+
 class RobotSession:
-    def __init__(self, root: Path = ROOT, client_factory=None, master_running=master_listening):
+    MASTER_START_TIMEOUT_S = 25.0
+
+    def __init__(self, root: Path = ROOT, client_factory=None, master_running=master_listening,
+                 master_launcher=_launch_master):
         self.root = Path(root)
         self.log_path = self.root / "logs" / "ai_session.log"
         self.state_path = self.root / "logs" / "ai_session.json"
+        self.master_state_path = self.root / "logs" / "ui_master.json"
         self._client_factory = client_factory
         self._master_running = master_running
+        self._master_launcher = master_launcher
+        self._master_lock = threading.Lock()
+        self._master_proc: subprocess.Popen | None = None
         self._lock = threading.Lock()
         # Browser tabs currently holding the master for manual control.
         self.hardware_ui = 0
@@ -95,6 +133,90 @@ class RobotSession:
         self._proc: subprocess.Popen | None = None
         self._ai = self._load_state()
         self._marker = "play.sh"
+        if self.ai_running():        # adopted from before a web-server restart
+            self._watch_ai()
+
+    # ── cdpr_master ──────────────────────────────────────────────────────
+
+    def _master_pid(self) -> int | None:
+        """pid of a master THIS UI started and that is still running."""
+        if self._master_proc is not None:
+            return self._master_proc.pid if self._master_proc.poll() is None else None
+        try:
+            pid = json.loads(self.master_state_path.read_text()).get("pid")
+        except (OSError, ValueError, AttributeError):
+            return None
+        return pid if isinstance(pid, int) and _alive(pid, "cdpr_master") else None
+
+    def ensure_master(self) -> bool:
+        """Start cdpr_master unless one is listening. True if this started it.
+
+        Blocks for the build check and until the port answers (seconds), so
+        call it off the event loop. Raises RuntimeError with the master's own
+        last log lines when it exits instead of listening -- usually no Teensy
+        on USB, or the drives' supply is off.
+        """
+        with self._master_lock:
+            if self._master_running():
+                return False
+            proc = self._master_launcher(self.root)
+            self._master_proc = proc
+            try:
+                self.master_state_path.parent.mkdir(parents=True, exist_ok=True)
+                self.master_state_path.write_text(json.dumps(dict(pid=proc.pid, started=time.time())))
+            except OSError:
+                pass
+            deadline = time.time() + self.MASTER_START_TIMEOUT_S
+            while time.time() < deadline:
+                if self._master_running():
+                    return True
+                if proc.poll() is not None:
+                    break
+                time.sleep(0.1)
+            if proc.poll() is None:
+                proc.send_signal(signal.SIGINT)
+            raise RuntimeError("The motor controller (cdpr_master) did not start"
+                               + (f" (exit code {proc.returncode})" if proc.poll() is not None else " in time")
+                               + ". Are the motors powered and the Teensy plugged in? Its log ends:\n"
+                               + self._master_log_tail())
+
+    def _master_log_tail(self, lines: int = 6) -> str:
+        try:
+            text = (self.root / "logs" / "cdpr_master.log").read_text(errors="replace")
+        except OSError:
+            return "(no logs/cdpr_master.log)"
+        return "\n".join([line.rstrip() for line in text.splitlines() if line.strip()][-lines:])
+
+    def stop_master(self) -> None:
+        """Stop a master this UI started, once nothing is using it. Its clean
+        exit de-energizes the drives; a copy of its log is kept, as play.sh does."""
+        with self._lock:
+            self._refuse_if_busy("stop cdpr_master")
+        with self._master_lock:
+            pid = self._master_pid()
+            if pid is None:
+                raise RuntimeError("The motor controller was not started from this page; "
+                                   "stop it where it was started.")
+            for _ in range(2):          # the second SIGINT is the master's own forced exit
+                try:
+                    os.kill(pid, signal.SIGINT)
+                except ProcessLookupError:
+                    break
+                deadline = time.time() + 6.0
+                while time.time() < deadline and _alive(pid, "cdpr_master"):
+                    if self._master_proc is not None:
+                        self._master_proc.poll()
+                    time.sleep(0.1)
+                if not _alive(pid, "cdpr_master"):
+                    break
+            self._master_proc = None
+            log = self.root / "logs" / "cdpr_master.log"
+            try:
+                self.master_state_path.unlink(missing_ok=True)
+                if log.is_file():
+                    shutil.copy(log, log.with_name(f"cdpr_master-{time.strftime('%Y%m%d-%H%M%S')}.log"))
+            except OSError:
+                pass
 
     # ── slack take-up ────────────────────────────────────────────────────
 
@@ -107,16 +229,19 @@ class RobotSession:
     def start_takeup(self) -> None:
         with self._lock:
             self._refuse_if_busy("take up slack")
-            if not self._master_running():
-                raise RuntimeError("cdpr_master is not running. Start it (sw/build/cdpr_master), "
-                                   "or press Start AI, which starts it and takes up slack itself.")
-            self._takeup = dict(state="running", started=time.time())
+            self._takeup = dict(state="running", started=time.time(),
+                                phase="taking up slack" if self._master_running() else "starting cdpr_master")
             client = self._takeup_client = self._client()
         threading.Thread(target=self._run_takeup, args=(client,), daemon=True).start()
 
     def _run_takeup(self, client) -> None:
         stopped = False
         try:
+            self.ensure_master()
+            with self._lock:
+                if self._takeup.get("stopping"):
+                    raise RuntimeError("stopped before it began")
+                self._takeup["phase"] = "taking up slack"
             client.connect()
             result = client.take_up_slack()
             outcome = dict(state="done", result=result)
@@ -203,6 +328,42 @@ class RobotSession:
                             model=modes[difficulty]["model"], accel=modes[difficulty]["accel"],
                             tension_mm=tension_mm, command=command, own_master=not running)
             self.state_path.write_text(json.dumps(self._ai))
+        self._watch_ai()
+
+    def _watch_ai(self) -> None:
+        """When the session ends on a master it did not start, de-energize.
+
+        play.sh stops a master it started, which turns the drives off. On a
+        master that was already running the runner brakes and disconnects with
+        the drives still holding (by design, for a terminal user who goes on
+        working); from a Stop button that would leave the motors energized
+        with nobody at the controls.
+        """
+        def watch():
+            while self.ai_running():
+                time.sleep(0.25)
+            with self._lock:
+                needed = not self._ai.get("own_master") and not self._ai.get("disabled")
+                self._ai["disabled"] = True
+            if needed and self._master_running():
+                client = self._client()
+                try:
+                    client.connect()
+                    client.disable()
+                    note = "drives disabled"
+                except Exception as e:      # noqa: BLE001
+                    note = f"COULD NOT DISABLE THE DRIVES ({e}); check cdpr_master"
+                finally:
+                    try:
+                        client.close()
+                    except Exception:       # noqa: BLE001
+                        pass
+                try:
+                    with open(self.log_path, "a") as log:
+                        log.write(f"[web UI] session ended on a running cdpr_master: {note}\n")
+                except OSError:
+                    pass
+        threading.Thread(target=watch, daemon=True).start()
 
     def stop_ai(self) -> None:
         """What Ctrl-C does in a terminal: SIGINT to the launcher's process
@@ -243,7 +404,8 @@ class RobotSession:
                 ai["state"] = "idle"
             takeup = {k: v for k, v in self._takeup.items() if k != "stopping"}
             hardware_ui = self.hardware_ui
-        return dict(master=self._master_running(), hardware_ui=hardware_ui, takeup=takeup, ai=ai,
+        return dict(master=self._master_running(), master_owned=self._master_pid() is not None,
+                    hardware_ui=hardware_ui, takeup=takeup, ai=ai,
                     log=self._log_tail() if ai["state"] != "idle" else [],
                     log_path=str(self.log_path.relative_to(self.root)))
 

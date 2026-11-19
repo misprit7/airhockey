@@ -736,7 +736,7 @@ document.getElementById("btn-hardware").addEventListener("click", () => {
     hardwareRequest = enabling;
     button.disabled = true;
     button.textContent = hardwareRequest ? "Hardware: Enabling…" : "Hardware: Disabling…";
-    error.textContent = hardwareRequest ? "Measuring paddle pose and enabling hardware…" : "Disabling hardware…";
+    error.textContent = hardwareRequest ? "Starting the motor controller if needed, measuring the mallet and enabling the drives…" : "Disabling hardware…";
     error.classList.remove("hidden");
     ws.send(JSON.stringify({ type: "toggle_hardware", tension_mm: Number(startupTension.value) }));
 });

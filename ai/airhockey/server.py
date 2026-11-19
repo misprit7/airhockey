@@ -112,6 +112,12 @@ async def robot_takeup_stop():
     return await asyncio.to_thread(_robot_action, ROBOT.stop_takeup)
 
 
+@app.post("/api/robot/master/stop")
+async def robot_master_stop():
+    """Shut down a motor controller this UI started (drives de-energize)."""
+    return await asyncio.to_thread(_robot_action, ROBOT.stop_master)
+
+
 @app.post("/api/robot/ai/start")
 async def robot_ai_start(body: dict):
     if body.get("confirm") is not True:
@@ -428,6 +434,10 @@ async def live_game(ws: WebSocket):
                                     raise RuntimeError("the AI is running; stop it first")
                                 if ROBOT.status()["takeup"].get("state") == "running":
                                     raise RuntimeError("slack take-up is running; wait for it")
+                                # Nobody has to start the motor controller by
+                                # hand: launch it if it is not running.
+                                # Launching energizes nothing.
+                                await asyncio.to_thread(ROBOT.ensure_master)
                                 tension_mm = float(msg.get('tension_mm', 1.5))
                                 if not math.isfinite(tension_mm) or not 0 <= tension_mm <= 6:
                                     raise ValueError('Startup pretension must be between 0 and 6 mm')

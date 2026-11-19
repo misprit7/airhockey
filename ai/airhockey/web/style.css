@@ -1115,3 +1115,4 @@ canvas {
     color: var(--ink-4);
     overflow-wrap: anywhere;
 }
+.panel-note.bad { color: var(--amber); }

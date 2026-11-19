@@ -30,6 +30,9 @@ class FakeClient:
     def set_startup_tension(self, mm):
         self.log.append(("tension", mm))
 
+    def disable(self):
+        self.log.append("disable")
+
     def abort(self):
         self.log.append("abort")
         self.release.set()
@@ -38,9 +41,33 @@ class FakeClient:
         self.log.append("close")
 
 
-def session(tmp_path, log, master=True, takeup=None):
+class FakeMaster:
+    """Stands in for the cdpr_master process: 'listening' once launched."""
+
+    def __init__(self, log, comes_up=True):
+        self.log, self.comes_up, self.listening, self.pid = log, comes_up, False, 4_000_000
+
+    def launch(self, root):
+        self.log.append("launch master")
+        self.listening = self.comes_up
+        (root / "logs").mkdir(exist_ok=True)
+        (root / "logs" / "cdpr_master.log").write_text("=== CDPR Master ===\nERROR: No Teensy found (no /dev/ttyACM* device)\n")
+        return self
+
+    def poll(self):
+        return None if self.comes_up else 1
+
+    returncode = 1
+
+    def send_signal(self, sig):
+        self.log.append("signal master")
+
+
+def session(tmp_path, log, master=True, takeup=None, fake_master=None):
+    fake_master = fake_master or FakeMaster(log)
     s = RobotSession(root=tmp_path, client_factory=lambda: FakeClient(log, takeup),
-                     master_running=lambda: master)
+                     master_running=lambda: master or fake_master.listening,
+                     master_launcher=fake_master.launch)
     return s
 
 
@@ -62,15 +89,73 @@ def test_takeup_reports_what_each_cable_wound_in(tmp_path):
     assert log == ["connect", "takeup", "close"]
 
 
-def test_takeup_needs_a_master_and_a_free_robot(tmp_path):
+def test_takeup_starts_the_motor_controller_itself(tmp_path):
+    """Nobody runs cdpr_master by hand: a button that needs it launches it."""
     log = []
-    with pytest.raises(RuntimeError, match="cdpr_master is not running"):
-        session(tmp_path, log, master=False).start_takeup()
+    s = session(tmp_path, log, master=False)
+    assert s.status()["master"] is False
+    s.start_takeup()
+    assert wait_for(lambda: s.status()["takeup"]["state"] == "done")
+    assert log == ["launch master", "connect", "takeup", "close"]
+    assert s.status()["master"] is True
+    # Already running: used as it is, never launched twice.
+    log.clear()
+    s.start_takeup()
+    assert wait_for(lambda: s.status()["takeup"]["state"] == "done")
+    assert log == ["connect", "takeup", "close"]
+    assert s.ensure_master() is False
+
+
+def test_a_controller_that_will_not_start_says_why(tmp_path):
+    log = []
+    s = session(tmp_path, log, master=False, fake_master=FakeMaster(log, comes_up=False))
+    s.start_takeup()
+    assert wait_for(lambda: s.status()["takeup"]["state"] == "error")
+    message = s.status()["takeup"]["message"]
+    assert "did not start (exit code 1)" in message and "No Teensy found" in message
+    assert "connect" not in log and "takeup" not in log
+
+
+def test_takeup_needs_a_free_robot(tmp_path):
+    log = []
     s = session(tmp_path, log)
     s.hardware_ui = 1
     with pytest.raises(RuntimeError, match="Manual control is on"):
         s.start_takeup()
+    with pytest.raises(RuntimeError, match="Manual control is on"):
+        s.stop_master()
     assert log == []
+
+
+def test_only_a_controller_started_here_is_shut_down_from_here(tmp_path):
+    import subprocess
+    log = []
+    s = session(tmp_path, log, master=True)
+    assert s.status()["master_owned"] is False
+    with pytest.raises(RuntimeError, match="not started from this page"):
+        s.stop_master()
+    # A real child whose command line says cdpr_master, stopped by SIGINT.
+    child = ("import signal, sys, time\n"
+             "signal.signal(signal.SIGINT, lambda *a: sys.exit(0))\n"
+             "time.sleep(30)  # cdpr_master\n")
+    listening = []
+
+    def launch(root):
+        proc = subprocess.Popen([sys.executable, "-c", child], start_new_session=True)
+        listening.append(proc)
+        return proc
+    (tmp_path / "logs").mkdir(exist_ok=True)
+    (tmp_path / "logs" / "cdpr_master.log").write_text("Listening on localhost:8421\n")
+    s = RobotSession(root=tmp_path, client_factory=lambda: FakeClient(log),
+                     master_running=lambda: bool(listening) and listening[0].poll() is None,
+                     master_launcher=launch)
+    assert s.ensure_master() is True and s.status()["master_owned"] is True
+    # A restarted web server still knows it is its own.
+    assert RobotSession(root=tmp_path, master_running=lambda: True).status()["master_owned"] is True
+    time.sleep(0.3)             # let the child install its handler
+    s.stop_master()
+    assert listening[0].poll() == 0 and s.status()["master"] is False and s.status()["master_owned"] is False
+    assert list((tmp_path / "logs").glob("cdpr_master-*.log"))
 
 
 def test_takeup_error_and_stop_are_shown_not_raised(tmp_path):
@@ -140,9 +225,13 @@ def test_ai_on_a_running_master_sets_its_pretension_and_keeps_it(tmp_path, monke
         RobotSession._command(s, d, t, running)) or [sys.executable, "-c", "pass"])
     s.start_ai("max", 1.5)
     assert seen == [["bash", "ai/bin/play.sh", "--difficulty", "max", "--tension", "1.5", "--use-running-master"]]
-    assert log == ["connect", ("tension", 1.5), "close"]
+    assert log[:3] == ["connect", ("tension", 1.5), "close"]
     assert json.loads((tmp_path / "logs" / "ai_session.json").read_text())["own_master"] is False
     assert wait_for(lambda: s.status()["ai"]["state"] == "exited")
+    # The runner leaves a master it did not start with the drives holding;
+    # the session ending from the UI must de-energize them.
+    assert wait_for(lambda: log[3:] == ["connect", "disable", "close"])
+    assert "drives disabled" in (tmp_path / "logs" / "ai_session.log").read_text()
 
 
 def test_modes_come_from_the_registry():
@@ -176,8 +265,8 @@ def test_server_routes_need_the_dialogs_confirmation_and_report_refusals(tmp_pat
         assert asyncio.run(server.robot_takeup(body)) == {"ok": False, "error": "not confirmed"}
         assert asyncio.run(server.robot_ai_start(dict(body, difficulty="max"))) == {"ok": False, "error": "not confirmed"}
     assert started == [] and log == []
-    refused = asyncio.run(server.robot_takeup({"confirm": True}))
-    assert refused["ok"] is False and "cdpr_master is not running" in refused["error"]
+    refused = asyncio.run(server.robot_master_stop())
+    assert refused["ok"] is False and "not started from this page" in refused["error"]
     assert asyncio.run(server.robot_ai_start({"confirm": True}))["error"] == "difficulty and tension_mm are required"
     reply = asyncio.run(server.robot_ai_start({"confirm": True, "difficulty": "easy", "tension_mm": 2}))
     assert reply["ok"] is True and started == [("easy", 2.0)]

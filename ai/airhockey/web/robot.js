@@ -72,9 +72,6 @@
         aiButton.disabled = busy || takeup.state === "running";
         level.disabled = aiLive;
 
-        const master = status.master
-            ? "cdpr_master is running."
-            : "cdpr_master is not running; Start AI starts it.";
         let text;
         if (ai.state === "running") {
             text = `Running ${ai.difficulty} (${ai.model}, up to ${ai.accel} m/s²) for ${elapsed(ai.started)}. ` +
@@ -84,9 +81,9 @@
         } else if (ai.state === "exited") {
             const how = ai.exit_code === 0 ? "ended normally"
                 : ai.exit_code === null || ai.exit_code === undefined ? "ended" : `ended with an error (exit code ${ai.exit_code})`;
-            text = `Last session (${ai.difficulty}, ${ai.model}) ${how}. ${master}`;
+            text = `Last session (${ai.difficulty}, ${ai.model}) ${how}. The drives are off.`;
         } else {
-            text = `Not running. ${master}`;
+            text = "Not running.";
         }
         $("ai-status").textContent = text;
         $("ai-status").classList.toggle("bad", ai.state === "exited" && !!ai.exit_code);
@@ -106,12 +103,15 @@
         if (phase !== lastPhase && phase !== "idle") $("ai-log-wrap").open = true;
         lastPhase = phase;
 
+        renderMaster(aiLive, takeup.state === "running");
         takeupButton.textContent = takeup.state === "running" ? "Stop taking up slack" : "Take up cable slack";
         takeupButton.classList.toggle("active", takeup.state === "running");
         takeupButton.disabled = busy || aiLive;
         const t = $("takeup-status");
         t.classList.toggle("bad", takeup.state === "error");
-        if (takeup.state === "running") {
+        if (takeup.state === "running" && takeup.phase === "starting cdpr_master") {
+            t.textContent = "Starting the motor controller…";
+        } else if (takeup.state === "running") {
             t.textContent = `Winding in slack for ${elapsed(takeup.started)}… The spools turn slowly; each stops when its cable is taut.`;
         } else if (takeup.state === "done") {
             const mm = takeup.result.wound_mm.map((v) => v.toFixed(1)).join(" / ");
@@ -121,12 +121,40 @@
         } else {
             t.textContent = "";
         }
+        applySticky();
     }
 
+    // The background program that talks to the motors. Nobody has to start it:
+    // every button that needs it does. This line only says where things stand.
+    function renderMaster(aiLive, takeupLive) {
+        const line = $("master-status");
+        const stop = $("btn-master-stop");
+        line.classList.remove("bad");
+        line.textContent = !status.master
+            ? "Motor controller: off. It starts by itself when you press a button above."
+            : aiLive ? "Motor controller: running the AI session."
+            : hardwareOn ? "Motor controller: on, drives energized for manual control."
+            : "Motor controller: on and idle, drives off.";
+        stop.classList.toggle("hidden", !(status.master && status.master_owned));
+        stop.disabled = busy || aiLive || takeupLive || hardwareOn;
+    }
+
+    // A refusal stays on screen until the next button press; the status poll
+    // would otherwise paint over it within a second.
+    const sticky = {};
     function showError(where, message) {
-        const el = $(where);
-        el.textContent = message;
-        el.classList.add("bad");
+        sticky[where] = message;
+        applySticky();
+    }
+    function applySticky() {
+        for (const [where, message] of Object.entries(sticky)) {
+            const el = $(where);
+            el.textContent = message;
+            el.classList.add("bad");
+        }
+    }
+    function clearErrors() {
+        for (const where of Object.keys(sticky)) delete sticky[where];
     }
 
     async function refresh() {
@@ -181,6 +209,7 @@
     }
 
     aiButton.addEventListener("click", async () => {
+        clearErrors();
         const state = status?.ai?.state;
         if (state === "running" || state === "stopping") {
             await post("/api/robot/ai/stop", {}, "ai-status");
@@ -205,6 +234,7 @@
     });
 
     takeupButton.addEventListener("click", async () => {
+        clearErrors();
         if (status?.takeup?.state === "running") {
             await post("/api/robot/takeup/stop", {}, "takeup-status");
             return;
@@ -216,6 +246,11 @@
             "and the drives switch off again. The mallet may slide a little.");
         if (!ok) return;
         await post("/api/robot/takeup", { confirm: true }, "takeup-status");
+    });
+
+    $("btn-master-stop").addEventListener("click", () => {
+        clearErrors();
+        post("/api/robot/master/stop", {}, "master-status");
     });
 
     // Once a second while the Robot tab is showing and something is live;

@@ -587,16 +587,24 @@ goals conceded from 0.10 to 0.04 per game.
   - **Robot** (opens here): *Play against the AI* -- a level from
     `ai/models.json` and Start / Stop AI -- and *Manual control* (Take up
     cable slack, Hardware on/off, pretension, click/follow), views, motor
-    load, motion limits, tracking test. `airhockey/robot_session.py` does
-    the two actions: take-up is the master's `TAKEUP` on a short-lived
-    connection; the AI is `ai/bin/play.sh --difficulty <level> --tension
+    load, motion limits, tracking test. NORMAL OPERATION NEEDS NO
+    TERMINAL: `cdpr_master` is started by whichever button needs it
+    (`RobotSession.ensure_master`: `make -C sw build/cdpr_master`, launch
+    detached at realtime priority when permitted, wait for the port; the
+    error shows the master's last log lines, usually no Teensy or no motor
+    power) and then stays up, idle with the drives off, until "Shut down
+    motor controller" (only offered for a master the UI started; pid in
+    `logs/ui_master.json`). The UI's wording calls it the motor controller.
+    `airhockey/robot_session.py` does the actions: take-up is the master's
+    `TAKEUP` on a short-lived connection; the AI is `ai/bin/play.sh --difficulty <level> --tension
     <mm>` as a child process (`--use-running-master` when a master is
     listening; its PRETENSION is then set first), output in
     `logs/ai_session.log`, pid in `logs/ai_session.json` so a restarted
     server still finds and can stop it. Stop is SIGINT to its process
-    group, i.e. Ctrl-C. One at a time, and never while a tab holds the
+    group, i.e. Ctrl-C. When a session ends on a master it did not start,
+    the UI sends DISABLE (the runner alone leaves the drives holding). One at a time, and never while a tab holds the
     hardware. Routes: `GET /api/robot`, `POST /api/robot/takeup[/stop]`,
-    `POST /api/robot/ai/start|stop`; the two that start motion need
+    `POST /api/robot/ai/start|stop`, `POST /api/robot/master/stop`; the two that start motion need
     `{"confirm": true}` from the button's dialog. `web/robot.js` is the
     client. Whether a master is running is read from `/proc/net/tcp`,
     never by connecting (the master serves one client).
@@ -796,10 +804,11 @@ pio run -d fw -t upload          # flash it
 make -C fw/test                  # host tests for the motion profile
 make -C sw test                  # host tests for the master (no SC-Hub, no Teensy)
 
-# Day to day: run the web UI (PYTHONPATH=ai python -m airhockey.server, port
-# 8420) and press Start AI on the Robot tab. It runs play.sh: starts
-# cdpr_master if none is running, takes up cable slack, measures the mallet,
-# enables and plays. The same from a terminal:
+# Day to day: everything is a button in the web UI (port 8420; the server is
+# PYTHONPATH=ai python -m airhockey.server and is normally left running).
+# Start AI runs play.sh: starts cdpr_master if none is running, takes up cable
+# slack, measures the mallet, enables and plays. Take up cable slack and
+# Hardware start cdpr_master themselves too. The same from a terminal:
 bash ai/bin/play.sh --difficulty easy --tension 1.5
 
 # Play with the trained policy (from the repo root)
