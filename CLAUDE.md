@@ -767,8 +767,17 @@ does not show that they should: pay for it directly if that style is
 wanted. `HumanTier.guard_scatter_m` (opt-in, unused) plus a weak
 `anticipation` reproduces the November numbers. `v4.4.2` (posts): the aim
 held to 150M steps and drifted again after (shots between the posts 67% ->
-61% at 252M, goals per shot unchanged). Record: the last two sections of
-the recipe README.
+61% at 252M, goals per shot unchanged). `--game-prepared-shot-weight W`
+(opt-in) is the one payment kept in games: W for an on-target shot struck
+from a captured puck, ramped with speed to 6 m/s. W = 100 (`v4.4.3`) moved
+nothing against people; W = 300 (`v4.4.4`, half a goal) gave 40% of shots
+from a controlled puck (30%), 25 prepared fast on-target shots per 100
+possessions (17), first touch to shot 0.85 s (0.75), and twice the goals
+conceded to the simulated people (0.27 a minute). THE SELF-PLAY ARM LOSES TO
+v4.1.2 HEAD TO HEAD with or without the payment (9-16, 8-17; v4.3.12 wins
+12-8): its only robot opponents were its own six latest snapshots. `v4.4.5`
+adds v4.1.2 and v4.3.12 as fixed opponents (`--opponent-reference`, a
+quarter of the games). Record: the last sections of the recipe README.
 
 ## Run names
 The scheme below is for TD-MPC2 runs only.

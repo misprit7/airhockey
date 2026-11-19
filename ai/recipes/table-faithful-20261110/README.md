@@ -1989,4 +1989,34 @@ prepared one is small there, and it is only against its own copy (0.1 goals
 a minute) that the payment is the larger income.
 
 `v4.4.4` = the same from v4.4.3's 101M snapshot with W = 300 (half a goal,
-more than a shot's expected goals against a person).
+more than a shot's expected goals against a person). At 101M steps, two
+seeds, posts sim, against the simulated people:
+
+| | v4.3.12 | v4.4.2 | v4.4.4 |
+|---|---|---|---|
+| shots struck from a controlled puck | 23% | 30% | 40% |
+| first touch to shot, median | 0.74 s | 0.75 s | 0.85 s |
+| shots between the posts | 65% | 67% | 66% |
+| per 100 possessions: controlled, on target and 4 m/s or more | 11.8 | 16.8 | 25.3 |
+| possessions ending in a shot | 71% | 75% | 83% |
+| puck given away slowly | 7.8% | 4.0% | 2.3% |
+| goals for / against per minute | 5.0 / 0.15 | 6.0 / 0.14 | 6.8 / 0.27 |
+| goal share | 97.0% | 97.7% | 96.2% |
+| head to head against v4.1.2, 64 one-minute games, both ends | 12-8 | 9-16 | 8-17 |
+
+The payment does what it is for. The cost is goals conceded: 68 against 36
+in 256 game-minutes, most of the difference straight shots (41 against 16)
+taken with the mallet back on guard and no touch in the last second
+(conceded on 3.3% of the people's shots of 3 m/s or more then, 0.3% for
+v4.4.2); its mallet also waits further out (365 mm from its goal line when
+the person's shot crosses the centre line, 304 mm for v4.4.2). No game
+reached the load shutdown level (peak 0.935).
+
+THE SELF-PLAY ARM LOSES TO v4.1.2 HEAD TO HEAD, payment or not (9-16 and
+8-17 where v4.3.12 wins 12-8; small counts, the same seed). In this arm the
+only robots the learner meets are its six latest snapshots; v4.3.12 had
+fixed older networks in a quarter of its slots. `v4.4.5` = v4.4.4 from its
+101M snapshot plus `--opponent-reference runs/v4.1.2/agent.pt
+--opponent-reference runs/v4.3.12/agent_step_1091305472.pt`: a quarter of
+the games against those two, a quarter against people, half against its
+own snapshots.
