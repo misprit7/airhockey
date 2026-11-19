@@ -557,3 +557,14 @@ def test_compliant_mallet_lags_rings_and_stays_out_of_the_policys_own_view():
     plain.reset(seed=1)
     plain.step(action[:2])
     np.testing.assert_allclose(plain.base.engine.paddle_agent_x, plain.base._agent_dyn["x"])
+
+
+def test_profile_20261119_is_the_calibrated_softer_mallet():
+    soft = table_fidelity("table-20261119")["mallet_compliance"]
+    assert soft["gain"] == (1.0, 3.5) and soft["frequency_hz"][0] < 10
+    env = NeuralTrainingEnv(8, stage=5, seed=3, **table_fidelity("table-20261119"))
+    k = env.base._compliance["k"]
+    assert k.min() >= 1.0 and k.max() <= 3.5
+    # The older names keep their meaning.
+    assert table_fidelity("table-20261118")["mallet_compliance"] is True
+    assert "mallet_compliance" not in table_fidelity("table-20261029")

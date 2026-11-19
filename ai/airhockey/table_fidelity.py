@@ -50,6 +50,8 @@ robot mallet, and the goals that followed within a second.
 
 Profile table-20261118 adds `compliance`: the mallet as a mass on elastic
 cables that lags the motion profile and rings (enable_mallet_compliance).
+Profile table-20261119 is the same with the compliance calibrated on the
+table's rebounds off a block (about twice as soft; see PROFILES).
 
 NOT modelled: the 220-400 mm strike-and-return position losses,
 and the runner's goal watchdog pausing the policy.
@@ -74,6 +76,18 @@ PROFILES = {
 # cables (BatchAirHockeyEnv.enable_mallet_compliance). A new name, so every
 # number reported under table-20261029 keeps meaning what it meant.
 PROFILES["table-20261118"] = dict(PROFILES["table-20261029"], compliance={"mallet_compliance": True})
+# 2026-11-19: the compliance CALIBRATED on what the table does after v4.1.2
+# blocks a shot of 4 m/s or more (37 min, sessions 2026-11-17 and 11-18): the
+# puck leaves the mallet at 1.06 / 1.74 / 2.91 m/s (quartiles) and 34% of the
+# rebounds under 2 m/s are recovered. The same model gives 0.55 / 0.90 / 2.00
+# and 70% with a rigid mallet, 0.77 / 1.36 / 2.44 and 56% under table-20261118
+# (gain 0.5-1.5), and 1.14 / 1.96 / 3.14 and 47% at gain 1.5-3.0. A static
+# gain of 2.3 is 18 mm of lag at 100 m/s^2 and 18 Hz. CAVEAT: those sessions
+# predate the camera recalibration of 2026-11-18 21:53 (the markers had
+# drifted 13-18 mm), so part of this gain stands in for a puck seen in the
+# wrong place, and the table as it is now may sit nearer table-20261118.
+PROFILES["table-20261119"] = dict(PROFILES["table-20261029"], compliance={"mallet_compliance": {
+    "gain": (1.0, 3.5), "frequency_hz": (8.0, 26.0), "damping": (0.02, 0.15)}})
 DEFAULT_PROFILE = "table-20261029"
 
 
