@@ -1301,3 +1301,20 @@ def test_round4_arm_is_a3_continued_with_what_its_evaluation_held_against_it():
                       far_cap_brake_seconds=fourth.far_cap_brake_seconds, dead_puck_cap_weight=fourth.dead_puck_cap_weight,
                       reach_edge_drill_fraction=fourth.reach_edge_drill_fraction,
                       anchor_side_rail_open_y=fourth.anchor_side_rail_open_y, anchor_front_margin=fourth.anchor_front_margin)
+
+
+def test_roam_reward_pays_for_standing_forward_only_while_the_opponent_prepares():
+    env = NeuralTrainingEnv(4, stage=5, seed=1, realistic=False, randomize=False, roam_weight=50.0)
+    env.reset()
+    e = env.engine
+    low, high = env.decoder.low[1], env.decoder.high[1]
+    e.paddle_agent_y[:] = [low, (low + high) / 2, high, high]
+    e.puck_y[:] = [1.6, 1.6, 1.6, 0.5]           # last: the puck is on the robot's half
+    e.puck_vx[:] = 0; e.puck_vy[:] = 0
+    np.testing.assert_allclose(env.roam_reward(), [0, .5, 1, 0], atol=1e-6)
+    # The slope exists at the back edge, where the full-strength model stands.
+    e.paddle_agent_y[0] = low + .02
+    assert env.roam_reward()[0] > 0
+    # A fast shot on its way pays nothing, however far forward the mallet is.
+    e.puck_vy[:] = -5
+    assert not env.roam_reward().any()

@@ -1969,13 +1969,18 @@ class NeuralTrainingEnv(ArrivalEnv):
         return preparing * opponent_half * excess**2
 
     def roam_reward(self):
-        """0..1: how far forward of the guard depth the mallet stands while
-        the opponent has the puck and no fast shot is on its way."""
+        """0..1: how far forward in its workspace the mallet stands while the
+        opponent has the puck and no fast shot is on its way.
+
+        Measured from the BACK edge of the workspace, so the slope is there
+        where the full-strength model stands (0.13 m off its goal line). The
+        first version started at the guard depth of 0.3 m: flat under the
+        mallet, and 34M steps at weights 40 and 120 moved nothing."""
         e = self.engine
         preparing = (e.puck_vy >= 0) | (np.hypot(e.puck_vx, e.puck_vy) < 2)
         opponent_half = np.clip((e.puck_y - 1.0) / .15, 0, 1)
-        forward = np.clip((e.paddle_agent_y - self.defensive_depth_target) /
-                          max(self.decoder.high[1] - self.defensive_depth_target, .01), 0, 1)
+        low, high = self.decoder.low[1], self.decoder.high[1]
+        forward = np.clip((e.paddle_agent_y - low) / max(high - low, .01), 0, 1)
         return preparing * opponent_half * forward
 
     def step(self, action):
