@@ -1,9 +1,12 @@
 # Comparing a physical session with simulation
 
-Open **http://localhost:8422/**, or the same port on the machine's Tailscale
-address. The main web UI also links to **Sim / Real recording viewer**.
-The comparison server is separate from robot control and never opens the
-camera, motor interface, policy checkpoint, or controller socket.
+In the main web UI (port 8420): **Recordings**, then **Table sessions**; a
+session opens at `/sessions/?session=<stamp>`. The same viewer still runs
+standalone on **http://localhost:8422/** (`python3 -m airhockey.replay_server`).
+It reads logs only and never opens the camera, motor interface, policy
+checkpoint, or controller socket. The session list shows when each run
+started, how long it was, the model version (`ai/models.json`) or policy, the
+speed and acceleration caps, and whether the robot was live or the run dry.
 
 Select a hardware session in the left column. By default, the viewer runs
 independent 10-second simulations from 0, 10, 20, … seconds and shows their

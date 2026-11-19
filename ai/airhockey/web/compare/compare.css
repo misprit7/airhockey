@@ -392,3 +392,23 @@ details p {
     grid-template-columns: repeat(2, minmax(0, 1fr));
   }
 }
+
+/* Header copy and the link back to the table UI. */
+.eyebrow a {
+  color: inherit;
+  text-decoration: none;
+}
+.eyebrow a:hover {
+  text-decoration: underline;
+}
+.lede {
+  max-width: 68ch;
+  margin: 8px 0 0;
+  font-size: 13px;
+  line-height: 1.5;
+  opacity: 0.75;
+}
+aside code {
+  font-size: 0.95em;
+  opacity: 0.9;
+}

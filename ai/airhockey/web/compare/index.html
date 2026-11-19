@@ -3,33 +3,40 @@
   <head>
     <meta charset="utf-8" />
     <meta name="viewport" content="width=device-width,initial-scale=1" />
-    <title>Air Hockey · Sim / Real</title>
-    <link rel="stylesheet" href="/compare.css" />
+    <title>Air Hockey · Table sessions</title>
+    <link rel="stylesheet" href="compare.css" />
   </head>
   <body>
     <header>
       <div>
-        <span class="eyebrow">AIR HOCKEY / ANALYSIS</span>
-        <h1>Sim / Real</h1>
+        <span class="eyebrow"><a id="back-link" href="../">← AIR HOCKEY</a> / RECORDINGS</span>
+        <h1>Table sessions</h1>
+        <p class="lede">
+          Each session is one run of the real robot against a person, as the
+          overhead camera saw it. This page replays what was measured and, next
+          to it, what the simulator predicts from the same start and the same
+          robot commands, so the gap between table and simulation is visible.
+        </p>
       </div>
-      <span class="badge">Offline replay</span>
+      <span class="badge" title="Reads logs only. Nothing here talks to the camera, the motors or a policy.">Reads logs only</span>
     </header>
     <div class="layout">
       <aside>
         <div class="section-head">
-          <h2>Recordings</h2>
-          <button id="refresh" title="Refresh recordings">↻</button>
+          <h2>Sessions</h2>
+          <button id="refresh" title="Refresh the list">↻</button>
         </div>
         <input
           id="search"
           type="search"
-          placeholder="Filter sessions…"
+          placeholder="Filter by date, model or policy…"
           aria-label="Filter sessions"
         />
         <div id="sessions" role="list"></div>
         <p class="small">
-          Camera tracks and issued robot commands. New sessions appear here
-          automatically after recording.
+          Newest first. Written by every run of the robot (Start AI, or
+          <code>ai/bin/play.sh</code>) to <code>logs/run_policy/</code>. "dry"
+          means the policy ran on the camera feed but commanded nothing.
         </p>
       </aside>
       <main>
@@ -37,7 +44,7 @@
           <div>
             <h2 id="session-title">Choose a recording</h2>
             <p id="session-info" class="small">
-              Browse a session, then compare its motion with the simulator.
+              Pick a session on the left.
             </p>
           </div>
           <span id="status" role="status"></span>
@@ -54,10 +61,16 @@
           </div>
           <div class="inspector">
             <div class="legend">
-              <span class="real">● Camera</span
-              ><span class="sim">◌ Simulation</span
-              ><span class="human">● Human input</span>
+              <span class="real">● Measured by the camera</span
+              ><span class="sim">◌ Simulated</span
+              ><span class="human">● Person's mallet</span>
             </div>
+            <p class="small">
+              Small disc = puck, crossed disc = mallet. The robot defends the
+              bottom goal, the person the top one. The simulation is given the
+              person's measured mallet and the robot's recorded commands, and
+              nothing else after its start.
+            </p>
             <div class="clock" id="clock">00:00.000</div>
             <p id="rollout-label">No simulation selected</p>
             <button id="simulate" class="primary" disabled>
@@ -65,10 +78,10 @@
             </button>
             <div class="metrics">
               <div>
-                <span>Puck error</span><strong id="puck-error">—</strong>
+                <span title="Distance between the measured and the simulated puck at this instant">Puck: sim vs camera</span><strong id="puck-error">—</strong>
               </div>
               <div>
-                <span>Robot error</span><strong id="agent-error">—</strong>
+                <span title="Distance between the measured and the simulated robot mallet at this instant">Robot: sim vs camera</span><strong id="agent-error">—</strong>
               </div>
             </div>
             <p id="stop-reason" class="small"></p>
@@ -154,10 +167,11 @@
         <section>
           <div class="section-head">
             <div>
-              <h2>10-second comparisons</h2>
+              <h2>The session in 10-second windows</h2>
               <p class="small">
-                Each tile starts a new simulation from its own measured state.
-                Click to inspect.
+                Each tile is its own simulation, started from the measured
+                state at the tile's first instant, with the mean distance
+                between simulated and measured positions. Click one to watch it.
               </p>
             </div>
             <button id="grid-reset" disabled>Return to grid</button>
@@ -166,6 +180,6 @@
         </section>
       </main>
     </div>
-    <script src="/compare.js"></script>
+    <script src="compare.js"></script>
   </body>
 </html>

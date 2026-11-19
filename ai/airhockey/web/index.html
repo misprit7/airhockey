@@ -11,13 +11,13 @@
         <div id="topbar">
             <div id="scoreboard">
                 <div class="score-row">
-                    <span class="score-label agent-color">You</span>
+                    <span class="score-label agent-color" id="label-agent">Robot end</span>
                     <span id="score-agent" class="score-value">0</span>
                 </div>
                 <div class="score-divider">:</div>
                 <div class="score-row">
                     <span id="score-opponent" class="score-value">0</span>
-                    <span class="score-label opponent-color">CPU</span>
+                    <span class="score-label opponent-color" id="label-opponent">Far end</span>
                 </div>
             </div>
             <div id="topbar-stats">
@@ -67,42 +67,56 @@
         </div>
         <div id="sidebar" class="hidden-mobile">
             <h1>Air Hockey</h1>
-            <a id="compare-link" href="#" target="_blank" rel="noopener" style="color:#56cdd8">Sim / Real recording viewer ↗</a>
-            <script>document.getElementById('compare-link').href = location.protocol + '//' + location.hostname + ':8422/';</script>
-            <div id="sidebar-reward">Reward: <span id="reward-value-desktop">0.0</span></div>
-            <div id="controls">
-                <button id="btn-reset">New Game</button>
-                <button id="btn-save">Save Recording</button>
-                <button id="btn-physics">Physics: Realistic</button>
+            <div id="mode-select">
+                <button class="mode-btn active" data-mode="control" title="The real table: start the AI, or drive the mallet by hand.">Robot</button>
+                <button class="mode-btn" data-mode="sim" title="A simulated table in this browser: play by mouse or watch trained models play.">Simulation</button>
+                <button class="mode-btn" data-mode="replay" title="Watch saved games: simulated ones here, real table sessions in the session viewer.">Recordings</button>
+            </div>
+            <p id="mode-hint" class="panel-note"></p>
+
+            <section id="ai-panel" class="control-group" data-tabs="control">
+                <h3 title="Starts the same thing ai/bin/play.sh does in a terminal: cdpr_master if it is not already running, slack take-up, a camera measurement of the mallet, then the drives are enabled and the neural player plays. Stop brakes the mallet where it is; a master this started is then stopped, which de-energizes the drives. The level is a model plus an acceleration limit for the robot (ai/models.json).">Play against the AI &#9432;</h3>
+                <div class="limit-row">
+                    <span class="lim-name">level</span>
+                    <select id="ai-difficulty" aria-label="AI level"></select>
+                </div>
+                <p id="ai-mode-note" class="panel-note"></p>
+                <button id="btn-ai" class="primary-action">Start AI</button>
+                <div id="ai-status" class="panel-status" role="status"></div>
+                <details id="ai-log-wrap">
+                    <summary>Session output</summary>
+                    <pre id="ai-log"></pre>
+                </details>
+            </section>
+
+            <section id="manual-panel" class="control-group" data-tabs="control">
+                <h3 title="For driving the mallet yourself. Take up cable slack: the drives energize, each cable is wound in slowly until its own drive feels it pull back, and the drives de-energize; run it after powering the motors on (Start AI does it by itself). Hardware: energizes the drives at the mallet's camera-measured position and applies the startup pretension; the mallet then goes where you click on the table. Needs sw/build/cdpr_master running.">Manual control &#9432;</h3>
+                <button id="btn-takeup">Take up cable slack</button>
+                <div id="takeup-status" class="panel-status" role="status"></div>
                 <button id="btn-hardware">Hardware: Off</button>
-                <button id="btn-camera">Camera: Off</button>
-                <button id="btn-state">State view: Off</button>
-                <button id="btn-side" style="display:none" title="Which paddle the mouse drives in Simulation. The two sides are not symmetric: the human has 2.3x the reach, no jerk limit, and can stand on their own goal line, none of which the cable robot can do. Playing the human side is how you feel what the policy is actually up against. The side you are not driving holds station.">Playing: Robot</button>
+                <div id="hardware-error" class="hidden" role="alert"></div>
+                <div id="pretension-panel">
+                    <label for="startup-tension">Startup pretension
+                        <span><input id="startup-tension" type="number" min="0" max="6" step="0.1" value="1.5" inputmode="decimal"> mm</span>
+                    </label>
+                    <p>How far every cable is wound in when the drives are enabled, by Hardware or by Start AI. Saved in this browser.</p>
+                </div>
                 <button id="btn-control" title="Click (default): the paddle only moves when you click, and holds position otherwise. Follow: it chases the pointer continuously. Clicking the field while a recording is up switches back to Live.">Control: Click</button>
                 <label id="hw-overlay-toggle" class="hidden">
                     <input type="checkbox" id="chk-hw-overlay" checked>
                     Show hardware position
                 </label>
-            </div>
-            <div id="hardware-error" class="hidden" role="alert"></div>
-            <div id="pretension-panel">
-                <label for="startup-tension">Startup pretension
-                    <span><input id="startup-tension" type="number" min="0" max="6" step="0.1" value="1.5" inputmode="decimal"> mm</span>
-                </label>
-                <p>Applied next time Hardware is enabled. Saved in this browser.</p>
-            </div>
-            <section id="motor-load-panel" aria-label="Physical motor load">
-                <h3>Motor load <span id="motor-load-state">Waiting</span></h3>
-                <div id="motor-load-summary">Reading motor telemetry…</div>
-                <div id="motor-load-cards"></div>
-                <p class="motor-load-help">Physical robot · RMS is % of drive shutdown load. Current sign follows motor direction.</p>
             </section>
-            <div id="mode-select">
-                <button class="mode-btn active" data-mode="control">Control</button>
-                <button class="mode-btn" data-mode="sim">Simulation</button>
-                <button class="mode-btn" data-mode="replay">Replay</button>
-            </div>
-            <div id="players-panel" class="hidden">
+
+            <section id="sim-panel" class="control-group" data-tabs="sim">
+                <h3>Simulated game</h3>
+                <div id="sidebar-reward">Reward: <span id="reward-value-desktop">0.0</span></div>
+                <button id="btn-reset">New Game</button>
+                <button id="btn-save" title="Saves this game to ai/recordings; it then appears under Recordings, Games played by mouse.">Save Recording</button>
+                <button id="btn-physics">Physics: Realistic</button>
+                <button id="btn-side" style="display:none" title="Which paddle the mouse drives in Simulation. The two sides are not symmetric: the human has 2.3x the reach, no jerk limit, and can stand on their own goal line, none of which the cable robot can do. Playing the human side is how you feel what the policy is actually up against. The side you are not driving holds station.">Playing: Robot</button>
+            </section>
+            <div id="players-panel" class="hidden" data-tabs="sim">
                 <h3 title="Who drives each paddle. Mouse = you. Rules are scripted policies. Agents are trained checkpoints from runs/ — pick one for each side to watch it play itself. The robot side runs the firmware motion law inside its reachable box; the human side has the whole half and human-model dynamics.">Players &#9432;</h3>
                 <div class="limit-row">
                     <span class="lim-name">robot</span>
@@ -125,7 +139,20 @@
                 </div>
                 <button id="btn-sim-limits">Apply</button>
             </div>
-            <div id="limits-panel">
+
+            <section id="views-panel" class="control-group" data-tabs="control sim">
+                <h3 title="Camera: the tracker's live view of the real table (only one program can hold the camera, so it is never started for you, and the AI takes it over when it starts). State view: the cable geometry the controller believes in, beside what the camera sees.">Views &#9432;</h3>
+                <button id="btn-camera">Camera: Off</button>
+                <button id="btn-state">State view: Off</button>
+            </section>
+
+            <section id="motor-load-panel" aria-label="Physical motor load" data-tabs="control">
+                <h3>Motor load <span id="motor-load-state">Waiting</span></h3>
+                <div id="motor-load-summary">Reading motor telemetry…</div>
+                <div id="motor-load-cards"></div>
+                <p class="motor-load-help">Physical robot · RMS is % of drive shutdown load. Current sign follows motor direction.</p>
+            </section>
+            <div id="limits-panel" data-tabs="control">
                 <h3 title="The trajectory profile lives on the Teensy. These push the caps to it at runtime, and the indicator says which one the last tick actually hit — a move that is accel-limited the whole way never reached its speed cap, so raising the speed would do nothing.">Motion limits &#9432;</h3>
                 <div class="limit-row">
                     <span class="lim-name">speed</span>
@@ -165,17 +192,27 @@
                 <div id="follow-test-msg"></div>
                 <pre id="follow-test-result" class="hidden"></pre>
             </div>
-            <div id="replay-panel" class="hidden">
-                <a href="/training" class="training-link">Training status &amp; checkpoint replays →</a>
-                <h3>Recordings</h3>
-                <ul id="recording-list"></ul>
+            <div id="replay-panel" class="hidden" data-tabs="replay">
+                <div id="rec-kind" role="tablist">
+                    <button class="rec-kind-btn active" data-kind="sim" role="tab">Simulated games <span id="rec-count-sim"></span></button>
+                    <button class="rec-kind-btn" data-kind="table" role="tab">Table sessions <span id="rec-count-table"></span></button>
+                </div>
+                <p id="rec-kind-note" class="panel-note"></p>
+                <div id="rec-now" class="hidden">
+                    <div id="rec-now-title"></div>
+                    <dl id="rec-now-facts"></dl>
+                    <details id="rec-now-more">
+                        <summary>All recorded settings</summary>
+                        <pre id="rec-now-meta"></pre>
+                    </details>
+                </div>
                 <div id="replay-controls" class="hidden">
                     <div id="stage-info" class="hidden"></div>
-                    <input type="range" id="replay-slider" min="0" max="100" value="0">
+                    <input type="range" id="replay-slider" min="0" max="100" value="0" aria-label="Position in the recording">
                     <div id="replay-buttons">
                         <button id="btn-play-pause">Play</button>
-                        <button id="btn-step-back">&lt;</button>
-                        <button id="btn-step-fwd">&gt;</button>
+                        <button id="btn-step-back" title="One frame back">&lt;</button>
+                        <button id="btn-step-fwd" title="One frame forward">&gt;</button>
                     </div>
                     <label>
                         Speed: <select id="replay-speed">
@@ -186,13 +223,23 @@
                             <option value="4">4x</option>
                         </select>
                     </label>
+                    <ul id="rec-legend">
+                        <li><span class="swatch blue"></span><span id="legend-blue">Blue mallet (bottom): the robot's end</span></li>
+                        <li><span class="swatch red"></span><span id="legend-red">Red mallet (top): the far end</span></li>
+                        <li><span class="swatch puck"></span>Puck, with a short trail</li>
+                        <li><span class="swatch box"></span>Dashed box: where the robot's mallet can reach</li>
+                    </ul>
                 </div>
+                <input type="search" id="rec-filter" placeholder="Filter by model, run, opponent or kind…" aria-label="Filter recordings">
+                <ul id="recording-list"></ul>
+                <ul id="session-list" class="hidden"></ul>
+                <a href="/training" class="training-link">Training status &amp; checkpoint replays →</a>
             </div>
             <div id="status">Connecting...</div>
         </div>
-    </div>
     <div id="sidebar-overlay"></div>
     <script src="/app.js"></script>
+    <script src="/robot.js"></script>
     <script src="/motor-load.js"></script>
 </body>
 </html>

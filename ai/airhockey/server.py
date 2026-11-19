@@ -20,6 +20,7 @@ from airhockey.dynamics import (ACTION_DT, DelayedDynamics, HardwareDynamics,  #
 from airhockey.env import AirHockeyEnv
 from airhockey.follow_test import FollowTest, format_summary
 from airhockey.recorder import Recorder
+from airhockey.robot_session import SESSION as ROBOT, difficulty_modes
 from airhockey.vision_service import SERVICE as VISION
 
 app = FastAPI()
@@ -27,6 +28,14 @@ app = FastAPI()
 WEB_DIR = Path(__file__).parent / "web"
 RECORDINGS_DIR = Path(__file__).parent.parent / "recordings"
 RECORDINGS_DIR.mkdir(exist_ok=True)
+
+
+# Table sessions (the real robot's logs, replayed beside the simulator) live
+# in their own small app; mounted here so the UI is one address. It still
+# runs standalone on 8422 (python -m airhockey.replay_server).
+from airhockey.replay_server import app as _sessions_app  # noqa: E402
+
+app.mount("/sessions", _sessions_app)
 
 
 @app.get("/")
@@ -50,6 +59,12 @@ async def style_css():
     )
 
 
+@app.get("/robot.js")
+async def robot_js():
+    return HTMLResponse((WEB_DIR / "robot.js").read_text(),
+                        media_type="application/javascript")
+
+
 @app.get('/motor-load.js')
 async def motor_load_js():
     return HTMLResponse((WEB_DIR / 'motor-load.js').read_text(),
@@ -60,6 +75,57 @@ async def motor_load_js():
 async def motor_load_status():
     from airhockey.motor_load import latest_snapshot
     return await asyncio.to_thread(latest_snapshot, WEB_DIR.parents[2] / 'logs/motor_load')
+
+
+# ── The table: slack take-up and the AI (airhockey/robot_session.py) ──────
+# The only routes here that can make the robot move are the two POSTs that
+# start something, and each needs {"confirm": true} from the button's dialog.
+
+
+@app.get("/api/robot")
+async def robot_status():
+    status = await asyncio.to_thread(ROBOT.status)
+    try:
+        status["modes"] = difficulty_modes()
+    except Exception as e:      # noqa: BLE001 — a broken registry must not hide the status
+        status["modes"], status["modes_error"] = [], str(e)
+    return status
+
+
+def _robot_action(action, *args):
+    try:
+        action(*args)
+    except (RuntimeError, ValueError, OSError) as e:
+        return {"ok": False, "error": str(e), **ROBOT.status()}
+    return {"ok": True, **ROBOT.status()}
+
+
+@app.post("/api/robot/takeup")
+async def robot_takeup(body: dict):
+    if body.get("confirm") is not True:
+        return {"ok": False, "error": "not confirmed"}
+    return await asyncio.to_thread(_robot_action, ROBOT.start_takeup)
+
+
+@app.post("/api/robot/takeup/stop")
+async def robot_takeup_stop():
+    return await asyncio.to_thread(_robot_action, ROBOT.stop_takeup)
+
+
+@app.post("/api/robot/ai/start")
+async def robot_ai_start(body: dict):
+    if body.get("confirm") is not True:
+        return {"ok": False, "error": "not confirmed"}
+    try:
+        difficulty, tension = str(body["difficulty"]), float(body.get("tension_mm", 1.5))
+    except (KeyError, TypeError, ValueError):
+        return {"ok": False, "error": "difficulty and tension_mm are required"}
+    return await asyncio.to_thread(_robot_action, ROBOT.start_ai, difficulty, tension)
+
+
+@app.post("/api/robot/ai/stop")
+async def robot_ai_stop():
+    return await asyncio.to_thread(_robot_action, ROBOT.stop_ai)
 
 
 @app.get("/training")
@@ -105,89 +171,17 @@ async def training_overview():
         return _TRAINING_CACHE
 
 
-def _recording_checkpoint(stem: str) -> tuple[str, int | None, str]:
-    """Read a checkpoint number while retaining optional diagnostic suffixes."""
-    match = re.fullmatch(r"(.+)_(?:step|update)_([0-9]+)((?:[-_].*)?)", stem)
-    if match is None:
-        return stem, None, ""
-    return match[1], int(match[2]), match[3]
-
-
-def _recording_label(stem: str) -> str:
-    """Turn a filename stem into a readable label.
-
-    e.g. 'ppo_v4_shaped_step_0100000' -> 'ppo_v4_shaped @ step 100k'
-         'game_1773964952' -> 'game_1773964952'
-    """
-    run_name, step_num, suffix = _recording_checkpoint(stem)
-    if step_num is not None:
-        if step_num >= 1_000_000:
-            step_label = f"{step_num / 1_000_000:.1f}M"
-        elif step_num >= 1_000:
-            step_label = f"{step_num // 1_000}k"
-        else:
-            step_label = str(step_num)
-        unit = "update " if stem.startswith(run_name + "_update_") else ""
-        return f"{run_name} @ {unit}{step_label}{suffix}"
-    return stem
-
-
-# One parse per file per mtime: the list refreshes every 5 s in the UI and a
-# recording is ~700 KB of JSON, so re-reading every file on every poll would
-# turn a directory of a few hundred games into a seconds-long request.
-_REC_CACHE: dict[str, tuple[float, dict]] = {}
-
-
-def _recording_entry(f: Path) -> dict:
-    st = f.stat()
-    cached = _REC_CACHE.get(f.name)
-    if cached and cached[0] == st.st_mtime:
-        return cached[1]
-    stem = f.stem
-    run, step, suffix = _recording_checkpoint(stem)
-    opponent = None
-    if step is None and "_vs_" in stem:
-        # Benchmark games ("<run>_vs_<opponent>") file under their run
-        # rather than each becoming a one-item group of its own.
-        run, opponent = stem.rsplit("_vs_", 1)
-    entry = {
-        "name": stem, "path": f.name, "label": _recording_label(stem),
-        "run": run, "step": step,
-        "variant": suffix.lstrip("-_"),
-        "mtime": st.st_mtime,
-        "date": time.strftime("%Y-%m-%dT%H:%M:%S", time.localtime(st.st_mtime)),
-        "size": st.st_size,
-    }
-    try:
-        data = json.loads(f.read_text(), parse_constant=lambda _c: None)
-        if isinstance(data, dict) and "columns" in data:
-            cols = data["columns"]
-            n = len(cols[data["fields"][0]])
-            entry["frames"] = n
-            if n and "time" in cols:
-                entry["duration_s"] = round(float(cols["time"][-1]), 1)
-            if n and "score_agent" in cols and "score_opponent" in cols:
-                entry["score"] = [int(cols["score_agent"][-1]),
-                                  int(cols["score_opponent"][-1])]
-            if "metadata" in data:
-                entry["metadata"] = data["metadata"]
-        elif isinstance(data, list):
-            entry["frames"] = len(data)
-    except Exception:            # noqa: BLE001 — a corrupt file still lists
-        pass
-    if opponent and "opponent" not in entry.get("metadata", {}):
-        entry.setdefault("metadata", {})["opponent"] = opponent
-    _REC_CACHE[f.name] = (st.st_mtime, entry)
-    return entry
+RECORDINGS_INDEX_CACHE = WEB_DIR.parents[2] / "logs" / "recordings_index.json"
 
 
 @app.get("/api/recordings")
 async def list_recordings():
-    """Every recording with the metadata the replay menu groups and sorts
-    by: run name, training step, wall-clock date, final score, duration."""
-    files = sorted(RECORDINGS_DIR.glob("*.json"),
-                   key=lambda f: f.stat().st_mtime, reverse=True)
-    return [_recording_entry(f) for f in files]
+    """Every simulated game with what the replay menu shows and groups by:
+    who played, what kind of game, the model version or run, score, date
+    (airhockey/recording_index.py). Off the event loop: the first call after
+    new files appear parses them."""
+    from airhockey.recording_index import list_recordings as build
+    return await asyncio.to_thread(build, RECORDINGS_DIR, RECORDINGS_INDEX_CACHE)
 
 
 @app.get("/api/recordings/{filename}")
@@ -428,6 +422,12 @@ async def live_game(ws: WebSocket):
                         use_hardware = not use_hardware
                         if use_hardware:
                             try:
+                                # The master serves one client; say who has it
+                                # rather than letting the connect time out.
+                                if ROBOT.ai_running():
+                                    raise RuntimeError("the AI is running; stop it first")
+                                if ROBOT.status()["takeup"].get("state") == "running":
+                                    raise RuntimeError("slack take-up is running; wait for it")
                                 tension_mm = float(msg.get('tension_mm', 1.5))
                                 if not math.isfinite(tension_mm) or not 0 <= tension_mm <= 6:
                                     raise ValueError('Startup pretension must be between 0 and 6 mm')
@@ -479,6 +479,7 @@ async def live_game(ws: WebSocket):
                                 env.agent_dynamics.reset(sx, sy)
                                 target_x = sx
                                 target_y = sy
+                                ROBOT.hardware_ui += 1
                                 print(f"  HW: holding at the measured pose, "
                                       f"sim ({sx:.3f}, {sy:.3f}) — nothing "
                                       f"commanded until you click")
@@ -499,6 +500,7 @@ async def live_game(ws: WebSocket):
                                 except Exception:
                                     pass
                                 hardware_dynamics = None
+                                ROBOT.hardware_ui = max(0, ROBOT.hardware_ui - 1)
                             env._ws = dict(simulation_workspace)
                             env.agent_dynamics = ProfileDynamics()
                             env.agent_dynamics.reset(
@@ -806,6 +808,7 @@ async def live_game(ws: WebSocket):
         pass
     finally:
         if hardware_dynamics:
+            ROBOT.hardware_ui = max(0, ROBOT.hardware_ui - 1)
             try:
                 hardware_dynamics.client.disable()
                 hardware_dynamics.client.close()

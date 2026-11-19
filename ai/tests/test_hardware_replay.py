@@ -197,3 +197,32 @@ def test_log_records_checkpoint_thermal_model_instead_of_default(tmp_path):
     assert meta['motor_profile']=={'schema':'test-spatial'}
     assert meta['table_config']['max_puck_speed']==16
     assert meta['workspace_bounds_mm']==[1200,1937.5,61.4,904.5]
+
+
+def test_session_list_says_what_each_session_was(tmp_path):
+    """The list is read by someone who has not seen the logs: when, how long,
+    which model, live or dry, at what caps -- from the two ends of the files."""
+    import json
+    from airhockey import hardware_replay
+
+    stamp = "20261117-202103"
+    lines = [dict(type="meta", version=1, policy="neural:runs/_neural-table-faithful-20261110-a3/agent.pt",
+                  live=True, motor_profile={"pad": "x" * 2000})]
+    lines += [dict(type="frame", t=0.005 * i, puck=None, agent=[1500.0, 480.0], human=None) for i in range(400)]
+    lines.append(dict(type="end", t=1198.66, monotonic=1.0))
+    (tmp_path / f"{stamp}.replay.jsonl").write_text("\n".join(json.dumps(line) for line in lines) + "\n")
+    (tmp_path / f"{stamp}.log").write_text("neural checkpoint: x\nsession caps: 12 m/s, 100 m/s^2\n")
+    (tmp_path / f"{stamp}.ticks.csv").write_text("t_cam,x\n" + "0.0,1\n" * 300)      # superseded by the jsonl
+    (tmp_path / "20260902-224734.ticks.csv").write_text("t_cam,x\n" + "".join(f"{0.02 * i:.2f},1\n" for i in range(1811)))
+    (tmp_path / "20260902-224734.log").write_text("!!  policy tdmpc2:latest   caps <= 8000 mm/s\n")
+
+    sessions = {s["name"]: s for s in hardware_replay.list_sessions(tmp_path)}
+    assert set(sessions) == {f"{stamp}.replay.jsonl", "20260902-224734.ticks.csv"}
+    new = sessions[f"{stamp}.replay.jsonl"]
+    assert new["started"] == "2026-11-17T20:21:03" and new["duration_s"] == 1198.7
+    assert new["live"] is True and new["caps"] == "12 m/s, 100 m/s^2"
+    assert new["model"] == "v4.1.2" and new["policy"].endswith("a3/agent.pt")
+    old = sessions["20260902-224734.ticks.csv"]
+    assert old["duration_s"] == 36.2 and old["policy"] == "tdmpc2:latest" and old["model"] is None
+    assert hardware_replay._model_version("neural:v4.0.0") == "v4.0.0"
+    assert hardware_replay._model_version("neural:_neural-table-faithful-20261110-a3") == "v4.1.2"

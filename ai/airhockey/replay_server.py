@@ -1,4 +1,9 @@
-"""Offline comparison UI. No camera, controller socket, or policy is opened."""
+"""Table-session viewer. No camera, controller socket, or policy is opened.
+
+Served two ways with the same files: mounted in the main web UI at
+``/sessions/`` (airhockey/server.py), and standalone on port 8422. The page
+therefore uses relative URLs only.
+"""
 
 from pathlib import Path
 import asyncio

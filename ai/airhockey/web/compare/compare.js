@@ -66,16 +66,41 @@ function setPlaying(value) {
   $("play").textContent = value ? "Pause" : "Play";
   lastFrame = performance.now();
 }
+const stamp = (name) => name.replace(/\.(ticks\.csv|replay\.jsonl)$/, "");
+// "Nov 17, 20:21" from the session's start time.
+function when(s) {
+  const d = new Date(s.started);
+  if (!s.started || isNaN(d)) return stamp(s.name);
+  return `${d.toLocaleDateString([], { month: "short", day: "numeric", year: "numeric" })}, ${d.toLocaleTimeString([], { hour: "2-digit", minute: "2-digit" })}`;
+}
+function length(seconds) {
+  if (!Number.isFinite(seconds)) return "";
+  return seconds >= 90 ? `${Math.round(seconds / 60)} min` : `${Math.round(seconds)} s`;
+}
+// What played: the registered model version when the checkpoint is one.
+function player(s) {
+  if (s.model) return s.model;
+  return (s.policy || "unknown policy").replace(/^neural:runs\//, "").replace(/\/agent\.pt$/, "");
+}
+function describe(s) {
+  return [player(s), (s.caps || "").replace(/\^2/g, "\u00B2"), s.live === false ? "dry run" : s.live ? "robot live" : null]
+    .filter(Boolean)
+    .join(" · ");
+}
 function renderSessions() {
   const q = $("search").value.toLowerCase();
   $("sessions").replaceChildren();
-  for (const s of sessions.filter((s) => s.name.toLowerCase().includes(q))) {
+  const shown = sessions.filter((s) =>
+    `${s.name} ${when(s)} ${describe(s)} ${s.policy || ""}`.toLowerCase().includes(q),
+  );
+  for (const s of shown) {
     let b = document.createElement("button");
     b.className = "session" + (data?.name === s.name ? " active" : "");
+    b.title = `${stamp(s.name)} · ${s.format} · ${(s.size / 1e6).toFixed(1)} MB`;
     let title = document.createElement("strong");
-    title.textContent = s.name.replace(/\.(ticks\.csv|replay\.jsonl)$/, "");
+    title.textContent = [when(s), length(s.duration_s)].filter(Boolean).join(" · ");
     let sub = document.createElement("span");
-    sub.textContent = `${s.format} · ${(s.size / 1e6).toFixed(1)} MB`;
+    sub.textContent = describe(s);
     b.append(title, sub);
     b.onclick = () => load(s.name);
     $("sessions").append(b);
@@ -85,9 +110,12 @@ function renderSessions() {
 }
 async function refresh() {
   try {
-    sessions = await api("/api/replays");
+    sessions = await api("api/replays");
     renderSessions();
-    if (!data && sessions.length) await load(sessions[0].name);
+    // ?session=<stamp> opens that one (the table UI links here that way).
+    const asked = new URLSearchParams(location.search).get("session");
+    const wanted = sessions.find((s) => s.name === asked || stamp(s.name) === asked);
+    if (!data && sessions.length) await load((wanted || sessions[0]).name);
   } catch (e) {
     status(e.message, true);
   }
@@ -98,19 +126,20 @@ async function load(name) {
   setPlaying(false);
   status("Loading recording…");
   try {
-    const d = await api(`/api/replays/${encodeURIComponent(name)}`);
+    const d = await api(`api/replays/${encodeURIComponent(name)}`);
     if (gen !== generation) return;
     data = d;
     custom = false;
     time = 0;
     selected = null;
     segments = [];
-    $("session-title").textContent = name.replace(
-      /\.(ticks\.csv|replay\.jsonl)$/,
-      "",
-    );
+    const entry = sessions.find((s) => s.name === name) || { name };
+    $("session-title").textContent = when(entry);
     $("session-info").textContent =
-      `${label(d.duration)} recorded · ${d.meta.policy} · ${d.tracks.puck.length.toLocaleString()} puck measurements`;
+      `${label(d.duration)} recorded · ${describe({ ...entry, policy: entry.policy || d.meta.policy })} · ${d.tracks.puck.length.toLocaleString()} puck measurements · log ${stamp(name)}`;
+    const url = new URL(location.href);
+    url.searchParams.set("session", stamp(name));
+    history.replaceState(null, "", url);
     $("warnings").textContent = d.warnings.join(" ");
     $("warnings").hidden = !d.warnings.length;
     $("scrub").max = d.duration;
@@ -123,7 +152,7 @@ async function load(name) {
   }
 }
 async function requestSim(starts, signal) {
-  return api(`/api/replays/${encodeURIComponent(data.name)}/simulate`, {
+  return api(`api/replays/${encodeURIComponent(data.name)}/simulate`, {
     method: "POST",
     headers: { "Content-Type": "application/json" },
     signal,

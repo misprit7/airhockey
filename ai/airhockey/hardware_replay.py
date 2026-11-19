@@ -48,7 +48,77 @@ def safe_path(name: str, directory: Path = LOG_DIR) -> Path:
     return p
 
 
+def _model_version(policy: str) -> str | None:
+    """'neural:runs/<run>/agent.pt', 'neural:<run>' or 'neural:v4.1.2' ->
+    the registered version (``ai/models.json``), if it is one."""
+    from airhockey import models   # noqa: PLC0415
+    try:
+        registered = models.registry()["models"]
+    except (OSError, ValueError, KeyError):
+        return None
+    name = str(policy).split(":", 1)[-1]
+    parts = Path(name).parts
+    run = parts[-2] if len(parts) >= 2 else name
+    if run in registered:
+        return run
+    return next((version for version, entry in registered.items() if entry["run"] == run), None)
+
+
+@lru_cache(maxsize=1024)
+def _summary(filename: str, mtime: int, size: int) -> dict:
+    """What a session was, read from the two ends of its log: the policy and
+    live/dry flag from the first line, the length from the last, the caps
+    from the first lines of the runner's own log. Never reads the middle."""
+    p = Path(filename)
+    out: dict = {}
+    stamp = p.name.split(".")[0]
+    if len(stamp) == 15 and stamp[8] == "-" and stamp.replace("-", "").isdigit():
+        out["started"] = (f"{stamp[:4]}-{stamp[4:6]}-{stamp[6:8]}T"
+                          f"{stamp[9:11]}:{stamp[11:13]}:{stamp[13:15]}")
+    try:
+        with open(p, "rb") as f:
+            head = f.readline(1 << 20).decode(errors="replace")
+            f.seek(max(0, size - 4096))
+            tail = f.read().decode(errors="replace").splitlines()
+        if p.name.endswith(".jsonl"):
+            meta = json.loads(head)
+            if meta.get("type") == "meta":
+                out["policy"] = meta.get("policy")
+                out["live"] = bool(meta.get("live"))
+            for line in reversed(tail):
+                try:
+                    out["duration_s"] = round(float(json.loads(line)["t"]), 1)
+                    break
+                except (ValueError, KeyError, TypeError):
+                    continue
+        else:
+            for line in reversed(tail):
+                value = _number(line.split(",", 1)[0])
+                if value is not None:
+                    out["duration_s"] = round(value, 1)
+                    break
+    except (OSError, ValueError):
+        pass
+    try:
+        with open(p.with_name(stamp + ".log"), "rb") as f:
+            text = f.read(16384).decode(errors="replace")
+        for line in text.splitlines():
+            line = line.strip()
+            if line.startswith("session caps:"):
+                out["caps"] = line.removeprefix("session caps:").strip()
+            elif "policy" not in out and line.startswith("!!  policy "):
+                out["policy"] = line.split()[2]
+    except OSError:
+        pass
+    if out.get("policy"):
+        out["model"] = _model_version(out["policy"])
+    return out
+
+
 def list_sessions(directory: Path = LOG_DIR):
+    """Every table session, newest first, with what it was: when it started,
+    how long it ran, which policy (and registered model version), whether the
+    robot was live or the run was dry, and the speed / accel caps."""
     files = list(directory.glob("*.replay.jsonl")) + list(directory.glob("*.ticks.csv"))
     rich = {
         p.name.removesuffix(".replay.jsonl")
@@ -59,15 +129,17 @@ def list_sessions(directory: Path = LOG_DIR):
     for p in sorted(files, key=lambda p: p.stat().st_mtime, reverse=True):
         if p.name.endswith(".ticks.csv") and p.name.removesuffix(".ticks.csv") in rich:
             continue
-        if p.stat().st_size < 400:
+        st = p.stat()
+        if st.st_size < 400:
             continue
         out.append(
             dict(
                 name=p.name,
-                size=p.stat().st_size,
+                size=st.st_size,
                 format="full camera log"
                 if p.name.endswith(".jsonl")
                 else "legacy decision log",
+                **_summary(str(p), st.st_mtime_ns, st.st_size),
             )
         )
     return out

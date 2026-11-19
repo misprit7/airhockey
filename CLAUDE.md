@@ -313,8 +313,13 @@ Robotic air hockey table that uses reinforcement learning trained in simulation,
       Its own flags: `--policy <spec>` (default `neural:latest`),
       `--difficulty <mode>` (`ai/models.json`), `--tension <mm>` (master pretension
       at ENABLE; default 0 = slack, the setting the tracking test
-      validated), `--dry`; everything else passes to `run_policy.py`.
-      Flags only, never environment variables.
+      validated), `--dry`, `--use-running-master` (do not start or stop a
+      master; use the one listening); everything else passes to
+      `run_policy.py`. Flags only, never environment variables. The live
+      start takes up cable slack first (the master's `TAKEUP`;
+      `run_policy.py --no-takeup` skips it), THEN measures the mallet,
+      because winding in slack can slide it. The web UI's Start AI button
+      runs this script.
   - `tests/` - Test suite. Run it with the SYSTEM python:
     `PYTHONPATH=ai:vision/bin:shared python3 -m pytest ai` (the venv's tensordict
     0.11 fails 5 TD-MPC2 tests; the system 0.13 passes).
@@ -394,6 +399,19 @@ Robotic air hockey table that uses reinforcement learning trained in simulation,
     `ERR fault ...` until the next ENABLE. Before this, one overloaded
     motor stopped while the other three kept pulling. The Teensy has no
     feedback wire from the drives, so this is the only place it can live.
+    `TAKEUP [taut_amps [max_mm]]` (2026-11-18) is the SLACK TAKE-UP: the
+    first enable after the drives are powered jerks the shafts and leaves
+    the cables slack, which used to be fixed by hand (enable, disable, turn
+    the spools taut, enable). It energizes the drives, has the Teensy wind
+    in one step pulse (0.38 mm) at a time (`SLACK <mask> <steps>`, firmware; same step/dir path
+    and direction as TENSION) every cable whose drive current is still under
+    0.3 A in magnitude (slack reads 0.0-0.16 A, 1.5 mm pretension ~1.3 A),
+    and de-energizes them, so it ends where the manual procedure did and
+    ENABLE is unchanged. Stops, drives disabled, on a drive alert, a current
+    over 2.5 A, 150 mm without resistance, 120 s, or ANY byte from the
+    client (closing the socket is the stop button). Only while disabled.
+    Host tests against a simulated rig: `make -C sw test`. NOT yet run on
+    the table.
   - `bin/` - Standalone diagnostics: `test_motor`, `scan_motors`, `activate`,
     `retract_test`, `check_limits`, `calibrate` (passive encoder capture)
   - `bin/drive_gains.cpp` - Back up every drive's tuning (read-only, to a new
@@ -565,7 +583,35 @@ goals conceded from 0.10 to 0.04 per game.
   forwards it to the Teensy as ACCEL only when it changes. Older 2-dim
   checkpoints still load and play (`policy_loader.checkpoint_shapes`).
   The motor dynamics model converts the target to actual paddle movement.
-- **Web UI**: Real-time visualization over WebSocket for debugging. Binds to 0.0.0.0 for access over Tailscale. Not used during training. Defaults to replay mode showing most recent recording. Has instant/realistic physics toggle for manual play.
+- **Web UI**: Real-time visualization over WebSocket for debugging. Binds to 0.0.0.0 for access over Tailscale. Not used during training. Has instant/realistic physics toggle for manual play. Three tabs since 2026-11-18, each showing only its own controls (`data-tabs` on the sidebar sections):
+  - **Robot** (opens here): *Play against the AI* -- a level from
+    `ai/models.json` and Start / Stop AI -- and *Manual control* (Take up
+    cable slack, Hardware on/off, pretension, click/follow), views, motor
+    load, motion limits, tracking test. `airhockey/robot_session.py` does
+    the two actions: take-up is the master's `TAKEUP` on a short-lived
+    connection; the AI is `ai/bin/play.sh --difficulty <level> --tension
+    <mm>` as a child process (`--use-running-master` when a master is
+    listening; its PRETENSION is then set first), output in
+    `logs/ai_session.log`, pid in `logs/ai_session.json` so a restarted
+    server still finds and can stop it. Stop is SIGINT to its process
+    group, i.e. Ctrl-C. One at a time, and never while a tab holds the
+    hardware. Routes: `GET /api/robot`, `POST /api/robot/takeup[/stop]`,
+    `POST /api/robot/ai/start|stop`; the two that start motion need
+    `{"confirm": true}` from the button's dialog. `web/robot.js` is the
+    client. Whether a master is running is read from `/proc/net/tcp`,
+    never by connecting (the master serves one client).
+  - **Simulation**: play by mouse or watch checkpoints.
+  - **Recordings**: two kinds, kept apart. SIMULATED GAMES
+    (`ai/recordings/*.json`, replayed on the page's table) are listed by
+    `airhockey/recording_index.py`: each entry says who played blue (the
+    robot's end, bottom) and red, what kind of game it was, and files under
+    the registered model version when the checkpoint is one, else the
+    run; entries are cached in `logs/recordings_index.json` and built off
+    the event loop (3,000 files used to be parsed on it). The loaded game
+    gets an info card, a running score and a legend. TABLE SESSIONS (the
+    real robot's logs) open in the session viewer, mounted at `/sessions/`
+    (`replay_server.py`, still standalone on 8422; `ai/REPLAY.md`), whose
+    list shows date, length, model version, caps and live/dry.
   - **Camera view** (`vision_service.py`) identifies three things and labels
     each in the overlay: the ROBOT paddle (3-marker cluster), the PUCK (its
     four-corner square, drawn at the true 40.7 mm radius with a spoke to each
@@ -748,6 +794,13 @@ make -C vision                   # snap (Spinnaker capture)
 pio run -d fw                    # Teensy firmware
 pio run -d fw -t upload          # flash it
 make -C fw/test                  # host tests for the motion profile
+make -C sw test                  # host tests for the master (no SC-Hub, no Teensy)
+
+# Day to day: run the web UI (PYTHONPATH=ai python -m airhockey.server, port
+# 8420) and press Start AI on the Robot tab. It runs play.sh: starts
+# cdpr_master if none is running, takes up cable slack, measures the mallet,
+# enables and plays. The same from a terminal:
+bash ai/bin/play.sh --difficulty easy --tension 1.5
 
 # Play with the trained policy (from the repo root)
 # Defaults reproduce training; the runner prints a sim/real alignment block

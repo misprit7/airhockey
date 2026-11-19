@@ -6,6 +6,11 @@ let config = null;
 let frame = null;
 let ws = null;
 let hardwareRequest = null;
+// Whether THIS tab holds the robot for manual control, and callbacks waiting
+// for the server's next answer about it (robot.js turns it off before the AI
+// starts: the master serves one client).
+let hardwareOn = false;
+const hardwareModeListeners = [];
 // "control" = driving the machine by hand, no world simulated at all;
 // "sim" = the full game; "replay" = watching a recording.
 const requestedReplay = new URLSearchParams(window.location.search).get("replay");
@@ -361,11 +366,11 @@ function render(now) {
             ctx.textAlign = "left";
             if (requests[frame.shot_type_opponent]) {
                 ctx.fillStyle = COLORS.opponent;
-                ctx.fillText(`Red request: ${requests[frame.shot_type_opponent]}`, 12, 25);
+                ctx.fillText(`Red asked to shoot: ${requests[frame.shot_type_opponent].toLowerCase()}`, 12, 25);
             }
             if (requests[frame.shot_type_agent]) {
                 ctx.fillStyle = COLORS.agent;
-                ctx.fillText(`Blue request: ${requests[frame.shot_type_agent]}`, 12, canvas.height - 15);
+                ctx.fillText(`Blue asked to shoot: ${requests[frame.shot_type_agent].toLowerCase()}`, 12, canvas.height - 15);
             }
             if (frame.rally_event) {
                 ctx.fillStyle = "rgba(0, 0, 0, 0.85)";
@@ -455,6 +460,8 @@ function connect() {
             error.textContent = reason ? "Hardware enable failed: " + reason : "";
             error.classList.toggle("hidden", !reason);
             hardwareRequest = null;
+            hardwareOn = !!msg.enabled;
+            hardwareModeListeners.splice(0).forEach((fn) => fn(msg));
             document.getElementById("btn-hardware").disabled = false;
             document.getElementById("btn-hardware").textContent =
                 msg.enabled ? "Hardware: ON" : "Hardware: Off";
@@ -490,6 +497,16 @@ function connect() {
 function updateScoreboard(f) {
     document.getElementById("score-agent").textContent = f.score_agent;
     document.getElementById("score-opponent").textContent = f.score_opponent;
+    if (mode === "replay") {
+        // The topbar scoreboard is a phone layout; on a desktop this line is
+        // the running score and clock of the recording.
+        const clock = (t) => `${Math.floor(t / 60)}:${Math.floor(t % 60).toString().padStart(2, "0")}`;
+        const end = replayData && replayData.length ? replayData[replayData.length - 1].time : undefined;
+        document.getElementById("stage-info").textContent =
+            `blue ${f.score_agent ?? 0} – ${f.score_opponent ?? 0} red` +
+            (f.time !== undefined ? `   ·   ${clock(f.time)}${end !== undefined ? ` / ${clock(end)}` : ""}` : "");
+        document.getElementById("stage-info").classList.remove("hidden");
+    }
     if (f.time !== undefined) {
         const mins = Math.floor(f.time / 60);
         const secs = Math.floor(f.time % 60).toString().padStart(2, "0");
@@ -750,43 +767,46 @@ function setMode(next) {
     if (ws && ws.readyState === 1 && next !== "replay") {
         ws.send(JSON.stringify({ type: "set_mode", mode: next }));
     }
-    // Scoring and the clock mean nothing without a simulated game.
-    document.getElementById("scoreboard").style.visibility =
-        next === "sim" ? "" : "hidden";
-    document.getElementById("topbar-stats").style.visibility =
-        next === "sim" ? "" : "hidden";
-    document.getElementById("sidebar-reward").style.display =
-        next === "sim" ? "" : "none";
-    // Only sim has two paddles to choose between.
-    document.getElementById("players-panel").classList.toggle(
-        "hidden", next !== "sim");
-    if (next === "sim") refreshAgentList();
+    // Scoring and the clock belong to a game: a simulated one, or a recorded
+    // one. The robot tab has neither.
+    const scored = next === "sim" || next === "replay";
+    document.getElementById("scoreboard").style.visibility = scored ? "" : "hidden";
+    document.getElementById("topbar-stats").style.visibility = scored ? "" : "hidden";
+    if (next === "sim") {
+        setScoreLabels("Robot end", "Far end");
+        refreshAgentList();
+    }
+    // Each sidebar section names the tabs it belongs to (data-tabs); a
+    // control that means nothing in this tab is not shown in it.
+    document.querySelectorAll("#sidebar [data-tabs]").forEach((el) => {
+        el.classList.toggle("hidden", !el.dataset.tabs.split(" ").includes(next));
+    });
+    document.getElementById("mode-hint").textContent = MODE_HINTS[next] || "";
 
-    // The hardware limits mean nothing while watching a recording, and on a
-    // phone they pushed the recording list below the fold: switching to
-    // Replay appeared to do nothing.
-    document.getElementById("limits-panel").classList.toggle(
-        "hidden", next === "replay");
-    document.getElementById("motor-load-panel").classList.toggle(
-        "hidden", next === "replay");
-
-    const replayPanel = document.getElementById("replay-panel");
     if (mode === "replay") {
-        replayPanel.classList.remove("hidden");
         loadRecordingsList();
         // Scroll the SELECTOR to the top, not the panel: the list then sits
         // right under it and the way back out stays on screen.
         if (isPhone()) document.getElementById("mode-select").scrollIntoView({ block: "start" });
-        // Auto-refresh recording list every 5 seconds
         if (recordingsRefreshTimer) clearInterval(recordingsRefreshTimer);
-        recordingsRefreshTimer = setInterval(loadRecordingsList, 5000);
+        recordingsRefreshTimer = setInterval(loadRecordingsList, 15000);
     } else {
-        replayPanel.classList.add("hidden");
         if (recordingsRefreshTimer) clearInterval(recordingsRefreshTimer);
         recordingsRefreshTimer = null;
         stopReplay();
         puckTrail = [];
     }
+}
+
+const MODE_HINTS = {
+    control: "The real table. Nothing moves until you press a button here.",
+    sim: "A simulated table. Blue (bottom) is the robot's end; pick who drives each mallet.",
+    replay: "Saved games. Pick one below; it plays on the table at the left.",
+};
+
+function setScoreLabels(blue, red) {
+    document.getElementById("label-agent").textContent = blue;
+    document.getElementById("label-opponent").textContent = red;
 }
 
 document.querySelectorAll(".mode-btn").forEach((btn) => {
@@ -796,11 +816,43 @@ document.querySelectorAll(".mode-btn").forEach((btn) => {
 // Replay
 let activeRecordingPath = requestedReplay || null;
 
-// Replay menu: grouped by RUN, newest run first, newest step first inside a
-// run. Groups remember whether you opened them across the 5 s refresh, so the
-// list does not fold shut under your pointer.
-const openRuns = new Set();
-let openRunsInitialised = false;
+// The Recordings tab. Two different things are called recordings and the tab
+// keeps them apart: SIMULATED GAMES (ai/recordings, replayed on this page's
+// table) and TABLE SESSIONS (the real robot's logs, opened in /sessions/).
+// The server says in plain fields who played each simulated game and which
+// model version or run it files under (airhockey/recording_index.py); the
+// file names themselves are whatever the writing script chose.
+let recordings = [];            // /api/recordings, newest first
+let tableSessions = [];         // /sessions/api/replays, newest first
+let recordingsSignature = "";
+let recKind = "sim";            // which list is showing: "sim" | "table"
+let recFilter = "";
+// Groups remember whether you opened them across refreshes, so the list does
+// not fold shut under your pointer.
+const openGroups = new Set();
+let openGroupsInitialised = false;
+
+const REC_KIND_NOTES = {
+    sim: "Games played in the simulator, saved by training and evaluation runs or by you in the Simulation tab. Filed under the model (or training run) that played the blue, robot end. Click one to watch it on the table at the left.",
+    table: "The real robot against a person, as the overhead camera recorded it. A session opens in the session viewer, which replays the measured tracks next to a re-simulation of the same moments.",
+};
+const REC_SECTIONS = [
+    ["models", "Released models", "Versions registered in ai/models.json, newest first."],
+    ["runs", "Training runs and experiments", "Everything else, by the run that produced it."],
+    ["manual", "Played by mouse", "Games saved from the Simulation tab."],
+];
+// What each kind of game is, for someone who has not read the training notes.
+const KIND_NOTES = {
+    "self-play": "the model against a copy of itself",
+    "cross-play": "two different models against each other",
+    "head-to-head": "two different models against each other",
+    "human-proxy benchmark": "the model against a scripted stand-in for a person",
+    "isolated defense": "one scripted attack on the robot's goal, to test a save",
+    "isolated drill": "one scripted situation, not a full game",
+    "resting-puck games": "games checked for pucks left lying untouched",
+    "resting-puck stall map": "a puck placed at rest, to see whether the robot plays it",
+    "training snapshot": "a game saved during training at this step",
+};
 
 function fmtStep(step) {
     if (step === null || step === undefined) return "";
@@ -821,82 +873,254 @@ function fmtDate(iso) {
     return `${d.toLocaleDateString([], { month: "short", day: "numeric" })} ${hm}`;
 }
 
+function fmtLength(seconds) {
+    if (!Number.isFinite(seconds)) return "";
+    return seconds >= 90 ? `${Math.round(seconds / 60)} min` : `${Math.round(seconds)} s`;
+}
+
+const versionKey = (v) => (v.match(/\d+/g) || []).map(Number);
+function compareVersionsDesc(a, b) {
+    const x = versionKey(a), y = versionKey(b);
+    for (let i = 0; i < 3; i++) if ((x[i] || 0) !== (y[i] || 0)) return (y[i] || 0) - (x[i] || 0);
+    return 0;
+}
+
+function recordingMatches(rec, words) {
+    if (!words.length) return true;
+    const hay = `${rec.name} ${rec.group} ${rec.group_alias || ""} ${rec.blue} ${rec.red} ${rec.kind}`.toLowerCase();
+    return words.every((w) => hay.includes(w));
+}
+
 async function loadRecordingsList() {
     try {
-        const resp = await fetch("/api/recordings");
-        if (!resp.ok) throw new Error(`Replay list request failed (${resp.status})`);
-        const recordings = await resp.json();
-        const list = document.getElementById("recording-list");
-
-        // Group by run, keeping the server's newest-first order for runs.
-        const groups = new Map();
-        for (const rec of recordings) {
-            const key = rec.run || rec.name;
-            if (!groups.has(key)) groups.set(key, []);
-            groups.get(key).push(rec);
-        }
-        for (const items of groups.values()) {
-            items.sort((a, b) => (b.step ?? 0) - (a.step ?? 0) || b.mtime - a.mtime);
-        }
-        if (!openRunsInitialised && groups.size) {
-            // First paint: open the run that holds the active replay, else the
-            // newest run, so the list is never a wall of closed headers.
-            const active = recordings.find((r) => r.path === activeRecordingPath);
-            openRuns.add(active ? (active.run || active.name) : groups.keys().next().value);
-            openRunsInitialised = true;
-        }
-
-        list.innerHTML = "";
-        for (const [run, items] of groups) {
-            const li = document.createElement("li");
-            li.className = "run-group" + (openRuns.has(run) ? " open" : "");
-
-            const head = document.createElement("div");
-            head.className = "run-head";
-            const newest = items[0];
-            const algo = newest.metadata && newest.metadata.algo ? newest.metadata.algo : "";
-            head.innerHTML =
-                `<span class="run-caret">\u25B8</span>` +
-                `<span class="run-name">${run}</span>` +
-                (algo ? `<span class="run-algo">${algo}</span>` : "") +
-                `<span class="run-meta">${items.length} \u00B7 ${fmtDate(newest.date)}</span>`;
-            head.addEventListener("click", () => {
-                if (openRuns.has(run)) openRuns.delete(run); else openRuns.add(run);
-                li.classList.toggle("open");
-            });
-            li.appendChild(head);
-
-            const ul = document.createElement("ul");
-            ul.className = "run-items";
-            for (const rec of items) {
-                const it = document.createElement("li");
-                it.className = "rec";
-                if (rec.path === activeRecordingPath) it.classList.add("active");
-                const step = rec.step !== null && rec.step !== undefined
-                    ? `@ ${fmtStep(rec.step)}${rec.variant ? ` · ${rec.variant}` : ""}` : rec.name;
-                const score = rec.score ? `${rec.score[0]}\u2013${rec.score[1]}` : "";
-                const opp = rec.metadata && rec.metadata.opponent ? `vs ${rec.metadata.opponent}` : "";
-                const dur = rec.duration_s ? `${Math.round(rec.duration_s)}s` : "";
-                it.innerHTML =
-                    `<span class="rec-step">${step}</span>` +
-                    `<span class="rec-score">${score}</span>` +
-                    `<span class="rec-meta">${[opp, dur, fmtDate(rec.date)].filter(Boolean).join(" \u00B7 ")}</span>`;
-                it.title = rec.name;
-                it.addEventListener("click", () => loadRecording(rec.path, it));
-                ul.appendChild(it);
-            }
-            li.appendChild(ul);
-            list.appendChild(li);
+        const [recs, sessions] = await Promise.all([
+            fetch("/api/recordings").then((r) => {
+                if (!r.ok) throw new Error(`Recording list request failed (${r.status})`);
+                return r.json();
+            }),
+            // The session viewer is a separate small app; without it the
+            // simulated games still list.
+            fetch("/sessions/api/replays").then((r) => (r.ok ? r.json() : [])).catch(() => []),
+        ]);
+        const signature = `${recs.length}:${recs[0]?.mtime}:${sessions.length}:${sessions[0]?.name}`;
+        if (signature === recordingsSignature) return;     // nothing new: leave the DOM alone
+        recordingsSignature = signature;
+        recordings = recs;
+        tableSessions = sessions;
+        document.getElementById("rec-count-sim").textContent = `(${recs.length})`;
+        document.getElementById("rec-count-table").textContent = `(${sessions.length})`;
+        renderRecordingLists();
+        if (activeRecordingPath) describeLoadedRecording();
+        // Something to look at straight away: the newest game of a released model.
+        if (mode === "replay" && !replayData && !activeRecordingPath && recs.length) {
+            const first = recs.find((r) => r.section === "models") || recs[0];
+            loadRecording(first.path, null);
         }
     } catch (e) {
         console.error("Failed to load recordings", e);
         const list = document.getElementById("recording-list");
         if (!list.children.length) {
             const message = document.createElement("li");
-            message.textContent = "Could not load replays. Retrying…";
+            message.className = "rec-empty";
+            message.textContent = "Could not load the recording list. Retrying…";
             list.appendChild(message);
         }
     }
+}
+
+function renderRecordingLists() {
+    document.querySelectorAll(".rec-kind-btn").forEach(
+        (b) => b.classList.toggle("active", b.dataset.kind === recKind));
+    document.getElementById("rec-kind-note").textContent = REC_KIND_NOTES[recKind];
+    document.getElementById("recording-list").classList.toggle("hidden", recKind !== "sim");
+    document.getElementById("session-list").classList.toggle("hidden", recKind !== "table");
+    document.getElementById("rec-filter").placeholder = recKind === "sim"
+        ? "Filter by model, run, opponent or kind…" : "Filter by date, model or policy…";
+    if (recKind === "sim") renderSimulatedGames(); else renderTableSessions();
+}
+
+function renderSimulatedGames() {
+    const list = document.getElementById("recording-list");
+    const words = recFilter.toLowerCase().split(/\s+/).filter(Boolean);
+    const shown = recordings.filter((r) => recordingMatches(r, words));
+    if (!openGroupsInitialised && recordings.length) {
+        const active = recordings.find((r) => r.path === activeRecordingPath);
+        const first = active || recordings.find((r) => r.section === "models") || recordings[0];
+        openGroups.add(`${first.section}/${first.group}`);
+        openGroupsInitialised = true;
+    }
+    list.innerHTML = "";
+    if (!shown.length) {
+        const empty = document.createElement("li");
+        empty.className = "rec-empty";
+        empty.textContent = recordings.length ? "No recording matches the filter." : "No recordings yet.";
+        list.appendChild(empty);
+        return;
+    }
+    for (const [section, title, note] of REC_SECTIONS) {
+        const groups = new Map();           // insertion order = newest first
+        for (const rec of shown) {
+            if (rec.section !== section) continue;
+            if (!groups.has(rec.group)) groups.set(rec.group, []);
+            groups.get(rec.group).push(rec);
+        }
+        if (!groups.size) continue;
+        const names = [...groups.keys()];
+        if (section === "models") names.sort(compareVersionsDesc);
+        const head = document.createElement("li");
+        head.className = "rec-section";
+        head.innerHTML = `<span></span><small></small>`;
+        head.firstChild.textContent = title;
+        head.lastChild.textContent = note;
+        list.appendChild(head);
+        for (const name of names) {
+            const items = groups.get(name);
+            const key = `${section}/${name}`;
+            // A narrow filter result is shown unfolded: you searched for it.
+            const open = openGroups.has(key) || (words.length > 0 && shown.length <= 40);
+            const li = document.createElement("li");
+            li.className = "run-group" + (open ? " open" : "");
+            const groupHead = document.createElement("div");
+            groupHead.className = "run-head";
+            const alias = items[0].group_alias;
+            groupHead.innerHTML =
+                `<span class="run-caret">▸</span><span class="run-name"></span>` +
+                `<span class="run-algo"></span><span class="run-meta"></span>`;
+            groupHead.children[1].textContent = name;
+            groupHead.children[2].textContent = alias ? alias.replace(/^_/, "") : "";
+            groupHead.children[2].title = alias ? `run directory runs/${alias}` : "";
+            groupHead.children[3].textContent = `${items.length} · ${fmtDate(items[0].date)}`;
+            groupHead.addEventListener("click", () => {
+                if (openGroups.has(key)) openGroups.delete(key); else openGroups.add(key);
+                renderSimulatedGames();
+            });
+            li.appendChild(groupHead);
+            if (open) {
+                const ul = document.createElement("ul");
+                ul.className = "run-items";
+                for (const rec of items) ul.appendChild(recordingItem(rec));
+                li.appendChild(ul);
+            }
+            list.appendChild(li);
+        }
+    }
+}
+
+function recordingItem(rec) {
+    const it = document.createElement("li");
+    it.className = "rec" + (rec.path === activeRecordingPath ? " active" : "");
+    it.dataset.path = rec.path;
+    const what = [rec.kind, rec.step !== null && rec.step !== undefined ? `step ${fmtStep(rec.step)}` : "",
+                  rec.variant].filter(Boolean).join(" · ");
+    it.innerHTML = `<span class="rec-step"></span><span class="rec-score"></span><span class="rec-meta"></span>`;
+    // Score from the point of view of the group's model, whichever end it had.
+    const mine = rec.score ? rec.score[rec.plays === "red" ? 1 : 0] : null;
+    const theirs = rec.score ? rec.score[rec.plays === "red" ? 0 : 1] : null;
+    it.children[0].textContent = `vs ${rec.opponent || rec.red}${rec.plays === "red" ? " (playing the red end)" : ""}`;
+    it.children[1].textContent = rec.score ? `${mine}–${theirs}` : "";
+    it.children[1].title = "final score: this model – its opponent";
+    it.children[2].textContent = [what, fmtLength(rec.duration_s), fmtDate(rec.date)].filter(Boolean).join(" · ");
+    // The file name is the only thing that tells two games of one pairing apart.
+    const file = document.createElement("span");
+    file.className = "rec-file";
+    file.textContent = rec.name;
+    it.appendChild(file);
+    it.title = `ai/recordings/${rec.path}`;
+    it.addEventListener("click", () => loadRecording(rec.path, it));
+    return it;
+}
+
+function renderTableSessions() {
+    const list = document.getElementById("session-list");
+    const words = recFilter.toLowerCase().split(/\s+/).filter(Boolean);
+    list.innerHTML = "";
+    const describe = (s) => [
+        s.model || (s.policy || "unknown policy").replace(/^neural:runs\//, "").replace(/\/agent\.pt$/, ""),
+        (s.caps || "").replace(/\^2/g, "\u00B2"), s.live === false ? "dry run" : s.live ? "robot live" : null,
+    ].filter(Boolean).join(" · ");
+    const shown = tableSessions.filter((s) => {
+        const hay = `${s.name} ${s.started || ""} ${describe(s)} ${s.policy || ""}`.toLowerCase();
+        return words.every((w) => hay.includes(w));
+    });
+    if (!shown.length) {
+        const empty = document.createElement("li");
+        empty.className = "rec-empty";
+        empty.textContent = tableSessions.length ? "No session matches the filter."
+            : "No table sessions found in logs/run_policy/.";
+        list.appendChild(empty);
+        return;
+    }
+    for (const s of shown) {
+        const stamp = s.name.replace(/\.(ticks\.csv|replay\.jsonl)$/, "");
+        const li = document.createElement("li");
+        li.className = "rec session";
+        const a = document.createElement("a");
+        a.href = `/sessions/?session=${encodeURIComponent(stamp)}`;
+        a.title = `logs/run_policy/${s.name} · ${s.format}`;
+        a.innerHTML = `<span class="rec-step"></span><span class="rec-score">open ↗</span><span class="rec-meta"></span>`;
+        const started = new Date(s.started);
+        a.children[0].textContent = [
+            isNaN(started) ? stamp : `${started.toLocaleDateString([], { month: "short", day: "numeric", year: "numeric" })} ` +
+                started.toLocaleTimeString([], { hour: "2-digit", minute: "2-digit" }),
+            fmtLength(s.duration_s)].filter(Boolean).join(" · ");
+        a.children[2].textContent = describe(s);
+        li.appendChild(a);
+        list.appendChild(li);
+    }
+}
+
+document.querySelectorAll(".rec-kind-btn").forEach((b) => b.addEventListener("click", () => {
+    recKind = b.dataset.kind;
+    renderRecordingLists();
+}));
+document.getElementById("rec-filter").addEventListener("input", (e) => {
+    recFilter = e.target.value;
+    renderRecordingLists();
+});
+
+// The card above the playback controls: what the loaded recording IS.
+let loadedMetadata = null;
+function describeLoadedRecording() {
+    const box = document.getElementById("rec-now");
+    if (!activeRecordingPath || !replayData) { box.classList.add("hidden"); return; }
+    const rec = recordings.find((r) => r.path === activeRecordingPath) || {};
+    const meta = loadedMetadata || {};
+    const blue = rec.blue || meta.run_name || "blue";
+    const red = rec.red || meta.opponent || "red";
+    const last = replayData[replayData.length - 1] || {};
+    const kind = rec.kind || meta.match_type || "";
+    document.getElementById("rec-now-title").textContent = `${blue} vs ${red}`;
+    const facts = [
+        ["What", KIND_NOTES[kind] ? `${kind}: ${KIND_NOTES[kind]}` : kind],
+        ["Blue, bottom", `${blue}${rec.group_alias ? ` (run ${rec.group_alias.replace(/^_/, "")})` : ""} — the robot's end`],
+        ["Red, top", `${red} — the far end, where a person stands at the real table`],
+        ["Sides", meta.policy_sides || ""],
+        ["Final score", last.score_agent !== undefined ? `${last.score_agent}–${last.score_opponent} (blue–red)` : ""],
+        ["Length", `${fmtLength(last.time ?? replayData.length / replayFps)} of play, ${replayData.length} frames at ${replayFps} per second`],
+        ["Robot limits", meta.accel_cap_m_s2 ? `acceleration up to ${meta.accel_cap_m_s2} m/s²` : ""],
+        ["Shot requests", meta.shot_request ? `${meta.shot_request} (the route the policy is asked to play each possession; shown on the table)` : ""],
+        ["Training step", rec.step !== null && rec.step !== undefined ? fmtStep(rec.step) : (meta.step ? fmtStep(meta.step) : "")],
+        ["Saved", rec.date ? new Date(rec.date).toLocaleString() : ""],
+        ["File", `ai/recordings/${activeRecordingPath}`],
+    ];
+    const dl = document.getElementById("rec-now-facts");
+    dl.innerHTML = "";
+    for (const [name, value] of facts) {
+        if (!value) continue;
+        const dt = document.createElement("dt"); dt.textContent = name;
+        const dd = document.createElement("dd"); dd.textContent = value;
+        dl.append(dt, dd);
+    }
+    // Everything the writer recorded, minus the one field that is a whole
+    // motor thermal model.
+    const shownMeta = JSON.parse(JSON.stringify(meta));
+    if (shownMeta.simulation_environment?.thermal_path) shownMeta.simulation_environment.thermal_path = "(motor thermal model, omitted)";
+    document.getElementById("rec-now-meta").textContent = JSON.stringify(shownMeta, null, 1);
+    document.getElementById("rec-now-more").classList.toggle("hidden", !Object.keys(meta).length);
+    document.getElementById("legend-blue").textContent = `Blue mallet (bottom, the robot's end): ${blue}`;
+    document.getElementById("legend-red").textContent = `Red mallet (top, the far end): ${red}`;
+    setScoreLabels(blue, red);
+    box.classList.remove("hidden");
 }
 
 function isPhone() {
@@ -923,35 +1147,16 @@ async function loadRecording(path, li) {
         puckTrail = [];
 
         activeRecordingPath = path;
-        document.querySelectorAll("#recording-list li.rec").forEach((l) => l.classList.remove("active"));
-        li?.classList.add("active");
+        loadedMetadata = metadata;
+        document.querySelectorAll("#recording-list li.rec").forEach(
+            (l) => l.classList.toggle("active", l.dataset.path === path));
+        describeLoadedRecording();
         const url = new URL(window.location.href);
         url.searchParams.set("replay", path);
         window.history.replaceState(null, "", url);
 
         const controls = document.getElementById("replay-controls");
         controls.classList.remove("hidden");
-
-        // Show stage info if available
-        const stageEl = document.getElementById("stage-info");
-        if (metadata && metadata.stage !== undefined) {
-            const name = metadata.stage_name || `Stage ${metadata.stage}`;
-            const step = metadata.step;
-            let text = name;
-            if (step !== undefined) {
-                const stepLabel = step >= 1_000_000
-                    ? `${(step / 1_000_000).toFixed(1)}M`
-                    : step >= 1_000 ? `${Math.floor(step / 1_000)}k` : `${step}`;
-                text += ` \u2022 Step ${stepLabel}`;
-            }
-            stageEl.textContent = text;
-            stageEl.classList.remove("hidden");
-        } else if (metadata && metadata.policy_sides) {
-            stageEl.textContent = `${metadata.match_type}: ${metadata.policy_sides}`;
-            stageEl.classList.remove("hidden");
-        } else {
-            stageEl.classList.add("hidden");
-        }
 
         const slider = document.getElementById("replay-slider");
         slider.max = replayData.length - 1;
@@ -1094,74 +1299,11 @@ resize();
 render();
 connect();
 
-// Load the most recent recording into the replay panel, WITHOUT switching
-// to it. The UI opens in live mode: this is a control surface for a machine
-// as much as a viewer, and starting on a recording meant every click on the
-// field was silently discarded until you noticed the mode button.
-async function loadLatestRecording() {
-    try {
-        const resp = await fetch("/api/recordings");
-        const recordings = await resp.json();
-        if (recordings.length > 0) {
-            const list = document.getElementById("recording-list");
-            list.innerHTML = "";
-            recordings.forEach((rec) => {
-                const li = document.createElement("li");
-                li.textContent = rec.label || rec.name;
-                if (rec.path === recordings[0].path) li.classList.add("active");
-                li.addEventListener("click", () => loadRecording(rec.path, li));
-                list.appendChild(li);
-            });
-            // Auto-load the most recent
-            activeRecordingPath = recordings[0].path;
-            const recResp = await fetch(`/api/recordings/${recordings[0].path}`);
-            const recData = await recResp.json();
-            replayData = recData.frames || recData;
-            const metadata = recData.metadata || null;
-            replayWorkspace = metadata?.workspace_sim || null;
-            replayFps = metadata?.fps > 0 ? metadata.fps : 60;
-            replayIndex = 0;
-            replayPosition = 0;
-            const controls = document.getElementById("replay-controls");
-            controls.classList.remove("hidden");
-
-            // Show stage info if available
-            const stageEl = document.getElementById("stage-info");
-            if (metadata && metadata.stage !== undefined) {
-                const name = metadata.stage_name || `Stage ${metadata.stage}`;
-                const step = metadata.step;
-                let text = name;
-                if (step !== undefined) {
-                    const stepLabel = step >= 1_000_000
-                        ? `${(step / 1_000_000).toFixed(1)}M`
-                        : step >= 1_000 ? `${Math.floor(step / 1_000)}k` : `${step}`;
-                    text += ` \u2022 Step ${stepLabel}`;
-                }
-                stageEl.textContent = text;
-                stageEl.classList.remove("hidden");
-            } else if (metadata && metadata.policy_sides) {
-                stageEl.textContent = `${metadata.match_type}: ${metadata.policy_sides}`;
-                stageEl.classList.remove("hidden");
-            } else {
-                stageEl.classList.add("hidden");
-            }
-
-            const slider = document.getElementById("replay-slider");
-            slider.max = replayData.length - 1;
-            slider.value = 0;
-            // Loaded and ready, but NOT painted — render() only draws replay
-            // frames while mode === "replay", so live keeps the canvas.
-        }
-    } catch (e) {
-        console.error("Failed to preload the latest recording", e);
-    }
-}
+// The UI opens on the Robot tab: this is a control surface for a machine as
+// much as a viewer. A recording is loaded when the Recordings tab is opened
+// (the newest game of a released model), or straight away for ?replay=<file>.
 setMode(mode);
-if (requestedReplay) {
-    loadRecording(requestedReplay, null);
-} else {
-    loadLatestRecording();
-}
+if (requestedReplay) loadRecording(requestedReplay, null);
 
 
 // ── motion limits ──────────────────────────────────────────────────

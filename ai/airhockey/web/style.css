@@ -202,10 +202,84 @@ h1 {
 #reward-value-desktop.positive { color: var(--green); }
 #reward-value-desktop.negative { color: var(--red); }
 
-#controls {
+#controls, .control-group {
     display: flex;
     flex-direction: column;
     gap: 8px;
+}
+
+/* A sidebar section: a small-caps heading over its controls. */
+.control-group > h3, #motor-load-panel > h3 {
+    font-size: 10px;
+    font-weight: 800;
+    letter-spacing: 0.14em;
+    text-transform: uppercase;
+    color: var(--ink-3);
+}
+
+/* One or two sentences saying what a tab, a section or a choice is. */
+.panel-note {
+    color: var(--ink-3);
+    font-size: 12px;
+    line-height: 1.45;
+}
+#mode-hint { margin-top: -14px; }
+
+/* What the server last said about an action; red when it failed. */
+.panel-status {
+    color: var(--ink-2);
+    font-size: 12px;
+    line-height: 1.45;
+    overflow-wrap: anywhere;
+}
+.panel-status:empty { display: none; }
+.panel-status.bad { color: var(--amber); }
+
+/* The one button on the page that starts the robot playing. */
+button.primary-action {
+    border-color: var(--blue);
+    color: var(--ink);
+    text-align: center;
+    padding: 12px;
+    font-size: 12px;
+}
+button.primary-action.active {
+    background: var(--red);
+    border-color: var(--red);
+    color: var(--ink);
+}
+button:disabled { opacity: 0.45; cursor: default; }
+
+#ai-panel select {
+    flex: 1;
+    min-width: 0;
+    background: var(--surface);
+    color: var(--ink);
+    border: 1px solid var(--line);
+    border-radius: var(--r);
+    padding: 5px 6px;
+    font: inherit;
+    font-size: 12px;
+}
+#ai-panel .limit-row { display: flex; align-items: center; gap: 8px; }
+#ai-panel .lim-name { color: var(--ink-3); font-size: 12px; }
+#ai-log-wrap summary, #rec-now-more summary {
+    cursor: pointer;
+    color: var(--ink-3);
+    font-size: 11px;
+}
+#ai-log, #rec-now-meta {
+    margin: 6px 0 0;
+    padding: 6px 8px;
+    font: 11px ui-monospace, Menlo, monospace;
+    color: var(--ink-2);
+    background: var(--ice);
+    border: 1.5px solid var(--line);
+    border-radius: var(--r);
+    white-space: pre-wrap;
+    overflow-wrap: anywhere;
+    overflow: auto;
+    max-height: 260px;
 }
 
 button {
@@ -926,4 +1000,118 @@ canvas {
     white-space: pre;
     overflow: auto;
     max-height: 240px;
+}
+
+/* ── Recordings tab ────────────────────────────────────────────────── */
+#rec-kind {
+    display: flex;
+    border: 1.5px solid var(--line);
+    border-radius: var(--r);
+    overflow: hidden;
+}
+.rec-kind-btn {
+    flex: 1;
+    text-align: center;
+    border: none;
+    border-right: 1.5px solid var(--line);
+    border-radius: 0;
+    padding: 7px 4px;
+}
+.rec-kind-btn:last-child { border-right: none; }
+.rec-kind-btn span { font-weight: 400; opacity: 0.7; }
+
+/* What the loaded recording is. */
+#rec-now {
+    background: var(--surface);
+    border: 1px solid var(--line);
+    border-radius: var(--r);
+    padding: 10px 12px;
+}
+#rec-now-title { font-size: 14px; font-weight: 700; color: var(--ink); margin-bottom: 6px; }
+#rec-now-facts {
+    display: grid;
+    grid-template-columns: max-content 1fr;
+    gap: 3px 12px;
+    font-size: 12px;
+    line-height: 1.4;
+    margin: 0 0 6px;
+}
+#rec-now-facts dt { color: var(--ink-3); }
+#rec-now-facts dd { margin: 0; color: var(--ink-2); overflow-wrap: anywhere; }
+
+#rec-legend {
+    list-style: none;
+    display: flex;
+    flex-direction: column;
+    gap: 3px;
+    font-size: 11.5px;
+    color: var(--ink-3);
+    margin-top: 4px;
+}
+#rec-legend li { display: flex; align-items: center; gap: 8px; }
+#rec-legend .swatch { width: 11px; height: 11px; border-radius: 50%; flex-shrink: 0; }
+#rec-legend .swatch.blue { background: var(--blue); }
+#rec-legend .swatch.red { background: var(--red); }
+#rec-legend .swatch.puck { background: var(--ink); width: 8px; height: 8px; margin: 0 1.5px; }
+#rec-legend .swatch.box { border-radius: 0; border: 1px dashed var(--ink-3); }
+
+#rec-filter {
+    background: var(--ice);
+    color: var(--ink);
+    border: 1.5px solid var(--line);
+    border-radius: var(--r);
+    padding: 7px 9px;
+    font: inherit;
+    font-size: 12px;
+}
+#recording-list .rec-section {
+    display: flex;
+    flex-direction: column;
+    gap: 1px;
+    padding: 10px 2px 3px;
+    font-size: 10px;
+    font-weight: 800;
+    letter-spacing: 0.14em;
+    text-transform: uppercase;
+    color: var(--ink-2);
+}
+#recording-list .rec-section small {
+    font-weight: 400;
+    letter-spacing: 0;
+    text-transform: none;
+    font-size: 11px;
+    color: var(--ink-4);
+}
+.rec-empty { color: var(--ink-3); font-size: 12px; padding: 8px 2px; }
+
+/* Table sessions: the same rows as the simulated games, as links. */
+#session-list {
+    list-style: none;
+    max-height: 440px;
+    overflow-y: auto;
+    display: flex;
+    flex-direction: column;
+    gap: 3px;
+}
+#session-list li.session a {
+    display: grid;
+    grid-template-columns: 1fr auto;
+    gap: 2px 10px;
+    padding: 7px 10px;
+    background: var(--surface);
+    border: 1px solid var(--line);
+    border-radius: var(--r);
+    color: var(--ink);
+    text-decoration: none;
+    font-size: 12.5px;
+}
+#session-list li.session a:hover { background: var(--surface-hi); border-color: var(--line-hi); }
+#session-list .rec-score { color: var(--blue); font-size: 11px; }
+#session-list .rec-meta { grid-column: 1 / -1; color: var(--ink-3); font-size: 11px; }
+#recording-list li.rec { grid-template-areas: "step score" "meta meta" "file file"; }
+#recording-list .rec-file {
+    grid-area: file;
+    font: 10px ui-monospace, Menlo, monospace;
+    color: var(--ink-4);
+    overflow-wrap: anywhere;
 }
