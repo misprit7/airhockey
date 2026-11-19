@@ -36,6 +36,9 @@ def hardware(monkeypatch, request):
     monkeypatch.setattr(server, 'HardwareDynamics', Hardware)
     monkeypatch.setattr(server.VISION, 'latest_pose', lambda: (1500., 450., 2.35))
     monkeypatch.setattr(server, '_camera_objects', lambda: {})
+    # Hardware mode starts the motor controller when it is not running; here
+    # it "is", and the suite's conftest fails any test that would launch it.
+    monkeypatch.setattr(server.ROBOT, 'ensure_master', lambda: False)
     return Hardware, bounds, events
 
 

@@ -278,3 +278,13 @@ def test_server_routes_need_the_dialogs_confirmation_and_report_refusals(tmp_pat
     monkeypatch.setattr(server, "ROBOT", fake)
     blocked = asyncio.run(server.robot_ai_start({"confirm": True, "difficulty": "easy", "tension_mm": 2}))
     assert blocked["ok"] is False and "Manual control is on" in blocked["error"]
+
+
+def test_the_real_launchers_refuse_inside_a_test_run(tmp_path):
+    """The interlock itself: neither cdpr_master nor play.sh starts from pytest."""
+    with pytest.raises(RuntimeError, match="refusing to start cdpr_master"):
+        robot_session._refuse_in_tests("start cdpr_master")
+    s = RobotSession(root=tmp_path, client_factory=lambda: FakeClient([]), master_running=lambda: False)
+    with pytest.raises(RuntimeError, match="refusing to run play.sh"):
+        s.start_ai("max", 1.5)
+    assert s.status()["ai"]["state"] == "idle"

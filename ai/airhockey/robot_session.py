@@ -37,6 +37,7 @@ import shutil
 import signal
 import socket
 import subprocess
+import sys
 import threading
 import time
 from pathlib import Path
@@ -91,13 +92,24 @@ def _alive(pid: int, marker: str = "play.sh") -> bool:
     return marker in cmdline
 
 
+def _refuse_in_tests(what: str) -> None:
+    if "pytest" in sys.modules:
+        raise RuntimeError(f"refusing to {what} from a test run: inject a fake")
+
+
 def _launch_master(root: Path) -> subprocess.Popen:
     """Build cdpr_master if its sources changed, then start it detached.
 
     The same two steps as ai/bin/play.sh: `make -C sw build/cdpr_master`, and
     realtime priority when the account may ask for it. Launching energizes
     nothing; the drives stay off until ENABLE or TAKEUP.
+
+    Refuses inside a test run. On 2026-11-18 a server test that turned the
+    UI's hardware mode on with a fake client reached this function and
+    started the real master (idle, never enabled, stopped two minutes later).
+    A test must inject its own launcher.
     """
+    _refuse_in_tests("start cdpr_master")
     build = subprocess.run(["make", "-C", "sw", "build/cdpr_master"], cwd=root, capture_output=True,
                            text=True, timeout=600)
     if build.returncode != 0:
@@ -318,6 +330,8 @@ class RobotSession:
                     client.close()
             self.log_path.parent.mkdir(parents=True, exist_ok=True)
             command = self._command(difficulty, tension_mm, running)
+            if command[:2] == ["bash", "ai/bin/play.sh"]:
+                _refuse_in_tests("run play.sh")
             with open(self.log_path, "w") as log:
                 log.write("$ " + " ".join(command) + "\n")
                 log.flush()
