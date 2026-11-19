@@ -1095,6 +1095,7 @@ function describeLoadedRecording() {
         ["Blue, bottom", `${blue}${rec.group_alias ? ` (run ${rec.group_alias.replace(/^_/, "")})` : ""} — the robot's end`],
         ["Red, top", `${red} — the far end, where a person stands at the real table`],
         ["Sides", meta.policy_sides || ""],
+        ["Simulator", meta.note || ""],
         ["Final score", last.score_agent !== undefined ? `${last.score_agent}–${last.score_opponent} (blue–red)` : ""],
         ["Length", `${fmtLength(last.time ?? replayData.length / replayFps)} of play, ${replayData.length} frames at ${replayFps} per second`],
         ["Robot limits", meta.accel_cap_m_s2 ? `acceleration up to ${meta.accel_cap_m_s2} m/s²` : ""],
