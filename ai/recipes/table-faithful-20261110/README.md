@@ -2020,3 +2020,31 @@ fixed older networks in a quarter of its slots. `v4.4.5` = v4.4.4 from its
 --opponent-reference runs/v4.3.12/agent_step_1091305472.pt`: a quarter of
 the games against those two, a quarter against people, half against its
 own snapshots.
+
+`v4.4.5` at 101M steps, two seeds: the head to head against v4.1.2 is level
+(20-18; it scores 20 where v4.4.4 scored 8 and concedes the same), the
+prepared shots are kept (39% of shots from a controlled puck, 25.4 per 100
+possessions, 70% of shots between the posts), and it still concedes 0.30 a
+minute to the simulated people.
+
+WHERE THE CONCEDED GOALS COME FROM: THE MALLET LIFT. Calibrated sim with
+posts, against the simulated people, 256 game-minutes each (v4.1.2: 128):
+
+| | lift events / min | conceded / min | through a lift | otherwise |
+|---|---|---|---|---|
+| v4.1.2 | 0.59 | 0.32 | 0.23 | 0.09 |
+| v4.3.12 | 0.29 | 0.15 | 0.10 | 0.05 |
+| v4.4.2 | 0.23 | 0.14 | 0.09 | 0.05 |
+| v4.4.4 | 0.46 | 0.27 | 0.22 | 0.05 |
+| v4.4.5 | 0.38 | 0.30 | 0.18 | 0.12 |
+
+Taking control of a fast shot means braking under it, which is what lets a
+6-8 m/s puck through. Every goal v4.4.4 conceded in its recorded games (24)
+was a puck the mallet was on (19 mm to the side, median). Apart from the
+lift v4.4.4 defends as v4.4.2 does. And the `selfplay` arm had switched the
+learner's lift off in games against a network (`--no-selfplay-lift`, for
+equal ends), three quarters of its games, so nothing there told it that
+braking under a fast puck costs goals. `v4.4.6` = v4.4.5 from its 101M
+snapshot with `--selfplay-lift`: the learner's mallet lifts in every game,
+the far robot's still does not (people's mallets do not lift, so goals
+through a far robot's lift are not worth learning).

@@ -130,8 +130,12 @@
       "summary": "v4.4.3 continued with the payment for a prepared shot at 300 (half a goal), 118M steps; the file is its 101M-step snapshot. 40% of its shots come from a controlled puck (v4.4.2 30%), 25 prepared fast on-target shots per 100 possessions (17). Concedes twice as often to the simulated people (0.27 a minute) and, like v4.4.2, loses to v4.1.2 head to head (8-17). Sim only."
     },
     "v4.4.5": {
-      "run": "v4.4.5", "date": "2026-11-19", "accel": 100, "parent": "v4.4.4",
-      "summary": "v4.4.4 continued with v4.1.2 and v4.3.12 as fixed opponents in a quarter of the games. In training; not evaluated. Sim only."
+      "run": "v4.4.5", "file": "agent_step_1658847232.pt", "date": "2026-11-19", "accel": 100, "parent": "v4.4.4",
+      "summary": "v4.4.4 continued with v4.1.2 and v4.3.12 as fixed opponents in a quarter of the games, 108M steps; the file is its 101M-step snapshot. Keeps v4.4.4's prepared shots (39% from a controlled puck, 25 per 100 possessions) and is level with v4.1.2 head to head (20-18, was 8-17). Still concedes 0.30 a minute to the simulated people, most of it through the mallet lift. Sim only."
+    },
+    "v4.4.6": {
+      "run": "v4.4.6", "date": "2026-11-19", "accel": 100, "parent": "v4.4.5",
+      "summary": "v4.4.5 continued with the learner's mallet lift on in every game (--selfplay-lift). In training; not evaluated. Sim only."
     }
   }
 }

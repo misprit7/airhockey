@@ -777,7 +777,13 @@ conceded to the simulated people (0.27 a minute). THE SELF-PLAY ARM LOSES TO
 v4.1.2 HEAD TO HEAD with or without the payment (9-16, 8-17; v4.3.12 wins
 12-8): its only robot opponents were its own six latest snapshots. `v4.4.5`
 adds v4.1.2 and v4.3.12 as fixed opponents (`--opponent-reference`, a
-quarter of the games). Record: the last sections of the recipe README.
+quarter of the games): level with v4.1.2 (20-18), prepared shots kept. The
+goals v4.4.4 / v4.4.5 concede (0.27-0.30 a minute to the simulated people,
+v4.1.2 0.32, v4.4.2 0.14) are mostly through the MALLET LIFT: taking
+control of a fast shot means braking under it, and the arm's
+`--no-selfplay-lift` had the learner's lift off in three quarters of its
+games. `v4.4.6` turns it back on (`--selfplay-lift`). Record: the last
+sections of the recipe README.
 
 ## Run names
 The scheme below is for TD-MPC2 runs only.

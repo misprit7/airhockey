@@ -62,7 +62,8 @@ symlink under `runs/`).
 | `v4.4.2` | - | v4.4.1 | 100 | The self-play arm continued in the sim with goal posts (its 101M-step snapshot). Same play as v4.4.1 within noise; the aim held to 150M steps and moved out again after. Sim only. |
 | `v4.4.3` | - | v4.4.2 | 100 | The self-play arm plus one payment in games for a prepared, fast, on-target shot (100, a sixth of a goal), 111M steps (its 101M-step snapshot). Prepared shots 30% -> 33% of on-target shots in training; nothing measurable against the simulated people. Sim only. |
 | `v4.4.4` | - | v4.4.3 | 100 | v4.4.3 continued with that payment at 300 (half a goal); its 101M-step snapshot. 40% of shots from a controlled puck (v4.4.2 30%), 25 prepared fast on-target shots per 100 possessions (17); concedes twice as often to the simulated people; loses to v4.1.2 head to head 8-17, as v4.4.2 does (9-16). Sim only. |
-| `v4.4.5` | - | v4.4.4 | 100 | v4.4.4 continued with v4.1.2 and v4.3.12 as fixed opponents in a quarter of the games. In training; not evaluated. Sim only. |
+| `v4.4.5` | - | v4.4.4 | 100 | v4.4.4 continued with v4.1.2 and v4.3.12 as fixed opponents in a quarter of the games; its 101M-step snapshot. Keeps v4.4.4's prepared shots and is level with v4.1.2 head to head (20-18, was 8-17); still concedes 0.30 a minute to the simulated people, most of it through the mallet lift. Sim only. |
+| `v4.4.6` | - | v4.4.5 | 100 | v4.4.5 continued with the learner's mallet lift on in every game (`--selfplay-lift`). In training; not evaluated. Sim only. |
 
 Majors 1 to 4 keep the numbers the packaged models already had (v1 to v4);
 only v1 was an architectural change. From here on a major means what the
