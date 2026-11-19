@@ -722,6 +722,9 @@ class BatchAirHockeyEnv:
 
     def _draw_compliance(self, idx) -> None:
         c = self._compliance
+        idx = np.asarray(idx)
+        if idx.dtype == bool:           # resets hand a mask, enabling hands indices
+            idx = np.flatnonzero(idx)
         m = len(idx)
         c["w"][:, idx] = 2.0 * np.pi * self._rng.uniform(*c["frequency"], size=(2, m))
         c["zeta"][idx] = self._rng.uniform(*c["damping"], size=m)

@@ -520,3 +520,40 @@ def test_a_late_command_takes_effect_a_tick_later():
     assert (moved[:2] < 1e-6).all() and (moved[2:] > 1e-4).all()
     env.step(action)
     assert (np.abs(env.engine.paddle_agent_y - start)[:2] > 1e-4).all()
+
+
+def test_compliant_mallet_lags_rings_and_stays_out_of_the_policys_own_view():
+    """Profile table-20261118: the puck meets a mallet that hangs on its
+    cables; the policy still sees the motion profile's position."""
+    import numpy as np
+    from airhockey.neural_training import NeuralTrainingEnv
+    from airhockey.table_fidelity import profile_options, table_fidelity
+
+    assert "mallet_compliance" in table_fidelity("table-20261118")
+    assert "mallet_compliance" not in table_fidelity("table-20261029")
+    assert "mallet_compliance" not in profile_options("table-20261118:contact,lift")
+    env = NeuralTrainingEnv(4, shot_conditioned=True, randomize=False, accel=100.0,
+                            mallet_compliance=dict(frequency_hz=(18.0, 18.0), damping=(0.05, 0.05), gain=(1.0, 1.0)))
+    env.reset(seed=1)
+    b = env.base
+    action = np.zeros((4, 6), np.float32)
+    action[:, 0], action[:, 5] = 0.9, 1.0            # a hard move along x
+    gaps = []
+    for _ in range(25):
+        env.step(action)
+        gaps.append(b.engine.paddle_agent_x - b._agent_dyn["x"])
+        own_x, _ = b._own_xy()
+        np.testing.assert_array_equal(own_x, b._agent_dyn["x"])      # the controller's view
+    gaps = np.array(gaps)
+    assert np.abs(gaps).max() > 0.002                 # millimetres of deflection...
+    assert np.abs(gaps).max() <= 0.03 + 1e-9          # ...bounded
+    assert (np.sign(gaps[5:, 0]) > 0).any() and (np.sign(gaps[5:, 0]) < 0).any()    # and it rings
+    # A partial reset (a mask, as the env hands it) redraws only those slots.
+    before = b._compliance["w"].copy()
+    b._draw_compliance(np.array([True, False, False, True]))
+    assert (b._compliance["e"][:, [0, 3]] == 0).all() and (b._compliance["w"][:, 1:3] == before[:, 1:3]).all()
+    # Off by default: the mallet is the profile.
+    plain = NeuralTrainingEnv(2, shot_conditioned=True, randomize=False, accel=100.0)
+    plain.reset(seed=1)
+    plain.step(action[:2])
+    np.testing.assert_allclose(plain.base.engine.paddle_agent_x, plain.base._agent_dyn["x"])
