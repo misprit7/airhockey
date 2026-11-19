@@ -14,7 +14,8 @@
 # an acceleration limit.
 #
 # This script's own flags: --policy <spec> (default neural:latest),
-# --difficulty <mode>, --dry,
+# --difficulty <mode>, --dry, --use-running-master (do not start or stop
+# cdpr_master; use the one already listening),
 # --tension <mm> (cdpr_master's startup pretension; default 0 = slack, which
 # is what the tracking test validated). Everything else goes to
 # ai/bin/run_policy.py, whose defaults reproduce training (6 planner
@@ -25,8 +26,9 @@
 # What happens, in order: build anything missing; start sw/build/cdpr_master
 # (which must run ALONE -- it opens the SC-Hub USB port; stop `activate` and
 # the web UI's hardware mode first); wait for its TCP port; run the policy
-# with --live, which measures the paddle with the camera, ENABLEs the drives
-# and starts the 100 Hz loop. Ctrl-C brakes the paddle in place, then the
+# with --live, which takes up cable slack (cdpr_master's TAKEUP; --no-takeup
+# skips it), measures the paddle with the camera, ENABLEs the drives and
+# starts the loop. The web UI's Start AI button runs this same script. Ctrl-C brakes the paddle in place, then the
 # master is stopped, which de-energizes the drives.
 #
 # Logs: logs/run_policy/<stamp>.log (everything printed) and
@@ -43,6 +45,7 @@ LIVE=1
 ARGS=()
 CPUS=""
 RT=1
+OWN_MASTER=1
 while [ $# -gt 0 ]; do
     case "$1" in
         --dry) LIVE=0; shift ;;
@@ -57,6 +60,7 @@ while [ $# -gt 0 ]; do
         --cpus) CPUS=$2; shift 2 ;;
         --cpus=*) CPUS=${1#--cpus=}; shift ;;
         --no-realtime) RT=0; shift ;;
+        --use-running-master) OWN_MASTER=0; shift ;;
         *) ARGS+=("$1"); shift ;;
     esac
 done
@@ -129,7 +133,13 @@ cleanup() {
 }
 trap cleanup EXIT
 
-if [ "$LIVE" = 1 ]; then
+if [ "$LIVE" = 1 ] && [ "$OWN_MASTER" = 0 ]; then
+    # --use-running-master: a cdpr_master someone already started (the web
+    # UI's Start AI passes this when one is listening). It keeps its own
+    # --tension unless told otherwise (PRETENSION), and is left running.
+    echo "using the cdpr_master already running on 8421"
+    "${SCHED[@]}" python3 ai/bin/run_policy.py --live --opponent --policy "$POLICY" "${ARGS[@]}"
+elif [ "$LIVE" = 1 ]; then
     if python3 - <<'PY' 2>/dev/null
 import socket, sys
 s = socket.socket(); s.settimeout(0.3)
@@ -137,7 +147,7 @@ sys.exit(0 if s.connect_ex(("127.0.0.1", 8421)) == 0 else 1)
 PY
     then
         echo "something already listens on 8421 -- a cdpr_master (or the web UI's"
-        echo "hardware mode) is running. Stop it, or run without this launcher."
+        echo "hardware mode) is running. Stop it, or pass --use-running-master."
         exit 1
     fi
     echo "starting cdpr_master ${MASTER_ARGS[*]:-}..."

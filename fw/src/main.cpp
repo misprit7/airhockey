@@ -46,6 +46,11 @@ enum Mode { MODE_SERIAL, MODE_SQUARE, MODE_RETRACT, MODE_DIRTOGGLE };
 constexpr Mode START_MODE = MODE_SERIAL;
 static Mode g_mode = START_MODE;
 
+// Largest single SLACK increment, in step pulses (0.38 mm of cable each).
+// The host asks for one at a time and looks at the drives in between; a
+// larger blind pull is refused.
+constexpr int SLACK_MAX_STEPS = 8;
+
 // Speed cap applied on boot in host-control mode.
 constexpr float SERIAL_DEFAULT_SPEED_MM_S = 200.0f;
 
@@ -217,6 +222,25 @@ static void processCommand(char *line) {
     }
     cdpr.tension(mm);
     Serial.println("OK TENSION");
+
+  } else if (strcasecmp(cmd, "SLACK") == 0) {
+    // A few step pulses on the masked motors; the host reads the drives'
+    // current between calls and stops asking once a cable pulls back.
+    if (timerRunning) {
+      Serial.println("ERR stop timer before taking up slack");
+      return;
+    }
+    unsigned mask = 0;
+    int steps = 0;
+    char extra;
+    if (sscanf(args, "%u %d %c", &mask, &steps, &extra) != 2 || mask == 0 ||
+        mask > 15 || steps < 1 || steps > SLACK_MAX_STEPS) {
+      Serial.printf("ERR SLACK requires mask 1..15 and steps 1..%d\n",
+                    SLACK_MAX_STEPS);
+      return;
+    }
+    cdpr.retractMotors((uint8_t)mask, steps);
+    Serial.printf("OK SLACK %u %d\n", mask, steps);
 
   } else if (strcasecmp(cmd, "RELEASE") == 0) {
     if (timerRunning) {

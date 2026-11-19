@@ -14,6 +14,12 @@
 //   TENSION mm       Retract all cables by mm to add pretension.
 //                    Blocking on Teensy side. Send before enabling motion.
 //
+//   SLACK mask steps Retract only the motors in mask (bit m = motor m)
+//                    by `steps` step pulses (1..8; 0.38 mm of cable each),
+//                    the others hold. Blocking; timer stopped. The master's
+//                    TAKEUP calls it one step at a time and reads drive
+//                    current in between. Usable before CAL.
+//
 //   RELEASE          Release previously applied tension.
 //                    Blocking on Teensy side. Send after stopping motion.
 //

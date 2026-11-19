@@ -96,6 +96,11 @@ public:
   // Blocking — call AFTER stopTimer().
   void releaseTension(float speed_mm_s = 5.0f);
 
+  // Retract the motors in `mask` (bit m = motor m) by `steps` step pulses
+  // (MM_PER_COUNT of cable each), the rest hold. Blocking; timer must be
+  // stopped. For the host's slack take-up (SLACK).
+  void retractMotors(uint8_t mask, int32_t steps, float speed_mm_s = 10.0f);
+
   void startTimer();
   void stopTimer();
 

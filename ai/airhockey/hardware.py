@@ -49,6 +49,8 @@ class CDPRClient:
     # ENABLE is the exception: it drives the Teensy through tensioning and
     # START, and the master allows 10 s for those internally.
     ENABLE_TIMEOUT_S = 20.0
+    # TAKEUP winds in slack one motor step (0.38 mm) at a time; gives up after 120 s.
+    TAKEUP_TIMEOUT_S = 135.0
     # LIMITS forwards TWO commands to the Teensy and the master waits up to
     # 5 s for each, so it can legitimately take 10 s. The default 2 s was
     # tighter than the thing it was measuring.
@@ -134,6 +136,43 @@ class CDPRClient:
                               f"{cal_theta_deg:.2f}", timeout=t)
         if not resp.startswith("OK"):
             raise RuntimeError(f"enable failed: {resp}")
+
+    def take_up_slack(self, taut_amps: float | None = None,
+                      max_mm: float | None = None) -> dict:
+        """Wind in cable slack until each drive feels its cable, then de-energize.
+
+        MOVES THE SPOOLS (slowly, one 0.38 mm step at a time) and may slide the mallet;
+        only valid while the hardware is disabled. The master energizes the
+        drives, has the Teensy retract each cable whose drive current is
+        still below `taut_amps` (default 0.3 A), and disables them again, so
+        the mallet must be measured AFTER this and before `enable`. Closing
+        the socket (`abort`) from another thread stops it.
+        """
+        cmd = "TAKEUP"
+        if taut_amps is not None:
+            cmd += f" {float(taut_amps):.2f}"
+            if max_mm is not None:
+                cmd += f" {float(max_mm):.0f}"
+        resp = self._send(cmd, timeout=self.TAKEUP_TIMEOUT_S)
+        parts = resp.split()
+        if len(parts) != 10 or parts[:2] != ["OK", "TAKEUP"]:
+            hint = (" Restart cdpr_master to load slack take-up."
+                    if "unknown command" in resp.lower() and "firmware" not in resp.lower() else "")
+            raise RuntimeError(f"slack take-up failed: {resp}.{hint}")
+        values = [float(v) for v in parts[2:]]
+        return {"wound_mm": values[:4], "amps": values[4:]}
+
+    def abort(self) -> None:
+        """Drop the connection without the QUIT handshake. From another
+        thread this interrupts a blocking command; the master treats the
+        disconnect during TAKEUP as stop and disables the drives."""
+        sock, self._sock = self._sock, None
+        if sock is not None:
+            try:
+                sock.shutdown(socket.SHUT_RDWR)
+            except OSError:
+                pass
+            sock.close()
 
     def disable(self) -> None:
         """Stop Teensy motion controller and disable motors."""

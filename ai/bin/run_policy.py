@@ -1564,6 +1564,37 @@ def _sig(_s, _f):
     _stop = True
 
 
+
+def take_up_slack(client, stopped, poll_s: float = 0.1) -> dict:
+    """cdpr_master's TAKEUP, interruptible.
+
+    The command blocks for as long as the cables take (up to two minutes),
+    and Ctrl-C here only sets a flag, so the request runs on a thread while
+    this one watches the flag. Stopping closes the socket, which the master
+    reads as "stop": it disables the drives. Raises KeyboardInterrupt then.
+    """
+    import threading    # noqa: PLC0415
+    out: dict = {}
+
+    def work():
+        try:
+            out["result"] = client.take_up_slack()
+        except Exception as e:      # noqa: BLE001
+            out["error"] = e
+
+    worker = threading.Thread(target=work, daemon=True)
+    worker.start()
+    while worker.is_alive():
+        worker.join(poll_s)
+        if worker.is_alive() and stopped():
+            client.abort()
+            worker.join(5.0)
+            raise KeyboardInterrupt
+    if "error" in out:
+        raise out["error"]
+    return out["result"]
+
+
 def run(args) -> int:
     """The real loop. Imports the camera only here, so --selftest need not."""
     sys.path.insert(0, str(ROOT / "vision" / "bin"))
@@ -1605,20 +1636,6 @@ def run(args) -> int:
         print("!!  ctrl-C stops it and brakes the paddle where it stands.")
         print("!" * 68 + "\n")
 
-        # Measure the paddle BEFORE opening the tracker: one process at a
-        # time can hold the Spinnaker device, and ENABLE needs this position
-        # -- it is the reference every later cable length is measured from,
-        # so an error here offsets the whole session.
-        print("measuring the paddle for the enable reference...")
-        try:
-            mx, my = tm.measure(exposure=args.exposure, gain=args.gain,
-                                threshold=args.threshold)[:2]
-        except Exception as e:      # noqa: BLE001
-            sys.exit(f"could not measure the paddle ({e}).\n"
-                     "  The web preview was checked before acquisition. "
-                     "Check for another camera process or a USB/camera stall.")
-        print(f"  paddle at ({mx:.1f}, {my:.1f}) mm")
-
         from airhockey.hardware import CDPRClient   # noqa: PLC0415
         client = CDPRClient()
         try:
@@ -1656,6 +1673,50 @@ def run(args) -> int:
             except Exception:
                 client.close()
                 raise
+        if not args.no_enable and not getattr(args, "no_takeup", False):
+            # Before the paddle is measured: winding in slack can slide it.
+            print("taking up cable slack (spools turn slowly; the drives "
+                  "energize, wind in until each feels its cable, de-energize)...")
+            try:
+                took = take_up_slack(client, lambda: _stop)
+                print("  wound in " + " ".join(f"{v:.1f}" for v in took["wound_mm"])
+                      + " mm; holding currents "
+                      + " ".join(f"{v:+.2f}" for v in took["amps"]) + " A")
+            except KeyboardInterrupt:
+                print("stopped during slack take-up -- the master disabled the "
+                      "drives; nothing else was commanded")
+                return 0
+            except Exception as e:      # noqa: BLE001
+                if "disable hardware before" in str(e):
+                    # Someone enabled the drives already; they are holding.
+                    print("  skipped: the drives are already enabled")
+                else:
+                    try:
+                        client.close()
+                    except Exception:   # noqa: BLE001
+                        pass
+                    sys.exit(f"slack take-up failed: {e}\n"
+                             "  Nothing else was commanded. --no-takeup skips this step.")
+
+        # Measure the paddle BEFORE opening the tracker: one process at a
+        # time can hold the Spinnaker device, and ENABLE needs this position
+        # -- it is the reference every later cable length is measured from,
+        # so an error here offsets the whole session.
+        print("measuring the paddle for the enable reference...")
+        try:
+            mx, my = tm.measure(exposure=args.exposure, gain=args.gain,
+                                threshold=args.threshold)[:2]
+        except Exception as e:      # noqa: BLE001
+            client.close()
+            sys.exit(f"could not measure the paddle ({e}).\n"
+                     "  The web preview was checked before acquisition. "
+                     "Check for another camera process or a USB/camera stall.")
+        print(f"  paddle at ({mx:.1f}, {my:.1f}) mm")
+
+        if _stop:
+            print("stopped before enabling -- the drives are not energized")
+            client.close()
+            return 0
         if not args.no_enable:
             print("ENABLING the drives (they will hold position, not move)...")
             try:
@@ -2268,6 +2329,9 @@ def main() -> int:
                          "lengthen the stop, not shorten it.")
     ap.add_argument("--no-enable", action="store_true",
                     help="assume the drives are already energized")
+    ap.add_argument("--no-takeup", action="store_true",
+                    help="skip the slack take-up before ENABLE (cdpr_master's "
+                         "TAKEUP: wind each cable in until its drive feels it)")
     ap.add_argument("--governor", action="store_true",
                     help="trim the caps when the paddle falls behind the "
                          "controller (see FollowGovernor); off by default so "

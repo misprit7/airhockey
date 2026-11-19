@@ -53,6 +53,20 @@ $(STANDALONE): $(BUILD_DIR)/%: $(SRC_DIR)/%.cpp $(SHARED_HDRS) $(SF_SO) | $(BUIL
 $(PROGRAMS): $(BUILD_DIR)/%: $(SRC_DIR)/%.cpp $(LIB_OBJS) $(SHARED_HDRS) $(SF_SO) | $(BUILD_DIR)
 	$(CXX) $(CXXFLAGS) -o $@ $< $(LIB_OBJS) $(LDFLAGS)
 
+# Host tests: no SC-Hub, no Teensy. test_master_serial compiles the real
+# master source and drives its command handlers over socketpairs.
+TESTS := $(BUILD_DIR)/test_serial_lines $(BUILD_DIR)/test_motor_load $(BUILD_DIR)/test_master_serial
+
+$(TESTS): $(BUILD_DIR)/%: test/%.cpp $(wildcard bin/cdpr_master.cpp) $(LIB_OBJS) $(SHARED_HDRS) $(SF_SO) | $(BUILD_DIR)
+	$(CXX) $(CXXFLAGS) -o $@ $< $(LIB_OBJS) $(LDFLAGS)
+
+.PHONY: test
+test: $(TESTS)
+	$(BUILD_DIR)/test_serial_lines
+	rm -f $(BUILD_DIR)/test_motor_load.jsonl
+	$(BUILD_DIR)/test_motor_load $(BUILD_DIR)/test_motor_load.jsonl
+	$(BUILD_DIR)/test_master_serial
+
 clean:
 	rm -rf $(BUILD_DIR)
 	$(MAKE) -C $(SF_LIB_DIR) clean

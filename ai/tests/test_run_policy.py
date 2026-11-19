@@ -1357,3 +1357,111 @@ def test_runner_returns_home_then_resumes_with_normal_caps(monkeypatch, tmp_path
     caps = [c for c in client.calls if c[0] == 'LIMITS']
     assert caps == ([('LIMITS', 8000, 24000)] if not unseen_at_startup else []) + [
         ('LIMITS', 500, 2000), ('LIMITS', 8000, 24000)]
+
+
+# ── Slack take-up before ENABLE ─────────────────────────────────────────
+
+
+class _StartupClient(_FakeClient):
+    """A master for the live start-up path: records the order of the steps."""
+
+    def __init__(self, events, takeup=None):
+        super().__init__()
+        self.events, self.takeup = events, takeup
+
+    def connect(self):
+        self.events.append("connect")
+
+    def get_motor_load(self, **kwargs):
+        raise RuntimeError("fake master")
+
+    def take_up_slack(self):
+        self.events.append("takeup")
+        if isinstance(self.takeup, Exception):
+            raise self.takeup
+        return {"wound_mm": [3.0, 0.5, 12.5, 1.0], "amps": [-0.4, 0.5, -0.3, 0.6]}
+
+    def enable(self, x, y):
+        self.events.append(("enable", x, y))
+
+    def set_ramp(self, ramp):
+        self.events.append("ramp")
+
+    def command_position(self, x, y, v, a=None):
+        pass
+
+    def close(self):
+        self.events.append("close")
+
+
+def _startup(monkeypatch, tmp_path, takeup=None, **args):
+    from airhockey import hardware
+    events = []
+    _install_fake_camera(monkeypatch, duration_s=0.2)
+    import track_mallet
+    monkeypatch.setattr(track_mallet, "measure",
+                        lambda **kwargs: events.append("measure") or (1600, 400))
+    client = _StartupClient(events, takeup)
+    monkeypatch.setattr(hardware, "CDPRClient", lambda: client)
+    monkeypatch.setattr(rp, "_shutdown", lambda *a: None)
+    monkeypatch.setattr(rp, "load_policy", lambda *a, **k: (lambda obs: (1800, 700, 8000, 24000)))
+    return events, lambda: rp.run(_loop_args(live=True, log_dir=str(tmp_path), **args))
+
+
+def test_live_start_takes_up_slack_before_measuring_the_paddle(monkeypatch, tmp_path):
+    """Winding in slack can slide the mallet, so the enable reference is
+    measured after it, never before."""
+    events, run = _startup(monkeypatch, tmp_path)
+    assert run() == 0
+    assert events[:4] == ["connect", "takeup", "measure", ("enable", 1600, 400)]
+
+
+def test_no_takeup_and_no_enable_skip_the_take_up(monkeypatch, tmp_path):
+    events, run = _startup(monkeypatch, tmp_path, no_takeup=True)
+    assert run() == 0
+    assert "takeup" not in events and ("enable", 1600, 400) in events
+    events, run = _startup(monkeypatch, tmp_path, no_enable=True)
+    assert run() == 0
+    assert "takeup" not in events and not any(isinstance(e, tuple) for e in events)
+
+
+def test_failed_take_up_never_enables(monkeypatch, tmp_path):
+    events, run = _startup(monkeypatch, tmp_path, takeup=RuntimeError(
+        "slack take-up failed: ERR takeup: motor 1 wound in 150 mm without finding tension"))
+    with pytest.raises(SystemExit, match="slack take-up failed"):
+        run()
+    assert events == ["connect", "takeup", "close"]
+
+
+def test_take_up_on_already_enabled_drives_is_skipped_not_fatal(monkeypatch, tmp_path):
+    events, run = _startup(monkeypatch, tmp_path, takeup=RuntimeError(
+        "slack take-up failed: ERR disable hardware before taking up slack."))
+    assert run() == 0
+    assert events[:4] == ["connect", "takeup", "measure", ("enable", 1600, 400)]
+
+
+def test_take_up_is_stopped_by_closing_the_socket():
+    """Ctrl-C only sets a flag; the blocking TAKEUP must still end."""
+    import threading
+    released = threading.Event()
+
+    class Client:
+        aborted = False
+
+        def take_up_slack(self):
+            released.wait(5)
+            raise ConnectionError("Server closed connection")
+
+        def abort(self):
+            self.aborted = True
+            released.set()
+
+    client = Client()
+    with pytest.raises(KeyboardInterrupt):
+        rp.take_up_slack(client, lambda: True, poll_s=0.01)
+    assert client.aborted
+    # Not stopped: the result, or the master's error, comes straight back.
+    class Done:
+        def take_up_slack(self):
+            return {"wound_mm": [0] * 4, "amps": [0.4] * 4}
+    assert rp.take_up_slack(Done(), lambda: False, poll_s=0.01)["amps"] == [0.4] * 4

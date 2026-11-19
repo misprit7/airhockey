@@ -24,6 +24,7 @@
 #include <dirent.h>
 #include "cdpr_geometry.h"
 #include "clearpath.h"
+#include "motor_hardware.h"
 #include "serial_lines.h"
 
 static volatile sig_atomic_t g_stop = 0;
@@ -380,6 +381,174 @@ static bool waitTeensyOK(int teensy_fd, int timeout_ms = 5000, std::string *resp
     return false;
 }
 
+// ── Slack take-up ───────────────────────────────────────────────────────
+//
+// WHY: the first enable after the drives are powered jerks each shaft a
+// little and leaves the cables slack, and until 2026-11-18 the fix was by
+// hand: enable, disable, turn the spools until the cables were taut, enable
+// again. TAKEUP does the same thing with the motors: energize, then wind in
+// each cable one step pulse at a time (0.38 mm; the Teensy's SLACK command,
+// the same step/dir path and retract direction as TENSION) until that drive's
+// own measured current says the cable pulls back, then de-energize. It ends
+// where the manual procedure ended -- drives off, cables just taut -- so the
+// ENABLE that follows is unchanged and still measures the mallet itself.
+//
+// Each motor stops on its own; a cable that goes slack again while another
+// is wound in (the mallet slides) is picked up on the next pass. Measured
+// 2026-11 holding currents: slack 0.0-0.16 A, 1.5 mm pretension ~1.3 A, so
+// the default 0.3 A is taut at about a quarter of normal pretension, and a
+// cable gains about 0.33 A per step once taut, so each ends between 0.3 and
+// roughly 0.65 A. The sign of the current differs per spool; the magnitude
+// is what is compared.
+//
+// Ends early, with all four drives disabled, on: a drive alert, an
+// unreadable current, a current above TAKEUP_HARD_AMPS, a cable wound in
+// past max_mm without resistance, the time limit, the master stopping, or
+// ANY byte from the client (so a second command, or closing the socket, is
+// the stop button).
+static const int TAKEUP_STEPS = 1;
+static const double TAKEUP_STEP_MM =
+    TAKEUP_STEPS * SPOOL_CIRCUMFERENCE_MM / MotorHardware::STEP_INPUT_COUNTS_PER_REV;
+static const double TAKEUP_TAUT_AMPS = 0.30;
+static const double TAKEUP_MAX_MM = 150.0;
+static const double TAKEUP_HARD_AMPS = 2.5;
+static const double TAKEUP_TIMEOUT_S = 120.0;
+static const int TAKEUP_SETTLE_MS = 40;
+static const int TAKEUP_CONFIRM_READS = 3;
+
+// The four things take-up needs from the drives, so the host test can run
+// the real loop against a simulated rig with no SC-Hub.
+struct TakeupDrives {
+    std::function<bool()> enable;
+    std::function<void()> disable;
+    std::function<int(char *, size_t)> check;      // ClearPath::checkDrives
+    std::function<LoadValue(unsigned)> current;    // measured torque, amps
+};
+
+static bool takeupTorques(const TakeupDrives &drives, double amps[4], std::string &why) {
+    for (unsigned m = 0; m < 4; m++) {
+        double v[3];
+        for (int k = 0; k < 3; k++) {
+            LoadValue r;
+            {
+                std::lock_guard<std::mutex> lock(g_robot_mutex);
+                r = drives.current(m);
+            }
+            if (!r.valid) {
+                why = "motor " + std::to_string(m) + " current unreadable (" + r.error + ")";
+                return false;
+            }
+            v[k] = r.value;
+        }
+        // Median of three: one noisy read must not stop or restart a cable.
+        if (v[0] > v[1]) std::swap(v[0], v[1]);
+        if (v[1] > v[2]) std::swap(v[1], v[2]);
+        if (v[0] > v[1]) std::swap(v[0], v[1]);
+        amps[m] = v[1];
+    }
+    return true;
+}
+
+static std::string takeUpSlack(const TakeupDrives &drives, int teensy_fd, int client_fd,
+                               double taut_amps, double max_mm) {
+    logf("  TAKEUP: taut at %.2f A, at most %.0f mm per cable, %.2f mm steps\n",
+         taut_amps, max_mm, TAKEUP_STEP_MM);
+    if (g_fault) {
+        logf("  clearing fault on motor %d (%s)\n", g_fault_node.load(), g_fault_why);
+        g_fault = false;
+        g_fault_node = -1;
+    }
+    // A previous session may have left the step timer running (see ENABLE).
+    sendTeensy(teensy_fd, "STOP\n");
+    waitTeensyOK(teensy_fd, 1000);
+    {
+        std::lock_guard<std::mutex> lock(g_robot_mutex);
+        if (!drives.enable()) return "ERR motor enable failed\n";
+    }
+    double travel[4] = {0, 0, 0, 0}, amps[4] = {0, 0, 0, 0};
+    auto fail = [&](const std::string &why) -> std::string {
+        {
+            std::lock_guard<std::mutex> lock(g_robot_mutex);
+            drives.disable();
+        }
+        logf("  TAKEUP stopped: %s. Wound in %.1f %.1f %.1f %.1f mm; drives disabled.\n",
+             why.c_str(), travel[0], travel[1], travel[2], travel[3]);
+        return "ERR takeup: " + why + " -- drives disabled\n";
+    };
+    // Let the first-enable jerk die out before believing any current.
+    for (int i = 0; i < 10 && !g_stop; i++) usleep(50000);
+
+    const double started = loadMonotonic();
+    int confirmed = 0;
+    while (true) {
+        if (g_stop) return fail("master stopping");
+        char peek;
+        ssize_t pending = recv(client_fd, &peek, 1, MSG_PEEK | MSG_DONTWAIT);
+        if (pending > 0) return fail("stopped by the client");
+        if (pending == 0) return fail("client disconnected");
+        if (loadMonotonic() - started > TAKEUP_TIMEOUT_S) return fail("time limit reached");
+        char alert[512];
+        int bad;
+        {
+            std::lock_guard<std::mutex> lock(g_robot_mutex);
+            bad = drives.check(alert, sizeof(alert));
+        }
+        if (bad >= 0) return fail("motor " + std::to_string(bad) + " " + alert);
+        std::string why;
+        if (!takeupTorques(drives, amps, why)) return fail(why);
+
+        unsigned mask = 0;
+        for (int m = 0; m < 4; m++) {
+            if (fabs(amps[m]) > TAKEUP_HARD_AMPS) {
+                char msg[96];
+                snprintf(msg, sizeof(msg), "motor %d at %.2f A, above the %.1f A ceiling",
+                         m, amps[m], TAKEUP_HARD_AMPS);
+                return fail(msg);
+            }
+            if (fabs(amps[m]) < taut_amps) mask |= 1u << m;
+        }
+        if (!mask) {
+            if (++confirmed >= TAKEUP_CONFIRM_READS) break;
+            usleep(100000);
+            continue;
+        }
+        confirmed = 0;
+        for (int m = 0; m < 4; m++) {
+            if ((mask & (1u << m)) && travel[m] + TAKEUP_STEP_MM > max_mm) {
+                char msg[160];
+                snprintf(msg, sizeof(msg), "motor %d wound in %.0f mm without finding "
+                         "tension (cable off its spool, or far more slack than expected)",
+                         m, travel[m]);
+                return fail(msg);
+            }
+        }
+        char cmd[48];
+        snprintf(cmd, sizeof(cmd), "SLACK %u %d\n", mask, TAKEUP_STEPS);
+        std::string reply;
+        sendTeensy(teensy_fd, cmd);
+        if (!waitTeensyOK(teensy_fd, 2000, &reply)) {
+            return fail(reply.find("unknown") != std::string::npos
+                ? "this firmware has no SLACK command; flash the current image (pio run -d fw -t upload)"
+                : "teensy SLACK failed" + (reply.empty() ? std::string() : " (" + reply + ")"));
+        }
+        for (int m = 0; m < 4; m++)
+            if (mask & (1u << m)) travel[m] += TAKEUP_STEP_MM;
+        usleep(TAKEUP_SETTLE_MS * 1000);
+    }
+    {
+        std::lock_guard<std::mutex> lock(g_robot_mutex);
+        drives.disable();
+    }
+    logf("  TAKEUP done in %.1f s: wound in %.1f %.1f %.1f %.1f mm, "
+         "currents %.2f %.2f %.2f %.2f A; drives disabled, cables taut.\n",
+         loadMonotonic() - started, travel[0], travel[1], travel[2], travel[3],
+         amps[0], amps[1], amps[2], amps[3]);
+    char resp[160];
+    snprintf(resp, sizeof(resp), "OK TAKEUP %.1f %.1f %.1f %.1f %.2f %.2f %.2f %.2f\n",
+             travel[0], travel[1], travel[2], travel[3], amps[0], amps[1], amps[2], amps[3]);
+    return resp;
+}
+
 static int handleCommand(const char *line, ClearPath &robot, int client_fd, int teensy_fd) {
     if (!strcmp(line, "LOAD") || !strcmp(line, "LOADMETA")) {
         // Copies cached JSON only: no drive calls, no file reads, no enabling.
@@ -393,7 +562,7 @@ static int handleCommand(const char *line, ClearPath &robot, int client_fd, int 
     }
     if (g_motor_load && (strncmp(line, "CMD ", 4) == 0 || strncmp(line, "ENABLE", 6) == 0 ||
         strncmp(line, "DISABLE", 7) == 0 || strncmp(line, "LIMITS", 6) == 0 || strncmp(line, "RAMP", 4) == 0 ||
-        strncmp(line, "PRETENSION", 10) == 0))
+        strncmp(line, "PRETENSION", 10) == 0 || strncmp(line, "TAKEUP", 6) == 0))
         g_motor_load->command(line, loadMonotonic());
     char resp[1024];
     // speed MUST be initialized: "CMD x y" parses two fields (sscanf >= 2
@@ -424,6 +593,29 @@ static int handleCommand(const char *line, ClearPath &robot, int client_fd, int 
             logf("  startup pretension -> %.2f mm (next ENABLE)\n", mm);
             snprintf(resp, sizeof(resp), "OK PRETENSION %.2f\n", mm);
         }
+    } else if (strncmp(line, "TAKEUP", 6) == 0) {
+        // "TAKEUP [taut_amps [max_mm]]". Energizes, winds in slack, and
+        // de-energizes; see takeUpSlack. Blocks this thread like TENSION does.
+        double taut = TAKEUP_TAUT_AMPS, max_mm = TAKEUP_MAX_MM;
+        char extra;
+        int got = sscanf(line + 6, "%lf %lf %c", &taut, &max_mm, &extra);
+        if (got > 2 || !std::isfinite(taut) || taut < 0.15 || taut > 1.0 ||
+            !std::isfinite(max_mm) || max_mm < 1 || max_mm > 300) {
+            snprintf(resp, sizeof(resp), "ERR TAKEUP takes [taut_amps 0.15..1 [max_mm 1..300]]\n");
+        } else if (g_motors_enabled) {
+            snprintf(resp, sizeof(resp), "ERR disable hardware before taking up slack\n");
+        } else {
+            const TakeupDrives drives = {
+                [&robot]() { return robot.enable(); },
+                [&robot]() { robot.disable(); },
+                [&robot](char *why, size_t n) { return robot.checkDrives(why, n); },
+                [&robot](unsigned m) { return robot.readLoad(m, LoadField::TorqueAmps); },
+            };
+            const std::string result = takeUpSlack(drives, teensy_fd, client_fd, taut, max_mm);
+            write(client_fd, result.data(), result.size());
+            return 1;
+        }
+
     } else if (strncmp(line, "ENABLE", 6) == 0) {
         logf("  ENABLE\n");
         if (g_fault) {

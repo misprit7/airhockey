@@ -269,6 +269,36 @@ void CDPR::tension(float mm, float speed_mm_s) {
   Serial.println("Tension applied");
 }
 
+// Retract only the motors in `mask` (bit m = motor m) by whole step pulses.
+// The host's slack take-up calls this one or two steps at a time and reads
+// the drives' current in between, so the firmware never decides when a cable
+// is taut. Steps, not mm: one step is 0.38 mm of cable, and a host counting
+// "0.5 mm" increments that each round to one step would be 24% off. Usable
+// before the first CAL, hence the pin setup here; counts are not tracked
+// because CAL zeroes the reference afterwards.
+void CDPR::retractMotors(uint8_t mask, int32_t steps, float speed_mm_s) {
+  if (steps <= 0 || !(mask & 0x0F)) return;
+  uint32_t intervalUs = (uint32_t)(1e6f / (speed_mm_s * COUNTS_PER_MM));
+
+  for (int i = 0; i < NUM_MOTORS; i++) {
+    pinMode(stepPins_[i], OUTPUT);
+    pinMode(dirPins_[i], OUTPUT);
+    digitalWriteFast(stepPins_[i], LOW);
+    digitalWriteFast(dirPins_[i], dirLevelRetract(i));
+  }
+  delayMicroseconds(2);
+  for (int32_t step = 0; step < steps; step++) {
+    for (int i = 0; i < NUM_MOTORS; i++) {
+      if (mask & (1u << i)) digitalWriteFast(stepPins_[i], HIGH);
+    }
+    delayMicroseconds(2);
+    for (int i = 0; i < NUM_MOTORS; i++) {
+      digitalWriteFast(stepPins_[i], LOW);
+    }
+    delayMicroseconds(intervalUs);
+  }
+}
+
 void CDPR::releaseTension(float speed_mm_s) {
   if (tensionMm_ <= 0) return;
 
