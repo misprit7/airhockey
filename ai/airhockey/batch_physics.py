@@ -142,6 +142,9 @@ class BatchPhysicsEngine:
         self.speed_restitution: SpeedRestitution | None = None
         self.mallet_lift: MalletLift | None = None
         self.opponent_robot = np.zeros(n_envs, dtype=bool)
+        # Envs in which the agent's mallet may lift (MalletLift). All of them
+        # unless a trainer clears some: see NeuralTrainingEnv(selfplay_lift=).
+        self.agent_lift = np.ones(n_envs, dtype=bool)
         self.paddle_e_lo = np.full(n_envs, SpeedRestitution.nominal[0])
         self.paddle_e_hi = np.full(n_envs, SpeedRestitution.nominal[1])
         # Per-env lift parameters [6, N] in MalletLift.nominal's order, and
@@ -433,7 +436,7 @@ class BatchPhysicsEngine:
         through &= overlap & (timer <= model.timeout_s)
         first = colliding & ~self._in_contact[side] & ~through
         self._in_contact[side] = overlap
-        robot = first if side == 0 else first & self.opponent_robot & model.far_body
+        robot = first & self.agent_lift if side == 0 else first & self.opponent_robot & model.far_body
         p100, a0, b0, m_ret, k_hi, shift = self.lift_parameters
         candidate = robot & (p100 > 0)
         if candidate.any():

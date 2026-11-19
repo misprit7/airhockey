@@ -1169,7 +1169,8 @@ def test_recipe_is_v4s_command_continued_with_the_table_options():
         assert changed == {"run_name", "evaluation_dir", "resume", "initialize_from", "opponent_reference", "minutes",
                            "seed", "value_warmup_updates", "width"}
         assert set(mine) - set(old) == new | round2 | round3 | round4 | {"free_request_share", "body_accel", "roam_weight",
-                                                                         "defense_followthrough_fraction", "game_shaping_scale"}
+                                                                         "defense_followthrough_fraction", "game_shaping_scale",
+                                                                         "selfplay_lift"}
         assert args.body_accel is None and "--body-accel" not in cmd
 
 
@@ -1381,3 +1382,18 @@ def test_selfplay_arm_is_mostly_self_play_with_bare_games():
                  "--guard-weight", "--accel-effort-weight", "--idle-speed-weight", "--dead-puck-weight",
                  "--possession-delay-weight", "--shutdown-penalty"):
         assert float(value(flag)) > 0, flag
+
+
+def test_selfplay_lift_off_spares_the_learner_only_in_games_against_a_network():
+    from airhockey.neural_training import _OPP_POLICY_MAP
+    options = dict(table_fidelity("table-20261119"))
+    env = NeuralTrainingEnv(64, stage=5, seed=3, game_fraction=.5, human_proxy_share=.5, human_proxy_tiers=("table",),
+                            selfplay_lift=False, **options)
+    env.reset()
+    game = env.kind == 3
+    people = env.base._opp_policy_id == _OPP_POLICY_MAP["human_proxy"]
+    assert (game & people).any() and (game & ~people).any() and (~game).any()
+    np.testing.assert_array_equal(env.engine.agent_lift, ~(game & ~people))
+    default = NeuralTrainingEnv(16, stage=5, seed=3, game_fraction=.5, **options)
+    default.reset()
+    assert default.engine.agent_lift.all()

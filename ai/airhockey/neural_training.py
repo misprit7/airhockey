@@ -202,6 +202,7 @@ class NeuralTrainingEnv(ArrivalEnv):
         defensive_depth_target=.30,
         roam_weight=0.0,
         game_shaping_scale=1.0,
+        selfplay_lift=True,
         possession_delay_weight=0.0,
         calm_accel_weight=0.0,
         calm_speed=1.5,
@@ -344,6 +345,13 @@ class NeuralTrainingEnv(ArrivalEnv):
         if not np.isfinite(game_shaping_scale) or not 0 <= game_shaping_scale <= 1:
             raise ValueError("game_shaping_scale must be in [0,1]")
         self.game_shaping_scale = float(game_shaping_scale)
+        # False: the learner's mallet does not lift in a full game against a
+        # NEURAL far side (it still does against people and in drills). With
+        # mallet_lift far_body=False, as every arm since a2 has it, only the
+        # learner's mallet lifts, and a game against a copy of itself is not
+        # a contest: v4.4.0 conceded 0.70 goals a minute to its own snapshots
+        # at 0.71 lifts a minute and scored 0.07.
+        self.selfplay_lift = bool(selfplay_lift)
         self.goals_only = bool(goals_only)
         games = games or self.goals_only
         continuous_rallies = continuous_rallies or self.goals_only
@@ -1962,6 +1970,8 @@ class NeuralTrainingEnv(ArrivalEnv):
             obs[~mask] = self._last_observation[~mask]
         self._last_observation = obs.copy()
         self._potential = self.potential()
+        if not self.selfplay_lift:
+            self.engine.agent_lift[:] = ~((self.kind == 3) & (self.base._opp_policy_id == _OPP_POLICY_MAP["external"]))
         if self.people is not None:
             # Other games keep the view of this tick they were already given.
             fresh = self.base.opponent_obs()

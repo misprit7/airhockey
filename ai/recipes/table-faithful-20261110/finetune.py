@@ -124,7 +124,9 @@ ARMS["selfplay"] = dict(
     trainer_arg=["--unproductive-return-penalty", "30", "--recovery-min-speed", "0.6", "--recovery-max-speed", "2.4",
                  "--recovery-fraction", "0.7", "--recovery-persistent-bias", "1.0", "--recovery-capture-bonus", "60",
                  "--recovery-get-ahead-bonus", "30", "--slow-exit-penalty", "100",
-                 "--defense-followthrough-fraction", "0.5"])
+                 "--defense-followthrough-fraction", "0.5",
+                 # Robot against robot nobody's mallet lifts (the far side's never did): an equal game.
+                 "--no-selfplay-lift"])
 
 
 def limited_teacher(spec, body_accel):
