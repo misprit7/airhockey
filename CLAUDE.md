@@ -784,6 +784,11 @@ python ai/bin/eval_fast_defense.py expert --output logs/fd-human.json \
   goal (camera, 14-30 Hz rms: 0.4-0.5 mm in October, ~1.1 mm at x0.35 in
   November, ~2.0 mm after the restore). Cause not found; the commands carry
   no such content, so it is mechanical or in the drive loop, not the policy.
+  2026-11-18: the ring test at baseline gains showed motors 0 and 1's
+  CURRENT oscillating 1-3 A at 18-21 Hz while holding near the goal (and
+  motor 2 holding ~5.7 A there at 2 mm pretension, which tripped its RMS
+  limit): the servo loop is in the ring. KI x0.35 was re-applied that
+  evening (1163/1706/2035/1393, read back); not yet re-measured.
 - **Paddles**: `standard` (170 g), `heavy` (370 g) and `printed` in
   `shared/cdpr_geometry.py`. `printed` is `hw/mallet/bin/gen_printed_mallet.py`
   and carries DESIGN values (98 g, markers 68.10/37.30 mm), not measurements.
