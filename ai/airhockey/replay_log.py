@@ -69,6 +69,11 @@ class ReplayLog:
                 t=t,
                 puck=list(report.puck[0][:2]) if report.t_puck == t else None,
                 agent=report.mallet if report.t_mallet == t else None,
+                # The robot mallet's measured angle, degrees (2026-11-18): it
+                # turns on its cables, and the controller assumes it does not.
+                agent_theta=(round(math.degrees(theta), 2)
+                             if report.t_mallet == t and (theta := getattr(report, "mallet_theta", None)) is not None
+                             else None),
                 human=report.opponent if report.t_opponent == t else None,
             )
         )

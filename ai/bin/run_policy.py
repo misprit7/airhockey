@@ -1783,6 +1783,7 @@ def run(args) -> int:
                 got = own.update(blobs)
                 if got is not None:
                     report.add_mallet(t, got[0], got[1])
+                    report.mallet_theta = getattr(own, "theta", None)
                 if opp is not None:
                     got = opp.update(blobs)
                     if got is not None:

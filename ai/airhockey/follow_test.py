@@ -201,7 +201,7 @@ def duration_estimate(segs: list[Segment], v_max: float, a_max: float,
 ROW_FIELDS = (
     "t", "seg", "name", "kind", "cmd_x", "cmd_y",
     "ctl_x", "ctl_y", "ctl_vx", "ctl_vy", "c0", "c1", "c2", "c3",
-    "cam_t", "cam_x", "cam_y",
+    "cam_t", "cam_x", "cam_y", "cam_theta_deg",
     "enc0", "enc1", "enc2", "enc3", "trq0", "trq1", "trq2", "trq3", "enc_ms",
     "enc_t",
 )
@@ -347,7 +347,7 @@ class FollowTest:
                     "ctl_vx": s["vx"], "ctl_vy": s["vy"],
                     "c0": s["c0"] - c_zero[0], "c1": s["c1"] - c_zero[1],
                     "c2": s["c2"] - c_zero[2], "c3": s["c3"] - c_zero[3],
-                    "cam_t": None, "cam_x": None, "cam_y": None,
+                    "cam_t": None, "cam_x": None, "cam_y": None, "cam_theta_deg": None,
                     "enc_ms": None, "enc_t": None,
                 }
                 for m in range(4):
@@ -359,6 +359,8 @@ class FollowTest:
                     row["cam_t"] = cam[0] - t0
                     row["cam_x"] = cam[1]
                     row["cam_y"] = cam[2]
+                    if len(cam) > 3 and cam[3] is not None:
+                        row["cam_theta_deg"] = round(math.degrees(cam[3]), 3)
                     self.progress["gap_mm"] = round(
                         math.hypot(cam[1] - s["x"], cam[2] - s["y"]), 1)
                 if drive_samples is None and t - last_enc_t >= ENC_EVERY_S:

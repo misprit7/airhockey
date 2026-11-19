@@ -73,7 +73,7 @@ def test_collect_takes_the_end_of_each_hold():
     for i, s in enumerate(segs):
         for k in range(100):
             still = s.kind == "hold" and k >= 30
-            rows.append(dict(t=t, seg=i, ctl_x=s.x, ctl_y=s.y,
+            rows.append(dict(t=t, seg=i, ctl_x=s.x, ctl_y=s.y, cam_theta_deg=133.0 + i,
                              cam_x=s.x + (2.0 if still else 40.0), cam_y=s.y - 1.0))
             t += 0.01
     dt = np.arange(0, t, 0.01)
@@ -83,5 +83,6 @@ def test_collect_takes_the_end_of_each_hold():
     np.testing.assert_allclose(points["camera"][0], [segs[1].x + 2.0, segs[1].y - 1.0])
     np.testing.assert_allclose(points["controller"][1], [segs[3].x, segs[3].y])
     np.testing.assert_allclose(points["amps"][0], [1.5, 2.5, 3.5, 4.5])
+    np.testing.assert_allclose(points["theta_deg"], [134.0, 136.0])      # the mallet's measured angle
     # A drive whose current was not sampled leaves no point to fit.
     assert gs.collect(rows, segs, {0: drives[0]})["camera"].shape == (0, 2)

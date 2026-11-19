@@ -91,7 +91,7 @@ def collect(rows: list[dict], segs: list[Segment], drives: dict) -> dict:
     each drive's holding current, medians over the end of the hold."""
     t = np.array([r["t"] for r in rows], float)
     seg = np.array([r["seg"] for r in rows], int)
-    cam, ctl, amps = [], [], []
+    cam, ctl, amps, angles = [], [], [], []
     for i, s in enumerate(segs):
         if not s.name.endswith(": measure"):
             continue
@@ -115,10 +115,12 @@ def collect(rows: list[dict], segs: list[Segment], drives: dict) -> dict:
         if len(current) < 4:
             continue
         cam.append(np.median(np.array(seen, float), axis=0))
+        turned = [r["cam_theta_deg"] for r in window if r.get("cam_theta_deg") is not None]
+        angles.append(float(np.median(turned)) if turned else float("nan"))
         ctl.append([np.median([r["ctl_x"] for r in window]), np.median([r["ctl_y"] for r in window])])
         amps.append(current)
     return dict(camera=np.array(cam, float).reshape(-1, 2), controller=np.array(ctl, float).reshape(-1, 2),
-                amps=np.array(amps, float).reshape(-1, 4))
+                amps=np.array(amps, float).reshape(-1, 4), theta_deg=np.array(angles, float))
 
 
 def _residuals(p, camera, nominal, tension, taut, anchors0, radius0, ref):
@@ -212,6 +214,12 @@ def format_report(result: dict) -> str:
     lines.append("cable stretch, mm per amp of holding current (motors 0-3): "
                  + " ".join(f"{v:.2f}" for v in f["stretch_mm_per_amp"]))
     lines.append("points where each cable was slack (under %.2f A): " % SLACK_AMPS + " ".join(map(str, f["slack"])))
+    turn = result.get("theta")
+    if turn:
+        lines.append(f"mallet angle over the grid: {turn['min']:.1f} to {turn['max']:.1f} deg "
+                     f"(the controller assumes {turn['assumed']:.1f} everywhere); "
+                     f"it changes {turn['per_100mm_y']:+.2f} deg per 100 mm of y and "
+                     f"{turn['per_100mm_x']:+.2f} per 100 mm of x.")
     lines.append("Nothing has been changed on the robot.")
     return "\n".join(lines)
 
@@ -241,6 +249,15 @@ def finish(test, wait_s: float = 6.0, sleep=None) -> dict:
         points = collect(test.rows, test.segments, drives)
         result["points"] = {k: np.round(v, 3).tolist() for k, v in points.items()}
         result["fit"] = fit(points["camera"], nominal_lengths(points["controller"]), points["amps"])
+        angle = points["theta_deg"]
+        seen = np.isfinite(angle)
+        if seen.sum() >= 6:
+            # A plane through the measured angle: how it varies across the table.
+            design = np.column_stack([np.ones(seen.sum()), points["camera"][seen] - points["camera"][seen].mean(0)])
+            plane, *_ = np.linalg.lstsq(design, angle[seen], rcond=None)
+            result["theta"] = dict(min=float(angle[seen].min()), max=float(angle[seen].max()),
+                                   assumed=float(np.degrees(geom.MALLET_THETA_RAD)),
+                                   per_100mm_x=float(100 * plane[1]), per_100mm_y=float(100 * plane[2]))
     except ValueError as e:
         result["error"] = f"Calibration sweep could not be fitted: {e}."
     result["text"] = format_report(result)

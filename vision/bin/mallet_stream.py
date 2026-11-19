@@ -168,7 +168,11 @@ class MalletTracker:
                         max(abs(r-geom.ARM_MARKER_R_MM) for r in pose['r']) <= 4):
                     matches.append(pose)
         if len(matches) != 1:
+            self.theta = None
             return None
+        # The mallet is free to turn on its cables; the angle is part of what
+        # was measured, and is logged with the position (`theta`, radians).
+        self.theta = matches[0].get('theta')
         return matches[0]['centre'], 3
 
 
