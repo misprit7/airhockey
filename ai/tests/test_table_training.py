@@ -1318,3 +1318,21 @@ def test_roam_reward_pays_for_standing_forward_only_while_the_opponent_prepares(
     # A fast shot on its way pays nothing, however far forward the mallet is.
     e.puck_vy[:] = -5
     assert not env.roam_reward().any()
+
+
+def test_roam_reward_pays_half_on_the_commanded_target():
+    env = NeuralTrainingEnv(2, stage=5, seed=1, realistic=False, randomize=False, roam_weight=50.0)
+    env.reset()
+    e = env.engine
+    low, high = env.decoder.low[1], env.decoder.high[1]
+    e.paddle_agent_y[:] = low
+    e.puck_y[:] = 1.6; e.puck_vx[:] = 0; e.puck_vy[:] = 0
+    np.testing.assert_allclose(env.roam_reward(np.array([low, high])), [0, .5], atol=1e-6)
+    # In a step: of two identical tables, the one sent forward is paid more, at once.
+    def paid(y):
+        env = NeuralTrainingEnv(1, stage=5, seed=1, realistic=False, randomize=False, roam_weight=50.0)
+        env.reset()
+        env.engine.puck_y[:] = 1.6; env.engine.puck_vx[:] = 0; env.engine.puck_vy[:] = 0
+        action = np.zeros((1, 6)); action[0, 1] = y
+        return float(env.step(action)[1][0])
+    assert paid(1.0) - paid(-1.0) > .3          # 50 * 0.02 s * half of the full span

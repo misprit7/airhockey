@@ -1968,9 +1968,14 @@ class NeuralTrainingEnv(ArrivalEnv):
                          max(self.decoder.high[1] - self.defensive_depth_target, .01), 0, 1)
         return preparing * opponent_half * excess**2
 
-    def roam_reward(self):
-        """0..1: how far forward in its workspace the mallet stands while the
-        opponent has the puck and no fast shot is on its way.
+    def roam_reward(self, target_y=None):
+        """0..1: how far forward in its workspace the mallet stands, and is
+        being SENT (target_y, the destination of the arrival just asked for), while the opponent
+        has the puck and no fast shot is on its way.
+
+        Half on the command because one tick of a nudged target moves the
+        mallet a millimetre or two at an idle cap: paid on position alone
+        (weight 60, 26M steps) the term gave exploration nothing to find.
 
         Measured from the BACK edge of the workspace, so the slope is there
         where the full-strength model stands (0.13 m off its goal line). The
@@ -1981,6 +1986,8 @@ class NeuralTrainingEnv(ArrivalEnv):
         opponent_half = np.clip((e.puck_y - 1.0) / .15, 0, 1)
         low, high = self.decoder.low[1], self.decoder.high[1]
         forward = np.clip((e.paddle_agent_y - low) / max(high - low, .01), 0, 1)
+        if target_y is not None:
+            forward = .5 * (forward + np.clip((np.asarray(target_y) - low) / max(high - low, .01), 0, 1))
         return preparing * opponent_half * forward
 
     def step(self, action):
@@ -1990,6 +1997,9 @@ class NeuralTrainingEnv(ArrivalEnv):
         action = np.clip(action, -1, 1)
         guarded = np.stack((self.guard_changed[0], self.guard_unresolved[0]))
         target, cap = self._decode(action)
+        # The arrival's DESTINATION, not this tick's waypoint (which sits a
+        # few mm from the mallet whatever was asked).
+        roam_target_y = self.decoder.unpack(action)[0][:, 1] if self.roam_weight else None
         guarded = np.stack((self.guard_changed[0], self.guard_unresolved[0])) - guarded
         b, e = self.base, self.engine
         launch = self.elapsed >= self._windup_release
@@ -2161,7 +2171,7 @@ class NeuralTrainingEnv(ArrivalEnv):
         # Stops charging once a fast shot is incoming; never clips an action.
         reward -= self.defensive_depth_weight * b.action_dt * self.defensive_depth_cost()
         if self.roam_weight:
-            reward += self.roam_weight * b.action_dt * self.roam_reward()
+            reward += self.roam_weight * b.action_dt * self.roam_reward(roam_target_y)
         # Accel cap asked for while nothing on the table needs it. The sim's
         # paddle follows any cap exactly; the table's tips its mallet past
         # ~1.5 g, rings its cables and sags the motor supply, so a guard
