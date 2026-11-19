@@ -1407,3 +1407,88 @@ slots with exploration noise, so they are below the evaluation's.)
   still draw explicit requests.
 - The governor's numbers (30 / 15% / 60% / 9 / 15%) are chosen, not tuned
   against play.
+
+## Round 5: the soft mallet and the puck after a block (2026-11-19, v4.3.x)
+
+Asked after the 2026-11-17/18 table sessions of v4.1.2: defense is as wanted
+(the person "basically just can't score"), offense is not. Two complaints:
+it lets a puck drift slowly off its half with room to go round it and take
+control, and it rushes shots before it is set up.
+
+### What the table logs say (v4.1.2, 37 min, 10 sessions, 11-17 and 11-18)
+
+Same code on the table's `replay.jsonl` and on sim recordings against the
+`table` / `table_plus` people (possession = one stay of the puck in the
+robot's half that ends with it leaving):
+
+| | table | rigid sim (`table-20261029`) |
+|---|---|---|
+| possessions ending in a shot (leaves >= 2 m/s within 0.7 s of a touch) | 49.5% | 82.6% |
+| leaves under 2 m/s, robot not touching it in the last 0.7 s | 13.2% | 5.0% |
+| leaves at 1-2 m/s | 19.6% | 6.0% |
+| shots: puck speed before the last touch, 75th percentile | 1.37 m/s | 0.87 m/s |
+| shots: one touch only | 35.8% | 15.1% |
+
+Ruled out: the puck does not move by itself. Free slow pucks (560 windows of
+0.4 s, away from both mallets and the rails) accelerate at 0.008 m/s^2 on
+average, i.e. not at all, so table tilt or air is not what carries them off.
+
+What the slow untouched exits are (64 of them, 1.75 a minute): the puck came
+in at 6 m/s (median), the robot BLOCKED it, and the rebound left at 1-1.7 m/s
+about 0.9 s later with the mallet staying 300-500 mm behind it, moving at
+0.8 m/s under a 40 m/s^2 cap. The puck was within the mallet's reach for
+0.8 s (median) of that. This is the "drifts away with room to go round it".
+
+After a block of a shot of 4 m/s or more:
+
+| | table | rigid sim | `table-20261118` (gain 0.5-1.5) | gain 1.5-3.0 | gain 2.5-4.5 |
+|---|---|---|---|---|---|
+| rebound speed, quartiles, m/s | 1.06 / 1.74 / 2.91 | 0.55 / 0.90 / 2.00 | 0.77 / 1.36 / 2.44 | 1.14 / 1.96 / 3.14 | 1.36 / 2.15 / 3.33 |
+| rebound / incoming speed, median | 0.27 | 0.14 | 0.20 | 0.29 | 0.33 |
+| rebound under 2 m/s then recovered (touched again) | 34% | 70% | 56% | 47% | 39% |
+| block followed by recovery and a shot | 19% | 53% | 37% | 26% | 17% |
+
+In the rigid sim the policy cushions its blocks (the reward's off-target
+penalty makes a hard unaimed return expensive) and collects the dead puck.
+On the table the same blocks come off twice as fast and two thirds of the
+slow ones are not collected.
+
+### The sim's mallet was rigid
+
+The policy's own-mallet input is the controller's step-count position, on
+the table and in the sim. On the table the mallet hangs on cables and
+springs: the camera sees it 5-9 mm rms from the controller's position, 40 mm
+at the 90th percentile when moving fast. In the sim the mallet WAS the
+profile. `BatchAirHockeyEnv.enable_mallet_compliance` (profile part
+`compliance`) makes it a damped mass driven by the profile's acceleration,
+per episode and axis: frequency, damping, gain. The puck meets the true
+mallet; the policy still sees the profile.
+
+- `table-20261118`: frequency 10-26 Hz, damping 0.03-0.15, gain 0.5-1.5 (a
+  first guess from the ring test). Moves v4.1.2 about half way to the table.
+- `table-20261119`: gain 1.0-3.5, frequency 8-26 Hz, damping 0.02-0.15,
+  chosen so the block statistics above land on the table's. Under it v4.1.2
+  reads: shots 62%, slow untouched exits 12%, exits at 1-2 m/s 22%, one-touch
+  shots 28%, rebound median 1.90 m/s, slow rebounds recovered 45%.
+
+CAVEAT. Every one of those table sessions predates the camera recalibration
+of 2026-11-18 21:53. The table markers had drifted 13-18 mm since October, so
+the puck was seen that far from where the step counts put the mallet. The
+calibrated gain absorbs that error too. The 11-18 evening sessions (drive
+gains at KI x0.35, 9 min) already differ from 11-17 (27 min): one-touch
+shots 26% against 40%, block-then-shot 27% against 16%. The table as it is
+now may sit between the two profiles.
+
+### Why v4.1.2 never learned the recovery
+
+- Defense drills are block-only (`--defense-block-only`): the episode ends,
+  paid 300, the moment the touched puck moves away. Nothing in 45% of the
+  practice slots ever shows what the block leaves behind.
+- In games a slow puck leaving the half costs nothing by itself
+  (`--slow-exit-penalty` 0, `--unproductive-return-penalty` 0), while
+  chasing it costs acceleration, heat and position. The trainer counts
+  these: 4.3-5.4 "slow possession losses" a minute in training games,
+  against 1.9 goals a minute.
+- The recovery drill (a puck moving away at 0.15-1.2 m/s, mallet behind it)
+  pays a fast aimed strike from behind as a success. In the drill v4.1.2
+  takes control of 1 puck in 128 and strikes 97 from behind on target.

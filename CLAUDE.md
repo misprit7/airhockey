@@ -130,6 +130,21 @@ Robotic air hockey table that uses reinforcement learning trained in simulation,
       `--sim-profile table-20261029` (`profile_options`; `name:contact,lift`
       for some parts; absent = the historical sim and report) and report
       `LiftTally`: lift events and goals conceded within 1 s of one.
+      COMPLIANT MALLET (2026-11-18/19, part `compliance`, profiles
+      `table-20261118` and `table-20261119`; `table-20261029` is unchanged):
+      the robot's mallet is a damped mass on elastic cables driven by the
+      profile's acceleration (`BatchAirHockeyEnv.enable_mallet_compliance`:
+      per episode and axis a frequency, damping and gain; the puck meets the
+      TRUE mallet, the policy still sees the profile position, as on the
+      table where that input is step counts; agent seat only). Why: on the
+      table the camera's mallet is 5-9 mm rms from the controller's, and
+      v4.1.2's possessions end in a shot 50% of the time there against 83%
+      in the rigid sim. `table-20261119` is the gain CALIBRATED on what
+      happens after v4.1.2 blocks a >= 4 m/s shot (table: rebound p50
+      1.74 m/s, 34% of slow rebounds recovered; rigid sim 0.90 and 70%;
+      `-20261118` 1.36 and 56%; `-20261119` in between the two nearest
+      trials). Those table sessions predate the camera recalibration of
+      2026-11-18, so part of that gain stands in for a mis-seen puck.
     - `playability.py` - The PHYSICAL-PLAYABILITY GATES (2026-11-10), one
       function for a simulated game and for a table session's
       `ticks.csv` + `replay.jsonl`: idle accel cap, share of ticks asking
@@ -291,6 +306,17 @@ Robotic air hockey table that uses reinforcement learning trained in simulation,
     - `eval_fast_defense.py` - First-attack defense benchmark; `--speed-min/
       --speed-max/--bank-fraction/--release-y-min/--release-y-max` re-tier
       it (defaults reproduce the original fixtures exactly)
+    - `ring_test.py`, `geometry_sweep.py` (in `airhockey/`, 2026-11-18) -
+      two more sequences for the tracking-test runner, started from the web
+      UI's Motion limits panel (Hardware ON). The RING TEST holds and makes
+      30 mm steps at five places and scans camera position and drive current
+      (`SAMPLE <s> torque`) for a tone: it is what showed the servo loop
+      oscillating at 18-21 Hz near the goal. The CALIBRATION SWEEP visits a
+      6 x 6 grid and fits anchors, spool radius and cable stretch to the
+      camera; its 2026-11-18 result was that the geometry is right to
+      ~0.9 mm (spool radius 48.43 confirmed, stretch 0-0.3 mm/A, mallet
+      angle 133.7-137.0 degrees across the table) and does NOT explain the
+      slack in the far cables. Reports in `logs/follow_test/`.
     - `follow_test_rescore.py` - Re-judge a tracking-test CSV with the
       current scoring
     - `run_policy.py` - Drives the table from a policy: heuristic bots or a
@@ -419,7 +445,8 @@ Robotic air hockey table that uses reinforcement learning trained in simulation,
     need `--apply`, are computed from the backup so they cannot compound, are
     refused on an enabled drive or a serial mismatch, and are read back.
   - `drive_config/` - Those backups. `baseline-20261108/` is the original
-    auto-tune; `ki-x0.5-20261108/` is an intermediate step.
+    auto-tune; `ki-x0.5-20261108/` is an intermediate step;
+    `ki-x0.35-20261118/` is the state the user called a good default.
   - `lib/clearpath.{h,cpp}` - Minimal ClearPath connect/enable/disable, plus
     drive parameter read/write and config save
   - `third_party/sFoundation/` - Teknic sFoundation SDK (patched for Linux, .gitignored)
@@ -788,7 +815,15 @@ python ai/bin/eval_fast_defense.py expert --output logs/fd-human.json \
   CURRENT oscillating 1-3 A at 18-21 Hz while holding near the goal (and
   motor 2 holding ~5.7 A there at 2 mm pretension, which tripped its RMS
   limit): the servo loop is in the ring. KI x0.35 was re-applied that
-  evening (1163/1706/2035/1393, read back); not yet re-measured.
+  evening (1163/1706/2035/1393, read back) and cut the ring 3-4x ("way
+  less vibrating"); snapshot `sw/drive_config/ki-x0.35-20261118`. KV x1.3
+  and x1.6 on top were marginal. The drives were LEFT at KI x0.2 of baseline
+  (665/975/1163/796, KV at default) as a trial the user had not judged;
+  `drive_gains restore sw/drive_config/ki-x0.35-20261118 --apply` goes back.
+  The camera pose was recalibrated the same evening (2026-11-18 21:53): the
+  table markers had drifted 9-12.5 px (13-18 mm) since October, so every
+  table session from some point in that span until then saw the puck that
+  far from where the mallet's step counts put it.
 - **Paddles**: `standard` (170 g), `heavy` (370 g) and `printed` in
   `shared/cdpr_geometry.py`. `printed` is `hw/mallet/bin/gen_printed_mallet.py`
   and carries DESIGN values (98 g, markers 68.10/37.30 mm), not measurements.
