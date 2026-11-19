@@ -120,6 +120,14 @@
     "v4.4.2": {
       "run": "v4.4.2", "file": "agent_step_1356070912.pt", "date": "2026-11-19", "accel": 100, "parent": "v4.4.1",
       "summary": "The self-play arm continued from v4.4.1 in the sim with goal posts. The file is its 101M-step snapshot: the same play as v4.4.1 within the evaluation's noise. The aim held to 150M steps and moved out again after; later snapshots are no better. Sim only."
+    },
+    "v4.4.3": {
+      "run": "v4.4.3", "file": "agent_step_1456996352.pt", "date": "2026-11-19", "accel": 100, "parent": "v4.4.2",
+      "summary": "The self-play arm plus one payment in games for a prepared shot (--game-prepared-shot-weight 100, a sixth of a goal), 111M steps. In training prepared shots went from 30% to 33% of on-target shots; against the simulated people nothing measurable changed. The file is its 101M-step snapshot. Sim only."
+    },
+    "v4.4.4": {
+      "run": "v4.4.4", "date": "2026-11-19", "accel": 100, "parent": "v4.4.3",
+      "summary": "v4.4.3 continued with the payment for a prepared shot raised to 300 (half a goal). In training; not evaluated. Sim only."
     }
   }
 }

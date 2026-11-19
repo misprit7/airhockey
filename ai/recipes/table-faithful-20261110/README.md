@@ -1953,3 +1953,39 @@ Goals per shot do not move while the aim does: against these defenders an
 on-target shot 75-149 mm from the centre goes in 39% of the time and one
 nearer the centre 28% (table, October: 28% and 24%), so a wider aim that
 misses more often can cost nothing in goals.
+
+The 303M snapshot (one seed) is the 252M one again: 62% between the posts,
+14.5 per 100 possessions. `v4.4.2` is registered as its 101M snapshot and
+the run was stopped there.
+
+### v4.4.3 / v4.4.4: one payment in games for a prepared shot
+
+`train_neural_player.py --game-prepared-shot-weight W` (opt-in; test in
+`tests/test_table_training.py`): in full-game slots only, for the learner
+only and outside `--game-shaping-scale`, W for a shot the learner strikes
+from a CAPTURED puck (slower than 0.65 m/s at its mallet for 0.12 s and not
+let go since) that is on target, times a speed ramp from 0 at 2 m/s to 1 at
+6 m/s. A shot at a moving puck earns none of it. Everything else is the
+`selfplay` arm in the posts sim:
+
+    finetune.py --run-name v4.4.3 --arm selfplay --resume runs/v4.4.2/agent_step_1356070912.pt \
+        --sim-profile table-20261119-posts --value-warmup 15 --n-envs 5120 --workers 16 \
+        --trainer-arg=--save-every --trainer-arg=50000000 \
+        --trainer-arg=--game-prepared-shot-weight --trainer-arg=100
+
+Why a payment at all: see the two sections above. Goals alone leave the
+share of prepared shots where it is, and that is what was asked to change.
+
+`v4.4.3` (W = 100, a sixth of a goal; stopped at 111M steps). In its
+training games prepared shots went from 30% to 33% of on-target shots (3.9
+-> 4.7 a minute, captures 6.1 -> 7.1). Against the simulated people, two
+seeds, nothing measurable: shots from a controlled puck 30% (v4.4.2 30%),
+first touch to shot 0.77 s (0.75), controlled + on target + 4 m/s per 100
+possessions 17.1 (16.8). Shots between the posts 60% (67%), as v4.4.2
+itself had 100M steps later. The size fits: against a person a shot is
+worth about 0.3 x 600 in goals however it is struck, so 100 more for a
+prepared one is small there, and it is only against its own copy (0.1 goals
+a minute) that the payment is the larger income.
+
+`v4.4.4` = the same from v4.4.3's 101M snapshot with W = 300 (half a goal,
+more than a shot's expected goals against a person).
