@@ -563,14 +563,20 @@ async def live_game(ws: WebSocket):
                             await ws.send_json({"type": "follow_test",
                                                 "state": "error",
                                                 "error": "already running"})
-                        elif msg.get("sequence") == "ring":
+                        elif msg.get("sequence") in ("ring", "sweep"):
                             # The ring test (airhockey/ring_test.py): holds
                             # and small steps at five places, the camera on
                             # the mallet and the drives' currents sampled.
                             # It needs the camera, so it turns it on, and it
                             # runs at its own caps so runs compare; the caps
                             # in force now are put back when it ends.
-                            from airhockey import ring_test
+                            # "sweep" is the calibration sweep
+                            # (airhockey/geometry_sweep.py), run the same way.
+                            kind = msg["sequence"]
+                            if kind == "ring":
+                                from airhockey import ring_test
+                            else:
+                                from airhockey import geometry_sweep as ring_test
                             try:
                                 if not VISION.running:
                                     VISION.start()
@@ -591,20 +597,20 @@ async def live_game(ws: WebSocket):
                                 follow_test = FollowTest(
                                     hardware_dynamics.client, camera=VISION.latest_pose_stamped,
                                     on_status=hardware_dynamics.absorb_status,
-                                    segments=ring_test.ring_sequence(
+                                    segments=ring_test.sequence(
                                         (box["min_x"], box["max_x"], box["min_y"], box["max_y"]) if box else None),
                                     summarizer=ring_test.quiet_summary, drive_field="torque",
                                     log_dir=ring_test.LOG_DIR)
-                                follow_test.kind = "ring"
+                                follow_test.kind = kind
                                 follow_test.start()
                                 await ws.send_json({
-                                    "type": "follow_test", "state": "started", "sequence": "ring",
+                                    "type": "follow_test", "state": "started", "sequence": kind,
                                     "camera": True, "segments": len(follow_test.segments)})
                             except Exception as e:      # noqa: BLE001
                                 follow_test = None
                                 VISION.set_boost(False)
                                 await ws.send_json({"type": "follow_test", "state": "error",
-                                                    "sequence": "ring", "error": str(e)})
+                                                    "sequence": kind, "error": str(e)})
                         else:
                             cam = (VISION.latest_pose_stamped
                                    if VISION.running else None)
@@ -719,7 +725,8 @@ async def live_game(ws: WebSocket):
                     VISION.set_boost(False)
                     if hardware_dynamics:
                         target_x, target_y = hardware_dynamics.x, hardware_dynamics.y
-                    ring = getattr(ft, "kind", None) == "ring"
+                    kind = getattr(ft, "kind", None)
+                    ring = kind in ("ring", "sweep")
                     if ring and hardware_dynamics and ring_restore and all(ring_restore):
                         try:
                             hardware_dynamics.set_limits(*ring_restore)
@@ -730,14 +737,16 @@ async def live_game(ws: WebSocket):
                         print(f"  tracking test failed: {ft.error}")
                         await ws.send_json({"type": "follow_test",
                                             "state": "error",
-                                            "sequence": "ring" if ring else None,
+                                            "sequence": kind if ring else None,
                                             "error": ft.error})
                     elif ring and ft.result:
-                        from airhockey import ring_test
-                        result = await asyncio.to_thread(ring_test.finish, ft)
-                        print("  ring test:\n    " + result["text"].replace("\n", "\n    "))
-                        await ws.send_json({"type": "follow_test", "state": "done", "sequence": "ring",
-                                            "summary": {"verdict": result["reading"][0] if result["reading"] else ""},
+                        if kind == "ring":
+                            from airhockey import ring_test as finisher
+                        else:
+                            from airhockey import geometry_sweep as finisher
+                        result = await asyncio.to_thread(finisher.finish, ft)
+                        print(f"  {kind}:\n    " + result["text"].replace("\n", "\n    "))
+                        await ws.send_json({"type": "follow_test", "state": "done", "sequence": kind,
                                             "text": result["text"]})
                     elif ft.result:
                         text = format_summary(ft.result)

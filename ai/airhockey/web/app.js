@@ -1436,28 +1436,35 @@ let followTestRunning = false;
     });
 })();
 
-// The ring test is the same loop with another move list; one runs at a time.
+// The ring test and the calibration sweep are the same loop with other move
+// lists; one of the three runs at a time, and its own button stops it.
 let followTestKind = "tracking";
+const TEST_BUTTONS = {
+    tracking: ["btn-follow-test", "tracking test"],
+    ring: ["btn-ring-test", "ring test"],
+    sweep: ["btn-sweep-test", "calibration sweep"],
+};
 
-(() => {
-    const b = document.getElementById("btn-ring-test");
-    if (!b) return;
-    b.addEventListener("click", () => {
+for (const kind of ["ring", "sweep"]) {
+    const b = document.getElementById(TEST_BUTTONS[kind][0]);
+    if (b) b.addEventListener("click", () => {
         if (!ws || ws.readyState !== 1) return;
         if (mode === "replay") setMode("control");
         ws.send(JSON.stringify(followTestRunning
             ? { type: "follow_test", action: "stop" }
-            : { type: "follow_test", action: "start", sequence: "ring" }));
+            : { type: "follow_test", action: "start", sequence: kind }));
     });
-})();
+}
 
 function setFollowTestRunning(on) {
     followTestRunning = on;
-    const ring = followTestKind === "ring";
-    const b = document.getElementById("btn-follow-test");
-    const r = document.getElementById("btn-ring-test");
-    if (b) { b.textContent = on && !ring ? "Stop tracking test" : "Run tracking test"; b.disabled = on && ring; }
-    if (r) { r.textContent = on && ring ? "Stop ring test" : "Run ring test"; r.disabled = on && !ring; }
+    for (const [kind, [id, name]] of Object.entries(TEST_BUTTONS)) {
+        const b = document.getElementById(id);
+        if (!b) continue;
+        const mine = on && kind === followTestKind;
+        b.textContent = `${mine ? "Stop" : "Run"} ${name}`;
+        b.disabled = on && !mine;
+    }
 }
 
 function updateFollowTest(p) {
@@ -1477,16 +1484,16 @@ function showFollowTest(msg) {
     const out = document.getElementById("follow-test-result");
     if (!el || !out) return;
     if (msg.state === "started") {
-        followTestKind = msg.sequence === "ring" ? "ring" : "tracking";
+        followTestKind = TEST_BUTTONS[msg.sequence] ? msg.sequence : "tracking";
         setFollowTestRunning(true);
         out.classList.add("hidden");
         el.textContent = msg.camera
             ? `running ${msg.segments} segments`
             : `running ${msg.segments} segments \u2014 camera OFF, drives vs steps only`;
         el.className = msg.camera ? "" : "bad";
-    } else if (msg.state === "done" && msg.sequence === "ring") {
+    } else if (msg.state === "done" && (msg.sequence === "ring" || msg.sequence === "sweep")) {
         setFollowTestRunning(false);
-        el.textContent = "ring test done";
+        el.textContent = `${TEST_BUTTONS[msg.sequence][1]} done`;
         el.className = "";
         out.textContent = msg.text;
         out.classList.remove("hidden");

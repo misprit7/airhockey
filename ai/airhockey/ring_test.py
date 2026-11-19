@@ -351,3 +351,6 @@ def finish(test, wait_s: float = 6.0, sleep=None) -> dict:
         except OSError:
             pass
     return result
+
+
+sequence = ring_sequence     # the name the server looks for on every move-list module
