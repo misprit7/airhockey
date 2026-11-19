@@ -43,8 +43,9 @@ LOG_DIR = ROOT / "logs" / "ring_test"
 
 TEST_SPEED_MM_S = 3000.0
 TEST_ACCEL_MM_S2 = 60000.0
-QUIET_S = 3.0           # holding still, nothing commanded
-LISTEN_S = 1.2          # after each step
+QUIET_S = 2.0           # holding still, nothing commanded
+GOAL_INSET_MM = 60.0    # see ring_sequence
+LISTEN_S = 1.0          # after each step
 STEP_MM = 30.0
 QUIET_SKIP_S = 0.6      # let the arrival die out before calling a hold quiet
 STEP_SKIP_S = 0.03      # after the step's own travel time
@@ -63,8 +64,13 @@ def ring_sequence(box: tuple[float, float, float, float] | None = None,
     x0, x1, y0, y1 = x0 + margin, x1 - margin, y0 + margin, y1 - margin
     cx, cy = 0.5 * (x0 + x1), 0.5 * (y0 + y1)
     side = 0.3 * (y1 - y0)
-    places = [("near goal, middle", x1, cy), ("centre", cx, cy), ("forward, middle", x0, cy),
-              ("near goal, low y", x1, cy - side), ("near goal, high y", x1, cy + side)]
+    # Holding hard against the goal end costs motor 2 about 5.7 A at 2 mm of
+    # pretension, above its 4 A RMS limit: the first run (2026-11-18) dwelt
+    # there 25 s and tripped RMSOverloadShutdown at 41 s. So the near-goal
+    # places sit GOAL_INSET_MM in, and cooler places come between them.
+    x1 = max(cx, x1 - GOAL_INSET_MM)
+    places = [("near goal, middle", x1, cy), ("centre", cx, cy), ("near goal, low y", x1, cy - side),
+              ("forward, middle", x0, cy), ("near goal, high y", x1, cy + side)]
     segs: list[Segment] = []
     for name, x, y in places:
         # Steps go toward the middle of the box, so they never leave it.

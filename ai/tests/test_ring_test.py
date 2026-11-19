@@ -54,10 +54,10 @@ def test_sequence_stays_in_the_box_and_listens_at_five_places():
     quiet = [s for s in segs if s.name.endswith(": quiet")]
     assert len(quiet) == 5 and all(s.hold_s == ring_test.QUIET_S and s.kind == "hold" for s in quiet)
     # The robot's goal is the high-x end: three of the five are hard against it.
-    assert sum(s.x > geom.WS_MAX_X - 40 for s in quiet) == 3
+    assert sum(s.x > geom.WS_MAX_X - 100 for s in quiet) == 3
     steps = [s for s in segs if ": step" in s.name]
     assert len(steps) == 20 and all(s.kind == "flip" for s in steps)
-    assert 30 < duration_estimate(segs, ring_test.TEST_SPEED_MM_S, ring_test.TEST_ACCEL_MM_S2) < 60
+    assert 25 < duration_estimate(segs, ring_test.TEST_SPEED_MM_S, ring_test.TEST_ACCEL_MM_S2) < 60
 
 
 def test_tone_finds_a_ring_through_uneven_sampling_and_noise():
