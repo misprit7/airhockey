@@ -691,9 +691,9 @@ continued under a 40 / 25 / 15 m/s^2 body limit (sim goal share 97 / 90 /
 81% against the table people; clipped v4.1.2 at those limits 94 / 72 / 49%).
 None of v4.2.x has been on the table; results and caveats in `ai/MODELS.md`.
 A mode may carry a `note` (shown under the UI's level selector) and any key
-is a level: 2026-11-19 added `new` = v4.3.12 and `new-chase` = v4.3.10, the
-two best checkpoints of the v4.3 study at full strength. `latest` and `max`
-stay v4.1.2 until one of them has played on the table.
+is a level: 2026-11-19 added `new` = v4.3.12, the best checkpoint of the
+v4.3 study, at full strength. `latest` and `max` stay v4.1.2 until it has
+played on the table.
 
 THE v4.3 STUDY (2026-11-19, record: "Round 5" of
 `ai/recipes/table-faithful-20261110/README.md`, results `ai/MODELS.md`).
@@ -712,7 +712,7 @@ fine-tune step (lr ~8e-6, KL 0.02, 164k samples per update) checkpoints 40M
 steps apart differ more than arms do; evaluate snapshots on 2-3 seeds and
 register the snapshot, not the last file (`"file"` in `ai/models.json`).
 Three times the batch (`--n-envs 3840 --workers 15`) held a gain that the
-small-batch runs lost. (2) Rewards alone did not teach taking control of a
+small-batch runs lost, and kept improving (v4.3.12). (2) Rewards alone did not teach taking control of a
 puck moving away (0-1 of 128 in the drill, every model): the gain is more
 chasing and softer blocks. (3) `--roam-weight` (a difficulty model that
 stands out from its goal) changed nothing in three tries; v4.3.7 is not a

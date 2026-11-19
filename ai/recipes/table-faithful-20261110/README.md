@@ -1523,9 +1523,11 @@ now may sit between the two profiles.
 | v4.3.4 | v4.3.2 | `-20261119` with gain 0.3-3.5, every worker | v4.3.3's terms + slow exit costs 100 | 84M |
 | v4.3.5 | v4.3.2 | same | "control first": slow exit 200, unproductive 60, shots at a moving puck worth half and fined 20, strike-from-behind credit 0.3 | 48M, stopped |
 | v4.3.6 | v4.3.2 | same | v4.3.4 + follow-through defense drills 0.5 | 95M |
-| v4.3.8 | v4.3.6 at 40M | same | v4.3.6 + recovery drill at 0.6-2.4 m/s in 70% of receiving drills, persistent exploration 1.0 | see results |
-| v4.3.9 | v4.3.8 at 40M | same | v4.3.8 with KL target 0.05 (0.02 elsewhere) | see results |
-| v4.3.10 | v4.3.8 at 40M | same | slow exit 200, unproductive 60, follow-through 0.7, recovery share 0.8, exploration 2.0, KL 0.03 | see results |
+| v4.3.8 | v4.3.6 at 40M | same | v4.3.6 + recovery drill at 0.6-2.4 m/s in 70% of receiving drills, persistent exploration 1.0 | 98M |
+| v4.3.9 | v4.3.8 at 40M | same | v4.3.8 with KL target 0.05 (0.02 elsewhere) | 48M, stopped |
+| v4.3.10 | v4.3.8 at 40M | same | slow exit 200, unproductive 60, follow-through 0.7, recovery share 0.8, exploration 2.0, KL 0.03 | 91M |
+| v4.3.11 | v4.3.8 at 40M | same | tilted to control: capture bonus 120, get-ahead 60, strike-from-behind credit 0.3, exploration 2.0, KL 0.03 | 50M, stopped |
+| v4.3.12 | v4.3.8 at 40M | same | v4.3.8's recipe with 3840 envs on 15 workers: 655k samples an update against 164k | 90M |
 
 The first four ran side by side from 23:07 and were stopped at 02:02 when
 their 80M and 120M snapshots showed goal share up a little in the soft sims
@@ -1577,8 +1579,8 @@ never trained with the delay (its strikes at moving pucks mistime too).
 
 Against the `table` / `table_plus` people, 64 one-minute games per tier.
 Possession and block numbers from 32 recorded minutes per seed in the
-calibrated sim. v4.1.2, v4.3.8, v4.3.10 and v4.3.12 are means of three
-seeds; the others one seed, for which a difference of 3 points in the
+calibrated sim. v4.1.2 and the bold rows are means of three seeds; the
+others one seed unless marked, for which a difference of 3 points in the
 possession columns is noise.
 
 | model (snapshot) | rigid: share, GF / GA per min | calibrated: share, GF / GA | ends in a shot | slow untouched exit | after a block: recovered / left slowly |
@@ -1597,8 +1599,12 @@ possession columns is noise.
 | v4.3.9 (40M) | 95.2%, 4.62 / 0.23 | 95.6%, 4.55 / 0.21 | 58.7% | 13.5% | 22.3% / 25.2% |
 | **v4.3.10 (40M)** | 97.9%, 4.76 / 0.10 | 96.9%, 5.08 / 0.16 | 70.4% | 8.0% | 35.3% / 18.5% |
 | v4.3.11 (40M) | 98.4%, 4.77 / 0.08 | 95.9%, 4.73 / 0.20 | 63.6% | 10.7% | 27.1% / 26.3% |
-| **v4.3.12 (20M)** | 98.7%, 5.70 / 0.08 | 97.5%, 5.60 / 0.15 | 67.2% | 9.5% | 30.9% / 21.7% |
+| v4.3.10 (80M, two seeds) | 97.5%, 4.99 / 0.13 | 95.2%, 5.61 / 0.28 | 66.6% | 6.7% | 31.9% / 17.6% |
+| v4.3.12 (20M, three seeds) | 98.7%, 5.70 / 0.08 | 97.5%, 5.60 / 0.15 | 67.2% | 9.5% | 30.9% / 21.7% |
 | v4.3.12 (40M, two seeds) | 97.9%, 5.13 / 0.11 | 95.9%, 5.13 / 0.22 | 67.8% | 9.5% | 28.8% / 21.6% |
+| **v4.3.12 (60M)**, the one registered | 98.6%, 5.03 / 0.07 | 96.9%, 5.66 / 0.18 | 71.4% | 7.3% | 37.5% / 18.6% |
+| v4.3.12 (80M, two seeds) | 97.7%, 5.36 / 0.12 | 96.7%, 5.71 / 0.19 | 69.8% | 7.7% | 31.1% / 19.9% |
+| v4.3.12 (90M, the last file, two seeds) | 98.0%, 5.24 / 0.11 | 96.5%, 5.47 / 0.20 | 69.5% | 7.0% | 36.1% / 19.6% |
 
 Read it this way:
 
@@ -1611,23 +1617,29 @@ Read it this way:
   defense drill and the slow-exit cost. Costs alone (v4.3.4) and softer
   credit for quick shots (v4.3.5) did not.
 - No model takes control of a puck moving away: 0-1 of 128 in the recovery
-  drill for every row. They strike it from behind (73-87 of 128 on target in
-  the calibrated sim for the three bold rows, against 66-70 for v4.1.2). The rebound off a block is also
-  softer (median 1.65-1.79 m/s against 1.88).
-- Snapshots of one run differ more than arms do. v4.3.8 at 80M and its
-  continuations v4.3.9 and v4.3.11 lost what the 40M snapshot had. The run
-  with three times the batch (v4.3.12, 655k samples an update) kept it at
-  20M and 40M. The registry points at the snapshots (`"file"`).
-- Robot against robot (64 games at both ends, calibrated sim) all three are
-  behind v4.1.2: shots on target 926 / 904 / 814 against 982 / 1029 / 968,
-  goals 15-21 / 19-23 / 23-27.
-- Gates beside v4.1.2 (calibrated sim): playability about equal (load 0.84
-  to 0.85; reversals 47-51 a minute against 46; cap above 40 m/s^2 in
-  28-34% of far-half ticks against 23%; forward excursion on shots of
-  5 m/s or more 140-162 mm against 150). Resting pucks: stall map 0.9% /
-  1.6% / 1.2% against 1.0%; a left-corner puck under a straight request is
-  touched in 41 / 42 / 39 of 48 trials against 47; rest spells of 4 s or
-  more in 64 games: 0 / 1 (8.5 s, on a rail) / 0 against 0.
+  drill for every row. They strike it from behind (73-93 of 128 on target in
+  the calibrated sim for the bold rows, against 66-70 for v4.1.2). The
+  rebound off a block is also softer (median 1.61-1.73 m/s against 1.88).
+  v4.3.12 recovers 53% of rebounds at 1-1.5 m/s and 27% at 1.5-2 m/s;
+  v4.1.2 41% and 8%; the table's v4.1.2 28% and 19%.
+- Snapshots of a small-batch run differ more than arms do. v4.3.8 at 80M
+  and its continuations v4.3.9 and v4.3.11 lost what the 40M snapshot had.
+  The run with three times the batch (v4.3.12, 655k samples an update) kept
+  it at every snapshot and improved on it. The registry points at snapshots
+  (`"file"`): v4.3.8 at 40M, v4.3.10 at 40M, v4.3.12 at 60M.
+- Robot against robot (64 games at both ends, calibrated sim) v4.3.8 and
+  v4.3.10 are behind v4.1.2 (shots on target 926 against 982 and 904 against
+  1029, goals 15-21 and 19-23); v4.3.12 at 60M is level (1022 against 1028,
+  19-18). Its 20M snapshot was behind too (814 against 968).
+- Gates beside v4.1.2 (calibrated sim), v4.3.8 / v4.3.10 / v4.3.12 at 60M:
+  playability about equal (load 0.85 / 0.84 / 0.82 against 0.84; reversals
+  47 / 51 / 49 a minute against 46; cap above 40 m/s^2 in 28 / 34 / 28% of
+  far-half ticks against 23%; forward excursion on shots of 5 m/s or more
+  160 / 140 / 131 mm against 150). Resting pucks: stall map 0.9% / 1.6% /
+  0.4% against 1.0%; worst corner cell touched 41 / 42 / 41 of 48 against
+  47 (left corner with a straight request for the first two, right corner
+  with a left-bank request for v4.3.12); rest spells of 4 s or more in 64
+  games: 0 / 1 (8.5 s, on a rail) / 0 against 0.
 
 ### Not done, and what is not known
 
@@ -1639,7 +1651,9 @@ Read it this way:
   stops it, labelled the way the physics teacher labels defense, is the
   obvious next thing; so is giving the network the camera's view of its own
   mallet, which is where the error it cannot see comes from.
-- The larger batch was tried once, late, for 76 minutes.
+- The larger batch was tried once, late, for 76 minutes. It is the one
+  setting that produced steady progress; the next run should start there
+  (and try larger still).
 - Self-play ideas not tried: v4.1.2 as a fixed reference opponent
   (`--opponent-reference`), a league of the v4.3 snapshots.
 - Roaming difficulty models (above).
