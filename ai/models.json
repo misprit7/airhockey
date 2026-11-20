@@ -150,8 +150,12 @@
       "summary": "v4.4.7 continued with hard acceleration costing four times as much outside its own possession (--defense-motion-scale 4), 101M steps (the file); stopped. Shot speed held (6.5 m/s on target) but the defending is hardly calmer (forward lunge on fast shots 91 -> 83 mm, mallet speed at contact unchanged at 1.5-1.6 m/s) and shots from a controlled puck slipped 47% -> 43%. Placed resting pucks left 0.5% (the best yet); long rest spells still occur about once in 64 games. Sim only."
     },
     "v4.4.10": {
-      "run": "v4.4.10", "date": "2026-11-20", "accel": 100, "parent": "v4.4.9",
-      "summary": "v4.4.9 continued from its 101M snapshot with the three motion charges times 25 while a shot is incoming (--incoming-motion-scale 25): the 2% of the time that holds 30% of the hard acceleration on the table and in which pucks go in off the moving mallet. In training; not evaluated. Sim only."
+      "run": "v4.4.10", "file": "agent_step_2365325312.pt", "date": "2026-11-20", "accel": 100, "parent": "v4.4.9",
+      "summary": "v4.4.9 continued with the three motion charges times 25 while a shot is incoming (--incoming-motion-scale 25), 202M steps (the file); stopped. Calm defending without softer shots: forward lunge on fast shots 28 mm (v4.1.2 150, v4.4.7 91; the 15 m/s^2 beginner on the table 20), hard reversals gone, goals through a mallet lift 0.08 a minute (v4.4.7 0.13, v4.1.2 0.23), on-target shot speed 6.6 m/s, 43% of shots from a controlled puck. The price: clean goals conceded 0.16 a minute (0.09), total unchanged at 0.24; 13-19 against v4.1.2. NOT FOR THE TABLE yet: placed resting pucks left 2.8% and the right-rail hover is untreated. Sim only."
+    },
+    "v4.4.11": {
+      "run": "v4.4.11", "date": "2026-11-20", "accel": 100, "parent": "v4.4.10",
+      "summary": "v4.4.10 continued from its 202M snapshot with more side-rail practice and a potential for closing to contact with a slow rail puck (--edge-drill-fraction 0.3, --edge-approach-weight 30), for the hover beside right-rail pucks. In training; not evaluated. Sim only."
     }
   }
 }

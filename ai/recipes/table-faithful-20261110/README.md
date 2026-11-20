@@ -2356,3 +2356,22 @@ Two seeds; v4.4.9 at 101M -> v4.4.10 at 50M -> 101M (the run continues):
   11-13, then 19-15.
 - placed resting pucks left 1.7%, then 1.5% (forward 4.7%, side rails 1.8%);
   load peak 1.01, then 0.91.
+
+v4.4.10 at 202M (the registered file; stopped at 215M): lunge 28 mm (p90
+80), reversals 15 a minute, |accel| > 60 duty 2.1%; LIFT EVENTS 0.17 a
+minute and goals through a lift 0.08 (0.25 and 0.15 at 101M; v4.4.7 0.28
+and 0.13; v4.1.2 0.59 and 0.23), CLEAN GOALS 0.16 a minute (0.11; v4.4.7
+0.09): the total is unchanged at 0.24, 0.18 in the rigid sim (0.07). Shots:
+6.6 m/s on target, 71% on target, 43% from a controlled puck, 30.9 prepared
+fast on-target per 100 possessions; 13-19 against v4.1.2. Placed resting
+pucks left 2.8%. So the request (calm defending, shots as hard) is met in
+the sim, at the price of more clean goals; whether the table's bounce-ins
+go with the lunge is for the table to say.
+
+`v4.4.11` = v4.4.10 from its 202M snapshot, both scales kept, plus
+`--edge-drill-fraction 0.3` (0.15) and `--edge-approach-weight 30` (0): the
+existing potential for closing to the nearest feasible contact with a slow
+side-fringe puck, in drills. For the right-rail hover. (Every table-proven
+model of this lineage had its rail behaviour from imitation:
+`--skill-reference-rail-weight 1` in v4.1.2 and v4.3.12, the teacher in v4.
+The self-play arm has none; that anchor is the fallback if this fails.)
