@@ -2438,3 +2438,27 @@ better choice. What it does not teach: to leave a rail puck when really
 hot, and to cool off away from it. Read: the edge-drill breakdown (cold
 right-rail pucks never touched, 67% now), rest spells over 448 games, and
 the load peak and overload seconds in games.
+
+### v4.4.13 (rail drills from safe loads): the rail hover goes, without imitation
+
+v4.4.11 at 101M -> v4.4.13 at 50M:
+
+- rail practice pucks never touched by the deployed policy 36% -> 22%; cold
+  right / left 67% / 21% (v4.4.10) -> 12% / 18%; hot right / left 29% / 19%
+  (v4.3.12: 13% overall, 1% / 5% cold, 20% / 21% hot).
+- rest spells >= 4 s: 10 in 448 games, to 59 s -> 4 in 448, the longest
+  10.9 s (a corner), 5.2 s and 4.4 s by a rail. No game left a puck for the
+  rest of the minute.
+- placed pucks left 3.5 -> 3.2%: side rails 10.7 -> 8.9%, FORWARD ZONE 7.8 ->
+  8.2% (forward-right with the right bank asked 20%).
+- shots from a controlled puck 44%, on target 75%, 6.7 m/s, prepared fast
+  on-target 34.5 per 100 possessions; conceded 0.18 a minute (through a lift
+  0.09); 20-21 against v4.1.2; lunge 26 mm; load peak 0.88, no overload
+  seconds.
+
+So the mechanism was the drills' hot starts, and the anchor is not needed
+for the rails. `--fringe-drill-max-load L` (new, opt-in) is the same start
+for every stationary drill whose puck lies at rest at the edge of reach,
+whichever drill placed it: within 30 mm of the mallet centre's side or back
+limit, or in the last 60 mm of forward reach. For the forward zone, where
+the front-edge drill still starts a third of its pucks hot.

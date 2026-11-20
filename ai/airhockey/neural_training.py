@@ -64,6 +64,8 @@ REVERSAL_WINDOW_TICKS = 5      # 100 ms, as airhockey.playability counts them
 DEFENSE_MOTION_PUCK_SPEED = 2.0     # m/s: slower than this on the learner's half is its own possession
 DEFENSE_MOTION_STRIKE_SECONDS = 0.25
 INCOMING_SHOT_SPEED = 3.0           # m/s toward the learner's goal: an incoming shot
+FRINGE_DRILL_MARGIN = 0.03          # m inside the mallet centre's travel, sides and back
+FRINGE_DRILL_FRONT = 0.06           # m short of the front edge of reach
 REVERSAL_GAP_S = 0.15
 STRIKE_DRILL_SECONDS = 6       # a person takes up to ~4 s to get to a puck and strike it
 DEFENSE_FOLLOW_SECONDS = 4.0   # a follow-through defense drill's time after the block
@@ -312,6 +314,7 @@ class NeuralTrainingEnv(ArrivalEnv):
         defense_motion_scale=1.0,
         incoming_motion_scale=1.0,
         edge_drill_max_load=None,
+        fringe_drill_max_load=None,
         # Share of stationary drills with a slow puck on the back rail
         # between the corners, the state before a wedged corner puck.
         back_rail_drill_fraction=0.0,
@@ -582,6 +585,9 @@ class NeuralTrainingEnv(ArrivalEnv):
         if edge_drill_max_load is not None and not 0.05 < edge_drill_max_load <= 1:
             raise ValueError("edge_drill_max_load must be above 0.05 and at most 1")
         self.edge_drill_max_load = edge_drill_max_load
+        if fringe_drill_max_load is not None and not 0.05 < fringe_drill_max_load <= 1:
+            raise ValueError("fringe_drill_max_load must be above 0.05 and at most 1")
+        self.fringe_drill_max_load = fringe_drill_max_load
         self.own_corner_weight = own_corner_weight
         self.anchor_side_rail_open_y = anchor_side_rail_open_y
         self.anchor_front_margin = anchor_front_margin
@@ -2023,6 +2029,24 @@ class NeuralTrainingEnv(ArrivalEnv):
                     # 10% -> 67% of them never touched).
                     rail = self.edge_drill[skill_ids]
                     level[rail] = rng.uniform(.05, self.edge_drill_max_load, (rail.sum(), 2, 4))
+                if self.fringe_drill_max_load is not None:
+                    # The same for every stationary drill whose puck starts at
+                    # rest at the edge of what the mallet reaches, whichever
+                    # drill put it there (front edge, side rails, back rail,
+                    # corners): the workspace's edges are where holding is
+                    # dearest (1.2-1.6 of the limit if held), and v4.4.13,
+                    # with the side rails cured this way, still left 8% of
+                    # front-edge pucks.
+                    e = self.engine
+                    px, py = e.puck_x[skill_ids], e.puck_y[skill_ids]
+                    still = np.hypot(e.puck_vx[skill_ids], e.puck_vy[skill_ids]) < DEAD_PUCK_SPEED
+                    reach = self.cfg.puck_radius + self.cfg.paddle_radius
+                    fringe = ((px < self.decoder.low[0] + FRINGE_DRILL_MARGIN)
+                              | (px > self.decoder.high[0] - FRINGE_DRILL_MARGIN)
+                              | (py < self.decoder.low[1] + FRINGE_DRILL_MARGIN)
+                              | (py > self.decoder.high[1] + reach - FRINGE_DRILL_FRONT))
+                    chosen = (self.kind[skill_ids] == 0) & still & fringe
+                    level[chosen] = rng.uniform(.05, self.fringe_drill_max_load, (chosen.sum(), 2, 4))
                 load.h[skill_ids] = level**2
                 load.observed[skill_ids] = level
         self._shutdown_reset[ids] = False

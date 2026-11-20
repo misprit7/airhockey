@@ -788,6 +788,24 @@ def test_side_rail_drills_can_start_below_a_load_at_which_a_strike_cannot_trip()
         assert capped.levels[~rail & (env.kind != 3)].max() > 0.8   # the other drills keep their starts
     with pytest.raises(ValueError):
         NeuralTrainingEnv(2, edge_drill_max_load=0.0)
+    # The same for any resting puck at the edge of reach, whichever drill placed it: here the front-edge drill's.
+    options = dict({**GAMES, "game_fraction": 0.0}, reach_edge_drill_fraction=0.6, correlated_warm_fraction=0.5,
+                   warm_start_max=0.94)
+    env = NeuralTrainingEnv(800, **options, fringe_drill_max_load=0.6)
+    plain = NeuralTrainingEnv(800, **options)
+    env.reset(seed=4)
+    plain.reset(seed=4)
+    e, reach = env.engine, env.cfg.puck_radius + env.cfg.paddle_radius
+    low, high = env.decoder.low, env.decoder.high
+    edge = (env.kind == 0) & ((e.puck_x < low[0] + 0.03) | (e.puck_x > high[0] - 0.03) | (e.puck_y < low[1] + 0.03)
+                              | (e.puck_y > high[1] + reach - 0.06)) & (np.hypot(e.puck_vx, e.puck_vy) == 0)
+    open_table = (env.kind == 0) & ~edge
+    assert edge.sum() > 50 and open_table.sum() > 20 and np.array_equal(e.puck_x, plain.engine.puck_x)
+    for capped, usual in zip(env.loads, plain.loads):
+        assert capped.levels[edge].max() <= 0.6 + 1e-9 and usual.levels[edge].max() > 0.8
+        assert capped.levels[open_table].max() > 0.8
+    with pytest.raises(ValueError):
+        NeuralTrainingEnv(2, fringe_drill_max_load=2.0)
 
 
 def test_rail_rest_drills_start_the_mallet_where_it_gets_stuck():
@@ -1278,7 +1296,8 @@ def test_recipe_is_v4s_command_continued_with_the_table_options():
                                                                          "defense_followthrough_fraction", "game_shaping_scale",
                                                                          "selfplay_lift", "game_prepared_shot_weight",
                                                                          "rail_rest_drill_fraction", "defense_motion_scale",
-                                                                         "incoming_motion_scale", "edge_drill_max_load"}
+                                                                         "incoming_motion_scale", "edge_drill_max_load",
+                                                                         "fringe_drill_max_load"}
         assert args.body_accel is None and "--body-accel" not in cmd
 
 
