@@ -2528,3 +2528,11 @@ a lift 0.12, otherwise 0.06), 0.08 rigid; 22-15 against v4.1.2; lunge 25 mm;
 load peak 0.84 rigid, 0.76 soft-mallet. By snapshot of this one run the long
 rest spells went 1 (v4.4.13) -> 6 -> 6 -> 15 -> 3 short: pick the snapshot
 by the 448-game check, not by step count.
+
+v4.4.14 at 400M (its last snapshot): worse again on resting pucks. Placed
+pucks left 4.2% (side rails 23%, forward 5.6%), rail practice pucks never
+touched 37% (cold 26% right / 29% left), 2 rest spells in 448 games (58 s
+and 34 s, left rail). Shots and defending as at 303M; 15-11 against v4.1.2;
+load peak 0.88. Placed pucks left by snapshot of this run: 4.0, 3.9, 2.3
+(202M), 0.9 (303M), 4.2%. `calm` stays on 303M. `v4.4.15` continues the same
+recipe from the last snapshot.
