@@ -94,7 +94,10 @@ if [ -n "$old" ]; then
 fi
 
 mkdir -p "$ROOT/logs"
-start="cd $(printf %q "$ROOT") && PYTHONPATH=ai setsid nohup python3 -m airhockey.server >> logs/web_server.log 2>&1 < /dev/null &"
+# setsid -f, not "&": the login shell here is zsh, which starts background
+# jobs at nice +5 (BG_NICE), and the server passes its niceness on to
+# everything it starts that does not get realtime priority.
+start="cd $(printf %q "$ROOT") && PYTHONPATH=ai setsid -f nohup python3 -m airhockey.server >> logs/web_server.log 2>&1 < /dev/null"
 if ssh -o BatchMode=yes -o ConnectTimeout=5 localhost true 2>/dev/null; then
     ssh -o BatchMode=yes localhost "exec \$SHELL -lc $(printf %q "$start")"
 else
