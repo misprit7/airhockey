@@ -290,3 +290,33 @@ def test_the_real_launchers_refuse_inside_a_test_run(tmp_path):
     with pytest.raises(RuntimeError, match="refusing to run play.sh"):
         s.start_ai("max", 1.5)
     assert s.status()["ai"]["state"] == "idle"
+
+
+def test_status_says_whether_the_control_loop_can_have_realtime_priority(tmp_path):
+    """The limit is inherited by the server at start and lost silently, so
+    the status carries it for the Robot tab to warn about. Asked once."""
+    asked = []
+
+    def check():
+        asked.append(1)
+        return False
+
+    session = RobotSession(root=tmp_path, client_factory=lambda: FakeClient([]),
+                           master_running=lambda: False, realtime=check)
+    assert session.status()["realtime"] is False
+    assert session.status()["master_realtime"] is None        # no controller of ours to ask about
+    assert len(asked) == 1
+    allowed = RobotSession(root=tmp_path, client_factory=lambda: FakeClient([]),
+                           master_running=lambda: False, realtime=lambda: True)
+    assert allowed.status()["realtime"] is True
+
+
+def test_a_controller_started_without_the_permission_is_reported(tmp_path, monkeypatch):
+    session = RobotSession(root=tmp_path, client_factory=lambda: FakeClient([]),
+                           master_running=lambda: True, realtime=lambda: True)
+    monkeypatch.setattr(session, "_master_pid", lambda: 4242)
+    monkeypatch.setattr(robot_session.os, "sched_getscheduler", lambda pid: robot_session.os.SCHED_OTHER)
+    assert session.status()["master_realtime"] is False
+    monkeypatch.setattr(robot_session.os, "sched_getscheduler", lambda pid: robot_session.os.SCHED_FIFO)
+    assert session.status()["master_realtime"] is True
+

@@ -139,6 +139,23 @@
             : "Motor controller: on and idle, drives off.";
         stop.classList.toggle("hidden", !(status.master && status.master_owned));
         stop.disabled = busy || aiLive || takeupLive || hardwareOn;
+
+        // Realtime priority is what keeps other programs on this PC from
+        // delaying the robot. It is lost silently when the web server is
+        // started the wrong way, so say so here. A server that predates the
+        // check reports nothing and shows nothing.
+        const warn = $("timing-warning");
+        let timing = "";
+        if (status.realtime === false) {
+            timing = "Timing warning: the robot's control loop cannot get priority over other programs on " +
+                "this PC, so it reacts late whenever they are busy. To fix it, run " +
+                "\"bash ai/bin/restart_server.sh\" in a terminal with the table idle, then reload this page.";
+        } else if (status.master && status.master_realtime === false) {
+            timing = "Timing warning: the motor controller is still running at normal priority. " +
+                "Press \"Shut down motor controller\" once; it starts again by itself, at realtime priority.";
+        }
+        warn.textContent = timing;
+        warn.classList.toggle("hidden", !timing);
     }
 
     // A refusal stays on screen until the next button press; the status poll

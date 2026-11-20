@@ -98,6 +98,28 @@ def _refuse_in_tests(what: str) -> None:
         raise RuntimeError(f"refusing to {what} from a test run: inject a fake")
 
 
+def realtime_available() -> bool:
+    """Whether this process may start programs at realtime priority.
+
+    play.sh (the policy loop and the camera tracker) and the motor controller
+    launch below ask for SCHED_FIFO 40 and quietly run at normal priority when
+    it is refused. The permission is a limit the SERVER inherited when it was
+    started, so it depends on how that was done: a login made after
+    /etc/security/limits.d/99-airhockey.conf was written has it, a server
+    started from an older shell or from a tool's shell does not
+    (ai/bin/restart_server.sh starts it through a fresh login). Without it
+    another program's batch job made 2-9% of policy ticks more than 30 ms late
+    for minutes at a time (2026-11-19) and the robot conceded five times as
+    often in those minutes.
+    """
+    if not shutil.which("chrt"):
+        return False
+    try:
+        return subprocess.run(["chrt", "-f", "40", "true"], capture_output=True, timeout=5).returncode == 0
+    except (OSError, subprocess.TimeoutExpired):
+        return False
+
+
 def _launch_master(root: Path) -> subprocess.Popen:
     """Build cdpr_master if its sources changed, then start it detached.
 
@@ -117,7 +139,7 @@ def _launch_master(root: Path) -> subprocess.Popen:
         tail = "\n".join((build.stdout + build.stderr).strip().splitlines()[-6:])
         raise RuntimeError(f"The motor controller (cdpr_master) did not build:\n{tail}")
     command = [str(root / "sw" / "build" / "cdpr_master")]
-    if shutil.which("chrt") and subprocess.run(["chrt", "-f", "40", "true"], capture_output=True).returncode == 0:
+    if realtime_available():
         command = ["chrt", "-f", "40", *command]
     # It writes logs/cdpr_master.log itself; stdout would only duplicate it.
     return subprocess.Popen(command, cwd=root, stdin=subprocess.DEVNULL, stdout=subprocess.DEVNULL,
@@ -128,8 +150,10 @@ class RobotSession:
     MASTER_START_TIMEOUT_S = 25.0
 
     def __init__(self, root: Path = ROOT, client_factory=None, master_running=master_listening,
-                 master_launcher=_launch_master):
+                 master_launcher=_launch_master, realtime=realtime_available):
         self.root = Path(root)
+        # Asked once: the limit cannot change while this process lives.
+        self._realtime_check, self._realtime = realtime, None
         self.log_path = self.root / "logs" / "ai_session.log"
         self.state_path = self.root / "logs" / "ai_session.json"
         self.master_state_path = self.root / "logs" / "ui_master.json"
@@ -160,6 +184,19 @@ class RobotSession:
         except (OSError, ValueError, AttributeError):
             return None
         return pid if isinstance(pid, int) and _alive(pid, "cdpr_master") else None
+
+    def _master_realtime(self) -> bool | None:
+        """Whether the controller this UI started runs at realtime priority
+        (None: no such controller). One started by a server without the
+        permission keeps normal priority until it is shut down and started
+        again."""
+        pid = self._master_pid()
+        if pid is None:
+            return None
+        try:
+            return os.sched_getscheduler(pid) in (os.SCHED_FIFO, os.SCHED_RR)
+        except OSError:
+            return None
 
     def ensure_master(self) -> bool:
         """Start cdpr_master unless one is listening. True if this started it.
@@ -423,7 +460,10 @@ class RobotSession:
                 ai["state"] = "idle"
             takeup = {k: v for k, v in self._takeup.items() if k != "stopping"}
             hardware_ui = self.hardware_ui
+        if self._realtime is None:
+            self._realtime = bool(self._realtime_check())
         return dict(master=self._master_running(), master_owned=self._master_pid() is not None,
+                    realtime=self._realtime, master_realtime=self._master_realtime(),
                     hardware_ui=hardware_ui, takeup=takeup, ai=ai,
                     log=self._log_tail() if ai["state"] != "idle" else [],
                     log_path=str(self.log_path.relative_to(self.root)))
