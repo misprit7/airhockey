@@ -739,7 +739,7 @@ None of v4.2.x has been on the table; results and caveats in `ai/MODELS.md`.
 A mode may carry a `note` (shown under the UI's level selector) and any key
 is a level: 2026-11-19 added `new` = v4.3.12, the best checkpoint of the
 v4.3 study, at full strength (played 38 minutes on the table that evening:
-about level with `max`); 2026-11-20 added `calm` = v4.4.13 (self-play line,
+about level with `max`); 2026-11-20 added `calm` = v4.4.14 (self-play line,
 simulation only). `latest` and `max` stay v4.1.2.
 
 THE v4.3 STUDY (2026-11-19, record: "Round 5" of
@@ -860,11 +860,16 @@ GATE'S 64 GAMES CANNOT SEE A REST SPELL THAT HAPPENS IN 1-3% OF GAMES: run
 `eval_resting_puck.py --parts games` on 3 more seeds (448 games), and test
 the deployed policy on the edge drill's own states by side and load
 (scratch `drilldet.py`); checkpoints 50M steps apart still differ a lot on
-this (v4.4.14: the weakness moved to the left rail). `v4.4.13` (101M) is
-the best all-round snapshot and the UI level `calm`: 43% of shots from a
-controlled puck, 73% on target, 0.18 conceded a minute, level with v4.1.2,
-lunge 16 mm, load peak 0.94; it still leaves 8.7% of pucks placed at the
-front edge of reach. Not yet on the table. RUN THE RESTING-PUCK GATES ON EVERY
+this (v4.4.14: the weakness moved to the left rail at 101M and 202M, with
+15 long spells in 448 games, and was nearly gone at 303M). The same start
+for every edge-of-reach drill puck (`--fringe-drill-max-load 0.6`, v4.4.14)
+fixed the front edge in 200M steps (8.7% -> 0.2%). `v4.4.14` at 303M is
+the best all-round snapshot and the UI level `calm`: 45% of shots from a
+controlled puck, 73% on target at 6.7 m/s, 0.18 conceded a minute, 22-15
+against v4.1.2, lunge 25 mm, load peak 0.84, placed resting pucks left 0.9%
+(v4.1.2 1.0%), no puck left longer than 5.6 s in 448 games; left-rail
+practice pucks are still left 29% of the time from cold. Not yet on the
+table. RUN THE RESTING-PUCK GATES ON EVERY
 SNAPSHOT OF THIS LINE; the shot-quality table does not show a stall.
 Record: the last sections of the recipe README.
 

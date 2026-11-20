@@ -2517,3 +2517,14 @@ imitation of the policy's OWN mirrored successes on rail states would carry
 the side that works to the side that does not, with no outside reference;
 not built (it needs the reflection of the 16-frame history and of the
 request).
+
+v4.4.14 at 303M (the registered file, UI level `calm`): placed resting pucks
+left 0.9% (forward 0.4%, side rails 7.7%; v4.1.2 1.0 / 1.6 / 5.9%); rest
+spells >= 4 s 3 in 448 games, the longest 5.6 s (202M: 15, to 59 s); rail
+practice pucks never touched 25% (cold right 0%, left 29%; hot right 10-18%,
+left 48%). 45% of shots from a controlled puck, 73% on target, 6.7 m/s, 34.3
+prepared fast on-target per 100 possessions; conceded 0.18 a minute (through
+a lift 0.12, otherwise 0.06), 0.08 rigid; 22-15 against v4.1.2; lunge 25 mm;
+load peak 0.84 rigid, 0.76 soft-mallet. By snapshot of this one run the long
+rest spells went 1 (v4.4.13) -> 6 -> 6 -> 15 -> 3 short: pick the snapshot
+by the 448-game check, not by step count.
