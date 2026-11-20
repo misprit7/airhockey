@@ -2138,3 +2138,37 @@ simulated people had a puck lie against the right rail at mid depth
 from snapshot to snapshot on this line (v4.1.2: 5.9%) without a trend: the
 front-edge drill does not reach them (its rail part is forward of y 0.58)
 and the arm's edge drill is 15% of the stationary drills.
+
+### v4.4.7 at 202M steps: the front edge is fixed; one rail puck is not
+
+`runs/v4.4.7/agent_step_2062548992.pt` (the registered file), two seeds:
+
+|  | v4.3.12 | v4.4.6 202M | v4.4.7 101M | v4.4.7 202M |
+|---|---|---|---|---|
+| shots from a controlled puck | 23% | 37% | 41% | 47% |
+| first touch to shot, median | 0.74 s | 0.83 s | 0.82 s | 0.88 s |
+| shots on target (controlled / moving) | 63% (73 / 60) | 73% (87 / 66) | 69% (83 / 59) | 75% (87 / 64) |
+| shots that fit between the posts / wide | | | 70% / 23% | 76% / 18% |
+| controlled, on target, >= 4 m/s per 100 possessions | 11.8 | 27.8 | 30.4 | 35.9 |
+| possessions ending in a shot | 71% | 87% | 90% | 88% |
+| conceded per minute (soft-mallet / rigid) | 0.15 / 0.10 | 0.23 / 0.14 | 0.23 / 0.09 | 0.22 / 0.07 |
+| head to head with v4.1.2 | 12-8 | 22-25 | 9-9 | 18-19 |
+| motor load peak, rigid sim (limit 0.95) | 0.93 | 1.01 | 0.96 | 0.92 |
+| resting pucks left: all / forward zone / side rails | 0.4% | 4.0 / 11.1 / 9.5% | 3.1 / 7.8 / 8.3% | 1.3 / 0.4 / 7.7% |
+
+Forward zone by snapshot: 13.1% (v4.4.6 101M), 11.1%, 7.8%, 4.2%, 0.4%: the
+drill at 0.3 took 200M steps. v4.1.2's own stall map is 1.0 / 1.6 / 5.9%,
+so the map is now level with it. Playability beside v4.1.2: calmer on every
+line (idle cap p50 6.6 against 8.4 m/s^2, |accel| > 60 duty 3.2% against
+5.7%, reversals 24 against 46 a minute, forward lunge on shots 91 against
+150 mm) except that the idle command moves more (p90 16 mm a tick against
+4 mm, at that low cap).
+
+WHAT STILL FAILS: REST SPELLS IN GAMES. In 2 of 64 games against the
+simulated people a puck came to rest against the RIGHT rail at mid depth
+((0.96, 0.41) and (0.93, 0.42)) and lay there 55.5 s and 42.8 s, i.e. to the
+end of the game; at 152M the same (13 s and 26 s at (0.92, 0.29) and
+(0.95, 0.41)); at 101M none over 4 s. v4.1.2: none over 0.2 s, with a stall
+map no better on the rails (rail cells 4-7% against 7-9%). So the placed
+rail pucks of the stall map do not show it; it is a state that arises in
+play.

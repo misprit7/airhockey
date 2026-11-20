@@ -138,8 +138,8 @@
       "summary": "v4.4.5 continued with the learner's mallet lift on in every game (--selfplay-lift), 202M steps (the file). 37-43% of shots from a controlled puck, 72-73% on target, 28-31 prepared fast on-target shots per 100 possessions (v4.3.12 12), concedes 0.22 a minute to the simulated people (v4.1.2 0.32), level with v4.1.2 head to head. NOT FOR THE TABLE: it hovers behind a puck lying at the front edge of its reach (4-5% of resting pucks left, v4.3.12 0.4%), dithering there until the load reaches the shutdown level (3 of 256 rigid-sim games). Sim only."
     },
     "v4.4.7": {
-      "run": "v4.4.7", "file": "agent_step_1961623552.pt", "date": "2026-11-19", "accel": 100, "parent": "v4.4.6",
-      "summary": "v4.4.6 continued with the front-edge resting-puck drill (--reach-edge-drill-fraction 0.3), 101M steps (the file); the run continues. Shot quality as v4.4.6 (41% of shots from a controlled puck, 30 prepared fast on-target shots per 100 possessions, level with v4.1.2 head to head). Resting pucks left 3.1% (v4.4.6 4-5%): fixed on the forward right, not yet on the forward left with a bank requested (19-24%). NOT FOR THE TABLE yet. Sim only."
+      "run": "v4.4.7", "file": "agent_step_2062548992.pt", "date": "2026-11-19", "accel": 100, "parent": "v4.4.6",
+      "summary": "v4.4.6 continued with the front-edge resting-puck drill (--reach-edge-drill-fraction 0.3), 202M steps (the file). Best shot quality so far: 47% of shots from a controlled puck, 75% on target, 36 prepared fast on-target shots per 100 possessions (v4.3.12 12), 0.22 conceded a minute, level with v4.1.2 head to head (18-19), load peak 0.92. Resting pucks left 1.3% (v4.4.6 4-5%, v4.1.2 1.0%), the front edge fixed. NOT FOR THE TABLE yet: in 2 of 64 games against the simulated people a puck lay against the right rail for 43 and 56 s. Sim only."
     }
   }
 }

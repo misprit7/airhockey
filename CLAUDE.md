@@ -812,10 +812,15 @@ TABLE: it hovers 0.35 m behind a puck lying at the front edge of its reach
 (4-5% of resting pucks left, v4.3.12 0.4%), dithering until the load
 reaches the shutdown level (3 of 256 rigid-sim games, each a 0-0 game;
 v4.1.2 does the same in 1 of 128). `v4.4.7` adds the drill for those pucks
-(`--reach-edge-drill-fraction 0.3`): at 101M steps the same shot quality,
-3.1% of resting pucks left, the forward right fixed and the forward left
-with a bank requested not yet (19-24%); still not for the table, the run
-continues. RUN THE RESTING-PUCK GATES ON EVERY
+(`--reach-edge-drill-fraction 0.3`): by 202M steps (the registered file)
+the front edge is fixed (forward zone 13% -> 0.4% of placed pucks left, all
+zones 1.3%, v4.1.2 1.0%), shot quality is the best yet (47% of shots from a
+controlled puck, 75% on target, 36 prepared fast on-target shots per 100
+possessions), level with v4.1.2 head to head, load peak 0.92. STILL NOT FOR
+THE TABLE: in 2 of 64 games against the simulated people a puck came to
+rest against the right rail at mid depth and lay there to the end of the
+game (43 s, 56 s); the stall map's placed rail pucks do not show it
+(7-9% left, v4.1.2 4-7% with no such spell). RUN THE RESTING-PUCK GATES ON EVERY
 SNAPSHOT OF THIS LINE; the shot-quality table does not show a stall.
 Record: the last sections of the recipe README.
 
