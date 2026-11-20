@@ -311,6 +311,7 @@ class NeuralTrainingEnv(ArrivalEnv):
         rail_rest_drill_fraction=0.0,
         defense_motion_scale=1.0,
         incoming_motion_scale=1.0,
+        edge_drill_max_load=None,
         # Share of stationary drills with a slow puck on the back rail
         # between the corners, the state before a wedged corner puck.
         back_rail_drill_fraction=0.0,
@@ -578,6 +579,9 @@ class NeuralTrainingEnv(ArrivalEnv):
         if not np.isfinite(incoming_motion_scale) or incoming_motion_scale < 1:
             raise ValueError("incoming_motion_scale must be finite and at least 1")
         self.incoming_motion_scale = incoming_motion_scale
+        if edge_drill_max_load is not None and not 0.05 < edge_drill_max_load <= 1:
+            raise ValueError("edge_drill_max_load must be above 0.05 and at most 1")
+        self.edge_drill_max_load = edge_drill_max_load
         self.own_corner_weight = own_corner_weight
         self.anchor_side_rail_open_y = anchor_side_rail_open_y
         self.anchor_front_margin = anchor_front_margin
@@ -2009,6 +2013,16 @@ class NeuralTrainingEnv(ArrivalEnv):
                     cold = ((self.kind[skill_ids] == 3) & self._initial_thermal_state[skill_ids]
                             & (rng.random(len(skill_ids)) < self.cold_game_start_fraction))
                     level[cold] = rng.uniform(.05, min(.4,self.warm_start_max), (cold.sum(),2,4))
+                if self.edge_drill_max_load is not None:
+                    # Side-rail practice from loads at which the visit a strike
+                    # takes cannot trip a drive. With the usual starts (a third
+                    # at 0.75-0.94) a stay by the right rail trips motor 0's
+                    # fast limit in the drill, 12000 against 600 for leaving the
+                    # puck, and without the rail anchor the arm learnt to leave
+                    # every right-rail puck, cold ones too (v4.4.2 -> v4.4.10:
+                    # 10% -> 67% of them never touched).
+                    rail = self.edge_drill[skill_ids]
+                    level[rail] = rng.uniform(.05, self.edge_drill_max_load, (rail.sum(), 2, 4))
                 load.h[skill_ids] = level**2
                 load.observed[skill_ids] = level
         self._shutdown_reset[ids] = False

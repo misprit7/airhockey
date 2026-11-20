@@ -2416,3 +2416,25 @@ to be free of imitation): `--skill-reference <v4.3.12>
 --skill-reference-rail-weight 1 --anchor-space pre-squash`, the anchor
 v4.3.12 itself trained with, on rail and corner drill slots and rail-strip
 pucks only.
+
+### v4.4.12 (approach potential at 1000): worse; v4.4.13
+
+v4.4.12 at 50M (stopped at 60M): rail practice pucks never touched 47%
+(36%), cold right / left 67% / 34% (the left was 21%); rest spells 15 in 448
+games (10), now on the left rail too; placed pucks left 6.1%, side rails
+19.6%. Shots and defending as before (6.8 m/s on target, 47% from a
+controlled puck, lunge 29 mm, 14-12 against v4.1.2). The potential pulls
+the mallet to the nearest point it can reach, which is level with a pinned
+puck and against it; it did not teach the strike. DO NOT USE
+`--edge-approach-weight` at 30 (no effect) or 1000 (harm) on this arm.
+
+`v4.4.13` = v4.4.11 from its 101M snapshot, approach potential off, with
+`--edge-drill-max-load 0.6` (new, opt-in): side-rail (edge) drill slots
+start with every motor at 0.05-0.6 of its limit instead of the usual draw
+(a third at 0.75-0.94). From 0.6 a four-second stay at the right rail
+reaches 0.73; from 0.77, a game's settling level, three seconds reach 0.83.
+So in these drills a strike never trips and leaving the puck is never the
+better choice. What it does not teach: to leave a rail puck when really
+hot, and to cool off away from it. Read: the edge-drill breakdown (cold
+right-rail pucks never touched, 67% now), rest spells over 448 games, and
+the load peak and overload seconds in games.
