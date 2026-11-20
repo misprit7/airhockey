@@ -23,7 +23,7 @@ from airhockey import models
 
 ROOT = Path(__file__).resolve().parents[2]
 CACHE_PATH = ROOT / "logs" / "recordings_index.json"
-CACHE_VERSION = 6
+CACHE_VERSION = 7
 # What the list needs from a recording's metadata. The full metadata (which
 # can carry a whole thermal model) is sent only with the recording itself.
 LIST_KEYS = ("algo", "opponent", "match_type", "policy_sides", "accel_cap_m_s2", "seconds",
@@ -77,6 +77,8 @@ def _player(name, versions: dict[str, str]) -> str | None:
         return f"simulated person ({tier})" if tier else "simulated person"
     if name.startswith("expert"):
         return "physics teacher (scripted)"
+    if name == "self":                                        # eval_neural_player's self-play games
+        return "a copy of itself"
     return run or name
 
 

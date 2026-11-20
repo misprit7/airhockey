@@ -85,6 +85,9 @@ def test_entries_say_who_played_what_and_file_under_the_model_version(tmp_path, 
     assert (proxy["group"], proxy["red"]) == ("v4.0.0", "simulated person (table-g0)")
     snapshot = write("some-run_step_0500000", {"match_type": "self-play", "run_name": "some-run"})
     assert (snapshot["section"], snapshot["group"], snapshot["red"]) == ("runs", "some-run", "a copy of itself")
+    # The evaluator's self-play games name the opponent "self"; that is not a player's name.
+    evaluated = write("some-run-selfplay-g0", {"match_type": "self-play", "run_name": "some-run", "opponent": "self"})
+    assert evaluated["red"] == "a copy of itself" and evaluated["kind"] == "self-play"
     bare = write("old-run_step_0001000")
     assert (bare["section"], bare["group"], bare["kind"]) == ("runs", "old-run", "training snapshot")
     mouse = write("game_1773964952")
