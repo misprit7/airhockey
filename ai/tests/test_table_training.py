@@ -1238,6 +1238,19 @@ def test_trainer_continues_a_run_with_every_table_option(tmp_path, monkeypatch):
         train("--run-name", "_tiers", "--steps", "128", "--human-proxy-share", ".25", "--human-proxy-tiers", "table,nobody")
     assert not (runs / "_tiers").exists()
 
+    # Mirrored imitation of its own rail-zone successes: no reference network, its own report.
+    fifth = train("--run-name", "_mirror", "--resume", str(runs / "_first" / "agent.pt"), *drills,
+                  "--edge-drill-fraction", ".5", "--mirror-success-weight", "1", "--anchor-space", "pre-squash")
+    for r in fifth:
+        m = r["mirror_success"]
+        assert "anchors" not in r and m["weight"] == 1 and m["space"] == "pre-squash"
+        assert 0 < m["rail_zone_share"] < 0.6 and np.isfinite(r["final_kl"])
+    assert sum(r["mirror_success"]["samples_imitated"] for r in fifth) > 0
+    assert all(np.isfinite(r["mirror_success"]["loss"]) for r in fifth if r["mirror_success"]["samples_imitated"])
+    assert all("mirror_success" not in r for r in second)
+    with pytest.raises(SystemExit):
+        train("--run-name", "_bad", "--steps", "128", "--mirror-success-weight", "-1")
+
 
 def test_recipe_is_v4s_command_continued_with_the_table_options():
     spec = importlib.util.spec_from_file_location("recipe_v5", REPO / "ai/recipes/table-faithful-20261110/finetune.py")
@@ -1297,7 +1310,8 @@ def test_recipe_is_v4s_command_continued_with_the_table_options():
                                                                          "selfplay_lift", "game_prepared_shot_weight",
                                                                          "rail_rest_drill_fraction", "defense_motion_scale",
                                                                          "incoming_motion_scale", "edge_drill_max_load",
-                                                                         "fringe_drill_max_load"}
+                                                                         "fringe_drill_max_load", "mirror_success_weight",
+                                                                         "mirror_success_cap"}
         assert args.body_accel is None and "--body-accel" not in cmd
 
 

@@ -392,6 +392,12 @@ def build_parser():
     p.add_argument("--fringe-drill-max-load", type=float, default=None,
                    help="The same for every stationary drill whose puck starts at rest at the edge of the mallet's reach "
                         "(front edge, side rails, back rail, corners), whichever drill placed it")
+    p.add_argument("--mirror-success-weight", type=float, default=0,
+                   help="Actor loss weight on the policy's own positive-advantage actions in rail-zone states, reflected "
+                        "left-right and imitated in the reflected state: carries a rail skill from the side that has it "
+                        "to the side that does not, with no reference network (training only)")
+    p.add_argument("--mirror-success-cap", type=float, default=3.0,
+                   help="Clip of the normalised advantage that weights a mirrored sample")
     p.add_argument("--incoming-motion-scale", type=float, default=1.0,
                    help="Multiplies the same three charges while a shot is incoming (the puck on the learner's half "
                         "travelling at its goal at 3 m/s or more), in place of --defense-motion-scale there: the phase "
@@ -695,6 +701,9 @@ def main():
     for name in ("teacher_resting_weight", "teacher_resting_start", "skill_reference_rail_weight"):
         if not np.isfinite(getattr(args, name)) or getattr(args, name) < 0:
             p.error(f"--{name.replace('_', '-')} must be finite and nonnegative")
+    if not np.isfinite([args.mirror_success_weight, args.mirror_success_cap]).all() or args.mirror_success_weight < 0 \
+            or args.mirror_success_cap <= 0:
+        p.error("--mirror-success-weight must be finite and nonnegative, --mirror-success-cap positive")
     if args.teacher_resting_weight and args.teacher is None:
         p.error("--teacher-resting-weight needs --teacher")
     if args.skill_reference_rail_weight and args.skill_reference is None:
@@ -1062,7 +1071,8 @@ def main():
     held_noise = torch.zeros((args.n_envs, 2), device=device)
     # Imitation anchors: the environment's zone and dead-puck clock for the
     # state each action was chosen in (reported with the step before it).
-    anchored = bool(args.teacher_resting_weight or args.skill_reference_rail_weight)
+    anchored = bool(args.teacher_resting_weight or args.skill_reference_rail_weight
+                    or getattr(args, "mirror_success_weight", 0))
     anchor_zone = torch.zeros(args.n_envs, dtype=torch.int8, device=device)
     anchor_clock = torch.zeros(args.n_envs, device=device)
     anchor_zones = torch.zeros(shape, dtype=torch.int8, device=device) if anchored else None
@@ -1383,6 +1393,8 @@ def main():
             with torch.no_grad():
                 return skill_reference.action_mean(x[rows])
 
+        mirror_rows = (rail_reference_mask(anchor_zones.flatten()) if getattr(args, "mirror_success_weight", 0) else None)
+        mirror_losses, mirror_counts = [], []
         for name, anchor in anchors.items():
             # The same anchored samples before and after the update (at most 8192 of them).
             rows = anchor["mask"].nonzero().flatten()
@@ -1460,6 +1472,15 @@ def main():
                         anchor_loss = anchor_mean(errors, chosen)
                         loss = loss + anchor["weight"] * anchor_loss
                         anchor["losses"].append(float(anchor_loss.detach()))
+                    if mirror_rows is not None:
+                        rows = ids[mirror_rows[ids]]
+                        if len(rows):
+                            from airhockey.neural_symmetry import mirror_success_loss
+                            mirror_loss, counted = mirror_success_loss(
+                                net, x[rows], ra[rows], advantage[rows], cap=args.mirror_success_cap, space=args.anchor_space)
+                            loss = loss + args.mirror_success_weight * mirror_loss
+                            mirror_losses.append(float(mirror_loss.detach()))
+                            mirror_counts.append(counted)
                     if args.defense_request_consistency:
                         consistency = defensive_request_consistency(net, x[ids], mu)
                         loss += args.defense_request_consistency * consistency
@@ -1735,6 +1756,12 @@ def main():
             status["lift_events_per_minute"] = dict(zip(("own", "opponent"), (60 * lifts / seconds).tolist()))
         if args.adaptive_lr:
             status["next_actor_lr"] = optimizer.param_groups[0]["lr"]
+        if mirror_rows is not None:
+            status["mirror_success"] = dict(
+                weight=args.mirror_success_weight, cap=args.mirror_success_cap, space=args.anchor_space,
+                rail_zone_share=float(mirror_rows.float().mean()), rail_zone_samples=int(mirror_rows.sum()),
+                samples_imitated=int(np.sum(mirror_counts)), minibatches=len(mirror_counts),
+                loss=float(np.mean(mirror_losses)) if mirror_losses else None)
         if anchor_status:
             status["anchors"] = anchor_status
             if kl_rows is not None:
