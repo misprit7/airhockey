@@ -143,6 +143,37 @@ def trained_free_request_share(checkpoint):
     return float((meta.get('args') or {}).get('free_request_share') or 0.0)
 
 
+def inference_device(requested=None):
+    """(device, reason) for the deployed network's forward pass.
+
+    None or 'cpu': the CPU. 'auto' (the table runner's default): the GPU when
+    CUDA works, else the CPU with the reason. Anything else is used as given.
+
+    Why the GPU on the table (2026-11-19): the forward pass reads all of the
+    network's weights every tick (23 MB at width 1536), which is more than a
+    core's own cache holds. While another program on the PC was allocating
+    memory hard (a batch job taking 12 GB in two minutes), that read took
+    14-20 ms at the 99th percentile instead of 1-2, in a process at realtime
+    priority that was never kept off its core, while a loop over a few kB
+    was not slowed at all: the delay is in memory, not in scheduling, so no
+    priority removes it. On the GPU the same forward took 0.3-0.9 ms, 3-5 ms
+    at the 99th percentile and 6.5 ms at worst through the same bursts, and
+    3.5 ms on the first call after 30 s of quiet. Outputs differ by 2e-7.
+    """
+    import torch
+    if requested in (None, 'cpu'):
+        return 'cpu', 'requested' if requested else 'default'
+    if requested != 'auto':
+        return requested, 'requested'
+    if not torch.cuda.is_available():
+        return 'cpu', 'no CUDA device'
+    try:
+        torch.zeros(1, device='cuda')
+    except Exception as error:      # noqa: BLE001 -- any CUDA start-up failure means the CPU
+        return 'cpu', f'CUDA did not start: {str(error).splitlines()[0][:120]}'
+    return 'cuda', 'available'
+
+
 class NeuralPolicy:
     def __init__(self, checkpoint, speed_mm_s, accel_mm_s2, *, shot_mode='mix', device=None,
                  selector_options=None):
@@ -161,7 +192,8 @@ class NeuralPolicy:
         self.net = NeuralPlayer(state['width'], history=state.get('history', 1),
                                 shot_conditioned=state.get('shot_conditioned', False))
         self.net.load_weights(state['model'])
-        self.net.to(device or 'cpu').eval()
+        self.device, self.device_reason = inference_device(device)
+        self.net.to(self.device).eval()
         self.history = PhysicalHistory(self.net.history)
         self.speed = speed_mm_s / 1000
         # The session's accel limit and the cap the checkpoint's coordinates
@@ -377,7 +409,18 @@ class NeuralPolicy:
             return Command(*self.sensor_hold, self.speed * 1000, self.accel * 1000)
         self.sensor_hold = None
         obs = self.observe(report)
-        action = self.net.act(obs[None])[0]
+        gpu_lost = False
+        try:
+            action = self.net.act(obs[None])[0]
+        except RuntimeError as error:
+            # A GPU that stops answering in mid-game (driver reset, device
+            # lost) must not end the session: the same network on the CPU.
+            if self.device == 'cpu':
+                raise
+            self.device, self.device_reason = 'cpu', f'the GPU failed in session: {str(error).splitlines()[0][:120]}'
+            self.net.to('cpu')
+            action = self.net.act(obs[None])[0]
+            gpu_lost = True
         if not np.isfinite(obs).all() or not np.isfinite(action).all():
             raise ValueError('nonfinite neural observation/action')
         target, cap = self.decoder.decode(self.cart, limit_cap(action[None], self.units_accel, self.accel),
@@ -387,7 +430,8 @@ class NeuralPolicy:
             self.cart, target, cap, self.target, self.command_cap,
             bounds=self.decoder.bounds, max_accel=self.accel, max_speed=self.speed,
             delay=self.delay, action_dt=0.02)
-        self.last_flags = (['arrival_guard'] if changed[0] else []) + (['arrival_guard_unresolved'] if unresolved[0] else [])
+        self.last_flags = ((['arrival_guard'] if changed[0] else []) + (['arrival_guard_unresolved'] if unresolved[0] else [])
+                           + (['neural_gpu_lost'] if gpu_lost else []))
         self.last_action = action.copy()
         x, y = sim_to_table_mm(*target[0], self.encoder.width, self.encoder.half_h)
         self.last_ms = (time.perf_counter() - started) * 1000

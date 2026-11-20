@@ -671,6 +671,19 @@ goals conceded from 0.10 to 0.04 per game.
     ppm; the offset was taken once at the first frame): in older logs read
     its spikes above the running median, not its level. `LagMonitor` now
     follows the drift (reference down at once, up at most 100 ppm).
+    THE NETWORK RUNS ON THE GPU ON THE TABLE (2026-11-19; `run_policy.py`
+    default for `neural:`, `--device cpu` forces the CPU, CPU fallback when
+    CUDA is missing or fails, also in mid-session with flag
+    `neural_gpu_lost`; `neural_deploy.inference_device`). Realtime priority
+    removed the waiting for a core (late ticks in a burst minute 3-4.5% ->
+    0.2-1.7%) but not the rest: a stand-in loop at SCHED_FIFO, pinned,
+    never kept off its core, with the clock at 5 GHz, still took 14-20 ms
+    (p99) for the forward pass during that job's bursts, because the pass
+    reads 23 MB of weights and the other job was allocating 12 GB (TLB
+    shootdowns on the loop's own core up 30-fold); a loop over a few kB was
+    not slowed at all. On the GPU the same pass is 0.3-0.9 ms, 3-5 ms p99,
+    6.5 ms worst through the bursts, 3.5 ms on the first call after 30 s of
+    quiet; outputs differ by 2e-7. Not yet played on the table this way.
   - **Simulation**: play by mouse or watch checkpoints.
   - **Recordings**: two kinds, kept apart. SIMULATED GAMES
     (`ai/recordings/*.json`, replayed on the page's table) are listed by

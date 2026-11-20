@@ -1055,12 +1055,20 @@ def load_policy(spec: str, caps: Caps, plan_iters: int | None = None,
             raise ValueError("--plan applies only to tdmpc2; neural uses its actor directly")
         if not math.isclose(cmd_hz, 50.0):
             raise ValueError("neural arrival policies require --cmd-hz 50")
+        # The GPU when there is one: the forward pass on the CPU stalls for
+        # 15-20 ms whenever another program is hammering memory, at any
+        # priority (airhockey.neural_deploy.inference_device). --device cpu
+        # forces the CPU.
         policy = NeuralPolicy(ckpt or name, caps.speed_max, caps.accel_max,
-                              shot_mode=shot_mode, device=device, selector_options=selector_options)
+                              shot_mode=shot_mode, device=device or "auto",
+                              selector_options=selector_options)
         ms = policy.warm_up()
         print(f"neural checkpoint: {policy.ckpt}")
         print(f"single neural actor, {policy.net.obs_dim} inputs / 6 arrival outputs; "
               f"50 Hz; decoder + guard: {ms:.2f} ms median")
+        print(f"network runs on: {policy.device} ({policy.device_reason})"
+              + ("" if policy.device != "cpu" or device == "cpu" else
+                 "  -- on the CPU a memory-heavy program on this PC can delay single ticks by 15-20 ms"))
         print(f"session caps: {caps.speed_max / 1000:g} m/s, "
               f"{caps.accel_max / 1000:g} m/s^2")
         print(neural_accel_alignment(policy))
@@ -2323,8 +2331,8 @@ def main() -> int:
     ap.add_argument("--shot-explore", type=float, default=None,
                     help="--shot-type auto: probability of a uniform explicit request anyway (default 0.15)")
     ap.add_argument("--device", default=None,
-                    help="torch device (neural defaults to cpu; tdmpc2: cpu for the "
-                         "prior, cuda for planning when available)")
+                    help="torch device (neural: the GPU when CUDA works, else cpu; "
+                         "tdmpc2: cpu for the prior, cuda for planning when available)")
     ap.add_argument("--list", action="store_true",
                     help="print the available policies and exit")
     ap.add_argument("--opponent", action="store_true",

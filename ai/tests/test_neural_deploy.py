@@ -420,3 +420,64 @@ def test_checkpoint_thermal_model_is_used(checkpoint):
     policy = NeuralPolicy(checkpoint, 12000, 60000)
     assert policy.loads.model.spatial
     np.testing.assert_allclose(policy.loads.model.limits[0], meta['thermal_model']['fast_limit_amps'])
+
+
+# ── Where the network runs ──────────────────────────────────────────────
+
+
+def _drive(policy, ticks=40):
+    """The same synthetic rally through a policy; the commands it gives."""
+    out = []
+    for i in range(ticks):
+        t = i * 0.02
+        command = policy({'t_s': t, 'mallet': sim_to_table_mm(0.5, 0.35), 'opponent': None,
+                          'puck': [(*sim_to_table_mm(0.5 + 0.004 * i, 0.9 - 0.012 * i), t)]})
+        policy.on_command(t, command)
+        out.append(command.as_tuple())
+    return np.array(out)
+
+
+def test_the_library_default_stays_on_the_cpu_and_auto_needs_a_working_gpu(checkpoint, monkeypatch):
+    assert NeuralPolicy(checkpoint, 12000, 60000).device == 'cpu'
+    monkeypatch.setattr(torch.cuda, 'is_available', lambda: False)
+    policy = NeuralPolicy(checkpoint, 12000, 60000, device='auto')
+    assert (policy.device, policy.device_reason) == ('cpu', 'no CUDA device')
+    monkeypatch.setattr(torch.cuda, 'is_available', lambda: True)
+    monkeypatch.setattr(torch, 'zeros', lambda *a, **k: (_ for _ in ()).throw(RuntimeError('CUDA out of memory')))
+    policy = NeuralPolicy(checkpoint, 12000, 60000, device='auto')
+    assert policy.device == 'cpu' and 'out of memory' in policy.device_reason
+
+
+@pytest.mark.skipif(not torch.cuda.is_available(), reason='needs a GPU')
+def test_the_gpu_gives_the_commands_the_cpu_gives(checkpoint):
+    cpu = NeuralPolicy(checkpoint, 12000, 60000, shot_mode='straight')
+    gpu = NeuralPolicy(checkpoint, 12000, 60000, shot_mode='straight', device='auto')
+    assert gpu.device == 'cuda'
+    np.testing.assert_allclose(_drive(gpu), _drive(cpu), atol=1e-2)       # mm, mm/s, mm/s^2
+
+
+def test_a_gpu_lost_in_mid_game_carries_on_on_the_cpu(checkpoint):
+    """A driver reset must not end the session: same network, CPU, flagged once."""
+    reference = _drive(NeuralPolicy(checkpoint, 12000, 60000, shot_mode='straight'))
+    policy = NeuralPolicy(checkpoint, 12000, 60000, shot_mode='straight')
+    policy.device = 'cuda'                      # as if it had been moved there
+    real, calls = policy.net.act, []
+
+    def act(obs, **kwargs):
+        calls.append(1)
+        if len(calls) == 5:
+            raise RuntimeError('CUDA error: unspecified launch failure')
+        return real(obs, **kwargs)
+
+    policy.net.act = act
+    flags = []
+    out = []
+    for i in range(40):
+        t = i * 0.02
+        command = policy({'t_s': t, 'mallet': sim_to_table_mm(0.5, 0.35), 'opponent': None,
+                          'puck': [(*sim_to_table_mm(0.5 + 0.004 * i, 0.9 - 0.012 * i), t)]})
+        policy.on_command(t, command)
+        out.append(command.as_tuple()); flags.append('neural_gpu_lost' in policy.last_flags)
+    np.testing.assert_allclose(np.array(out), reference, atol=1e-9)
+    assert sum(flags) == 1 and policy.device == 'cpu' and 'failed in session' in policy.device_reason
+
