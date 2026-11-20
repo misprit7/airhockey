@@ -2334,3 +2334,25 @@ pretension. Fast RMS, worst motor per 5-minute window: motor 2 at 83-95% of
 its limit in every window of play, with every model (95% at 18:40 and
 20:25, 91-93% during the beginner's sessions); motor 0 91% in the one
 window at 1.5 mm. The drive trips at 100%.
+
+### v4.4.10 (25x while a shot is incoming): the lunge goes, the shots stay
+
+Two seeds; v4.4.9 at 101M -> v4.4.10 at 50M -> 101M (the run continues):
+
+- forward lunge on shots >= 5 m/s 83 -> 52 -> 38 mm (v4.1.2 150), p90
+  201 -> 146 -> 102; reversals 26 -> 18 -> 16 a minute, of 3 m/s or more
+  0.34 -> 0.06 -> 0; |accel| > 60 duty 3.2 -> 2.3 -> 2.3%.
+- in the incoming-shot phase itself (`phases.py`, sim games): rms
+  acceleration 52.7 (v4.4.7) -> 37.5, ticks over 60 m/s^2 28% -> 8%, share of
+  all effort above 40 m/s^2 18% -> 7%. The beginner on the table: 11 rms.
+- mallet speed at contact unchanged (1.58 -> 1.53 -> 1.55 m/s): what is left
+  is the sideways tracking, which the charges do not price at constant
+  speed.
+- conceded 0.22 -> 0.21 -> 0.25 a minute (through a lift 0.13 -> 0.12 ->
+  0.15): the sim's lift goals have NOT fallen with the lunge.
+- on-target shot speed 6.5 -> 6.3 -> 6.5 m/s; on target 69 -> 66 -> 70%;
+  shots from a controlled puck 43 -> 43 -> 45%; prepared fast on-target
+  shots per 100 possessions 31.3 -> 29.6 -> 32.6; head to head with v4.1.2
+  11-13, then 19-15.
+- placed resting pucks left 1.7%, then 1.5% (forward 4.7%, side rails 1.8%);
+  load peak 1.01, then 0.91.
