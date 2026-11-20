@@ -2375,3 +2375,44 @@ side-fringe puck, in drills. For the right-rail hover. (Every table-proven
 model of this lineage had its rail behaviour from imitation:
 `--skill-reference-rail-weight 1` in v4.1.2 and v4.3.12, the teacher in v4.
 The self-play arm has none; that anchor is the fallback if this fails.)
+
+### v4.4.11: the rail hover did not move; where the rail skill went
+
+v4.4.10 at 202M -> v4.4.11 at 50M -> 101M (stopped at 130M). Rail practice
+pucks never touched by the deployed policy (edge-drill states, 480 each):
+38% -> 37% -> 36%. Rest spells >= 4 s: 8 in 384 games -> 12 in 448 -> 10 in
+448, to 59 s, on the right rail and behind it (x 0.82-0.96), two on the
+left. `--edge-approach-weight 30` was a units mistake: the potential is per
+metre, so closing 8 cm to a puck was worth 2.4 points. Otherwise: lunge 28
+-> 19 -> 26 mm, on-target shot speed 6.6 -> 6.7 -> 6.7 m/s, conceded 0.24 ->
+0.20 -> 0.18 a minute (through a lift 0.08 -> 0.08 -> 0.12), 19-14 and 13-15
+against v4.1.2, shots from a controlled puck 43 -> 41 -> 45%.
+
+THE SAME TEST ON THE EARLIER MODELS (edge-drill states, never touched;
+by the load the motors start at, right rail / left rail):
+
+| | all | cold (< 0.5) | hot (>= 0.8) |
+|---|---|---|---|
+| v4.3.12 (rail anchor on v4) | 13% | 1% / 5% | 20% / 21% |
+| v4.1.2 (rail anchor on v4) | 24% | 0% / 23% | 23% / 46% |
+| v4.4.2 at 101M (self-play arm, no anchor) | 23% | 10% / 5% | 47% / 25% |
+| v4.4.2 at 151M | 23% | 24% / 3% | 48% / 16% |
+| v4.4.2 at 202M | 31% | 53% / 3% | 51% / 15% |
+| v4.4.7 at 202M | 29% | 38% / 8% | 40% / 24% |
+| v4.4.10 at 202M | 38% | 67% / 21% | 38% / 25% |
+
+v4.3.12 strikes a cold rail puck on either side and leaves one in five when
+hot, which is the teacher's rule ("leaves rail pucks alone when hot") come
+down through v4 and held by the rail anchor. In the self-play arm the
+RIGHT-rail skill erodes from the first 100M steps on, cold or hot, while
+the left holds: the right rail is where a stay trips the fast limit of
+motor 0 within tens of seconds (the left's limiting level is the slow one),
+65% of the drills start warm, and a trip is 12000 against 600 for leaving
+the puck. Leaving every right-rail puck is what the reward as set teaches.
+
+`v4.4.12` = v4.4.11 from its 101M snapshot with `--edge-approach-weight
+1000`. The alternative, NOT run without the user's word (the arm was asked
+to be free of imitation): `--skill-reference <v4.3.12>
+--skill-reference-rail-weight 1 --anchor-space pre-squash`, the anchor
+v4.3.12 itself trained with, on rail and corner drill slots and rail-strip
+pucks only.
