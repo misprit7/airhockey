@@ -395,7 +395,8 @@ def build_parser():
     p.add_argument("--mirror-success-weight", type=float, default=0,
                    help="Actor loss weight on the policy's own positive-advantage actions in rail-zone states, reflected "
                         "left-right and imitated in the reflected state: carries a rail skill from the side that has it "
-                        "to the side that does not, with no reference network (training only)")
+                        "to the side that does not, with no reference network (training only). At weight 1 it made v4.4.16 much "
+                        "worse on both rails within 50M steps; do not use as built")
     p.add_argument("--mirror-success-cap", type=float, default=3.0,
                    help="Clip of the normalised advantage that weights a mirrored sample")
     p.add_argument("--incoming-motion-scale", type=float, default=1.0,

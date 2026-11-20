@@ -175,8 +175,8 @@
       "summary": "v4.4.14 continued unchanged from its final (400M) snapshot; stopped at 45M steps to free the GPU for v4.4.16. No snapshot evaluated. Sim only."
     },
     "v4.4.16": {
-      "run": "v4.4.16", "date": "2026-11-20", "accel": 100, "parent": "v4.4.14",
-      "summary": "v4.4.14 continued from its 303M snapshot with mirrored imitation of its own rail-zone successes (--mirror-success-weight 1): each positive-advantage action in a rail state, reflected left-right, is a target in the reflected state, so a rail skill held on one side carries to the other with no reference network. In training; not evaluated. Sim only."
+      "run": "v4.4.16", "file": "agent_step_2920415232.pt", "date": "2026-11-20", "accel": 100, "parent": "v4.4.14",
+      "summary": "v4.4.14 continued from its 303M snapshot with mirrored imitation of its own rail-zone successes (--mirror-success-weight 1), 50M steps (the file); stopped. MUCH WORSE: placed resting pucks left 11% (0.9%), a puck left lying for 4 s or more in 52 of 448 games (3), both rails now equally bad (about 30% of cold rail practice pucks never touched), shots on target 66% (73%), concedes 0.27 a minute (0.18). Do not use; kept as the record of a failed mechanism. Sim only."
     }
   }
 }

@@ -2559,3 +2559,27 @@ loss).
 `--mirror-success-weight 1 --anchor-space pre-squash`. v4.4.15 (the same
 recipe unchanged, from the 400M snapshot) was stopped at 45M steps,
 unevaluated, to free the GPU for it.
+
+v4.4.16 at 50M (stopped at 85M): MUCH WORSE. Placed resting pucks left 11.0%
+(forward 18%, side rails 38%; 0.9% before); a puck left for 4 s or more in
+52 of 448 games (3); rail practice pucks never touched 38%, cold 29% right /
+30% left (0% / 29%); shots from a controlled puck 38% (45%), on target 66%
+(73%), conceded 0.27 a minute (0.18), 14-17 against v4.1.2, load peak 0.96.
+The mirrored loss started at 3.0 (the first actor update overshot the KL
+target at 0.048 and the adaptive rate fell to 4e-7) and settled at 0.2.
+What it did was make the two rails ALIKE, at the worse side's level: a
+positive advantage in a rail-zone state is mostly not a strike (waiting a
+little better than the critic expected counts too), so the average
+"success" it mirrored was the hover. DO NOT USE `--mirror-success-weight`
+AS BUILT. If the idea is tried again: imitate only samples from episodes
+that ended in an aimed shot or a clearance, not every positive advantage,
+and at a weight a tenth of this.
+
+SCORE OF THE RAIL WORK ON THIS ARM: one change helped (side-rail and
+edge-of-reach drills from safe loads, v4.4.13 / v4.4.14), five did not
+(v4.4.8 rail-rest drill, v4.4.11 / v4.4.12 approach potential, v4.4.16
+mirrored imitation; more edge drill alone). With the working change the
+skill is there but not held: placed pucks left by snapshot 2.9% (v4.4.13),
+4.0, 3.9, 2.3, 0.9 (v4.4.14 at 303M, the UI level `calm`), 4.2%. The proven
+way to hold it is the rail anchor on a reference network (v4.3.12), which
+this arm was asked to do without.
