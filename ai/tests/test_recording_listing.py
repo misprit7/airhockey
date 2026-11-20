@@ -97,7 +97,7 @@ def test_entries_say_who_played_what_and_file_under_the_model_version(tmp_path, 
     cache = tmp_path / "cache" / "index.json"
     monkeypatch.setattr(recording_index, "model_names", lambda: versions)
     first = recording_index.list_recordings(tmp_path, cache)
-    assert len(first) == 6 and cache.is_file()
+    assert len(first) == 7 and cache.is_file()
     recording_index._MEMORY.clear()
     monkeypatch.setattr(recording_index, "describe", lambda *a: (_ for _ in ()).throw(AssertionError("re-read")))
     assert recording_index.list_recordings(tmp_path, cache) == first
