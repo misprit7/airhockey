@@ -169,6 +169,10 @@
     "v4.4.14": {
       "run": "v4.4.14", "file": "agent_step_2869952512.pt", "date": "2026-11-20", "accel": 100, "parent": "v4.4.13",
       "summary": "v4.4.13 continued with the safe-load start for every stationary drill puck at the edge of reach (--fringe-drill-max-load 0.6), 303M steps (the file). The best all-round model of the self-play line: 45% of shots from a controlled puck, 73% on target at 6.7 m/s, 34 prepared fast on-target shots per 100 possessions (v4.3.12 12), concedes 0.18 a minute, beats v4.1.2 22-15 head to head, forward lunge on fast shots 25 mm (v4.1.2 150), load peak 0.84. Placed resting pucks left 0.9% (v4.1.2 1.0%; front edge 0.4%, side rails 7.7%); in 448 games no puck left longer than 5.6 s. Earlier snapshots of this run were weak on the left rail (101M, 202M), and left-rail practice pucks are still left 29% of the time from cold. The UI level 'calm'. Sim only."
+    },
+    "v4.4.15": {
+      "run": "v4.4.15", "date": "2026-11-20", "accel": 100, "parent": "v4.4.14",
+      "summary": "v4.4.14 continued unchanged from its final (400M) snapshot, to see whether its rail handling settles. In training; not evaluated. Sim only."
     }
   }
 }
