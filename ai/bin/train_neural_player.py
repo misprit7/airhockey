@@ -382,6 +382,9 @@ def build_parser():
     p.add_argument("--reach-edge-drill-fraction", type=float, default=0,
                    help="Fraction of stationary drills with the puck at rest in the last 50 mm of forward reach "
                         "(whole width) or against a side rail forward of y 0.58")
+    p.add_argument("--rail-rest-drill-fraction", type=float, default=0,
+                   help="Fraction of stationary drills with the puck at rest on or within 45 mm of a side rail, anywhere up "
+                        "the rail, and the mallet mostly level with it just short of contact (the state v4.4.7 creeps in)")
     p.add_argument("--back-rail-drill-fraction", type=float, default=0,
                    help="Fraction of stationary drills with a slow puck on the back rail between the corners")
     p.add_argument("--own-corner-weight", type=float, default=0,
@@ -565,6 +568,7 @@ def environment_options(args, *, shot_conditioned):
         dead_puck_cap_weight=getattr(args, 'dead_puck_cap_weight', 0.0),
         dead_puck_cap_grace=getattr(args, 'dead_puck_cap_grace', 2.5),
         reach_edge_drill_fraction=getattr(args, 'reach_edge_drill_fraction', 0.0),
+        rail_rest_drill_fraction=getattr(args, 'rail_rest_drill_fraction', 0.0),
         back_rail_drill_fraction=getattr(args, 'back_rail_drill_fraction', 0.0),
         own_corner_weight=getattr(args, 'own_corner_weight', 0.0),
         anchor_side_rail_open_y=getattr(args, 'anchor_side_rail_open_y', None),

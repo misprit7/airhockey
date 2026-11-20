@@ -2172,3 +2172,29 @@ end of the game; at 152M the same (13 s and 26 s at (0.92, 0.29) and
 map no better on the rails (rail cells 4-7% against 7-9%). So the placed
 rail pucks of the stall map do not show it; it is a state that arises in
 play.
+
+What the spell is (recorded games, `eval_resting_puck.py --parts games
+--record`): the robot's own dribble carries a slow puck to the right rail,
+where it stops on the rail or 35 mm off it at y 0.41-0.42; the mallet then
+stays level with it on the table's side, 10-25 mm short of touching
+(mallet (0.85, 0.41) beside a puck at (0.957, 0.414)), creeping at
+3-6 cm/s, for the remaining 43-56 s. It is the hover of the front-edge
+pucks in another place. The edge drill has pucks there but starts the
+mallet anywhere on the half.
+
+`v4.4.8` = v4.4.7 from its 202M snapshot plus `--rail-rest-drill-fraction
+0.35` (new, opt-in): 35% of the stationary drills have a puck at rest from
+touching a side rail to 45 mm off it, anywhere up the rail below the front
+edge, and the mallet half the time level with it 8-70 mm short of contact,
+a quarter below it, a quarter anywhere. `--reach-edge-drill-fraction 0.3`
+stays. v4.4.7 was stopped at 240M steps.
+
+    PYTHONPATH=ai python3 ai/recipes/table-faithful-20261110/finetune.py --run-name v4.4.8 --arm selfplay \
+        --resume runs/v4.4.7/agent_step_2062548992.pt --sim-profile table-20261119-posts --value-warmup 8 \
+        --n-envs 5120 --workers 16 --minutes 240 --steps 400000000 --seed 20261148 \
+        --trainer-arg=--save-every --trainer-arg=50000000 \
+        --trainer-arg=--game-prepared-shot-weight --trainer-arg=300 \
+        --trainer-arg=--opponent-reference --trainer-arg=runs/v4.1.2/agent.pt \
+        --trainer-arg=--opponent-reference --trainer-arg=runs/v4.3.12/agent_step_1091305472.pt \
+        --trainer-arg=--selfplay-lift --trainer-arg=--reach-edge-drill-fraction --trainer-arg=0.3 \
+        --trainer-arg=--rail-rest-drill-fraction --trainer-arg=0.35

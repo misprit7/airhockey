@@ -305,6 +305,7 @@ class NeuralTrainingEnv(ArrivalEnv):
         # mallet's forward limit (across the whole width), or against a side
         # rail on the forward part of the half.
         reach_edge_drill_fraction=0.0,
+        rail_rest_drill_fraction=0.0,
         # Share of stationary drills with a slow puck on the back rail
         # between the corners, the state before a wedged corner puck.
         back_rail_drill_fraction=0.0,
@@ -552,7 +553,7 @@ class NeuralTrainingEnv(ArrivalEnv):
         for value in (dead_puck_cap_weight, dead_puck_cap_grace, own_corner_weight):
             if not np.isfinite(value) or value < 0:
                 raise ValueError("round-4 cost weights and the dead-puck cap grace must be finite and nonnegative")
-        for fraction in (reach_edge_drill_fraction, back_rail_drill_fraction):
+        for fraction in (reach_edge_drill_fraction, back_rail_drill_fraction, rail_rest_drill_fraction):
             if not np.isfinite(fraction) or not 0 <= fraction <= 1:
                 raise ValueError("drill fractions must be in [0,1]")
         if far_cap_brake_seconds is not None and (
@@ -565,6 +566,7 @@ class NeuralTrainingEnv(ArrivalEnv):
         self.dead_puck_cap_weight, self.dead_puck_cap_grace = dead_puck_cap_weight, dead_puck_cap_grace
         self.reach_edge_drill_fraction = reach_edge_drill_fraction
         self.back_rail_drill_fraction = back_rail_drill_fraction
+        self.rail_rest_drill_fraction = rail_rest_drill_fraction
         self.own_corner_weight = own_corner_weight
         self.anchor_side_rail_open_y = anchor_side_rail_open_y
         self.anchor_front_margin = anchor_front_margin
@@ -1682,6 +1684,46 @@ class NeuralTrainingEnv(ArrivalEnv):
                 start = np.where(near[:, None], np.clip(beside, self.decoder.low + .005, self.decoder.high - .005), start)
                 overlap = np.linalg.norm(start - puck[sel, :2], axis=1) < radius + .01
                 start[overlap] = np.clip(puck[sel[overlap], :2] - [0, .20], self.decoder.low + .005, self.decoder.high - .005)
+                paddle[sel] = start
+                replay_actions[sel] = np.nan
+                replay_loads[sel] = np.nan
+                replay_fringe[sel] = False
+                starting_requests[sel] = 0
+            if self.rail_rest_drill_fraction:
+                # The rest spell v4.4.7 still has in games (2026-11-19, 2 of
+                # 64, 43 and 56 s): its own dribble leaves the puck at rest
+                # on or just off a side rail at mid depth, and the mallet
+                # then creeps BESIDE it, level with it and 10-25 mm short of
+                # contact, for the rest of the game. The edge drill has the
+                # puck there but starts the mallet anywhere; the stall map's
+                # placed rail pucks do not show it. So: a puck at rest from
+                # touching a side rail to 45 mm off it, anywhere up the rail
+                # below the front edge, and the mallet mostly where it gets
+                # stuck -- half level with the puck and just short of it,
+                # a quarter below it, a quarter anywhere. Reset states only;
+                # a stationary slot like the reach-edge drill's.
+                sel = np.flatnonzero((kind == 0) & (rng.random(n) < self.rail_rest_drill_fraction))
+                k = len(sel)
+                radius = self.cfg.puck_radius + self.cfg.paddle_radius
+                low, high = self.decoder.low + .005, self.decoder.high - .005
+                left = rng.random(k) < .5
+                off = self.cfg.puck_radius + rng.uniform(.001, .045, k)
+                puck[sel, 0] = np.where(left, off, self.cfg.width - off)
+                puck[sel, 1] = rng.uniform(self.decoder.low[1] + .10, self.decoder.high[1] + radius - .05, k)
+                puck[sel, 2:] = 0
+                inward = np.where(left, 1.0, -1.0)
+                level = np.column_stack((puck[sel, 0] + inward * (radius + rng.uniform(.008, .07, k)),
+                                         puck[sel, 1] + rng.uniform(-.06, .06, k)))
+                below = np.column_stack((puck[sel, 0] + inward * rng.uniform(0, .15, k),
+                                         puck[sel, 1] - rng.uniform(.10, .30, k)))
+                where = rng.random(k)
+                start = np.where((where < .5)[:, None], level,
+                                 np.where((where < .75)[:, None], below, rng.uniform(low, high, (k, 2))))
+                start = np.clip(start, low, high)
+                overlap = np.linalg.norm(start - puck[sel, :2], axis=1) < radius + .005
+                start[overlap, 0] = np.clip(puck[sel[overlap], 0] + inward[overlap] * (radius + .02), low[0], high[0])
+                overlap = np.linalg.norm(start - puck[sel, :2], axis=1) < radius + .005
+                start[overlap] = np.clip(puck[sel[overlap], :2] - [0, .20], low, high)
                 paddle[sel] = start
                 replay_actions[sel] = np.nan
                 replay_loads[sel] = np.nan

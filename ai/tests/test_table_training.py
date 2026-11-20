@@ -723,6 +723,45 @@ def test_reach_edge_drills_put_the_puck_where_no_other_drill_did():
         NeuralTrainingEnv(2, reach_edge_drill_fraction=1.5)
 
 
+def test_rail_rest_drills_start_the_mallet_where_it_gets_stuck():
+    """v4.4.7's rest spell in games: a puck at rest on or just off a side rail and the mallet level with it,
+    1-2 cm short of touching. The drill is that state; off, every reset is the one it was."""
+    options = dict({**GAMES, "game_fraction": 0.0})
+    env = NeuralTrainingEnv(600, **options, rail_rest_drill_fraction=1.0)
+    plain = NeuralTrainingEnv(600, **options)
+    off = NeuralTrainingEnv(600, **options, rail_rest_drill_fraction=0.0)
+    env.reset(seed=4)
+    plain.reset(seed=4)
+    off.reset(seed=4)
+    assert np.array_equal(off.engine.puck_x, plain.engine.puck_x) and np.array_equal(off.engine.paddle_agent_x, plain.engine.paddle_agent_x)
+    e, rows = env.engine, env.kind == 0
+    low, high = env.decoder.low, env.decoder.high
+    radius = env.cfg.puck_radius + env.cfg.paddle_radius
+    x, y = e.puck_x[rows], e.puck_y[rows]
+    from_rail = np.minimum(x, env.cfg.width - x) - env.cfg.puck_radius
+    # On or within 45 mm of either rail, anywhere up the rail short of the front edge, at rest.
+    assert (from_rail > 0).all() and (from_rail < 0.0451).all() and (x < 0.5).any() and (x > 0.5).any()
+    assert y.min() < low[1] + 0.2 and y.max() > 0.6 and (y < high[1] + radius - 0.05 + 1e-9).all()
+    assert (np.hypot(e.puck_vx, e.puck_vy)[rows] == 0).all() and not env.edge_drill[rows].any()
+    # The mallet: never touching; about half level with the puck and within 8 cm of contact, on the table's side of it.
+    mx, my = e.paddle_agent_x[rows], e.paddle_agent_y[rows]
+    gap = np.hypot(mx - x, my - y) - radius
+    assert gap.min() > 0
+    level = (np.abs(my - y) < 0.065) & (gap < 0.08)
+    assert 0.35 < level.mean() < 0.65
+    inward = np.where(x < 0.5, mx - x, x - mx)
+    assert (inward[level] > 0).all()
+    assert ((my < y - 0.09) & ~level).mean() > 0.15 and (gap > 0.3).mean() > 0.05
+    # The other slots are the ones they were, and these are on the dead-puck clock.
+    assert np.array_equal(env.kind, plain.kind) and np.array_equal(e.puck_y[env.kind == 2], plain.engine.puck_y[plain.kind == 2])
+    env.set_opponent_action(np.zeros((600, 6), np.float32))
+    for _ in range(3):
+        info = env.step(env.last_action.copy())[4]
+    assert (info["dead_puck_clock"][rows] > 0.03).mean() > 0.9
+    with pytest.raises(ValueError):
+        NeuralTrainingEnv(2, rail_rest_drill_fraction=1.5)
+
+
 def test_forward_side_rail_pucks_are_the_teachers_and_front_edge_pucks_nobodys():
     from airhockey.neural_training import ANCHOR_NONE, ANCHOR_OPEN, ANCHOR_RAIL
     from airhockey.neural_finetune import ATTACK, resting_teacher_mask
@@ -1170,7 +1209,8 @@ def test_recipe_is_v4s_command_continued_with_the_table_options():
                            "seed", "value_warmup_updates", "width"}
         assert set(mine) - set(old) == new | round2 | round3 | round4 | {"free_request_share", "body_accel", "roam_weight",
                                                                          "defense_followthrough_fraction", "game_shaping_scale",
-                                                                         "selfplay_lift", "game_prepared_shot_weight"}
+                                                                         "selfplay_lift", "game_prepared_shot_weight",
+                                                                         "rail_rest_drill_fraction"}
         assert args.body_accel is None and "--body-accel" not in cmd
 
 
