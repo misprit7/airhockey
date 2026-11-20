@@ -666,10 +666,11 @@ goals conceded from 0.10 to 0.04 per game.
     carries `realtime` and `master_realtime` and the Robot tab shows a
     timing warning when either is false; a controller started without the
     permission keeps normal priority until it is shut down and started
-    again. `lag_ms` in ticks.csv also DRIFTS upward 0.4-0.55 ms a minute in
-    every session (camera clock against the PC's, 7-9 ppm; the offset is
-    taken once at the first frame): read spikes above its running median,
-    not its level. Not yet fixed in the runner.
+    again. `lag_ms` in ticks.csv DRIFTED upward 0.4-0.55 ms a minute in
+    every session until 2026-11-19 (camera clock against the PC's, 7-9
+    ppm; the offset was taken once at the first frame): in older logs read
+    its spikes above the running median, not its level. `LagMonitor` now
+    follows the drift (reference down at once, up at most 100 ppm).
   - **Simulation**: play by mouse or watch checkpoints.
   - **Recordings**: two kinds, kept apart. SIMULATED GAMES
     (`ai/recordings/*.json`, replayed on the page's table) are listed by

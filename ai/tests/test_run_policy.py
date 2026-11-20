@@ -773,11 +773,49 @@ def test_lag_grows_and_warns_once_when_frames_queue():
     m = rp.LagMonitor()
     for k in range(200):
         m.update(k * 0.005, k * 0.006)      # 20% too slow
-    assert m.lag == pytest.approx(199 * 0.001)
+    # less the 100 ppm of that second the reference may follow as clock drift
+    assert m.lag == pytest.approx(199 * 0.001, abs=2e-4)
     assert m.peak == pytest.approx(m.lag)
     msg = m.warn_once()
     assert msg is not None and "behind the camera" in msg
     assert m.warn_once() is None, "the warning must not repeat every frame"
+
+
+def test_lag_does_not_grow_with_clock_drift():
+    """The camera's clock runs 7-9 ppm off the PC's. With the offset fixed
+    at the first frame an hour of play read 30 ms behind with the loop
+    keeping up, past the warning and the camera-mallet trust line."""
+    m = rp.LagMonitor()
+    for k in range(0, 3600 * 200, 40):                  # an hour, every 40th frame
+        t = k * 0.005
+        m.update(t, 500.0 + t * (1 + 9e-6))
+    assert m.lag < 0.0005
+    assert m.peak < 0.0005
+    assert m.warn_once() is None
+
+
+def test_lag_still_shows_a_backlog_on_top_of_the_drift():
+    m = rp.LagMonitor()
+    for k in range(60 * 200):                           # a minute keeping up
+        t = k * 0.005
+        m.update(t, t * (1 + 9e-6))
+    for k in range(60 * 200, 60 * 200 + 200):           # then a second 40 ms behind
+        t = k * 0.005
+        m.update(t, t * (1 + 9e-6) + 0.040)
+    assert m.lag == pytest.approx(0.040, abs=0.0005)
+    assert m.warn_once() is not None
+
+
+def test_a_late_first_frame_does_not_set_the_reference():
+    """The reference comes down to the fastest delivery seen: a start-up
+    stall on frame one used to make the whole session read negative."""
+    m = rp.LagMonitor()
+    m.update(0.0, 0.006)                                # first frame 6 ms late
+    for k in range(1, 200):
+        m.update(k * 0.005, k * 0.005)
+    assert m.lag == pytest.approx(0.0, abs=1e-6)
+    m.update(1.0, 1.010)
+    assert m.lag == pytest.approx(0.010, abs=1e-4)
 
 
 def test_lag_stays_quiet_below_the_threshold():
@@ -1144,7 +1182,7 @@ def test_a_single_stall_does_not_trip_the_lag_warning():
     for k in range(101, 140):
         m.update(k * 0.005, k * 0.005 + max(0.0, 0.032 - (k - 100) * 0.008))
     assert m.warn_once() is None, "a stall that recovered must not warn"
-    assert m.peak == pytest.approx(0.032)
+    assert m.peak == pytest.approx(0.032, abs=1e-4)
 
 
 # ── The camera wins over a controller that has lost the paddle ──────────

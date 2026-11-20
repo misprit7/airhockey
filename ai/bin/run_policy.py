@@ -535,8 +535,20 @@ class LagMonitor:
     loop, and sends you to retrain something that was fine.
 
     Cheap to measure and impossible to infer: camera time against wall
-    time, both differenced from their values on the first frame, so the two
-    clocks never need a common epoch.
+    time. The two clocks have no common epoch, so the lag is the offset
+    between them above a REFERENCE offset, the one at which the loop is
+    keeping up.
+
+    The reference is not the offset on the first frame (it was until
+    2026-11-19). The camera's clock runs 7-9 ppm off the PC's: in every
+    session longer than a few minutes the reading rose 0.4-0.55 ms a minute
+    with the loop keeping up, 15 ms after 27 minutes and 24 ms after 56,
+    on its way to the 25 ms warning and the 30 ms line past which the
+    camera's own-mallet fix is no longer trusted. And a first frame that
+    was itself delivered late put the whole session 5-6 ms negative. So
+    the reference FOLLOWS the offset: down at once (a frame cannot arrive
+    before it is taken, so the smallest offset is the loop keeping up) and
+    up by at most DRIFT_MAX of the camera time elapsed.
     """
 
     WARN_S = 0.025      # 2.5 command ticks; below this it is jitter
@@ -546,19 +558,27 @@ class LagMonitor:
     # that said "and growing" about a lag that was already gone. A real
     # backlog stays over the line frame after frame.
     SUSTAIN_FRAMES = 40     # 200 ms of camera frames over the line
+    # Fastest clock drift the reference follows upward, seconds per second.
+    # Ten times what the rig shows; a real 30 ms backlog would take five
+    # minutes to fade from the reading, and it warns after 200 ms.
+    DRIFT_MAX = 100e-6
 
     def __init__(self):
-        self._t_cam0: float | None = None
-        self._t_wall0 = 0.0
+        self._base: float | None = None     # the offset that counts as "keeping up"
+        self._t_cam = 0.0
         self.lag = 0.0
         self.peak = 0.0
         self.warned = False
         self._over = 0
 
     def update(self, t_cam: float, t_wall: float) -> float:
-        if self._t_cam0 is None:
-            self._t_cam0, self._t_wall0 = t_cam, t_wall
-        self.lag = (t_wall - self._t_wall0) - (t_cam - self._t_cam0)
+        offset = t_wall - t_cam
+        if self._base is None:
+            self._base = offset
+        else:
+            self._base = min(offset, self._base + self.DRIFT_MAX * max(t_cam - self._t_cam, 0.0))
+        self._t_cam = t_cam
+        self.lag = offset - self._base
         self.peak = max(self.peak, self.lag)
         self._over = self._over + 1 if self.lag >= self.WARN_S else 0
         return self.lag
