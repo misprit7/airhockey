@@ -2583,3 +2583,10 @@ skill is there but not held: placed pucks left by snapshot 2.9% (v4.4.13),
 4.0, 3.9, 2.3, 0.9 (v4.4.14 at 303M, the UI level `calm`), 4.2%. The proven
 way to hold it is the rail anchor on a reference network (v4.3.12), which
 this arm was asked to do without.
+
+`calm` (v4.4.14 at 303M) re-checked on two more seeds of the placed-puck
+map: 0.7% and 0.9% left (v4.1.2 on the same seed 1.2%), forward zone 0.4%
+both, side rails 5.9% and 7.1% (v4.1.2 6.6%); one cell over 5% each time
+(rail with the right bank asked, 14-16%; v4.1.2 two cells). Corner pucks all
+touched. Training on this arm is stopped here (2026-11-20 08:50) pending the
+table and the user's word on the rail anchor.
