@@ -2475,3 +2475,26 @@ soft-mallet games, no overload seconds.
 
 `v4.4.14` = v4.4.13 from its 101M snapshot plus `--fringe-drill-max-load
 0.6`.
+
+### v4.4.14 (every edge-of-reach drill puck from safe loads): not better so far
+
+v4.4.13 at 101M -> v4.4.14 at 50M -> 101M (the run continues to 200M):
+
+- rail practice pucks never touched 21% -> 33% -> 29%, now on the LEFT (cold
+  right / left 11% / 14% -> 20% / 38% -> 12% / 38%); the untouched ones lie low
+  on the rail (y 0.27-0.54), the mallet ends 0.15 m inside and 0.10 m behind
+  them, i.e. at the inner edge of the 0.12 m edge-dwell band, without
+  entering it.
+- rest spells >= 4 s 1 in 448 games -> 6 -> 6 (to 59 s, left rail and
+  back-left).
+- placed pucks left 2.9 -> 4.0 -> 3.9%: forward zone 8.7 -> 9.1 -> 6.4%, side
+  rails 5.4 -> 13.7 -> 14.3%.
+- shots from a controlled puck 43 -> 50 -> 40%, on target 73 -> 74 -> 69%,
+  6.7 -> 6.4 -> 6.6 m/s; conceded 0.18 -> 0.12 -> 0.17 a minute; 12-11 and
+  17-13 against v4.1.2; lunge 15-16 mm.
+
+The side the rail weakness sits on has moved from model to model (v4.1.2
+left, v4.4.2-v4.4.12 right, v4.4.13 neither, v4.4.14 left): the skill is not
+held by anything in this arm, only not pushed away any more. v4.4.13 at 101M
+stays the best all-round snapshot and is the UI level `calm` (2026-11-20;
+simulation only; the level's note says what it may do with a resting puck).

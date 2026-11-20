@@ -738,8 +738,9 @@ continued under a 40 / 25 / 15 m/s^2 body limit (sim goal share 97 / 90 /
 None of v4.2.x has been on the table; results and caveats in `ai/MODELS.md`.
 A mode may carry a `note` (shown under the UI's level selector) and any key
 is a level: 2026-11-19 added `new` = v4.3.12, the best checkpoint of the
-v4.3 study, at full strength. `latest` and `max` stay v4.1.2 until it has
-played on the table.
+v4.3 study, at full strength (played 38 minutes on the table that evening:
+about level with `max`); 2026-11-20 added `calm` = v4.4.13 (self-play line,
+simulation only). `latest` and `max` stay v4.1.2.
 
 THE v4.3 STUDY (2026-11-19, record: "Round 5" of
 `ai/recipes/table-faithful-20261110/README.md`, results `ai/MODELS.md`).
@@ -833,7 +834,37 @@ possessions), level with v4.1.2 head to head, load peak 0.92. STILL NOT FOR
 THE TABLE: in 2 of 64 games against the simulated people a puck came to
 rest against the right rail at mid depth and lay there to the end of the
 game (43 s, 56 s); the stall map's placed rail pucks do not show it
-(7-9% left, v4.1.2 4-7% with no such spell). RUN THE RESTING-PUCK GATES ON EVERY
+(7-9% left, v4.1.2 4-7% with no such spell).
+THE NIGHT OF 2026-11-19/20 (v4.4.8-v4.4.14; record: the last sections of the
+recipe README). (1) CALM DEFENDING, asked for by the user after the table
+showed half the goals v4.1.2 / v4.3.12 concede going in off or under their
+own moving mallet and none of the 15 m/s^2 beginner's: the motion charges
+multiplied outside the learner's own possession (`--defense-motion-scale 4`)
+did little; times 25 while a shot is incoming (`--incoming-motion-scale 25`)
+took the forward lunge on fast shots from 91 mm to 16-28 (v4.1.2 150, the
+beginner on the table 20) with shots as hard (6.6-6.7 m/s on target) and
+the same goals conceded (fewer through a lift, more clean). (2) THE HOVER
+BESIDE RAIL PUCKS came from the drills' hot starts: a third of them start
+at 0.75-0.94 of the load limit, where a stay by the right rail trips motor
+0's fast limit (12000 against 600 for leaving the puck), and without the
+rail anchor the arm unlearnt striking right-rail pucks, cold ones too
+(v4.4.2 10% -> v4.4.10 67% never touched; v4.3.12, with the anchor, 1%).
+Starting side-rail drills at loads <= 0.6 (`--edge-drill-max-load 0.6`,
+v4.4.13) brought it back in 50M steps with no imitation (11% / 14% right /
+left; rest spells 10 -> 1 in 448 games). Tried and WORSE: a drill with the
+mallet level beside the puck (`--rail-rest-drill-fraction`, v4.4.8), the
+approach potential (`--edge-approach-weight` 30: nothing; 1000: harm). The
+real drive telemetry agrees with the load model by the right rail (motor 0
+holds at 0.92 of its limit there), so the model is not the fault. (3) THE
+GATE'S 64 GAMES CANNOT SEE A REST SPELL THAT HAPPENS IN 1-3% OF GAMES: run
+`eval_resting_puck.py --parts games` on 3 more seeds (448 games), and test
+the deployed policy on the edge drill's own states by side and load
+(scratch `drilldet.py`); checkpoints 50M steps apart still differ a lot on
+this (v4.4.14: the weakness moved to the left rail). `v4.4.13` (101M) is
+the best all-round snapshot and the UI level `calm`: 43% of shots from a
+controlled puck, 73% on target, 0.18 conceded a minute, level with v4.1.2,
+lunge 16 mm, load peak 0.94; it still leaves 8.7% of pucks placed at the
+front edge of reach. Not yet on the table. RUN THE RESTING-PUCK GATES ON EVERY
 SNAPSHOT OF THIS LINE; the shot-quality table does not show a stall.
 Record: the last sections of the recipe README.
 
