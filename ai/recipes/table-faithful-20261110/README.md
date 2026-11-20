@@ -2462,3 +2462,16 @@ for every stationary drill whose puck lies at rest at the edge of reach,
 whichever drill placed it: within 30 mm of the mallet centre's side or back
 limit, or in the last 60 mm of forward reach. For the forward zone, where
 the front-edge drill still starts a third of its pucks hot.
+
+v4.4.13 at 101M (the registered file; stopped at 115M): rail practice pucks
+never touched 21% (cold 11% right / 14% left, hot 26% / 24%); rest spells
+>= 4 s 1 in 448 games (35 s, right rail at y 0.23); placed pucks left 2.9%:
+side rails 5.4% (v4.1.2 5.9%), forward zone 8.7% (forward-right with the
+right bank asked 20%). Lunge 16 mm; 6.7 m/s on target, 73% on target, 43%
+from a controlled puck, 31.8 prepared fast on-target per 100 possessions;
+conceded 0.18 a minute (through a lift 0.07, otherwise 0.11), 0.10 in the
+rigid sim; 20-20 against v4.1.2; load peak 0.94 rigid, 0.74 in the
+soft-mallet games, no overload seconds.
+
+`v4.4.14` = v4.4.13 from its 101M snapshot plus `--fringe-drill-max-load
+0.6`.
