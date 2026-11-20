@@ -2093,3 +2093,38 @@ TWO THINGS KEEP IT OFF THE TABLE:
 `v4.4.7` = v4.4.6 from its 202M snapshot plus `--reach-edge-drill-fraction
 0.3` (30% of the stationary drills: a puck at rest in the last 50 mm of
 forward reach, or against a side rail forward of y 0.58).
+
+### v4.4.7 at 101M steps: the drill works where it has got to
+
+`runs/v4.4.7/agent_step_1961623552.pt`, two seeds, beside v4.4.6:
+
+|  | v4.3.12 | v4.4.6 101M | v4.4.6 202M | v4.4.7 101M |
+|---|---|---|---|---|
+| shots from a controlled puck | 23% | 43% | 37% | 41% |
+| first touch to shot, median | 0.74 s | 0.92 s | 0.83 s | 0.82 s |
+| shots on target | 63% | 72% | 73% | 69% |
+| controlled, on target, >= 4 m/s per 100 possessions | 11.8 | 31.5 | 27.8 | 30.4 |
+| possessions ending in a shot | 71% | 84% | 87% | 90% |
+| conceded per minute (soft-mallet / rigid) | 0.15 / 0.10 | 0.22 / 0.12 | 0.23 / 0.14 | 0.23 / 0.09 |
+| head to head with v4.1.2 | 12-8 | 8-10 | 22-25 | 9-9 |
+| resting pucks left (of 1,632) | 0.4% | 5.3% | 4.0% | 3.1% |
+| ... in the forward zone | | 13.1% | 11.1% | 7.8% |
+
+Shot quality is v4.4.6's. The stall map by cell (70 trials each; request in
+brackets), v4.4.6 at 101M / 202M -> v4.4.7:
+
+- forward RIGHT: 17 / 17% (left bank), 14 / 4% (right bank), 11 / 1%
+  (straight) -> 3%, 0%, 0%. Fixed.
+- forward LEFT: 20 / 17% (left bank), 3 / 26% (right bank), 13 / 1%
+  (straight) -> 19%, 24%, 1%. Not moved.
+- side rails: 11 / 9% (left bank), 23 / 13% (right bank), 9 / 7% (straight)
+  -> 2%, 20%, 4%.
+
+The drill places pucks on both sides and draws the request uniformly, so the
+left side is a matter of steps, not of coverage. In games against the
+simulated people the longest rest spell is 3.7 s (v4.4.6: one of 59 s).
+3 of 256 rigid-sim games still touch the shutdown level (peak 0.96, no time
+above it; v4.4.6: 1.01 and 6.6 s above). Playability beside v4.1.2 is calmer
+on every line but one: the idle command moves more (p90 14 mm a tick against
+4 mm). STILL NOT FOR THE TABLE; the run continues and the resting-puck gate
+is run on every snapshot.

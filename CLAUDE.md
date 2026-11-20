@@ -649,6 +649,27 @@ goals conceded from 0.10 to 0.04 per game.
     confirmation dialogs, by the user's choice). `web/robot.js` is the
     client. Whether a master is running is read from `/proc/net/tcp`,
     never by connecting (the master serves one client).
+    REALTIME PRIORITY (2026-11-19): the policy loop, the camera tracker and
+    the motor controller ask for SCHED_FIFO 40 (`play.sh`,
+    `robot_session._launch_master`) and run at normal priority, without
+    failing, when the SERVER that starts them lacks the account's rtprio
+    limit. That limit is set at login (`/etc/security/limits.d/
+    99-airhockey.conf`, created 2026-11-10), so a server started from an
+    older shell, the desktop session or an AI assistant's shell has 0. On
+    2026-11-19 a server restarted that way ran every session at normal
+    priority: another project's batch job (8 cores for ~6 min every 15)
+    stretched single policy ticks from 3 ms to 20-50 ms, 2-9% of ticks
+    were more than 30 ms late in those minutes, and v4.3.12 conceded 0.56
+    goals a minute in them against 0.11 otherwise. ALWAYS (re)start the
+    server with `bash ai/bin/restart_server.sh` (a fresh login through
+    `ssh localhost`, refuses while the table is in use). `/api/robot`
+    carries `realtime` and `master_realtime` and the Robot tab shows a
+    timing warning when either is false; a controller started without the
+    permission keeps normal priority until it is shut down and started
+    again. `lag_ms` in ticks.csv also DRIFTS upward 0.4-0.55 ms a minute in
+    every session (camera clock against the PC's, 7-9 ppm; the offset is
+    taken once at the first frame): read spikes above its running median,
+    not its level. Not yet fixed in the runner.
   - **Simulation**: play by mouse or watch checkpoints.
   - **Recordings**: two kinds, kept apart. SIMULATED GAMES
     (`ai/recordings/*.json`, replayed on the page's table) are listed by
@@ -790,7 +811,10 @@ TABLE: it hovers 0.35 m behind a puck lying at the front edge of its reach
 (4-5% of resting pucks left, v4.3.12 0.4%), dithering until the load
 reaches the shutdown level (3 of 256 rigid-sim games, each a 0-0 game;
 v4.1.2 does the same in 1 of 128). `v4.4.7` adds the drill for those pucks
-(`--reach-edge-drill-fraction 0.3`). RUN THE RESTING-PUCK GATES ON EVERY
+(`--reach-edge-drill-fraction 0.3`): at 101M steps the same shot quality,
+3.1% of resting pucks left, the forward right fixed and the forward left
+with a bank requested not yet (19-24%); still not for the table, the run
+continues. RUN THE RESTING-PUCK GATES ON EVERY
 SNAPSHOT OF THIS LINE; the shot-quality table does not show a stall.
 Record: the last sections of the recipe README.
 
@@ -817,7 +841,7 @@ directory means unrelated commands can be pasted back to back.
 # Install
 pip install -e "./ai[dev]"
 
-# Run visualization server
+# Run visualization server (on the table's PC use ai/bin/restart_server.sh instead)
 PYTHONPATH=ai python -m airhockey.server
 
 # Run tests
@@ -951,7 +975,10 @@ make -C fw/test                  # host tests for the motion profile
 make -C sw test                  # host tests for the master (no SC-Hub, no Teensy)
 
 # Day to day: everything is a button in the web UI (port 8420; the server is
-# PYTHONPATH=ai python -m airhockey.server and is normally left running).
+# normally left running). START OR RESTART IT WITH ai/bin/restart_server.sh,
+# never by hand: it must come from a fresh login to carry the realtime limit.
+bash ai/bin/restart_server.sh                 # refuses while the table is in use
+bash ai/bin/restart_server.sh --wait-idle 60  # waits for a minute of idle table first
 # Start AI runs play.sh: starts cdpr_master if none is running, takes up cable
 # slack, measures the mallet, enables and plays. Take up cable slack and
 # Hardware start cdpr_master themselves too. The same from a terminal:
