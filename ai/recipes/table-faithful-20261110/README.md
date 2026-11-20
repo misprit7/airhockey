@@ -2260,3 +2260,55 @@ contact, conceded and through a lift, the resting-puck gates.
 
     ... same command as v4.4.7 with --run-name v4.4.9 --resume runs/v4.4.7/agent_step_2062548992.pt --seed 20261149
         --trainer-arg=--defense-motion-scale --trainer-arg=4      (no --rail-rest-drill-fraction)
+
+### v4.4.9 (general scale 4): shot speed held, defending hardly calmer
+
+Two seeds each; v4.4.7 at 202M -> v4.4.9 at 50M -> 101M (stopped at 115M):
+
+- on-target shot speed 6.5 -> 6.3 -> 6.5 m/s; shots from a controlled puck
+  47 -> 45 -> 43%; on target 75 -> 72 -> 69%; prepared fast on-target shots
+  per 100 possessions 35.9 -> 34.0 -> 31.3; head to head with v4.1.2 18-19,
+  12-10 at 50M.
+- forward lunge on shots >= 5 m/s 91 -> 87 -> 83 mm (p90 221 -> 204 -> 201);
+  peak mallet speed on them 3.10 -> 2.90 -> 2.77 m/s; mallet speed at
+  contact 1.54 -> 1.52 -> 1.58; rms acceleration 23.5 -> 23.9 -> 23.7; in
+  training the accel-duty share in games fell 5.7 -> 5.3%.
+- conceded 0.22 -> 0.18 -> 0.22 a minute (through a lift 0.13 -> 0.12);
+  load peak 0.92 -> 0.90 -> 0.98.
+- placed resting pucks left 1.3 -> 0.8 -> 0.5% (forward 0%, side rails 4.2%;
+  v4.1.2 1.0 / 1.6 / 5.9%). REST SPELLS: none in the gate's 64 games at
+  either snapshot, but 6 of 18-59 s in 384 more games at 50M (v4.4.7: 7 in
+  256). THE GATE'S 64 GAMES CANNOT SEE A 1.5-3% EVENT; use 256 or more
+  (`eval_resting_puck.py --parts games --games 64 --seed N`, several N).
+
+WHERE THE HARD ACCELERATION GOES (scratch `phases.py`; table, v4.3.12, the
+27-minute session of 2026-11-19; phases by what the puck is doing):
+
+| phase | share of time | share of effort above 40 m/s^2 | ticks over 60 m/s^2 | rms accel |
+|---|---|---|---|---|
+| a shot incoming (>= 3 m/s at its goal) | 2.0% | 30% | 19% | 45 |
+| moving puck on its half, not a shot | 4.4% | 10% | 2.4% | 26 |
+| puck on the far half | 29% | 26% | 0.9% | 15 |
+| own possession (puck under 2 m/s) | 10% | 11% | 1.2% | 17 |
+| within 0.25 s of its own touch | 7.8% | 19% | 2.3% | 25 |
+
+The beginner meets incoming shots at 11 m/s^2 rms. At scale 4 a lunge
+(80 m/s^2 for 0.3 s) costs about 15 against a goal's 600: too little to
+weigh against even a 3% change in the chance of conceding. Hence
+`--incoming-motion-scale S2` (new, opt-in): the same three charges times S2
+while a shot is incoming, in place of the general scale there. `v4.4.10` =
+v4.4.9 from its 101M snapshot with S2 = 25 (a lunge costs 100-250).
+
+THE HOVER IS ONE-SIDED (scratch `drilldet.py`, v4.4.7 at 202M on the drills'
+own start states, with and without exploration noise: the same, so it is
+not noise hiding it). Rail pucks never touched: edge drill 29% (right rail
+40%, left 18%), rail-rest drill 19% (right 30%, left 8%); by starting load,
+left-rail pucks are left almost only when hot (0-8% cold, 12-24% above 0.8)
+and right-rail pucks cold or hot (27-38% / 31-40%). Every long spell in
+games was on the right. In the load model the right rail's limiting motor
+is motor 0, fast limit 4.1 A, with the largest forward-acceleration
+coefficient; the left rail's is motor 3, fast limit 5.8 A; holding at
+either rail settles at 1.2 of the limit through the recipe's unmeasured-
+extension prior (1 A per 100 mm outside the surveyed 3 x 3 grid). NOT YET
+CHECKED against the drive telemetry of the 2026-11-19 sessions
+(`logs/motor_load/1795131634045133-2641762.jsonl`, 34,677 enabled samples).

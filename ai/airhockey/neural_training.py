@@ -63,6 +63,7 @@ CORNER_POCKET_ENTRY_SPEED = 2.0    # m/s: faster pucks bounce back out of the po
 REVERSAL_WINDOW_TICKS = 5      # 100 ms, as airhockey.playability counts them
 DEFENSE_MOTION_PUCK_SPEED = 2.0     # m/s: slower than this on the learner's half is its own possession
 DEFENSE_MOTION_STRIKE_SECONDS = 0.25
+INCOMING_SHOT_SPEED = 3.0           # m/s toward the learner's goal: an incoming shot
 REVERSAL_GAP_S = 0.15
 STRIKE_DRILL_SECONDS = 6       # a person takes up to ~4 s to get to a puck and strike it
 DEFENSE_FOLLOW_SECONDS = 4.0   # a follow-through defense drill's time after the block
@@ -309,6 +310,7 @@ class NeuralTrainingEnv(ArrivalEnv):
         reach_edge_drill_fraction=0.0,
         rail_rest_drill_fraction=0.0,
         defense_motion_scale=1.0,
+        incoming_motion_scale=1.0,
         # Share of stationary drills with a slow puck on the back rail
         # between the corners, the state before a wedged corner puck.
         back_rail_drill_fraction=0.0,
@@ -573,6 +575,9 @@ class NeuralTrainingEnv(ArrivalEnv):
         if not np.isfinite(defense_motion_scale) or defense_motion_scale < 1:
             raise ValueError("defense_motion_scale must be finite and at least 1")
         self.defense_motion_scale = defense_motion_scale
+        if not np.isfinite(incoming_motion_scale) or incoming_motion_scale < 1:
+            raise ValueError("incoming_motion_scale must be finite and at least 1")
+        self.incoming_motion_scale = incoming_motion_scale
         self.own_corner_weight = own_corner_weight
         self.anchor_side_rail_open_y = anchor_side_rail_open_y
         self.anchor_front_margin = anchor_front_margin
@@ -2358,6 +2363,18 @@ class NeuralTrainingEnv(ArrivalEnv):
             own = ((e.puck_y < self.cfg.height / 2) & (speed < DEFENSE_MOTION_PUCK_SPEED)) | (
                 self.elapsed - self.contact_clock[0] < DEFENSE_MOTION_STRIKE_SECONDS)
             harder = np.where(own, 1.0, self.defense_motion_scale)
+        if self.incoming_motion_scale != 1:
+            # The phase the bounce-ins happen in, charged on its own scale:
+            # a shot on the learner's half travelling at its goal. On the
+            # table (v4.3.12, 2026-11-19) that is 2% of the time and 30% of
+            # all acceleration effort above 40 m/s^2, the mallet at 45 m/s^2
+            # rms and up to 3 m/s; the 15 m/s^2 beginner meets the same shots
+            # at 11 m/s^2 rms and lets no more of them in. The general scale
+            # at 4 makes a lunge cost ~15 against a goal's 600 and moved
+            # nothing in 100M steps (v4.4.9).
+            incoming = ((e.puck_y < self.cfg.height / 2) & (e.puck_vy <= -INCOMING_SHOT_SPEED)
+                        & (self.elapsed - self.contact_clock[0] >= DEFENSE_MOTION_STRIKE_SECONDS))
+            harder = np.where(incoming, self.incoming_motion_scale, harder)
         if self.accel_duty_weight or self.reversal_weight or self.far_cap_weight:
             reward -= (harder * (self.accel_duty_weight * motion[:, 1] + self.reversal_weight * motion[:, 2])
                        + self.far_cap_weight * motion[:, 5])

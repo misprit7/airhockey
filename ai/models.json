@@ -146,8 +146,12 @@
       "summary": "v4.4.7 continued with the rail-rest drill (--rail-rest-drill-fraction 0.35), 101M steps (the file); stopped. WORSE than its parent: placed resting pucks left 5.1% (v4.4.7 1.3%), the two long rail spells still there, 16-24 against v4.1.2. Do not use; kept as the record of a failed drill. Sim only."
     },
     "v4.4.9": {
-      "run": "v4.4.9", "date": "2026-11-19", "accel": 100, "parent": "v4.4.7",
-      "summary": "v4.4.7 continued from its 202M snapshot with hard acceleration costing four times as much outside its own possession (--defense-motion-scale 4): calmer defending without softer shots, after the table showed half the goals v4.1.2 / v4.3.12 concede going in off or under their own moving mallet. In training; not evaluated. Sim only."
+      "run": "v4.4.9", "file": "agent_step_2163474432.pt", "date": "2026-11-19", "accel": 100, "parent": "v4.4.7",
+      "summary": "v4.4.7 continued with hard acceleration costing four times as much outside its own possession (--defense-motion-scale 4), 101M steps (the file); stopped. Shot speed held (6.5 m/s on target) but the defending is hardly calmer (forward lunge on fast shots 91 -> 83 mm, mallet speed at contact unchanged at 1.5-1.6 m/s) and shots from a controlled puck slipped 47% -> 43%. Placed resting pucks left 0.5% (the best yet); long rest spells still occur about once in 64 games. Sim only."
+    },
+    "v4.4.10": {
+      "run": "v4.4.10", "date": "2026-11-20", "accel": 100, "parent": "v4.4.9",
+      "summary": "v4.4.9 continued from its 101M snapshot with the three motion charges times 25 while a shot is incoming (--incoming-motion-scale 25): the 2% of the time that holds 30% of the hard acceleration on the table and in which pucks go in off the moving mallet. In training; not evaluated. Sim only."
     }
   }
 }

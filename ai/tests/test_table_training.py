@@ -549,6 +549,26 @@ def test_hard_acceleration_costs_more_outside_the_learners_own_possession():
     with pytest.raises(ValueError):
         NeuralTrainingEnv(2, defense_motion_scale=0.5)
 
+    # An incoming shot has its own scale: the puck on its half travelling at its goal at 3 m/s or more.
+    def shot(env, vy):
+        env.reset(seed=2)
+        e, rewards = env.engine, []
+        for t in range(12):
+            e.puck_x[:], e.puck_y[:], e.puck_vx[:], e.puck_vy[:] = 0.08, 0.7, 0.0, vy
+            action = np.zeros((env.n_envs, 6), np.float32)
+            action[:, 1] = action[:, 3] = 1.0
+            action[:, 4], action[:, 5] = -1.0, 1.0
+            rewards.append(env.step(action)[1].astype(np.float64))
+        return np.array(rewards)
+
+    for vy, factor in ((-5.0, 25.0), (-2.5, 3.0), (5.0, 3.0)):     # incoming; too slow to be a shot; going away
+        free = shot(NeuralTrainingEnv(4, **kw), vy)
+        plain = shot(NeuralTrainingEnv(4, **kw, **weights), vy)
+        scaled = shot(NeuralTrainingEnv(4, **kw, **weights, defense_motion_scale=3.0, incoming_motion_scale=25.0), vy)
+        assert (free - plain).sum(axis=0).min() > 0.2 and np.allclose(free - scaled, factor * (free - plain), atol=1e-3)
+    with pytest.raises(ValueError):
+        NeuralTrainingEnv(2, incoming_motion_scale=0.5)
+
 
 def test_the_brake_after_a_strike_is_not_an_idle_cap():
     kw = dict(seed=2, accel=100.0, randomize=False)
@@ -1240,7 +1260,8 @@ def test_recipe_is_v4s_command_continued_with_the_table_options():
         assert set(mine) - set(old) == new | round2 | round3 | round4 | {"free_request_share", "body_accel", "roam_weight",
                                                                          "defense_followthrough_fraction", "game_shaping_scale",
                                                                          "selfplay_lift", "game_prepared_shot_weight",
-                                                                         "rail_rest_drill_fraction", "defense_motion_scale"}
+                                                                         "rail_rest_drill_fraction", "defense_motion_scale",
+                                                                         "incoming_motion_scale"}
         assert args.body_accel is None and "--body-accel" not in cmd
 
 

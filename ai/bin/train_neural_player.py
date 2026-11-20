@@ -386,6 +386,10 @@ def build_parser():
                    help="Multiplies the accel-duty, reversal and accel-effort charges on every tick that is not the "
                         "learner's own possession (a puck on its half under 2 m/s, or within 0.25 s of its own contact): "
                         "hard acceleration costs more when defending or idle and the same in a strike")
+    p.add_argument("--incoming-motion-scale", type=float, default=1.0,
+                   help="Multiplies the same three charges while a shot is incoming (the puck on the learner's half "
+                        "travelling at its goal at 3 m/s or more), in place of --defense-motion-scale there: the phase "
+                        "in which a moving mallet bounces pucks into its own goal on the table")
     p.add_argument("--rail-rest-drill-fraction", type=float, default=0,
                    help="Fraction of stationary drills with the puck at rest on or within 45 mm of a side rail, anywhere up "
                         "the rail, and the mallet mostly level with it just short of contact (the state v4.4.7 creeps in). "
@@ -575,6 +579,7 @@ def environment_options(args, *, shot_conditioned):
         reach_edge_drill_fraction=getattr(args, 'reach_edge_drill_fraction', 0.0),
         rail_rest_drill_fraction=getattr(args, 'rail_rest_drill_fraction', 0.0),
         defense_motion_scale=getattr(args, 'defense_motion_scale', 1.0),
+        incoming_motion_scale=getattr(args, 'incoming_motion_scale', 1.0),
         back_rail_drill_fraction=getattr(args, 'back_rail_drill_fraction', 0.0),
         own_corner_weight=getattr(args, 'own_corner_weight', 0.0),
         anchor_side_rail_open_y=getattr(args, 'anchor_side_rail_open_y', None),
