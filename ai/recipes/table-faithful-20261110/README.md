@@ -2312,3 +2312,25 @@ either rail settles at 1.2 of the limit through the recipe's unmeasured-
 extension prior (1 A per 100 mm outside the surveyed 3 x 3 grid). NOT YET
 CHECKED against the drive telemetry of the 2026-11-19 sessions
 (`logs/motor_load/1795131634045133-2641762.jsonl`, 34,677 enabled samples).
+
+Checked against the drive telemetry of 2026-11-19 (2.2 h enabled, 15,834
+samples with the mallet still; the mallet is rarely still near a rail, so
+the rail estimate is 9 samples): holding at sim x 0.86 on the right, the
+drives drew 3.76 / 3.33 / 3.10 / 0.31 A; the recipe with its extension prior
+says 3.38 / 3.74 / 3.63 / 1.41, without it 2.42 / 2.78 / 2.67 / 0.45. THE
+PRIOR IS NOT TOO PESSIMISTIC THERE: motor 0 really holds at 0.92 of its
+4.1 A fast limit beside the right rail (at 2 mm pretension; the recipe is
+for 1.5). So the hover beside a right-rail puck is not a sim artefact to
+remove from the model; it is the worst place to wait on the real table too.
+What is wrong is the policy: it neither strikes at once (safe from cold: a
+strike is a 0.1 s spike under a 25 s filter) nor backs off to the middle to
+cool. Levers already in the trainer and off in this arm:
+`--edge-approach-weight` (a potential for closing to contact with a slow
+side-fringe puck) and `--edge-persistent-bias` (coherent exploration in
+quiet side-fringe practice).
+
+THE SAME TELEMETRY: THE DRIVES RAN CLOSE TO THEIR LIMIT ALL EVENING at 2 mm
+pretension. Fast RMS, worst motor per 5-minute window: motor 2 at 83-95% of
+its limit in every window of play, with every model (95% at 18:40 and
+20:25, 91-93% during the beginner's sessions); motor 0 91% in the one
+window at 1.5 mm. The drive trips at 100%.
