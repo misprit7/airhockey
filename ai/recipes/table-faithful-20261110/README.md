@@ -2498,3 +2498,22 @@ left, v4.4.2-v4.4.12 right, v4.4.13 neither, v4.4.14 left): the skill is not
 held by anything in this arm, only not pushed away any more. v4.4.13 at 101M
 stays the best all-round snapshot and is the UI level `calm` (2026-11-20;
 simulation only; the level's note says what it may do with a resting puck).
+
+v4.4.14 at 202M: THE FRONT EDGE IS FIXED (forward zone 8.7% -> 9.1 -> 6.4 ->
+0.2% of placed pucks left; 200M steps, as the front-edge drill itself took)
+and the right rail holds (cold right-rail practice pucks never touched 0%,
+hot 7%), but the LEFT rail is now where the right was: 41% cold, 52-62% hot
+never touched, and 15 rest spells of 14-59 s in 448 games, all on the left
+rail or behind it (x 0.04-0.16). Placed pucks left 2.3% (side rails 17%).
+Shots 41% from a controlled puck, 71% on target, 6.7 m/s; conceded 0.14 a
+minute; 8-22 against v4.1.2 (17-13 at 101M); lunge 18 mm; load peak 0.96
+rigid. The run goes on to 300M.
+
+OPEN: nothing in this arm holds the rail skill on both sides at once. The
+table is symmetric where the motors are not; `airhockey/neural_symmetry.py`
+has the reflection of one frame and of an action (used by an old
+distillation script, not by the PPO trainer). An advantage-weighted
+imitation of the policy's OWN mirrored successes on rail states would carry
+the side that works to the side that does not, with no outside reference;
+not built (it needs the reflection of the 16-frame history and of the
+request).
