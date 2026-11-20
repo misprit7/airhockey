@@ -2536,3 +2536,26 @@ and 34 s, left rail). Shots and defending as at 303M; 15-11 against v4.1.2;
 load peak 0.88. Placed pucks left by snapshot of this run: 4.0, 3.9, 2.3
 (202M), 0.9 (303M), 4.2%. `calm` stays on 303M. `v4.4.15` continues the same
 recipe from the last snapshot.
+
+### v4.4.16: mirrored imitation of its own rail successes
+
+`--mirror-success-weight W` (new, opt-in; `airhockey/neural_symmetry.py`,
+tests `tests/test_neural_symmetry.py`): in the PPO update, for every sample
+in a rail-zone state (the zone the rail anchor used: edge-drill slots and a
+puck waiting in the rail strip) whose normalised advantage is positive, the
+action that was taken, reflected left-right, is a pre-squash target for the
+actor in the reflected state, weighted by the advantage clipped at
+`--mirror-success-cap` (3). No reference network: the side of the table on
+which the policy strikes rail pucks teaches the side on which it does not.
+The reflection covers all 16 frames (positions, velocities, the previous
+arrival, the queued target, the relative features; the four motors' fast
+and slow loads change places) and swaps the left-bank and right-bank
+requests. The motor model is not mirror-symmetric, so it is a prior and the
+return on the other side still decides. Reported per update as
+`status["mirror_success"]` (share of rail-zone samples, samples imitated,
+loss).
+
+`v4.4.16` = v4.4.14's recipe from its 303M snapshot plus
+`--mirror-success-weight 1 --anchor-space pre-squash`. v4.4.15 (the same
+recipe unchanged, from the 400M snapshot) was stopped at 45M steps,
+unevaluated, to free the GPU for it.

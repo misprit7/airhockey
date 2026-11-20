@@ -172,7 +172,11 @@
     },
     "v4.4.15": {
       "run": "v4.4.15", "date": "2026-11-20", "accel": 100, "parent": "v4.4.14",
-      "summary": "v4.4.14 continued unchanged from its final (400M) snapshot, to see whether its rail handling settles. In training; not evaluated. Sim only."
+      "summary": "v4.4.14 continued unchanged from its final (400M) snapshot; stopped at 45M steps to free the GPU for v4.4.16. No snapshot evaluated. Sim only."
+    },
+    "v4.4.16": {
+      "run": "v4.4.16", "date": "2026-11-20", "accel": 100, "parent": "v4.4.14",
+      "summary": "v4.4.14 continued from its 303M snapshot with mirrored imitation of its own rail-zone successes (--mirror-success-weight 1): each positive-advantage action in a rail state, reflected left-right, is a target in the reflected state, so a rail skill held on one side carries to the other with no reference network. In training; not evaluated. Sim only."
     }
   }
 }
