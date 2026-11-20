@@ -2128,3 +2128,13 @@ above it; v4.4.6: 1.01 and 6.6 s above). Playability beside v4.1.2 is calmer
 on every line but one: the idle command moves more (p90 14 mm a tick against
 4 mm). STILL NOT FOR THE TABLE; the run continues and the resting-puck gate
 is run on every snapshot.
+
+At 152M steps (`agent_step_2012086272.pt`, gates only): resting pucks left
+2.9%. The forward zone went on down (7.8% -> 4.2%; forward-left with a bank
+requested 19-24% -> 10-11%), the SIDE RAILS went up (8.3% -> 14.9%: left
+bank 14%, right bank 20%, straight 11%), and two of 64 games against the
+simulated people had a puck lie against the right rail at mid depth
+(y 0.29-0.41) for 13 s and 26 s. Rail stalls have moved between 8% and 15%
+from snapshot to snapshot on this line (v4.1.2: 5.9%) without a trend: the
+front-edge drill does not reach them (its rail part is forward of y 0.58)
+and the arm's edge drill is 15% of the stationary drills.
