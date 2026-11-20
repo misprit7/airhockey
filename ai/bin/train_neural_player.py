@@ -382,9 +382,14 @@ def build_parser():
     p.add_argument("--reach-edge-drill-fraction", type=float, default=0,
                    help="Fraction of stationary drills with the puck at rest in the last 50 mm of forward reach "
                         "(whole width) or against a side rail forward of y 0.58")
+    p.add_argument("--defense-motion-scale", type=float, default=1.0,
+                   help="Multiplies the accel-duty, reversal and accel-effort charges on every tick that is not the "
+                        "learner's own possession (a puck on its half under 2 m/s, or within 0.25 s of its own contact): "
+                        "hard acceleration costs more when defending or idle and the same in a strike")
     p.add_argument("--rail-rest-drill-fraction", type=float, default=0,
                    help="Fraction of stationary drills with the puck at rest on or within 45 mm of a side rail, anywhere up "
-                        "the rail, and the mallet mostly level with it just short of contact (the state v4.4.7 creeps in)")
+                        "the rail, and the mallet mostly level with it just short of contact (the state v4.4.7 creeps in). "
+                        "v4.4.8 trained with 0.35 and stalled MORE; do not use as built")
     p.add_argument("--back-rail-drill-fraction", type=float, default=0,
                    help="Fraction of stationary drills with a slow puck on the back rail between the corners")
     p.add_argument("--own-corner-weight", type=float, default=0,
@@ -569,6 +574,7 @@ def environment_options(args, *, shot_conditioned):
         dead_puck_cap_grace=getattr(args, 'dead_puck_cap_grace', 2.5),
         reach_edge_drill_fraction=getattr(args, 'reach_edge_drill_fraction', 0.0),
         rail_rest_drill_fraction=getattr(args, 'rail_rest_drill_fraction', 0.0),
+        defense_motion_scale=getattr(args, 'defense_motion_scale', 1.0),
         back_rail_drill_fraction=getattr(args, 'back_rail_drill_fraction', 0.0),
         own_corner_weight=getattr(args, 'own_corner_weight', 0.0),
         anchor_side_rail_open_y=getattr(args, 'anchor_side_rail_open_y', None),

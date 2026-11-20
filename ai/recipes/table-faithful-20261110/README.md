@@ -2198,3 +2198,65 @@ stays. v4.4.7 was stopped at 240M steps.
         --trainer-arg=--opponent-reference --trainer-arg=runs/v4.3.12/agent_step_1091305472.pt \
         --trainer-arg=--selfplay-lift --trainer-arg=--reach-edge-drill-fraction --trainer-arg=0.3 \
         --trainer-arg=--rail-rest-drill-fraction --trainer-arg=0.35
+
+### v4.4.8: the rail-rest drill made it worse (stopped at 130M steps)
+
+| resting-puck gates | v4.4.7 202M | v4.4.8 50M | v4.4.8 101M |
+|---|---|---|---|
+| placed pucks left: all / forward zone / side rails | 1.3 / 0.4 / 7.7% | 2.6 / 4.7 / 12.5% | 5.1 / 10.9 / 19.1% |
+| rest spells >= 4 s in 64 games | 2 (43 s, 56 s) | 0 (longest 3.8 s) | 2 (56 s, 59 s, right rail y 0.40) |
+
+Shot quality unchanged (47% of shots from a controlled puck, 36 prepared
+fast on-target shots per 100 possessions); head to head with v4.1.2 16-24;
+conceded in the rigid sim 0.18 a minute (0.07). DO NOT USE
+`--rail-rest-drill-fraction` AS BUILT. Why it failed is not established.
+What the logs do show: in TRAINING the stationary drills end in an aimed
+shot 91-95% of the time in v4.4.7 and v4.4.8 alike, and a puck lies dead
+0.3% of game time, against 2.6% for the same network played without
+exploration noise (the two spells). The noise (std 0.13, doubled on the
+timing and effort outputs once a puck has lain 3 s) gets the training
+policy out of the hover that the deployed mean stays in, so the drill's
+states were mostly "solved" as far as the gradient could see, while the
+drill took a third of the front-edge drill's share (20% -> 13% of the
+stationary drills) and the forward zone came back. Next for the rail
+spell: measure the deployed (noise-free) policy on each drill's own start
+states before adding practice (`scratch drilldet.py`), not the training
+counters.
+
+### The table, 2026-11-19: the beginner defends better per shot
+
+The user's observation after an evening against `max`, `new` and
+`beginner`: the beginner "jitters a lot less and so doesn't ever jump /
+randomly bounce the puck in"; wanted: hard acceleration discouraged unless
+necessary, WITHOUT softer shots. The logs agree (straight shots only;
+17-19 November, live sessions):
+
+|  | v4.1.2 (40 min) | v4.3.12 (38 min) | v4.2.2 beginner, 15 m/s^2 (24 min) |
+|---|---|---|---|
+| straight shots reaching its end, per minute | 0.65 | 0.89 | 1.64 |
+| of those, in | 19% (5) | 21% (7) | 8% (3) |
+| goals that went in off or under its own mallet (mallet within touching range in the last 0.5 s) | 2 of 5 | 4 of 7 | 0 of 3 |
+| conceded per minute | 0.13 | 0.18 | 0.13 |
+
+Playability gates from the same evening's logs (`eval_playability.py
+--from-table-log`), v4.3.12 / beginner: rms acceleration 24.8 / 7.3 m/s^2,
+reversals 30 / 0 a minute, forward lunge on shots of 5 m/s or more 98 /
+20 mm (p90 243 / 49), mallet speed at contact 1.36 / 0.78 m/s. v4.4.7 in
+the sim is where v4.3.12 is on the table (lunge 91 mm, 1.54 m/s at
+contact): the sim's mallet lift does not punish a moving mallet as hard as
+the table does. (5 of v4.3.12's 7 goals fell in the minutes its loop was
+late, see CLAUDE.md "REALTIME PRIORITY"; the split off-the-mallet / past-it
+is the same in and out of them.)
+
+`--defense-motion-scale S` (new, opt-in): the accel-duty, reversal and
+accel-effort charges are multiplied by S on every tick that is not the
+learner's own possession (a puck on its half under 2 m/s, or within 0.25 s
+of its own contact). An incoming shot, the puck away and a volley at a
+moving puck pay S times; the wind-up and strike at a puck it holds pay what
+they did. `v4.4.9` = v4.4.7's arm from its 202M snapshot with S = 4 (a
+lunge of 80 m/s^2 for 0.2 s costs about 60 against 15; a goal is 600).
+Read with it: shot speed (must not fall), lunge and mallet speed at
+contact, conceded and through a lift, the resting-puck gates.
+
+    ... same command as v4.4.7 with --run-name v4.4.9 --resume runs/v4.4.7/agent_step_2062548992.pt --seed 20261149
+        --trainer-arg=--defense-motion-scale --trainer-arg=4      (no --rail-rest-drill-fraction)

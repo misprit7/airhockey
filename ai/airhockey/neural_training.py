@@ -61,6 +61,8 @@ RAIL_ZONE_MARGIN = 0.015
 # random 12 s action sequences; README "Round 4"), and v4 and a3 hover over it.
 CORNER_POCKET_ENTRY_SPEED = 2.0    # m/s: faster pucks bounce back out of the pocket
 REVERSAL_WINDOW_TICKS = 5      # 100 ms, as airhockey.playability counts them
+DEFENSE_MOTION_PUCK_SPEED = 2.0     # m/s: slower than this on the learner's half is its own possession
+DEFENSE_MOTION_STRIKE_SECONDS = 0.25
 REVERSAL_GAP_S = 0.15
 STRIKE_DRILL_SECONDS = 6       # a person takes up to ~4 s to get to a puck and strike it
 DEFENSE_FOLLOW_SECONDS = 4.0   # a follow-through defense drill's time after the block
@@ -306,6 +308,7 @@ class NeuralTrainingEnv(ArrivalEnv):
         # rail on the forward part of the half.
         reach_edge_drill_fraction=0.0,
         rail_rest_drill_fraction=0.0,
+        defense_motion_scale=1.0,
         # Share of stationary drills with a slow puck on the back rail
         # between the corners, the state before a wedged corner puck.
         back_rail_drill_fraction=0.0,
@@ -567,6 +570,9 @@ class NeuralTrainingEnv(ArrivalEnv):
         self.reach_edge_drill_fraction = reach_edge_drill_fraction
         self.back_rail_drill_fraction = back_rail_drill_fraction
         self.rail_rest_drill_fraction = rail_rest_drill_fraction
+        if not np.isfinite(defense_motion_scale) or defense_motion_scale < 1:
+            raise ValueError("defense_motion_scale must be finite and at least 1")
+        self.defense_motion_scale = defense_motion_scale
         self.own_corner_weight = own_corner_weight
         self.anchor_side_rail_open_y = anchor_side_rail_open_y
         self.anchor_front_margin = anchor_front_margin
@@ -2338,13 +2344,27 @@ class NeuralTrainingEnv(ArrivalEnv):
             b.action_dt * calm * np.linalg.norm(velocity, axis=1), b.action_dt * dead,
             b.action_dt * dithering * np.maximum(fraction - 0.05, 0), wedged))
         self.motion_totals += motion
+        # Hard acceleration costs more outside the learner's own possession
+        # (2026-11-19, from the table: half the goals v4.1.2 / v4.3.12
+        # conceded went in off or under their own moving mallet, none of the
+        # 15 m/s^2 beginner's; the request was calmer defending WITHOUT
+        # softer shots). Its possession: a puck on its half slower than
+        # DEFENSE_MOTION_PUCK_SPEED, and the quarter second after its own
+        # contact (the strike's follow-through and brake). Everything else
+        # -- an incoming shot, the puck away, a volley at a moving puck --
+        # pays the duty, reversal and effort charges times the scale.
+        harder = 1.0
+        if self.defense_motion_scale != 1:
+            own = ((e.puck_y < self.cfg.height / 2) & (speed < DEFENSE_MOTION_PUCK_SPEED)) | (
+                self.elapsed - self.contact_clock[0] < DEFENSE_MOTION_STRIKE_SECONDS)
+            harder = np.where(own, 1.0, self.defense_motion_scale)
         if self.accel_duty_weight or self.reversal_weight or self.far_cap_weight:
-            reward -= (self.accel_duty_weight * motion[:, 1] + self.reversal_weight * motion[:, 2]
+            reward -= (harder * (self.accel_duty_weight * motion[:, 1] + self.reversal_weight * motion[:, 2])
                        + self.far_cap_weight * motion[:, 5])
         if (self.guard_weight or self.guard_unresolved_weight or self.accel_effort_weight
                 or self.idle_speed_weight or self.dead_puck_weight):
             reward -= (self.guard_weight * motion[:, 6] + self.guard_unresolved_weight * motion[:, 7]
-                       + self.accel_effort_weight * motion[:, 8] + self.dead_puck_weight * motion[:, 10]
+                       + harder * self.accel_effort_weight * motion[:, 8] + self.dead_puck_weight * motion[:, 10]
                        # Games only: a drill starts the mallet anywhere, and
                        # walking to a guard post before the launch is its point.
                        + self.idle_speed_weight * game * motion[:, 9])

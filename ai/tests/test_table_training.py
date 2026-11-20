@@ -520,6 +520,36 @@ def test_guard_interventions_and_effort_are_counted_and_charged():
     assert np.allclose(game - paid, 20 * path[..., COLUMN["idle_path"]], atol=1e-4) and (game - paid).sum() > 20
 
 
+def test_hard_acceleration_costs_more_outside_the_learners_own_possession():
+    """Calmer defending without softer shots: the duty, reversal and effort charges are multiplied on every tick
+    that is not the learner's own possession, and are what they were while a slow puck is on its half."""
+    kw = dict(seed=2, accel=100.0, randomize=False)
+    weights = dict(accel_duty_weight=20.0, reversal_weight=5.0, accel_effort_weight=100.0)
+
+    def run(env, puck):
+        env.reset(seed=2)
+        e, rewards, motions = env.engine, [], []
+        for t in range(30):
+            e.puck_x[:], e.puck_y[:], e.puck_vx[:], e.puck_vy[:] = puck[0], puck[1], 0.0, 0.0
+            action = np.zeros((env.n_envs, 6), np.float32)
+            action[:, 1] = action[:, 3] = 1.0
+            action[:, 4], action[:, 5] = -1.0, (1.0 if t < 6 else -1.0)
+            _, reward, _, _, info = env.step(action)
+            rewards.append(reward.astype(np.float64)); motions.append(info["motion"].astype(np.float64))
+        return np.array(rewards), np.array(motions)
+
+    for puck, factor in (((0.5, 1.6), 3.0),        # the puck is away: not its possession
+                         ((0.08, 0.45), 1.0)):     # a puck at rest on its half, out of the mallet's way: its possession
+        free, counted = run(NeuralTrainingEnv(4, **kw), puck)
+        plain, _ = run(NeuralTrainingEnv(4, **kw, **weights), puck)
+        scaled, again = run(NeuralTrainingEnv(4, **kw, **weights, defense_motion_scale=3.0), puck)
+        cost = free - plain
+        assert np.array_equal(again, counted) and cost.sum(axis=0).min() > 0.5
+        assert np.allclose(free - scaled, factor * cost, atol=1e-4)
+    with pytest.raises(ValueError):
+        NeuralTrainingEnv(2, defense_motion_scale=0.5)
+
+
 def test_the_brake_after_a_strike_is_not_an_idle_cap():
     kw = dict(seed=2, accel=100.0, randomize=False)
     _, always = lunge(NeuralTrainingEnv(4, **kw), steps=40)
@@ -1210,7 +1240,7 @@ def test_recipe_is_v4s_command_continued_with_the_table_options():
         assert set(mine) - set(old) == new | round2 | round3 | round4 | {"free_request_share", "body_accel", "roam_weight",
                                                                          "defense_followthrough_fraction", "game_shaping_scale",
                                                                          "selfplay_lift", "game_prepared_shot_weight",
-                                                                         "rail_rest_drill_fraction"}
+                                                                         "rail_rest_drill_fraction", "defense_motion_scale"}
         assert args.body_accel is None and "--body-accel" not in cmd
 
 
